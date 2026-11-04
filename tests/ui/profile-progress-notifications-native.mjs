@@ -75,11 +75,34 @@ test('native progress uses system delivery or fallback, preserves controls and r
   await invoke('profile_progress_settings_save',{settings:{delivery:'window',position:'bottom-right'}});
   operation=`window-probe-${randomUUID()}`;
   const manual={...progress,operationId:operation,title:'Profile activation',profileName:'Notification controls check',phase:'preparing',message:'Checking the native Cancel action',canCancel:true};
-  await invoke('profile_activation_window_open',{progress:manual});child=await childWindow();
+  assert.equal(await main.evaluate(`(async()=>{
+    const {NativeProfileActivationWindow}=await import('/src/lib/profile-activation-window.ts');
+    const {observeActivationWindow}=await import('/src/lib/activation-window-observation.ts');
+    window.__popupCancelCount=0;
+    const adapter=new NativeProfileActivationWindow({observe:observeActivationWindow});
+    window.__popupAdapter=adapter;
+    return adapter.show(${JSON.stringify(manual)},()=>{window.__popupCancelCount++;return true;});
+  })()`),true);
+  child=await childWindow();
   await until(()=>child.evaluate(`document.body.innerText.includes('Checking the native Cancel action')`),'The native activation probe did not render');
   evidence.window=await invoke('profile_activation_window_state');assertGeometry(evidence.window,'bottom-right');
+  const observeReads=`(async()=>{
+    const bridge=window.__TAURI_INTERNALS__,original=bridge.invoke;
+    let reads=0;
+    bridge.invoke=function(command,...args){
+      if(command==='profile_activation_window_state')reads++;
+      return original.call(this,command,...args);
+    };
+    try{
+      await new Promise(resolve=>setTimeout(resolve,550));
+      return reads;
+    }finally{bridge.invoke=original;}
+  })()`;
+  evidence.periodicPopupStateReads=await Promise.all([main.evaluate(observeReads),child.evaluate(observeReads)]);
+  assert.deepEqual(evidence.periodicPopupStateReads,[0,0]);
   const cancel=await child.evaluate(`(()=>{const button=document.querySelector('button');if(!button||button.disabled)return null;const label=button.textContent.trim();button.click();return label;})()`);assert.equal(cancel,'Cancel');
-  await until(async()=>(await invoke('profile_activation_window_state')).cancelRequested,'The actual Cancel action did not submit cancellation intent');
+  await until(()=>main.evaluate('window.__popupCancelCount===1'),'The popup cancellation did not reach the parent observer');
+  assert.equal((await invoke('profile_activation_window_state')).cancelRequested,true);
   await invoke('profile_activation_window_update',{progress:{...manual,phase:'deactivating',canCancel:false,message:'Checking cleanup progress'},resetCancelRequest:true});
   await until(()=>child.evaluate(`document.querySelectorAll('button').length===0&&document.body.innerText.includes('Checking cleanup progress')`),'Cleanup did not remove the Cancel action');
   evidence.cleanup=await invoke('profile_activation_window_state');assert.equal(evidence.cleanup.cancelRequested,false);assert.equal(evidence.cleanup.progress.canCancel,false);
@@ -98,6 +121,7 @@ test('native progress uses system delivery or fallback, preserves controls and r
  finally{
   try{
    if(operation)await cleanup('Close display probe',async()=>{assert.equal(await invoke('profile_activation_window_close',{operationId:operation}),true);});
+   await cleanup('Dispose parent observer',()=>main.evaluate('window.__popupAdapter?.dispose();delete window.__popupAdapter;delete window.__popupCancelCount;'));
    if(original)await cleanup('Restore notification preferences',async()=>{assert.deepEqual(await invoke('profile_progress_settings_save',{settings:original}),original);assert.deepEqual(await invoke('profile_progress_settings_get'),original);});
    await cleanup('Verify display probe closed',async()=>{evidence.final=await invoke('profile_activation_window_state');assert.equal(evidence.final,null);});
    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');

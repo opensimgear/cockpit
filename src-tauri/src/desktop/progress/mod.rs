@@ -8,6 +8,8 @@ use geometry::{position_notification,native_notification_geometry,NativeNotifica
 #[cfg(test)]
 use geometry::{notification_geometry,NotificationGeometry};
 
+pub(crate) const TOPIC: &str = "profiles.activation-window";
+const CLOCK: &str = "activation-window";
 const LABEL: &str = "profile-activation";
 const NOTIFICATION_WIDTH: f64 = 420.0;
 const NOTIFICATION_HEIGHT: f64 = 96.0;
@@ -86,7 +88,11 @@ struct ActiveSystemNotification {
 }
 
 #[derive(Default)]
-pub(crate) struct ActivationWindowState(Mutex<Option<ActivationWindowSnapshot>>, Mutex<Option<ActiveSystemNotification>>);
+pub(crate) struct ActivationWindowState(
+    Mutex<Option<ActivationWindowSnapshot>>,
+    Mutex<Option<ActiveSystemNotification>>,
+    Option<(osg_streams::Publisher, std::time::Instant)>,
+);
 
 impl ActivationProgress {
     fn validate(&self) -> Result<(), String> {
@@ -106,19 +112,43 @@ impl ActivationProgress {
 }
 
 impl ActivationWindowState {
+    pub(crate) fn observe(broker: &osg_streams::Broker) -> Result<Self, osg_streams::RegistryError> {
+        let publisher = broker.register(
+            osg_streams::TopicSpec { topic: TOPIC.into(), source: CLOCK.into(), audiences: vec!["ui".into()] },
+            serde_json::Value::Null, 0, CLOCK.into(),
+        )?;
+        Ok(Self(Mutex::default(), Mutex::default(), Some((publisher, std::time::Instant::now()))))
+    }
+
+    // Commit and publish while holding the snapshot lock so a concurrent cancel,
+    // update or close cannot publish an earlier snapshot after its successor.
+    fn publish(&self, snapshot: Option<&ActivationWindowSnapshot>) {
+        let Some((publisher, started)) = &self.2 else { return; };
+        let at = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+        if let Err(error) = publisher.publish_latest_state(publisher.generation(), serde_json::json!(snapshot), at, CLOCK) {
+            eprintln!("Profile window observation failed: {error}");
+        }
+    }
+
     pub(crate) fn shutdown(&self) {
-        self.0.lock().unwrap_or_else(|p| p.into_inner()).take();
+        {
+            let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            state.take();
+            self.publish(None);
+        }
         close_system_notification(self, None);
     }
 
     fn start(&self, progress: ActivationProgress) {
-        *self.0.lock().unwrap() = Some(ActivationWindowSnapshot {
+        let mut state = self.0.lock().unwrap();
+        *state = Some(ActivationWindowSnapshot {
             progress,
             cancel_requested: false,
             delivery: ProgressDelivery::Window,
             window_focused: None,
             native_geometry: None,
         });
+        self.publish(state.as_ref());
     }
 
     fn snapshot(&self) -> Option<ActivationWindowSnapshot> {
@@ -129,6 +159,7 @@ impl ActivationWindowState {
         let mut state = self.0.lock().unwrap();
         let Some(current) = state.as_mut().filter(|s| s.progress.operation_id == operation_id) else { return false; };
         current.delivery = delivery;
+        self.publish(state.as_ref());
         true
     }
 
@@ -141,6 +172,7 @@ impl ActivationWindowState {
         if reset_cancel_request {
             current.cancel_requested = false;
         }
+        self.publish(state.as_ref());
         true
     }
 
@@ -149,7 +181,10 @@ impl ActivationWindowState {
         let Some(current) = state.as_mut().filter(|s| s.progress.operation_id == operation_id && s.progress.can_cancel && s.progress.phase.can_cancel()) else {
             return false;
         };
-        current.cancel_requested = true;
+        if !current.cancel_requested {
+            current.cancel_requested = true;
+            self.publish(state.as_ref());
+        }
         true
     }
 
@@ -157,6 +192,7 @@ impl ActivationWindowState {
         let mut state = self.0.lock().unwrap();
         if state.as_ref().is_some_and(|s| s.progress.operation_id == operation_id) {
             *state = None;
+            self.publish(None);
             return true;
         }
         false
@@ -328,6 +364,7 @@ pub(crate) async fn profile_activation_window_open(
                     if let Some(current) = snapshot.as_mut().filter(|current| current.progress.operation_id == progress.operation_id) {
                         *state.1.lock().unwrap_or_else(|p| p.into_inner()) = Some(ActiveSystemNotification { operation_id: progress.operation_id, notification: notification.take().unwrap() });
                         current.delivery = ProgressDelivery::System;
+                        state.publish(snapshot.as_ref());
                         true
                     } else { false }
                 };

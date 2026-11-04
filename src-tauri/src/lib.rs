@@ -378,8 +378,8 @@ pub fn run() {
             gateway.start_automatic();
             if let Err(error)=gateway.start_workspace(){eprintln!("Workspace initialization failed: {error}");}
             app.manage(mcp::Server::native(gateway.clone()));
+            app.manage(profile_activation_window::ActivationWindowState::observe(&gateway.observation_runtime().broker())?);
             app.manage(NativeGateway(gateway));
-            app.manage(profile_activation_window::ActivationWindowState::default());
             desktop::setup(app)?;
             Ok(())
         })

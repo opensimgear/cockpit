@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn window_observation_follows_current_progress_and_cancel_intent() {
+    let broker = osg_streams::Broker::new("profile-window-test".into()).unwrap();
+    let state = ActivationWindowState::observe(&broker).unwrap();
+    assert!(broker.subscribe("remote", "mcp", TOPIC).is_err());
+    let mut reader = broker.subscribe("popup", "ui", TOPIC).unwrap();
+    let mut next = || reader.try_recv().unwrap().unwrap().payload.unwrap();
+
+    assert!(next().is_null());
+    state.start(progress("operation"));
+    assert_eq!(next()["progress"]["operationId"], "operation");
+    assert!(!state.request_cancel("retired"));
+    assert!(state.request_cancel("operation"));
+    assert_eq!(next()["cancelRequested"], true);
+    let mut update = progress("operation");
+    update.message = "Updated".into();
+    assert!(state.update(update, true));
+    let updated = next();
+    assert_eq!(updated["cancelRequested"], false);
+    assert_eq!(updated["progress"]["message"], "Updated");
+    assert!(state.finish("operation"));
+    assert!(next().is_null());
+}
+
     fn progress(id: &str) -> ActivationProgress {
         ActivationProgress { operation_id: id.into(), profile_name: "Flight rig".into(), title: "Activating profile".into(), phase: ActivationPhase::Preparing, message: "Preparing companions".into(), details: vec![], can_cancel: true }
     }

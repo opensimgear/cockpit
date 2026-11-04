@@ -3,6 +3,7 @@
   import {gatewayRequest,subscribeProfileCleanup} from './gateway';
   import {nativeProfileActivation} from './profile-runtime';
   import {NativeProfileActivationWindow,type ActivationWindowProgress} from './profile-activation-window';
+  import {observeActivationWindow} from './activation-window-observation';
   import {ActivationProgressPresenter,ApplicationProfileProgress} from './activation-progress-presenter';
   let fallback=$state<ActivationWindowProgress|null>(null);
   async function cancel(activationId:string){
@@ -16,7 +17,7 @@
   onMount(()=>{
     if(!('__TAURI_INTERNALS__' in window))return;
     let reading=false,disposed=false;
-    const presenter=new ActivationProgressPresenter(new NativeProfileActivationWindow(),cancel,progress=>fallback=progress);
+    const presenter=new ActivationProgressPresenter(new NativeProfileActivationWindow({observe:observeActivationWindow}),cancel,progress=>fallback=progress);
     const progress=new ApplicationProfileProgress(presenter,async activationId=>{
       const result=(await gatewayRequest({command:'profile_activation_status',activationId})).profileActivation;
       return result?nativeProfileActivation(result,activationId):null;

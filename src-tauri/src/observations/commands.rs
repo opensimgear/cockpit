@@ -22,7 +22,7 @@ pub(crate) fn observation_subscribe<R: tauri::Runtime>(
 ) -> Result<String, String> {
     let client = principal(&window)?;
     if window.label() == "profile-activation"
-        && !matches!(topic.as_str(), "preferences.theme" | "preferences.progress")
+        && !matches!(topic.as_str(), "preferences.theme" | "preferences.progress" | crate::profile_activation_window::TOPIC)
     {
         return Err("The activation window cannot observe this topic.".into());
     }

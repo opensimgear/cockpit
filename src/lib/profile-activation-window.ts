@@ -18,12 +18,19 @@ export const profileProgressCanCancel = (progress: Pick<ActivationWindowProgress
   progress.canCancel && !['deactivating', 'recovering', 'cancelling', 'launching', 'switching'].includes(progress.phase);
 
 type NativeInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-type CancelCallback = () => void | Promise<unknown>;
+type CancelCallback = () => void | boolean | Promise<unknown>;
+type ObserveWindow = typeof import('./activation-window-observation').observeActivationWindow;
+type WindowOperation = {
+  operationId: string;
+  progress: ActivationWindowProgress;
+  cancel: CancelCallback;
+  delivered: boolean;
+  observationError: boolean;
+};
 interface WindowDependencies {
   invoke?: NativeInvoke;
   isNative?: () => boolean;
-  setInterval?: typeof globalThis.setInterval;
-  clearInterval?: typeof globalThis.clearInterval;
+  observe: ObserveWindow;
 }
 
 const nativeInvoke: NativeInvoke = async (command, args) => {
@@ -36,20 +43,15 @@ const nativeInvoke: NativeInvoke = async (command, args) => {
 export class NativeProfileActivationWindow {
   private readonly invoke: NativeInvoke;
   private readonly isNative: () => boolean;
-  private readonly schedule: typeof globalThis.setInterval;
-  private readonly unschedule: typeof globalThis.clearInterval;
-  private timer?: ReturnType<typeof globalThis.setInterval>;
-  private active?: { operationId: string; progress: ActivationWindowProgress; cancel: CancelCallback; delivered: boolean };
+  private readonly observe: ObserveWindow;
+  private unsubscribe?: () => void;
+  private active?: WindowOperation;
   private queue: Promise<unknown> = Promise.resolve();
-  private polling = false;
 
-  constructor(dependencies: WindowDependencies = {}) {
+  constructor(dependencies: WindowDependencies) {
     this.invoke = dependencies.invoke ?? nativeInvoke;
     this.isNative = dependencies.isNative ?? (() => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window);
-    // WebView2 timers require their Window receiver. Calling an unbound timer
-    // as an adapter method throws after the native window has already opened.
-    this.schedule = dependencies.setInterval ?? globalThis.setInterval.bind(globalThis);
-    this.unschedule = dependencies.clearInterval ?? globalThis.clearInterval.bind(globalThis);
+    this.observe = dependencies.observe;
   }
 
   private enqueue<T>(action: () => Promise<T>): Promise<T> {
@@ -60,19 +62,26 @@ export class NativeProfileActivationWindow {
 
   async show(progress: ActivationWindowProgress, onCancel: CancelCallback): Promise<boolean> {
     if (!this.isNative()) return false;
-    this.stopPolling();
-    const operation = { operationId: progress.operationId, progress, cancel: onCancel, delivered: false };
+    this.stopObserving();
+    const operation: WindowOperation = { operationId: progress.operationId, progress, cancel: onCancel, delivered: false, observationError: false };
     this.active = operation;
     try {
       await this.enqueue(() => this.invoke('profile_activation_window_open', { progress }));
       if (this.active !== operation) return false;
-      this.timer = this.schedule(() => { void this.poll(operation); }, 150);
+      const unsubscribe = this.observe((snapshot, error) => {
+        if (this.active !== operation) return;
+        operation.observationError = error !== undefined;
+        if (!operation.observationError) void this.forwardCancel(operation, snapshot);
+      });
+      if (this.active !== operation) { unsubscribe(); return false; }
+      this.unsubscribe = unsubscribe;
+      if (operation.observationError) { await this.close(operation.operationId); return false; }
       return true;
     } catch {
       if (this.active === operation) {
         this.active = undefined;
-        this.stopPolling();
-        // Creation may have succeeded before polling failed. Close only this
+        this.stopObserving();
+        // Creation may have succeeded before observation failed. Close only this
         // exact operation so fallback never leaves a stale owned window open.
         await this.close(operation.operationId);
       }
@@ -83,6 +92,7 @@ export class NativeProfileActivationWindow {
   async update(progress: ActivationWindowProgress): Promise<boolean> {
     const operation = this.active;
     if (operation?.operationId !== progress.operationId) return false;
+    if (operation.observationError) { await this.close(operation.operationId); return false; }
     operation.progress = progress;
     let updated = false;
     try {
@@ -96,7 +106,7 @@ export class NativeProfileActivationWindow {
     if (!this.isNative()) return;
     if (this.active?.operationId === operationId) {
       this.active = undefined;
-      this.stopPolling();
+      this.stopObserving();
     }
     try {
       await this.enqueue(() => this.invoke('profile_activation_window_close', { operationId }));
@@ -106,31 +116,30 @@ export class NativeProfileActivationWindow {
   dispose(): void {
     const operationId = this.active?.operationId;
     this.active = undefined;
-    this.stopPolling();
+    this.stopObserving();
     if (operationId) void this.close(operationId);
   }
 
-  private stopPolling(): void {
-    if (this.timer !== undefined) this.unschedule(this.timer);
-    this.timer = undefined;
+  private stopObserving(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
   }
 
-  private async poll(operation: NonNullable<NativeProfileActivationWindow['active']>): Promise<void> {
-    if (this.polling || this.active !== operation || operation.delivered || !profileProgressCanCancel(operation.progress)) return;
-    this.polling = true;
+  private async forwardCancel(
+    operation: WindowOperation,
+    snapshot: ActivationWindowSnapshot | null,
+  ): Promise<void> {
+    if (this.active !== operation || operation.delivered || snapshot?.progress.operationId !== operation.operationId
+      || !snapshot.cancelRequested || !profileProgressCanCancel(operation.progress) || !profileProgressCanCancel(snapshot.progress)) return;
+    operation.delivered = true;
     try {
-      const snapshot = await this.invoke<ActivationWindowSnapshot | null>('profile_activation_window_state');
-      if (this.active !== operation || snapshot?.progress.operationId !== operation.operationId || !snapshot.cancelRequested
-        || !profileProgressCanCancel(operation.progress) || !profileProgressCanCancel(snapshot.progress)) return;
-      operation.delivered = true;
-      try {
-        if (await operation.cancel() === false) await this.resetFailedCancel(operation);
-      } catch { await this.resetFailedCancel(operation); }
-    } catch { /* An update can recover from a transient native read failure. */ }
-    finally { this.polling = false; }
+      if (await operation.cancel() !== false) return;
+    } catch { /* Release a failed intent so the user can retry. */ }
+    try { await this.resetFailedCancel(operation); }
+    catch { /* The native view can still receive a later progress update. */ }
   }
 
-  private async resetFailedCancel(operation: NonNullable<NativeProfileActivationWindow['active']>): Promise<void> {
+  private async resetFailedCancel(operation: WindowOperation): Promise<void> {
     if (this.active !== operation) return;
     await this.enqueue(() => this.invoke('profile_activation_window_update', { progress: operation.progress, resetCancelRequest: true }));
     operation.delivered = false;

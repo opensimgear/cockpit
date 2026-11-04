@@ -3,10 +3,10 @@
   const theme = uiPreference('theme');
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { observeActivationWindow } from './activation-window-observation';
   import {profileProgressCanCancel, type ActivationWindowSnapshot} from './profile-activation-window';
 
   let snapshot = $state<ActivationWindowSnapshot | null>(null);
-  let loading = false;
   let cancelPending = $state(false);
   let error = $state('');
   const cancelling = $derived(cancelPending || snapshot?.cancelRequested || snapshot?.progress.phase === 'cancelling');
@@ -15,16 +15,10 @@
   const status = $derived(error || snapshot?.progress.message || 'Preparing profile…');
   const light = $derived($theme.value);
 
-  async function refresh() {
-    if (loading) return;
-    loading = true;
-    try {
-      const next = await invoke<ActivationWindowSnapshot | null>('profile_activation_window_state');
-      if (next?.progress.operationId !== snapshot?.progress.operationId || (!next?.cancelRequested && next?.progress.phase !== 'cancelling')) cancelPending = false;
-      snapshot = next;
-      error = '';
-    } catch { error = 'Waiting for Cockpit to reconnect…'; }
-    finally { loading = false; }
+  function accept(next: ActivationWindowSnapshot | null, failure?: string) {
+    if (next?.progress.operationId !== snapshot?.progress.operationId || (!next?.cancelRequested && next?.progress.phase !== 'cancelling')) cancelPending = false;
+    snapshot = next;
+    error = failure ?? '';
   }
 
   async function cancel() {
@@ -41,11 +35,10 @@
   }
 
   onMount(() => {
-    void refresh();
+    const unsubscribe = observeActivationWindow(accept);
     const requestClose = () => { void cancel(); };
     window.addEventListener('profile-activation-close', requestClose);
-    const timer = window.setInterval(() => { void refresh(); }, 200);
-    return () => { window.clearInterval(timer); window.removeEventListener('profile-activation-close', requestClose); };
+    return () => { unsubscribe(); window.removeEventListener('profile-activation-close', requestClose); };
   });
 </script>
 
