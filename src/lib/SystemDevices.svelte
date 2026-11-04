@@ -5,6 +5,7 @@
   import PageHeader from './PageHeader.svelte';
 
   import { onMount, tick, type Snippet } from 'svelte';
+  import { observeProfileResources } from './profile-resources-shared';
   import { slide } from 'svelte/transition';
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
@@ -129,10 +130,11 @@
     const updateMotion = () => { reducedMotion = motion.matches; };
     updateMotion(); motion.addEventListener('change', updateMotion);
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage: inventoryStorage, onChange: next => { snapshot = next; oninventory(next); } });
+    const stopResources = observeProfileResources((page, error) => { void controller.observeResources(page?.resources ?? null, error); });
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 

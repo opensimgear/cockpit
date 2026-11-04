@@ -4,9 +4,8 @@
   import { gatewayRequest } from './gateway';
   import { ProfilesClient, type DeepReadonly, type ProfileSummary } from './profiles';
   import { observeProfileLibrary } from './profile-read-models/shared';
-  import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
-  import { followProfileResources } from './profile-resource-observation';
-  import { SharedObservations } from './streams/shared';
+  import type { ResourceSummary } from './profile-inventory';
+  import { observeProfileResources } from './profile-resources-shared';
   import { ProfileCompilerClient } from './profile-compilation';
   import type { ProfileRuntimeController, RuntimeControlState } from './profile-runtime-controller';
   import { ProfileInspectorClient } from './profile-inspection';
@@ -22,11 +21,6 @@
   const profiles = new ProfilesClient(async request => {
     const result = (await gatewayRequest(request)).profiles;
     if (!result) throw new Error('Profiles are unavailable. Reconnect the native service.');
-    return result;
-  });
-  const resources = new ProfileInventoryClient(async request => {
-    const result = (await gatewayRequest(request)).profileResources;
-    if (!result) throw new Error('Resource inventory is unavailable. Reconnect the native service.');
     return result;
   });
   const compiler = new ProfileCompilerClient(async request => {
@@ -60,29 +54,21 @@
         profileError = state.error ?? 'Waiting for the current profile library.';
       }
     });
-    const observations = new SharedObservations();
-    const resourceSubscription = followProfileResources(
-      listener => observations.subscribe('profiles.resources', listener),
-      resources,
-      (page, error) => {
-        if (!page) {
-          inventoryError = error ?? 'Waiting for the current resource inventory.';
-          return;
-        }
-        const signature = JSON.stringify([page.session, page.revision]);
-        if (signature !== inventorySignature) {
-          inventorySignature = signature;
-          inventoryRevision++;
-          inventory = page.resources;
-        }
-        inventoryError = page.inventoryDiagnostics?.join(' ') ?? '';
-      },
-      () => !document.hidden,
-    );
-    document.addEventListener('visibilitychange', resourceSubscription.refreshVisible);
+    const stopResources = observeProfileResources((page, error) => {
+      if (!page) {
+        inventoryError = error ?? 'Waiting for the current resource inventory.';
+        return;
+      }
+      const signature = JSON.stringify([page.session, page.revision]);
+      if (signature !== inventorySignature) {
+        inventorySignature = signature;
+        inventoryRevision++;
+        inventory = page.resources;
+      }
+      inventoryError = page.inventoryDiagnostics?.join(' ') ?? '';
+    });
     return () => {
-      document.removeEventListener('visibilitychange', resourceSubscription.refreshVisible);
-      resourceSubscription.dispose();
+      stopResources();
       stopLibrary();
     };
   });

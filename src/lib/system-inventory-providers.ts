@@ -3,7 +3,8 @@ import type { GatewayEntry } from './gateway-workspace';
 import { observeControllerInventory, type ControllerInventoryState } from './controller-read-models/shared.ts';
 import type { UsbModuleSummary } from './module-usb';
 import { ProfileTopologyClient } from './profile-activity';
-import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory.ts';
+import type { ResourceSummary } from './profile-inventory.ts';
+import type { DeepReadonly } from './profiles';
 import { canChangeController } from './controller-lifecycle.ts';
 import { gameIntegrationLabel, type Game, type GameId } from './games.ts';
 import { observeGamesState, type GameModelState, type GamesSummaryState } from './game-read-models/shared.ts';
@@ -66,7 +67,7 @@ export function gatewayObservations(entries: readonly GatewayEntry[], now: numbe
   });
 }
 /** Reuse verified native correlation; never guess identity from display strings or VID/PID. */
-export function correlateSystem(observations: SystemObservation[], resources: readonly ResourceSummary[]): SystemObservation[] {
+export function correlateSystem(observations: SystemObservation[], resources: DeepReadonly<ResourceSummary[]>): SystemObservation[] {
   const native = new Map<string, string>();
   const bindings = new Map<string, string[]>();
   for (const r of resources) for (const c of r.connections) {
@@ -105,7 +106,10 @@ export class SystemInventoryController {
   private epoch = 0;
   private disposed = false;
   private captures = new Map<string, Capture>();
-  private resources: ResourceSummary[] = [];
+  private resources: DeepReadonly<ResourceSummary[]> = [];
+  private resourceError = 'Waiting for the current resource inventory.';
+  private resourceVersion = 0;
+  private projectedResourceVersion = -1;
   private associations: NonNullable<NativeSystemInventory['controllerAssociations']> = [];
   private onChange: (snapshot: SystemSnapshot) => void;
   private gamesState: GameModelState<GamesSummaryState> = { status: 'connecting' };
@@ -130,13 +134,27 @@ export class SystemInventoryController {
     });
   }
   get snapshot() { return this.registry.snapshot; }
+  observeResources(resources: DeepReadonly<ResourceSummary[]> | null, error?: string): Promise<SystemSnapshot> {
+    if (this.disposed) return Promise.resolve(this.snapshot);
+    const resourceError = resources ? '' : error ?? 'Waiting for the current resource inventory.';
+    if ((!resources || resources === this.resources) && this.resourceError === resourceError) return Promise.resolve(this.snapshot);
+    if (resources) this.resources = resources;
+    this.resourceError = resourceError;
+    this.resourceVersion++;
+    if (!this.readyProjection || (this.pending && !this.projecting)) return Promise.resolve(this.snapshot);
+    return this.projectCurrent().catch(error => {
+      const snapshot = this.snapshot;
+      if (!this.disposed) this.onChange({ ...snapshot, diagnostics: [...snapshot.diagnostics, message(error)] });
+      return snapshot;
+    });
+  }
   refresh(): Promise<SystemSnapshot> {
     if (this.disposed) return Promise.resolve(this.snapshot);
     if (this.pending) return this.pending;
     const epoch = this.epoch;
     const pending = this.collect(epoch).finally(() => {
       if (this.pending === pending) this.pending = null;
-      if (!this.disposed && this.readyProjection && this.projectedControllers !== this.controllerState) void this.projectCurrent().catch(() => {});
+      if (!this.disposed && this.readyProjection && (this.projectedControllers !== this.controllerState || this.projectedResourceVersion !== this.resourceVersion)) void this.projectCurrent().catch(() => {});
     });
     this.pending = pending; return pending;
   }
@@ -159,12 +177,6 @@ export class SystemInventoryController {
     const native = this.captures.get('native');
     if (native?.visibilityInspected) complete.push('visibility');
     if (native?.associations) this.associations = native.associations;
-    // The common resource facade already proves USB/CAN/host HID equivalence.
-    try {
-      const client = new ProfileInventoryClient(async request => { const value = (await this.send(request)).profileResources; if (!value) throw Error('Shared native identity evidence unavailable.'); return value; });
-      this.resources = JSON.parse(JSON.stringify((await client.listAll()).resources));
-    } catch (error) { diagnostics.push(`Identity correlation is stale: ${message(error)}`); }
-    if (this.disposed || epoch !== this.epoch) return this.snapshot;
     this.projectionBase = { complete, diagnostics };
     this.readyProjection = true;
     return this.projectCurrent();
@@ -182,7 +194,9 @@ export class SystemInventoryController {
   private async projectOnce(): Promise<SystemSnapshot> {
     const projectionId = ++this.projectionId;
     this.projectedControllers = this.controllerState;
+    const resourceVersion = this.resourceVersion;
     const now = Date.now(), complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
+    if (this.resourceError) diagnostics.push('Identity correlation is stale: ' + this.resourceError);
     const controllers = this.controllers(now);
     this.captures.set('controllers', controllers);
     if (controllers.complete !== false) complete.push('controllers');
@@ -245,7 +259,10 @@ export class SystemInventoryController {
       if (c && visibility) aliases[`visibility:pnp:${visibility.id.toLowerCase()}`] = c.id;
       if (c) aliases[visibilityIds.get(h)!] = c.id;
     }
-    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases); if (!this.disposed && !this.projectionQueued && projectionId === this.projectionId) this.onChange(snapshot); return snapshot;
+    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases);
+    this.projectedResourceVersion = resourceVersion;
+    if (!this.disposed && !this.projectionQueued && projectionId === this.projectionId) this.onChange(snapshot);
+    return snapshot;
   }
   private controllers(now: number): Capture {
     const state = this.controllerState, page = state.value;
@@ -391,7 +408,9 @@ export class SystemInventoryController {
   async reviewForget(ids: string[]): Promise<SystemComponent[]> {
     const selected = this.snapshot.components.filter(c => ids.includes(c.id));
     const result = selected.map(c => ({ ...c, forget: { ...c.forget }, references: [...c.references] }));
+    const resourceVersion = this.resourceVersion;
     try {
+      if (this.resourceError || this.projectedResourceVersion !== resourceVersion) throw Error('Current resource identity evidence is unavailable.');
       const profiles = (await this.send({ command: 'profile_list' })).profiles?.profiles;
       if (!profiles || profiles.length > 256) throw Error('Stored binding inventory unavailable.');
       for (const profile of profiles) {
@@ -403,6 +422,7 @@ export class SystemInventoryController {
           for (const a of assignments) if (sourceIds.has(a.sourceId)) c.references.push({ kind: 'binding', id: `${profile.id}/${a.resourceId}`, name: `${profile.name} / ${a.resourceId}` });
         }
       }
+      if (resourceVersion !== this.resourceVersion) throw Error('Resource identity evidence changed during review.');
       for (const c of result) if (c.references.some(reference => reference.kind === 'binding')) {
         c.forget = { ...c.forget, allowed: false, reason: 'Used in profiles. Remove its profile assignments before cleaning up this device.' };
       }
@@ -422,8 +442,10 @@ export class SystemInventoryController {
     // this row. There is no remaining provider or local record to remove.
     if (!current) return;
     if (!current.forget.allowed || current.presence === 'connected' || current.owner || current.hidden) throw Error(current.forget.reason || 'The selected component is no longer eligible.');
+    const resourceVersion = this.resourceVersion;
     const [c] = await this.reviewForget([id]);
     signal?.throwIfAborted();
+    if (resourceVersion !== this.resourceVersion) throw Error('Resource identity evidence changed during review.');
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden) throw Error(c?.forget.reason || 'The selected component is no longer eligible.');
     const t = c.targets.find(t => t.kind === 'controller' || t.kind === 'module' || t.kind === 'companion');
     let activityRecorded = false;

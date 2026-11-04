@@ -31,7 +31,6 @@ function harness(options = {}) {
     if (failures.has(input.command)) throw failures.get(input.command);
     if (custom.has(input.command)) return custom.get(input.command)(input);
     if (input.command === 'module_usb_list') return { moduleUsb: { offset: input.offset, total: state.usb.length, modules: state.usb.slice(input.offset, input.offset + input.limit) } };
-    if (input.command === 'profile_resources_list') return { profileResources: { session: 'inventory-1', revision: '1', offset: input.offset, total: state.resources.length, resources: state.resources.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'companion_inventory') return { companions: state.companions };
     if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
@@ -44,12 +43,14 @@ function harness(options = {}) {
   let controllerModel={status:'ready',value:controllerInventory(state.controllers)};
   nextControllerModel=controllerModel;
   const controller = new SystemInventoryController({ request, gateways: () => state.gateways, gatewayError: () => state.gatewayError ?? '', storage: options.storage, onChange: snapshot => changes.push(snapshot) });
+  void controller.observeResources(state.resources);
+  const emitResources=(resources=state.resources,error)=>controller.observeResources(resources,error);
   const subscription=gameSubscriptions.at(-1),controllerSubscription=controllerSubscriptions.at(-1),refresh=controller.refresh.bind(controller);
   let lastFixtureSources=state.controllers;
   const emitGames=model=>{explicitGamesModel=model;if(subscription.active)subscription.listener(model);};
   const emitControllers=model=>{controllerModel=model;if(controllerSubscription.active)controllerSubscription.listener(model);};
   controller.refresh=(...args)=>{if(subscription.active)subscription.listener(explicitGamesModel??{status:'ready',value:structuredClone(state.games)});if(controllerSubscription.active&&controllerModel.status==='ready'&&state.controllers!==lastFixtureSources){lastFixtureSources=state.controllers;emitControllers({status:'ready',value:controllerInventory(state.controllers)});}return refresh(...args);};
-  return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
+  return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,emitResources,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
@@ -225,7 +226,9 @@ test('dual transport input ownership and configuration writer are independent ob
 test('newly verified USB CAN grouping supersedes remembered sightings and preserves their history', async () => {
  const h=harness({gateways:[gateway()],usb:[usb()]});await h.controller.refresh();assert.ok(h.component('usb:serial'));assert.ok(h.component('module:gateway-one/panel'));
  h.state.resources=[resource('proven',[connection('standalone-usb','serial'),connection('gateway:gateway-one','panel')])];
- await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='osg').length,1);assert.ok(h.component('resource:proven'));
+ const requests=h.requests.length;
+ await h.emitResources();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='osg').length,1);assert.ok(h.component('resource:proven'));
+ assert.equal(h.requests.length,requests,'A resource commit must not reread other providers');
 });
 
 test('forget review explains exact retained local bindings and degrades honestly on missing metadata', async () => {
@@ -250,7 +253,7 @@ test('forget review resolves actual host facade UUID assignments and preserves s
  assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Driving / steering']);
  assert.ok(h.component('controller:offline').evidence.includes('binding-source:'+facade));
  h.state.resources=[];
- await h.controller.refresh();
+ await h.emitResources();
  review=await h.controller.reviewForget(['controller:offline']);
  assert.deepEqual(plain(review[0].references.map(reference=>reference.name)),['Driving / steering']);
  assert.equal(h.requests.some(request=>/forget|revoke|apply|save/.test(request.command)),false);
@@ -369,11 +372,12 @@ test('current inventory includes every category, current transport, diagnostics 
   assert.equal(h.requests.some(request => /claim|apply|activate|session|arm|profile_(?!resources|status)/.test(request.command)), false);
 });
 
-test('providers use the full controller stream catalogue and traverse USB and verified-identity resource pages', async () => {
+test('providers use the full streamed catalogues and traverse USB pages without resource list requests', async () => {
   const h = harness({ controllers: Array.from({ length: 67 }, (_, index) => source('wheel-' + index)), usb: Array.from({ length: 35 }, (_, index) => usb('usb-' + index)), resources: Array.from({ length: 65 }, (_, index) => resource('resource-' + index)) });
   await h.controller.refresh();
   assert.equal(h.requests.some(request => request.command === 'controller_list'), false);
-  for (const [command, expected] of [['module_usb_list', [0, 32]], ['profile_resources_list', [0, 32, 64]]]) assert.deepEqual(h.requests.filter(request => request.command === command).map(request => request.offset), expected);
+  assert.deepEqual(h.requests.filter(request => request.command === 'module_usb_list').map(request => request.offset), [0, 32]);
+  assert.equal(h.requests.some(request => request.command === 'profile_resources_list'), false);
   assert.equal(h.controller.snapshot.components.filter(component => component.type === 'controller').length, 67);
   assert.equal(h.controller.snapshot.components.filter(component => component.type === 'osg').length, 35);
 });
@@ -461,11 +465,25 @@ test('failed providers retain stale unknown records while successful empty provi
 test('temporarily unavailable identity evidence preserves previously proved grouping without duplicate remembered devices', async () => {
   const h = harness({ usb: [usb()], gateways: [gateway()], resources: [resource('physical-panel', [connection('standalone-usb', 'serial'), connection('gateway:gateway-one', 'panel', 'can')])] });
   await h.controller.refresh();
-  h.failures.set('profile_resources_list', Error('Identity provider restarting'));
-  await h.controller.refresh();
+  const requests = h.requests.length;
+  await h.emitResources(null, 'Identity provider restarting');
+  assert.equal(h.requests.length, requests);
   assert.equal(h.controller.snapshot.components.filter(component => component.type === 'osg').length, 1);
   assert.equal(h.component('resource:physical-panel').presence, 'connected');
   assert.match(h.controller.snapshot.diagnostics.join(' '), /Identity provider restarting/);
+});
+
+test('cleanup review requires current resource evidence before checking bindings', async () => {
+  const h = harness({ controllers: [source('offline', { online: false })] });
+  await h.controller.refresh();
+  await h.emitResources(null, 'Resource stream unavailable');
+  const reads = h.requests.length;
+  const review = await h.controller.reviewForget(['controller:offline']);
+  assert.equal(review[0].forget.allowed, false);
+  assert.match(review[0].diagnostics.join(' '), /Current resource identity evidence is unavailable/);
+  assert.equal(h.requests.length, reads);
+  await h.emitResources();
+  assert.equal((await h.controller.reviewForget(['controller:offline']))[0].forget.allowed, true);
 });
 
 test('partial native inspection keeps omitted devices unknown while retaining affirmative current observations', async () => {
@@ -504,7 +522,8 @@ test('a controller stream validation error degrades only that provider while pre
 test('missing capabilities are surfaced as diagnostics instead of silently treating providers as empty', async () => {
   const h = harness();
   h.emitControllers({status:'error',error:'Controller inventory unavailable.'});
-  for (const command of ['module_usb_list', 'companion_inventory', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
+  for (const command of ['module_usb_list', 'companion_inventory', 'system_inventory']) h.custom.set(command, () => ({}));
+  await h.emitResources(null, 'Resource inventory unavailable.');
   h.emitGames({status:'error',error:'Game integration inventory is unavailable.'});
   await h.controller.refresh();
   assert.equal(h.controller.snapshot.components.length, 1);
@@ -535,15 +554,16 @@ test('refresh coalesces concurrent reads, publishes once, and ignores late provi
   assert.equal(h.requests.length, reads);
 });
 
-test('late identity-facade response cannot publish a disposed inventory', async () => {
-  const h = harness({ controllers: [source()] }), gate = deferred(), entered = deferred();
-  h.custom.set('profile_resources_list', () => { entered.resolve(); return gate.promise; });
-  const pending = h.controller.refresh();
-  await entered.promise;
+test('disposed inventories ignore late resource observations', async () => {
+  const h = harness({ controllers: [source()] });
+  await h.controller.refresh();
+  h.changes.length = 0;
+  const reads = h.requests.length;
   h.controller.dispose();
-  gate.resolve({ profileResources: { session: 's', revision: '1', offset: 0, total: 0, resources: [] } });
-  await pending;
+  await h.emitResources([resource()]);
+  await h.emitResources(null, 'Retired subscription');
   assert.equal(h.changes.length, 0);
+  assert.equal(h.requests.length, reads);
 });
 
 test('restart restores remembered components conservatively and a fresh observation restores current state', async () => {
