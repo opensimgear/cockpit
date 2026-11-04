@@ -80,7 +80,7 @@
   <ProfilePathActivity controller={activity} {owner} active={active&&section==='profile'} {selectedId} editorProfileId={editor?.document.id}/>
   </div>
   <div id={`${debugId}-runtime-panel`} role="tabpanel" aria-labelledby={`${debugId}-runtime-tab`} hidden={section!=='runtime'}>
-  {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} active={active&&section==='runtime'} onState={onRuntimeState} manageActivationProgress={false}/>{/if}
+  {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} active={active&&section==='runtime'} onState={onRuntimeState}/>{/if}
   <details class="panel native-details"><summary>Native runtime and desktop output details</summary><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
   <details class="panel native-details" ontoggle={event=>{companionDetailsOpen=event.currentTarget.open;if(companionDetailsOpen)void readCompanions();}}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
   <ProfileRetiredRecovery active={active&&section==='runtime'}/>

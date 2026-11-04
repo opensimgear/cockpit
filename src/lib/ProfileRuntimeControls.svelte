@@ -1,19 +1,18 @@
 <script lang="ts">
+  import { observeProfileActivation } from './profile-activation-observation';
   import { observeProfileRuntime } from './profile-read-models/shared';
   import { onMount, untrack } from 'svelte';
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
   import { gameCatalogue } from './games';
   import type { DeepReadonly, ProfileSummary } from './profiles';
-  import type {ActivationWindowProgress} from './profile-activation-window';
-  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, compact = false,manageActivationProgress=true }: {
+  let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, compact = false }: {
     controller: ProfileRuntimeController; editor?: RuntimeEditorTarget|null; profiles?: readonly DeepReadonly<ProfileSummary>[];
-    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; compact?:boolean;manageActivationProgress?:boolean;
+    gameIds?: readonly string[]; active?: boolean; onState?: (state: DeepReadonly<RuntimeControlState>)=>void; compact?:boolean;
   } = $props();
   const runtime = untrack(()=>controller);
   let view = $state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
   let mounted = $state(false), gameId = $state('');
-  let nativeOpened=$state(false),nativeResolved=$state(false),elapsed=$state(0);
   const games = $derived($gameCatalogue);
   const choices = $derived(games.filter(game=>!gameIds.length||gameIds.includes(game.id)));
   const native = $derived(view.status);
@@ -28,12 +27,11 @@
   const activeEditor = $derived(!!editor&&native?.owner?.profileId===editor.id);
   const savedChangesPending = $derived(activeEditor&&native?.appliedSnapshot?.revision!==editor?.baseRevision);
   const activating=$derived(view.pending==='apply'&&!!view.activation);
-  const activationStarted=$derived(view.activation?.startedAt??0);
   const cancelling=$derived(!!view.activation?.cancelling||view.progress?.phase==='cancelling');
   const targetName=$derived(profiles.find(profile=>profile.id===view.activation?.profileId)?.name??'profile');
   const progressPayload=$derived.by(()=>{
     if(!activating||!view.activation)return null;
-    const progress=view.progress,phase=cancelling?'cancelling':progress?.phase==='activating'?'activating':'preparing';
+    const progress=view.progress;
     const details=(progress?.companions??[]).flatMap(companion=>{
       const operation=companion.operation;if(!operation||operation.phase==='ready')return [];
       const labels:Record<string,string>={'opening':'Connecting','checking-cache':'Checking cached images','downloading':'Downloading images','rendering':'Drawing panel','awaiting-neutral':'Release touch controls','failed':'Panel could not load'};
@@ -42,29 +40,26 @@
       return [`${companion.name}: ${labels[operation.phase]??'Preparing panel'}${download}`];
     });
     if(view.progressError)details.push('Waiting for the next progress update…');
-    return {operationId:view.activation.id,profileName:targetName,title:cancelling?'Cancelling activation':'Activating profile',phase,
-      message:cancelling?'Cancelling this activation and restoring safe outputs. Please wait.':progress?.message??'Checking the saved profile and preparing its devices.',details,
-      canCancel:!cancelling&&(progress?.canCancel??true)} satisfies ActivationWindowProgress;
+    return {message:cancelling?'Cancelling this activation and restoring safe outputs. Please wait.':progress?.message??'Checking the saved profile and preparing its devices.',details,
+      canCancel:!cancelling&&(progress?.canCancel??true)};
   });
   onMount(()=>{
     mounted=true;
     const stop=runtime.subscribe(next=>{view=next;onState?.(next);});
-    nativeOpened='__TAURI_INTERNALS__' in window;nativeResolved=manageActivationProgress;
     return()=>{mounted=false;stop();};
   });
-  $effect(()=>{
-    if(!manageActivationProgress||!mounted||!activating||!activationStarted)return;
-    const started=activationStarted;
-    const refresh=()=>{elapsed=Math.floor((Date.now()-started)/1000);void runtime.refreshProgress();};
-    refresh();const timer=window.setInterval(refresh,400);return()=>window.clearInterval(timer);
-  });
+  function watchProgress(){
+    const id=view.activation?.id;
+    if(!mounted||!active||!activating||!id)return;
+    return observeProfileActivation((progress,error)=>runtime.observeProgress(id,progress,error));
+  }
+  $effect(watchProgress);
   function watchStatus(){ if(!mounted||!active)return; return observeProfileRuntime(state=>runtime.observe(state)); }
   $effect(watchStatus);
   async function apply(){if(!applyDisabled&&editor)await runtime.apply(editor,selectedGame);}
   async function stop(){await runtime.stop();}
   async function recover(){await runtime.recover();}
   async function cancelPending(){await runtime.cancelPendingActivation();}
-  function showProgress(node:HTMLDialogElement){node.showModal();return()=>node.close();}
 </script>
 
 <section class="profile-runtime" class:panel={!compact} class:compact aria-label="Runtime profile status">
@@ -80,21 +75,13 @@
   </div>{/if}
   {#if !compact}{#if activeEditor}<p class="runtime-help">Saving this profile updates its active configuration.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before activating this profile.</p>{:else if editor}<p class="runtime-help">Activate this profile when ready. Saving it keeps the current active profile.</p>{:else}<p class="runtime-help">Activate a saved profile from its tile for hardware only, or open it to choose a game context.</p>{/if}{/if}
   {#if invalidGame}<p class="runtime-notice">Choose a game context eligible for this profile, or explicitly choose Hardware only.</p>{/if}
-  {#if progressPayload}<div class="activation-status" role="status"><span class="activation-spinner" aria-hidden="true"></span><div><strong>{cancelling?'Cancelling activation':`Activating ${targetName}`}</strong><p>{progressPayload.message}</p></div><button class="secondary-button cancel-activation" disabled={!progressPayload.canCancel} onclick={cancelPending}>{cancelling?'Cancelling…':'Cancel activation'}</button></div>{:else if view.pending}<p class="runtime-notice" role="status">{view.pending==='stop'?'Deactivating profile…':view.pending==='recover'?'Recovering outputs…':'Activating profile…'}</p>{/if}
+  {#if progressPayload}<div class="activation-status" role="status"><span class="activation-spinner" aria-hidden="true"></span><div><strong>{cancelling?'Cancelling activation':`Activating ${targetName}`}</strong><p>{progressPayload.message}</p>{#if progressPayload.details.length}<ul>{#each progressPayload.details as detail,index (index)}<li>{detail}</li>{/each}</ul>{/if}</div><button class="secondary-button cancel-activation" disabled={!progressPayload.canCancel} onclick={cancelPending}>{cancelling?'Cancelling…':'Cancel activation'}</button></div>{:else if view.pending}<p class="runtime-notice" role="status">{view.pending==='stop'?'Deactivating profile…':view.pending==='recover'?'Recovering outputs…':'Activating profile…'}</p>{/if}
   {#if view.notice&&!cancelledRecovery}<p class="runtime-notice" role="status">{view.notice}</p>{/if}
   {#if view.statusError}<p class="runtime-error" role="status">Current native status is unavailable: {view.statusError}</p>{/if}
 </section>
 
-{#if progressPayload&&nativeResolved&&!nativeOpened}<dialog class="activation-dialog" aria-label="Profile activation progress" oncancel={event=>{event.preventDefault();void cancelPending();}} {@attach showProgress}>
-  <div class="activation-dialog-heading"><span class="activation-spinner" aria-hidden="true"></span><div><p class="activation-eyebrow">PROFILE ACTIVATION</p><h2>{progressPayload.title}</h2><p class="activation-profile-name" title={targetName}>{targetName}</p></div></div>
-  <p class="activation-message" role="status">{progressPayload.message}</p>
-  {#if progressPayload.details.length}<ul>{#each progressPayload.details as detail,index (index)}<li>{detail}</li>{/each}</ul>{/if}
-  <div class="activation-track" role="progressbar" aria-label="Profile activation in progress"><span></span></div>
-  <footer><span>{elapsed}s elapsed</span><button class="secondary-button cancel-activation" disabled={!progressPayload.canCancel} onclick={cancelPending}>{cancelling?'Cancelling…':'Cancel activation'}</button></footer>
-</dialog>{/if}
-
 <style>
-  .activation-status{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--surface);margin:12px 0}.activation-status>div{flex:1;min-width:0}.activation-status strong{font-size:var(--ui-heading-size)}.activation-status p{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height);margin:6px 0 0}.activation-status .cancel-activation{margin-left:auto;white-space:nowrap}.activation-spinner{display:inline-block;flex-shrink:0;width:20px;height:20px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:activation-spin .9s linear infinite}.activation-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;padding:26px;width:480px;max-width:calc(100vw - 48px);box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);box-shadow:0 20px 70px #0006}.activation-dialog::backdrop{background:#0008}.activation-dialog-heading{display:flex;align-items:center;gap:16px}.activation-profile-name{font-size:var(--ui-text-size);color:var(--muted);margin:6px 0 0;overflow-wrap:anywhere}.activation-eyebrow{font-size:9px;letter-spacing:1.4px;color:var(--muted);margin:0 0 8px}.activation-dialog h2{font-size:var(--ui-section-title-size);line-height:1.4;margin:0;overflow-wrap:anywhere}.activation-message,.activation-dialog li{font-size:var(--ui-text-size);line-height:var(--ui-line-height);color:var(--muted)}.activation-message{margin:20px 0 16px}.activation-dialog ul{padding-left:18px}.activation-track{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin:22px 0}.activation-track span{display:block;width:35%;height:100%;background:var(--accent);animation:activation-slide 1.5s ease-in-out infinite}.activation-dialog footer{display:flex;align-items:center;justify-content:space-between;gap:16px}.activation-dialog footer>span{font-size:var(--ui-text-size);color:var(--muted)}.activation-dialog button{font-size:var(--ui-action-size)}@keyframes activation-spin{to{transform:rotate(360deg)}}@keyframes activation-slide{from{transform:translateX(-110%)}to{transform:translateX(400%)}}@media(prefers-reduced-motion:reduce){.activation-spinner,.activation-track span{animation:none}}@media(max-width:560px){.activation-status{flex-wrap:wrap}.activation-status .cancel-activation{margin-left:34px}}
+  .activation-status{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--surface);margin:12px 0}.activation-status>div{flex:1;min-width:0}.activation-status strong{font-size:var(--ui-heading-size)}.activation-status p{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height);margin:6px 0 0}.activation-status .cancel-activation{margin-left:auto;white-space:nowrap}.activation-spinner{display:inline-block;flex-shrink:0;width:20px;height:20px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:activation-spin .9s linear infinite}@keyframes activation-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.activation-spinner{animation:none}}@media(max-width:560px){.activation-status{flex-wrap:wrap}.activation-status .cancel-activation{margin-left:34px}}
   .runtime-error-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.runtime-error-copy{min-width:0;flex:1;overflow-wrap:anywhere}.runtime-error-copy p{margin:0}.runtime-error-copy p+p{margin-top:8px}.recover-runtime{flex-shrink:0;margin-left:auto}
   .profile-runtime.compact{padding:0;margin:0}.profile-runtime.compact:has(>*){margin-bottom:18px}
   .profile-runtime{padding:var(--ui-panel-padding);margin-bottom:var(--ui-section-gap);}.runtime-heading,.runtime-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}.runtime-heading{justify-content:space-between;}.runtime-heading strong{font-size:var(--ui-heading-size);}.profile-runtime button{font-size:var(--ui-action-size);}.runtime-actions{align-items:end;}.runtime-actions label{display:grid;gap:6px;font-size:var(--ui-text-size);color:var(--muted);}.runtime-actions select{font-size:var(--ui-text-size);max-width:220px;min-height:var(--ui-control-height);box-sizing:border-box}.runtime-help{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height);margin:12px 0 0;overflow-wrap:anywhere;}.runtime-notice,.runtime-error{font-size:var(--ui-text-size);line-height:var(--ui-line-height);margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:5px;}.runtime-notice{color:var(--soft);}.runtime-error{color:#c9ab7b;border-color:#ad875440;}.stop-runtime{border-color:#ad875460;}

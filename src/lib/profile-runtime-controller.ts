@@ -4,7 +4,7 @@ import type{DeepReadonly}from'./profiles';
 
 export type RuntimeEditorTarget={id:string;revision:number;baseRevision:number|null;dirty:boolean;readOnly:boolean};
 export type ProfileActivationConfirmation={target:RuntimeEditorTarget;gameId?:ProfileGameId;previousOwner:DeepReadonly<NativeProfileOwner>};
-export type RuntimeActivation={id:string;profileId:string;startedAt:number;cancelling:boolean};
+export type RuntimeActivation={id:string;profileId:string;cancelling:boolean};
 export type RuntimeControlState={status:DeepReadonly<NativeProfileStatus>|null;pending:'apply'|'stop'|'recover'|null;activationConfirmation:DeepReadonly<ProfileActivationConfirmation>|null;activation:DeepReadonly<RuntimeActivation>|null;progress:DeepReadonly<NativeProfileActivation>|null;progressError:string;notice:string;loading:boolean;stale:boolean;readOnly:boolean;error:string;statusError:string};
 type Client=Pick<ProfileRuntimeClient,'status'|'apply'|'stop'|'recover'>&Partial<Pick<ProfileRuntimeClient,'activationStatus'|'cancelActivation'>>;
 /** UI admission and stale-reply fencing only; native owns every run and output. */
@@ -13,7 +13,7 @@ export class ProfileRuntimeController{
   private listeners=new Set<(state:DeepReadonly<RuntimeControlState>)=>void>();
   private epoch=0;
   private reading=false;private observationVersion=0;private observing=false;private observationReady=false;private observedReadOnly=false;
-  private readingProgress=false;
+  private progressVersion=0;
   private disposed=false;
   constructor(private client:Client){}
   get state():DeepReadonly<RuntimeControlState>{return Object.freeze(this.value);}
@@ -54,28 +54,25 @@ export class ProfileRuntimeController{
     return this.activate(target.id,target.revision,gameId,previousOwner);
   }
   private activate(id:string,revision:number,gameId:ProfileGameId|undefined,previousOwner:DeepReadonly<NativeProfileOwner>|null):Promise<boolean>{
-    const activation=Object.freeze({id:crypto.randomUUID(),profileId:id,startedAt:Date.now(),cancelling:false});
+    const activation=Object.freeze({id:crypto.randomUUID(),profileId:id,cancelling:false});
     this.set({activation,progress:null,progressError:'',notice:''});
     return this.run('apply',()=>this.client.cancelActivation?this.client.apply(id,revision,gameId,previousOwner,activation.id):this.client.apply(id,revision,gameId,previousOwner));
   }
-  async refreshProgress():Promise<void>{
-    const activation=this.value.activation,epoch=this.epoch;
-    if(this.disposed||this.readingProgress||this.value.pending!=='apply'||!activation||!this.client.activationStatus)return;
-    this.readingProgress=true;
-    try{
-      const progress=nativeProfileActivation(await this.client.activationStatus(activation.id),activation.id);
-      if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({progress,progressError:''});
-    }catch(error){if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({progressError:error instanceof Error?error.message:String(error)});}
-    finally{this.readingProgress=false;}
+  observeProgress(operationId:string,progress:DeepReadonly<NativeProfileActivation>|null,error?:string):void{
+    if(this.disposed||this.value.pending!=='apply'||this.value.activation?.id!==operationId)return;
+    if(progress?.activationId!==operationId&&!error)return;
+    this.progressVersion++;
+    this.set({progress,progressError:error??''});
   }
   async cancelPendingActivation(operationId=this.value.activation?.id):Promise<boolean>{
     const activation=this.value.activation,epoch=this.epoch;
     if(this.disposed||this.value.pending!=='apply'||!activation||activation.id!==operationId||activation.cancelling||!this.client.cancelActivation)return false;
+    const version=this.progressVersion;
     this.set({activation:Object.freeze({...activation,cancelling:true}),error:''});
     try{
       const progress=nativeProfileActivation(await this.client.cancelActivation(activation.id),activation.id);
       if(epoch!==this.epoch||this.value.activation?.id!==activation.id)return false;
-      this.set({progress,progressError:'',activation:Object.freeze({...activation,cancelling:progress.cancelRequested})});
+      this.set({...(version===this.progressVersion?{progress,progressError:''}:{}),activation:Object.freeze({...activation,cancelling:progress.cancelRequested})});
       return progress.cancelRequested;
     }catch(error){if(epoch===this.epoch&&this.value.activation?.id===activation.id)this.set({activation,error:error instanceof Error?error.message:String(error)});return false;}
   }

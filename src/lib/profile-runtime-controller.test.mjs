@@ -11,7 +11,7 @@ test('dedicated cancellation preserves the previous active profile and waits for
   let progress;h.client.activationStatus=async()=>progress;h.client.cancelActivation=async activationId=>{h.calls.push(['cancel',activationId]);return progress={...progress,phase:'cancelling',cancelRequested:true,canCancel:false};};
   h.client.apply=async(...args)=>{h.calls.push(['apply',...args]);return pending.promise;};
   await h.controller.apply({...editor(),id:other});const applying=h.controller.confirmActivation(),activation=h.controller.state.activation;
-  progress=activationProgress(activation);await h.controller.refreshProgress();assert.equal(h.controller.state.progress.phase,'preparing');
+  progress=activationProgress(activation);h.controller.observeProgress(activation.id,progress);assert.equal(h.controller.state.progress.phase,'preparing');
   assert.equal(await h.controller.cancelPendingActivation('stale-operation'),false);assert.equal(await h.controller.cancelPendingActivation(activation.id),true);
   assert.equal(h.controller.state.pending,'apply');assert.equal(h.controller.state.activation.cancelling,true);assert.equal(await h.controller.cancelPendingActivation(activation.id),false);
   assert.equal(h.calls.some(call=>call[0]==='stop'),false);assert.equal(h.calls[0][5],activation.id);
@@ -21,19 +21,33 @@ test('dedicated cancellation preserves the previous active profile and waits for
 });
 
 test('late progress and cancellation replies cannot change a newer explicit deactivation',async()=>{
-  const h=harness(),pending=deferred(),read=deferred(),cancel=deferred();h.client.apply=()=>pending.promise;h.client.activationStatus=()=>read.promise;h.client.cancelActivation=()=>cancel.promise;
+  const h=harness(),pending=deferred(),cancel=deferred();h.client.apply=()=>pending.promise;h.client.cancelActivation=()=>cancel.promise;
   const applying=h.controller.apply(editor()),activation=h.controller.state.activation;
-  const reading=h.controller.refreshProgress(),cancelling=h.controller.cancelPendingActivation(activation.id);
-  assert.equal(await h.controller.stop(),true);read.resolve(activationProgress(activation));cancel.resolve(activationProgress(activation,{phase:'cancelling',cancelRequested:true,canCancel:false}));
-  await reading;assert.equal(await cancelling,false);pending.resolve(running());assert.equal(await applying,false);
+  const cancelling=h.controller.cancelPendingActivation(activation.id);
+  assert.equal(await h.controller.stop(),true);h.controller.observeProgress(activation.id,activationProgress(activation));cancel.resolve(activationProgress(activation,{phase:'cancelling',cancelRequested:true,canCancel:false}));
+  assert.equal(await cancelling,false);pending.resolve(running());assert.equal(await applying,false);
   assert.equal(h.controller.state.status.owner,null);assert.equal(h.controller.state.progress,null);assert.equal(h.controller.state.activation,null);assert.equal(h.controller.state.notice,'');
+});
+
+test('live progress accepts only the pending attempt and a late cancel reply cannot rewind it',async()=>{
+  const h=harness(),pending=deferred(),cancel=deferred();
+  h.client.apply=()=>pending.promise;h.client.cancelActivation=()=>cancel.promise;
+  const applying=h.controller.apply(editor()),activation=h.controller.state.activation;
+  h.controller.observeProgress(activation.id,activationProgress({...activation,id:other}));
+  assert.equal(h.controller.state.progress,null);
+  const cancelling=h.controller.cancelPendingActivation(activation.id);
+  h.controller.observeProgress(activation.id,activationProgress(activation,{phase:'cancelling',cancelRequested:true,message:'Releasing outputs'}));
+  cancel.resolve(activationProgress(activation,{phase:'cancelling',cancelRequested:true,message:'Initial cancellation'}));
+  assert.equal(await cancelling,true);
+  assert.equal(h.controller.state.progress.message,'Releasing outputs');
+  pending.resolve(running());await applying;
 });
 
 test('failed cancellation remains retryable and progress failure never abandons an activation',async()=>{
   const h=harness(),pending=deferred();h.client.apply=()=>pending.promise;let fail=true;
   h.client.activationStatus=async()=>{throw new Error('Progress temporarily unavailable.');};
   h.client.cancelActivation=async()=>{if(fail)throw new Error('Cancellation connection failed.');return activationProgress(h.controller.state.activation,{phase:'cancelling',cancelRequested:true,canCancel:false});};
-  const applying=h.controller.apply(editor());await h.controller.refreshProgress();assert.equal(h.controller.state.pending,'apply');assert.match(h.controller.state.progressError,/temporarily unavailable/);
+  const applying=h.controller.apply(editor());h.controller.observeProgress(h.controller.state.activation.id,null,'Progress temporarily unavailable.');assert.equal(h.controller.state.pending,'apply');assert.match(h.controller.state.progressError,/temporarily unavailable/);
   assert.equal(await h.controller.cancelPendingActivation(),false);assert.equal(h.controller.state.activation.cancelling,false);assert.match(h.controller.state.error,/Cancellation connection failed/);
   fail=false;assert.equal(await h.controller.cancelPendingActivation(),true);pending.resolve(running());assert.equal(await applying,true);assert.equal(h.controller.state.status.owner.profileId,id);
 });

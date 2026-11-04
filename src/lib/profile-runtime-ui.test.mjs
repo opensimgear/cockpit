@@ -24,13 +24,13 @@ function harness(){const calls=[];let response=stopped(),progress={};const clien
 
 // Expose the actual Svelte handlers and poll lifecycle; SSR has no DOM or mounted effects.
 async function component({gameContext=''}={}){
-  const models=readModelFixture();const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
-  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,cancelPending,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
+  const models=readModelFixture(),progressListeners=new Set();const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
+  const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,cancelPending,watchStatus,mountProgress(){mounted=true;return watchProgress();},mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
   const timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,listener){events.set(name,listener);},removeEventListener(name,listener){if(events.get(name)===listener)events.delete(name);}};
   const window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
-  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,window,document,initialGameContext:gameContext,captureRuntimeControls(value){handlers=value;},require(name){if(name==='./profile-read-models/shared')return models;if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
-  return{models,render(props){const html=render(exports.default,{props}).body;return{html,handlers};},timers,events,document};
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,window,document,initialGameContext:gameContext,captureRuntimeControls(value){handlers=value;},require(name){if(name==='./profile-read-models/shared')return models;if(name==='./profile-activation-observation')return{observeProfileActivation:listener=>{progressListeners.add(listener);return()=>progressListeners.delete(listener);}};if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
+  return{models,progressListeners,render(props){const html=render(exports.default,{props}).body;return{html,handlers};},timers,events,document};
 }
 const button=(html,label)=>html.match(new RegExp(`<button\\b[^>]*>\\s*${label}[^]*?<\\/button>`))?.[0]??'';
 
@@ -56,6 +56,24 @@ test('Cancel activation stays enabled during preparation and targets its exact a
   h.setProgress({phase:'cancelled',cancelRequested:true,canCancel:false,outcome:'inactive',message:'Activation cancelled.'});pending.reject(new Error('Profile preparation was cancelled by a newer native control.'));assert.equal(await applying,false);
   result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('No profile active'));assert.ok(result.html.includes('Activation cancelled.'));assert.ok(!result.html.includes('newer native control'));assert.equal(button(result.html,'Deactivate'),'');assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,0);assert.equal(h.calls.find(call=>call.command==='profile_activation_cancel').activationId,activationId);
 });
+test('only a mounted active pending attempt subscribes to activation progress',async()=>{
+  const view=await component(),h=harness(),pending=deferred();
+  h.client.apply=()=>pending.promise;
+  const applying=h.controller.apply(editor());
+  const inactive=view.render({controller:h.controller,active:false});
+  assert.equal(inactive.handlers.mountProgress(),undefined);
+  const active=view.render({controller:h.controller});
+  const stop=active.handlers.mountProgress();
+  assert.equal(view.progressListeners.size,1);
+  const activation=h.controller.state.activation;
+  const progress={activationId:activation.id,profileId:id,phase:'activating',canCancel:true,cancelRequested:false,message:'Applying devices',companions:[],outcome:null,error:null};
+  for(const listener of view.progressListeners)listener(progress);
+  assert.equal(h.controller.state.progress.message,'Applying devices');
+  assert.deepEqual(h.calls,[]);
+  stop();assert.equal(view.progressListeners.size,0);
+  pending.resolve(running());await applying;
+});
+
 test('recovery reports native results without retrying failed Apply',async()=>{
   const view=await component(),h=harness();let result;h.setStatus({...stopped(),state:'recovery-needed',fault:'Native output release must be retried.'});await h.controller.refresh();result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Native output release must be retried.'));assert.ok(button(result.html,'Recover'));await result.handlers.recover();assert.equal(h.calls.at(-1).command,'profile_recover');
   h.client.apply=async()=>{h.calls.push({command:'profile_apply'});throw new Error('Backend unavailable.');};h.setStatus({...running(),state:'degraded',degradation:['Optional companion disconnected.']});await h.controller.apply(editor());result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Backend unavailable.'));assert.ok(result.html.includes('Some profile resources are unavailable. Open Debug for details.'));assert.ok(!result.html.includes('Optional companion disconnected.'));assert.equal(h.calls.filter(call=>call.command==='profile_apply').length,1);

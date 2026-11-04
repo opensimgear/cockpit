@@ -3,11 +3,10 @@
   import {gatewayRequest,subscribeProfileCleanup} from './gateway';
   import {nativeProfileActivation,type NativeProfileActivation} from './profile-runtime';
   import type {DeepReadonly} from './profiles';
-  import {SharedObservations} from './streams/shared';
+  import {observeProfileActivation} from './profile-activation-observation';
   import {NativeProfileActivationWindow,type ActivationWindowProgress} from './profile-activation-window';
   import {observeActivationWindow} from './activation-window-observation';
   import {ActivationProgressPresenter,ApplicationProfileProgress} from './activation-progress-presenter';
-  const observations=new SharedObservations();
   let fallback=$state<ActivationWindowProgress|null>(null);
   async function cancel(activationId:string){
     try{return !!(await gatewayRequest({command:'profile_activation_cancel',activationId})).profileActivation?.cancelRequested;}
@@ -37,19 +36,8 @@
         }
       }finally{applying=false;}
     };
-    const stop=observations.subscribe('profiles.activation',state=>{
-      if(state.status==='connecting')return;
-      if(state.status!=='ready'||state.frame?.source!=='profile-activation'){
-        pending=null;
-        void apply().catch(()=>{});
-        return;
-      }
-      const value=state.frame.payload;
-      if(value===null){pending=null;}
-      else{
-        if(!value||typeof value!=='object'||!('activationId' in value)||typeof value.activationId!=='string')return;
-        try{pending=nativeProfileActivation(value,value.activationId);}catch{return;}
-      }
+    const stop=observeProfileActivation(next=>{
+      pending=next;
       void apply().catch(()=>{});
     });
     return()=>{disposed=true;stop();unsubscribe();progress.dispose();};
