@@ -212,6 +212,7 @@ mod workspace;
 pub struct GatewayManager {
     workspace:workspace::Runtime,
     pub(crate) observations: crate::observations::Runtime,
+    pub(crate) can_input_observations: crate::stm32_panel_observations::Bridges,
     profile_read_models: crate::profile_read_models::Runtime,
     game_read_models: crate::game_read_models::Runtime,
     profile_samples: crate::profile_samples::Runtime,
@@ -259,6 +260,13 @@ impl Default for GatewayManager {
     }
 }
 impl GatewayManager {
+    pub(crate) fn can_input_capture(&self, gateway: &str, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        let state = self.profile_panels.can_snapshot(gateway)?;
+        if !state["modules"].as_array().is_some_and(|modules| modules.iter().any(|entry| entry["id"] == module)) {
+            return Err("Unknown CAN input module.".into());
+        }
+        self.profile_panels.can_capture(gateway, module)
+    }
     fn configuration_claims(&self) -> Vec<(String, crate::module_configuration_routes::WriterPin)> {
         let sessions = self.sessions.lock().unwrap_or_else(|p|p.into_inner()).iter()
             .map(|(id,adapter)|(id.clone(),adapter.clone())).collect::<Vec<_>>();
@@ -429,6 +437,7 @@ impl GatewayManager {
         let manager = Self {
             workspace:workspace::Runtime::new(),
             observations,
+            can_input_observations: Default::default(),
             profile_read_models,
             game_read_models,
             profile_samples,
@@ -811,6 +820,34 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if command == "can_input_inspect" {
+            let result = (|| -> Result<Value, String> {
+                if self.closed.load(Ordering::Acquire) || request.to_string().len() > 512 {
+                    return Err("Invalid CAN inspection request or closed Cockpit.".into());
+                }
+                self.check_mcp_authorization(native_authorization.as_ref())?;
+                let (gateway, module) = request["topic"].as_str()
+                    .and_then(crate::stm32_panel_observations::route_topic)
+                    .ok_or("Invalid CAN input observation topic.")?;
+                let gateway = format!("stm32:{gateway}");
+                let capture = self.can_input_capture(&gateway, module)?;
+                let state = self.profile_panels.can_snapshot(&gateway)?;
+                let current = state["modules"].as_array().into_iter().flatten().find(|entry| entry["id"] == module);
+                let ready = capture.latest(std::time::Instant::now()).filter(|sample| {
+                    let route = sample.route;
+                    state["connected"] == true && state["epoch"] == route.gateway_epoch
+                        && current.is_some_and(|entry| entry["online"] == true && entry["node"] == route.node
+                            && entry["sourceNode"] == route.source_node && entry["boot"] == route.boot_session
+                            && entry["lease"] == route.lease && entry["configurationGeneration"] == route.configuration_generation)
+                });
+                Ok(ready.map_or_else(
+                    || json!({"status":"unavailable"}),
+                    |ready| crate::stm32_panel_observations::preview_payload(&ready, &[]),
+                ))
+            })();
+            return result.map_or_else(|error| self.error(&error, None),
+                |preview| json!({"ok":true,"state":{"canInput":preview}}));
+        }
         if matches!(command,"profile_read_model_page"|"game_read_model_page"|"workspace_read_model_page") {
             if self.closed.load(Ordering::Acquire) || request.to_string().len() > 512
                 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
@@ -1526,6 +1563,7 @@ impl GatewayManager {
         self.profile_read_models.shutdown();
         self.game_read_models.shutdown();
         self.observations.close();
+        self.can_input_observations.close();
         self.closed.store(true, Ordering::Release);
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
         self.profile_closed.store(true,Ordering::Release);
@@ -2238,7 +2276,7 @@ mod tests {
         {
             let mut state=adapter.state.lock().unwrap();
             state["epoch"]=json!(1);state["canProtocol"]=json!(3);
-            state["modules"]=json!([{"id":MODULE,"name":"Panel","online":true,"node":5,"lease":3,"boot":2,"axisCount":0,"configurationGeneration":4,"canConfigure":false}]);
+            state["modules"]=json!([{"id":MODULE,"name":"Panel","online":true,"node":5,"sourceNode":42,"lease":3,"boot":2,"axisCount":0,"configurationGeneration":4,"canConfigure":false}]);
             state["moduleEvents"]=json!({(MODULE):events});
             state["moduleActions"]=json!({(MODULE):{"status":"unsupported","route":route,"configurationGeneration":4}});
         }
@@ -2261,6 +2299,10 @@ mod tests {
         assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":assignments}))["ok"],true);
         send(1, 0, Payload::Layout { contact_count: 1, encoder_count: 0, selector_count: 0, maintained: [0; 16] });
         send(2, 0, Payload::State { held: [0; 16], axes: [0; 8], axis_available: 0 });
+        let topic = format!("can.inputs.{}.{MODULE}", FIRST.trim_start_matches("stm32:"));
+        let inspect = |topic: &str| manager.mcp_request(json!({"command":"can_input_inspect","topic":topic}));
+        assert_eq!(inspect(&topic)["state"]["canInput"]["held"], json!([false]));
+        assert_eq!(inspect("can.inputs.invalid")["ok"], false);
         let applied=request(&manager,"profile_apply",None,json!({"id":document.id,"expectedRevision":2}));assert_eq!(applied["ok"],true,"{applied}");
         let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();
         send(3, 1, Payload::Edges(vec![Edge { control: 0, pressed: true, captured_at_ms: 13 }]));
@@ -2273,6 +2315,7 @@ mod tests {
         }
         adapter.state.lock().unwrap()["modules"][0]["boot"]=json!(99);
         adapter.panels.accept(Record::Loss { module_id: MODULE.into() }, std::time::Instant::now());
+        assert_eq!(inspect(&topic)["state"]["canInput"]["status"], "unavailable");
         let deadline=std::time::Instant::now()+Duration::from_secs(2);
         loop {
             manager.profile_session.lock().unwrap().poll().unwrap();

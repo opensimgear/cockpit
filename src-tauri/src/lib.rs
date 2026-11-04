@@ -113,6 +113,7 @@ pub mod stm32;
 mod stm32_panel_serial;
 mod stm32_panel_wire;
 mod stm32_panel_capture;
+mod stm32_panel_observations;
 mod transport;
 mod xplane;
 mod xplane_installation;

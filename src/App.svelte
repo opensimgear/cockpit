@@ -21,6 +21,7 @@
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
   import DebugControls from './lib/DebugControls.svelte';
+  import { canInputTopic, observeCanPanel, type CanPanelPreview } from './lib/can-input-observations';
   import DebugDevices from './lib/DebugDevices.svelte';
   import { supportsDeviceContracts } from './lib/gateway-capabilities';
   import ManualActions from './lib/ManualActions.svelte';
@@ -249,9 +250,23 @@
     `${device.name} ${device.settings.label} ${device.id} ${device.route}`.toLowerCase().includes(search.toLowerCase()) && (filter !== 'online' || device.online)
   ));
   const hidModule = $derived(gateway?.modules.find(module => module.id === selected?.id));
+  const nativeCanInputs = $derived(gateway?.backend === 'stm32' && gateway.canProtocol === 3);
+  let canPreview = $state<CanPanelPreview>();
+  const canTopic = $derived(view === 'device' && nativeCanInputs && gatewayConnected && selected?.online
+    && !hidModule?.outputOnly ? canInputTopic(selected.gatewayId, selected.id) : undefined);
+  $effect(() => {
+    canPreview = undefined;
+    if (canTopic) return observeCanPanel(canTopic, sample => { canPreview = sample; });
+  });
+  const canReady = $derived(!!canPreview && canPreview.route.epoch === gateway?.epoch
+    && canPreview.route.node === hidModule?.node && canPreview.route.sourceNode === hidModule?.sourceNode
+    && canPreview.route.boot === hidModule?.boot && canPreview.route.lease === hidModule?.lease
+    && canPreview.route.configurationGeneration === hidModule?.configurationGeneration);
   const controlsReady = $derived(gatewayConnected && !!gateway?.running && !!hidModule?.active && !!selected?.online && !hidModule?.directUsb);
-  const held = $derived(controlsReady ? hidModule?.buttons ?? [] : []);
-  const axes = $derived(controlsReady ? hidModule?.axes ?? [] : Array.from({ length: hidModule?.axisCount ?? 0 }, (_, i) => runtimeSnapshot?.config.axes[i]?.[4] ?? 0));
+  const held = $derived(nativeCanInputs ? canReady ? canPreview?.held.flatMap((pressed, i) => pressed ? [i + 1] : []) ?? [] : []
+    : controlsReady ? hidModule?.buttons ?? [] : []);
+  const axes = $derived(nativeCanInputs ? canReady ? canPreview?.axes ?? [] : []
+    : controlsReady ? hidModule?.axes ?? [] : Array.from({ length: hidModule?.axisCount ?? 0 }, (_, i) => runtimeSnapshot?.config.axes[i]?.[4] ?? 0));
   const axisNames = $derived(Array.from({ length: hidModule?.axisCount ?? 0 }, (_, i) => selected?.kind === 'pedals' ? ['Throttle', 'Brake', 'Clutch'][i] ?? `Axis ${i + 1}` : selected?.kind === 'handbrake' && i === 0 ? 'Handbrake' : selected?.kind === 'wheel' && i === 0 ? 'Steering' : `Axis ${i + 1}`));
   const buttonNames = $derived(Array.from({ length: hidModule?.buttonCount ?? 0 }, (_, i) => selected?.kind === 'shifter' && i < 3 ? ['Downshift', 'Neutral', 'Upshift'][i] : `Button ${String(i + 1).padStart(2, '0')}`));
 
@@ -483,7 +498,7 @@
           <div class="device-workspace">
             <div>
                 <section class="panel device-stage"><div class="stage-title"><div><span class="eyebrow">DEVICE WORKSPACE</span><h2>{selected.name}</h2><p>{selected.subtitle}</p></div><span class="connection-badge"><span class="status-dot" class:offline={!selected.online}></span>{selected.online ? 'Connected' : 'Offline'}</span></div><div class="large-device"><DeviceIllustration kind={selected.kind} /></div><div class="stage-metadata"><div><small>STABLE IDENTITY</small><strong>{selected.id}</strong></div><div><small>ACTIVE ROUTE</small><strong>{selected.route}</strong></div><div><small>CAPABILITIES</small><strong>{selected.inputs}</strong></div></div></section>
-                {#if !hidModule?.outputOnly}<section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>{/if}
+                {#if !hidModule?.outputOnly}<section class="panel device-inputs"><div class="panel-heading"><h2>Live inputs</h2><span class="quiet-tag">{nativeCanInputs ? 'Native CAN input' : controlsReady ? 'Live HID output' : 'Device inputs'}</span></div>{@render inputTester()}</section>{/if}
                 {#if gateway?.debug && hidModule}{#key `${selected.key}/${gateway.debug.devices.find(device => device.id === selected.id)?.boot ?? hidModule.boot}`}<DebugControls state={gateway} module={hidModule} request={scopedGatewayRequest(selected.gatewayId)} read={scopedGatewayRequest(selected.gatewayId, true)} />{/key}{/if}
                 {#key selected.key}<ManualActions state={gateway} module={hidModule} busy={gatewayBusy} request={request => sendGateway(selected.gatewayId, request)} profileBlockedReason={profileMutationBlock} />{/key}
             </div>
@@ -542,13 +557,15 @@
 
 {#snippet inputTester()}
   <div class="input-tester">
-    <div class="hid-state"><span class="status-dot" class:offline={!controlsReady}></span><span>{controlsReady ? `HID · ${selected.id}` : physicalGateway && hidModule?.directUsb ? 'Device USB owns these inputs' : lifecycle ? !hidModule?.enabled ? controllerStatus(hidModule) : !selected.online ? 'Device offline · neutral controller retained' : hidModule?.profileMatch === false && hidModule?.published ? 'Profile changed · controller neutral' : gateway?.layoutPending ? 'Gateway updating USB controllers' : 'Waiting for fresh device input' : physicalGateway && !hidModule?.registered ? 'This older gateway requires controller registration' : !gateway?.running ? physicalGateway ? 'Apply the layout to publish HID inputs' : 'Start the gateway to publish HID inputs' : !selected.online ? 'Module offline · controller retained' : physicalGateway && (hidModule?.activeSlot ?? -1) >= 0 && hidModule?.profileMatch ? 'Waiting for fresh device input' : 'Controller pending gateway reconnect'}</span></div>
+    {#if nativeCanInputs && !canReady}<p class="field-help" role="status">Waiting for fresh CAN panel input.</p>{:else}
+    <div class="hid-state"><span class="status-dot" class:offline={!nativeCanInputs && !controlsReady}></span><span>{nativeCanInputs ? `CAN · ${selected.id}` : controlsReady ? `HID · ${selected.id}` : physicalGateway && hidModule?.directUsb ? 'Device USB owns these inputs' : lifecycle ? !hidModule?.enabled ? controllerStatus(hidModule) : !selected.online ? 'Device offline · neutral controller retained' : hidModule?.profileMatch === false && hidModule?.published ? 'Profile changed · controller neutral' : gateway?.layoutPending ? 'Gateway updating USB controllers' : 'Waiting for fresh device input' : physicalGateway && !hidModule?.registered ? 'This older gateway requires controller registration' : !gateway?.running ? physicalGateway ? 'Apply the layout to publish HID inputs' : 'Start the gateway to publish HID inputs' : !selected.online ? 'Module offline · controller retained' : physicalGateway && (hidModule?.activeSlot ?? -1) >= 0 && hidModule?.profileMatch ? 'Waiting for fresh device input' : 'Controller pending gateway reconnect'}</span></div>
     {#if buttonNames.length}
       <div class="input-buttons" class:panel-buttons={selected.kind === 'panel'}>{#each buttonNames as control, i (control)}<button class:pressed={held.includes(i + 1)} disabled><Icon name={control === 'Neutral' ? 'grid' : 'arrow'} size={19} /><span>{control}</span><small>{held.includes(i + 1) ? 'ON' : 'OFF'}</small></button>{/each}</div>
     {/if}
-      {#each axisNames as name, i (name)}<label class="axis-test"><span>{name}<strong>{Math.round((axes[i] ?? 0) / 655.35)}%</strong></span><input aria-label={`${name} live input`} type="range" min="0" max="100" value={Math.round((axes[i] ?? 0) / 655.35)} disabled /><span class="range-labels"><span>Released</span><span>Full travel</span></span></label>{/each}
-    <p class="field-help">Live device inputs are read-only. Offline, disabled and changed-profile controllers remain neutral.</p>
-    {#if physicalGateway}<div class="device-details">{#each hidModule?.hats ?? [] as hat, i (i)}<p>Hat {i + 1}: {hat === 8 ? 'Neutral' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][hat]}</p>{/each}</div>{/if}
+      {#each axisNames as name, i (name)}<label class="axis-test"><span>{name}<strong>{nativeCanInputs && !canPreview?.axisAvailable[i] ? 'Unavailable' : nativeCanInputs ? axes[i] : `${Math.round((axes[i] ?? 0) / 655.35)}%`}</strong></span>{#if !nativeCanInputs || canPreview?.axisAvailable[i]}<input aria-label={`${name} live input`} type="range" min="0" max="65535" value={axes[i] ?? 0} disabled /><span class="range-labels"><span>Released</span><span>Full travel</span></span>{/if}</label>{/each}
+    <p class="field-help">{nativeCanInputs ? 'Live CAN panel inputs are read-only.' : 'Live device inputs are read-only. Offline, disabled and changed-profile controllers remain neutral.'}</p>
+    {/if}
+    {#if physicalGateway}<div class="device-details" aria-label="HID hat state">{#each hidModule?.hats ?? [] as hat, i (i)}<p>Hat {i + 1}: {hat === 8 ? 'Neutral' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][hat]}</p>{/each}</div>{/if}
   </div>
 {/snippet}
 

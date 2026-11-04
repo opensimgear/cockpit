@@ -14,6 +14,13 @@ impl crate::gateways::GatewayManager {
             self.module_usb.with_input_observation(topic,self.observations.broker(),
                 |wake|self.observations.watch_reader_lifecycle(wake),action)
         }
+        else if topic.starts_with("can.inputs.") {
+            let (gateway, module) = crate::stm32_panel_observations::route_topic(topic)
+                .ok_or("Invalid CAN input observation topic.")?;
+            let capture = self.can_input_capture(&format!("stm32:{gateway}"), module)?;
+            self.can_input_observations.with_topic(topic, capture, self.observations.broker(),
+                |wake| self.observations.watch_reader_lifecycle(wake), action)
+        }
         else if topic.starts_with("usb.metadata.") {
             self.module_usb.with_metadata_observation(topic,self.observations.broker(),
                 |wake|self.observations.watch_reader_lifecycle(wake),action)

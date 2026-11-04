@@ -52,6 +52,9 @@ export type GatewayModule = {
   reportId?: number | null;
   canConfigure?: boolean;
   boot?: number;
+  node?: number;
+  sourceNode?: number;
+  lease?: number;
   configurationGeneration?: number;
   serialNumber: string;
   hidInterface?: number | null;

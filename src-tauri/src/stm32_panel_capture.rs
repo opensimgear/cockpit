@@ -115,6 +115,13 @@ impl Capture {
             .map_err(|error| format!("Could not subscribe to CAN panel capture: {error:?}"))
     }
 
+    pub(crate) fn latest(&self, now: Instant) -> Option<Ready> {
+        let mut guard = self.cursor.lock().unwrap_or_else(|error| error.into_inner());
+        let cursor = guard.as_mut()?;
+        self.expire_cursor(cursor, now);
+        cursor.ready
+    }
+
     pub(crate) fn watch(&self, wake: Arc<NativeWake>) -> Result<NativeWatch<Snapshot, Batch>, String> {
         self.stream.watch(wake).map_err(|error| format!("Could not watch CAN panel capture: {error:?}"))
     }
