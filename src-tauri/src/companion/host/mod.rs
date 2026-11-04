@@ -171,13 +171,14 @@ impl Runtime {
                 let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
                 let saved_listener=crate::companion_settings::Listener::open(&directory)?;
                 let firmware_observation = self.firmware_observation.clone();
+                let usb_hub = hub.clone();
                 let services=Services {
                     hub, server, directory,
                     saved_listener,
                     panel_cache:Mutex::new(()),
-                    usb: osg_companion_serial::Manager::with_flash_observer(Some(Arc::new(move |state| {
+                    usb: osg_companion_serial::Manager::with_observers(Arc::new(move |state| {
                         if let Some(observe) = firmware_observation.get() { observe(state); }
-                    }))),
+                    }), move || usb_hub.notify_presence()),
                     usb_setup: Mutex::new(()),
                     firmware_releases: crate::firmware_releases::Resolver::default(),
                 };

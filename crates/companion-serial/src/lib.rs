@@ -4,6 +4,8 @@ mod flash;
 mod reconnect;
 mod recovery;
 mod serial_write;
+mod status_observation;
+use status_observation::StatusObserver;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
 use osg_companion_service::Hub;
@@ -103,6 +105,7 @@ pub type FlashObserver = Arc<dyn Fn(&Value) + Send + Sync>;
 #[derive(Default)]
 pub struct Manager {
     flash_observer: Option<FlashObserver>,
+    status_observer: StatusObserver,
     flash_state: Arc<Mutex<Value>>,
     flash_candidates: Mutex<Vec<Value>>,
     flash_owner: Mutex<Option<String>>,
@@ -113,9 +116,10 @@ pub struct Manager {
     selected: Mutex<Option<String>>,
 }
 impl Manager {
-    pub fn with_flash_observer(observer: Option<FlashObserver>) -> Self {
+    pub fn with_observers(observer: FlashObserver, status_changed: impl Fn() + Send + Sync + 'static) -> Self {
         let mut manager = Self::default();
-        manager.flash_observer = observer;
+        manager.flash_observer = Some(observer);
+        manager.status_observer = StatusObserver::new(status_changed);
         manager
     }
 
@@ -153,7 +157,13 @@ impl Manager {
         let _operation = self.operation.lock().unwrap_or_else(|p| p.into_inner());
         self.auto_released.store(false, Ordering::SeqCst);
         self.attach_inner(port, hub, None)?;
-        *self.selected.lock().unwrap_or_else(|p|p.into_inner())=Some(port.into());Ok(())
+        let mut selected = self.selected.lock().unwrap_or_else(|p|p.into_inner());
+        if selected.as_deref() != Some(port) {
+            *selected = Some(port.into());
+            drop(selected);
+            self.status_observer.notify();
+        }
+        Ok(())
     }
     fn attach_inner(&self, port: &str, hub: Hub, expected: Option<String>) -> Result<(), String> {
         if self.flash_state.lock().unwrap_or_else(|p| p.into_inner())["flashing"] == true {
@@ -186,8 +196,9 @@ impl Manager {
         let (tx, rx) = mpsc::sync_channel(8);
         let public = state.clone();
         let path = port.to_owned();
+        let observer = self.status_observer.clone();
         let join = thread::spawn(move || {
-            let result = worker(&path, &hub, &rx, &public, expected.as_deref());
+            let result = worker(&path, &hub, &rx, &public, expected.as_deref(), &observer);
             if let Err(error) = result {
                 let paired=hub.command(&json!({"command":"companion_status"})).ok();
                 let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
@@ -202,8 +213,12 @@ impl Manager {
                     state["stage"]=json!("USB connection failed. Reconnect the device and try again.");
                 }
             }
-            set(&public, "connected", json!(false));
-            set(&public, "provisioning", json!(false));
+            {
+                let mut state = public.lock().unwrap_or_else(|p| p.into_inner());
+                state["connected"] = json!(false);
+                state["provisioning"] = json!(false);
+            }
+            observer.notify();
         });
         self.links.lock().unwrap_or_else(|p|p.into_inner()).insert(port.into(),Link {
             port: port_name,
@@ -213,6 +228,8 @@ impl Manager {
         });
         let mut selected=self.selected.lock().unwrap_or_else(|p|p.into_inner());
         if selected.is_none(){*selected=Some(port.into());}
+        drop(selected);
+        self.status_observer.notify();
         Ok(())
     }
     pub fn flash(&self, port: &str, firmware: &'static [FirmwareSegment]) -> Result<(), String> {
@@ -406,7 +423,7 @@ impl Manager {
         if self.status()["scanning"]==true{return Err("A Wi-Fi scan is already running.".into());}
         self.record(json!({"command":"scan-wifi"}))?;
         if let Some((_,public))=self.selected_link(){
-            let mut state=public.lock().unwrap_or_else(|p|p.into_inner());state["scanning"]=json!(true);state["scanError"]=Value::Null;
+            self.status_observer.set_fields(&public, [("scanning", json!(true)), ("scanError", Value::Null)]);
         }
         Ok(())
     }
@@ -430,7 +447,7 @@ impl Manager {
             let link=self.selected_link();
             if let Some((port,state))=link{
                 self.flash_candidates.lock().unwrap_or_else(|p|p.into_inner()).retain(|candidate|candidate["port"]!=port);
-                set(&state,"provisioning",json!(true));
+                self.status_observer.set(&state,"provisioning",json!(true));
             }
         }
         result
@@ -441,6 +458,7 @@ impl Manager {
     fn shutdown_port(&self,port:&str){
         let link=self.links.lock().unwrap_or_else(|p|p.into_inner()).remove(port);
         if let Some(mut link)=link{
+            self.status_observer.notify();
             let _=link.tx.try_send(Action::Stop);drop(link.tx);
             if let Some(join)=link.join.take(){let _=join.join();}
         }
@@ -474,9 +492,6 @@ mod candidate_tests {
         // A removed identity is no longer classified as paired, so it is eligible again.
         assert!(candidate_visible(None, None));
     }
-}
-fn set(state: &Arc<Mutex<Value>>, key: &str, value: Value) {
-    state.lock().unwrap_or_else(|p| p.into_inner())[key] = value;
 }
 fn send(port: &mut dyn SerialPort, v: &Value, public:&Arc<Mutex<Value>>) -> Result<(), String> {
     serial_write::send(port,v,public,false)
@@ -560,6 +575,7 @@ fn worker(
     rx: &Receiver<Action>,
     public: &Arc<Mutex<Value>>,
     expected: Option<&str>,
+    observer: &StatusObserver,
 ) -> Result<(), String> {
     let mut port = serialport::new(path, 115200)
         .timeout(Duration::from_millis(10))
@@ -586,7 +602,11 @@ fn worker(
         loop {
             let _ = hub.tick(hub.now_ms());
             if scan_started.is_some_and(|at|at.elapsed()>Duration::from_secs(15)){
-                scan_started=None;set(public,"scanning",json!(false));set(public,"scanError",json!("Wi-Fi scan timed out. Try again."));
+                scan_started = None;
+                observer.set_fields(public, [
+                    ("scanning", json!(false)),
+                    ("scanError", json!("Wi-Fi scan timed out. Try again.")),
+                ]);
                 last_status=Some(Instant::now());
             }
             let preparing=ready && hub.serial_panel_preparing(public.lock().unwrap_or_else(|p|p.into_inner())["device"]["companionId"].as_str().unwrap_or(""), &wire.connection);
@@ -623,7 +643,7 @@ fn worker(
                 }
                 Ok(action) => {
                     if !ready {
-                        set(
+                        observer.set(
                             public,
                             "stage",
                             json!("Wait for the device to become ready"),
@@ -641,20 +661,25 @@ fn worker(
                                 recovery.reset();
                             }
                             if v["command"]=="scan-wifi"{
-                                scan_started=Some(Instant::now());set(public,"scanning",json!(true));set(public,"scanError",Value::Null);set(public,"networks",json!([]));
+                                scan_started = Some(Instant::now());
+                                observer.set_fields(public, [
+                                    ("scanning", json!(true)),
+                                    ("scanError", Value::Null),
+                                    ("networks", json!([])),
+                                ]);
                             }
                             send(&mut *port,&v,public)?;
                         },
                         Action::Provision(mut v, id) => {
                             if provision.is_some() {
-                                set(public, "stage", json!("Provisioning is already running"));
+                                observer.set(public, "stage", json!("Provisioning is already running"));
                                 continue;
                             }
                             let assignment =
                                 v.as_object_mut().and_then(|v| v.remove("_assignment"));
                             send(&mut *port, &v,public)?;
                             provision = Some((id, Instant::now(), assignment));
-                            set(public, "stage", json!("Provisioning device"));
+                            observer.set(public, "stage", json!("Provisioning device"));
                         }
                         Action::Arm => {
                             let status =
@@ -664,7 +689,7 @@ fn worker(
                                     t.elapsed() < Duration::from_millis(1500)
                                 })
                             {
-                                set(
+                                observer.set(
                                     public,
                                     "stage",
                                     json!(
@@ -692,13 +717,13 @@ fn worker(
                     }
                 }
                 if at.elapsed() > Duration::from_secs(60) {
-                    set(
+                    observer.set(
                         public,
                         "stage",
                         json!("Setup timed out. Check Wi-Fi and listener settings, then retry."),
                     );
                     provision = None;
-                    set(public, "provisioning", json!(false));
+                    observer.set(public, "provisioning", json!(false));
                 }
             }
             match port.read(&mut bytes) {
@@ -732,10 +757,10 @@ fn worker(
                                         }
                                     }
                                     Some("serial-request") => {
-                                        set(public, "lastWireRequest", v["frame"]["type"].clone());
+                                        public.lock().unwrap_or_else(|p|p.into_inner())["lastWireRequest"] = v["frame"]["type"].clone();
                                         for response in wire.handle(hub, &v)? {
                                             if response["frame"]["type"] == "error" {
-                                                set(
+                                                observer.set(
                                                     public,
                                                     "lastHostError",
                                                     response["frame"]["error"].clone(),
@@ -761,7 +786,12 @@ fn worker(
                                             let host=hub.command(&json!({"command":"companion_status"}))?;
                                             let paired = host["clients"].as_array().is_some_and(|rows| rows.iter().any(|c|c["companionId"]==v["companionId"]));
                                             let assigned=assignment_hash(&host,v["companionId"].as_str().unwrap_or(""));
-                                            refresh_panel_recovery(&mut public.lock().unwrap_or_else(|p|p.into_inner()),&v,&mut blocked_panel);
+                                            let cleared_error = {
+                                                let mut state = public.lock().unwrap_or_else(|p|p.into_inner());
+                                                let had_error = state.get("lastHostError").is_some() || state.get("deviceStatus").is_some();
+                                                refresh_panel_recovery(&mut state,&v,&mut blocked_panel);
+                                                had_error && state.get("lastHostError").is_none() && state.get("deviceStatus").is_none()
+                                            };
                                             // A newly attached device may retain a shutdown
                                             // error. Later retries require fresh verified status,
                                             // the current assignment and transport-only failures.
@@ -796,7 +826,6 @@ fn worker(
                                             }
                                             ready = true;
                                             last_status = Some(Instant::now());
-                                            set(public, "ready", json!(true));
                                             let mut safe = json!({});
                                             for key in [
                                                 "firmwareVersion",
@@ -830,18 +859,7 @@ fn worker(
                                                 safe["operation"] = operation;
                                             }
                                             if let Some(profile)=safe_render_profile(&v){safe["renderProfile"]=profile;}
-                                            {
-                                                let mut state = public.lock().unwrap_or_else(|p|p.into_inner());
-                                                state["device"] = safe;
-                                                // This stamp advances only for a nonce-matched full
-                                                // status, never for an unverified progress event.
-                                                state["_statusObservedMs"] = json!(status_clock_ms());
-                                            }
-                                            hub.notify_panel_operations();
-                                            set(
-                                                public,
-                                                "stage",
-                                                json!(v["statusMessage"].as_str().filter(|s| !s.is_empty() && s.len()<=191 && !s.chars().any(char::is_control)).unwrap_or(match v["status"].as_str() {
+                                            let stage = json!(v["statusMessage"].as_str().filter(|s| !s.is_empty() && s.len()<=191 && !s.chars().any(char::is_control)).unwrap_or(match v["status"].as_str() {
                                                     Some("live-armed") =>
                                                         "Panel connected · touch ready",
                                                     Some("live-disarmed") =>
@@ -856,31 +874,39 @@ fn worker(
                                                         "Connecting panel",
                                                     Some("panel-error") => "Panel could not load or render",
                                                     _ => "Device ready",
-                                                })),
+                                                }));
+                                            let recovery_report = recovery.view(now);
+                                            let stage = match &recovery_report {
+                                                Some(report) if !healthy => report["message"].clone(),
+                                                _ => stage,
+                                            };
+                                            observer.verified_status(
+                                                public, safe, stage, recovery_report, status_clock_ms(), cleared_error,
                                             );
-                                            {
-                                                let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
-                                                if let Some(report)=recovery.view(now) {
-                                                    if !healthy { state["stage"]=report["message"].clone(); }
-                                                    state["recovery"]=report;
-                                                } else if let Some(state)=state.as_object_mut() { state.remove("recovery"); }
-                                            }
+                                            hub.notify_panel_operations();
                                             if (v["setupSaved"] == true || v["status"] == "error")
                                                 && provision.as_ref().is_some_and(|p| {
                                                     v["companionId"].as_str() == Some(&p.0)
                                                 })
                                             {
                                                 provision = None;
-                                                set(public, "provisioning", json!(false));
+                                                observer.set(public, "provisioning", json!(false));
                                             }
                                         } else if v["status"] == "wifi-networks" {
                                             scan_started=None;last_status=Some(Instant::now());
-                                            set(public,"scanning",json!(false));set(public,"scanError",Value::Null);
-                                            set(public, "networks", v["networks"].clone());
-                                            set(public, "stage", json!("Choose a Wi-Fi network"));
+                                            observer.set_fields(public, [
+                                                ("scanning", json!(false)),
+                                                ("scanError", Value::Null),
+                                                ("networks", v["networks"].clone()),
+                                                ("stage", json!("Choose a Wi-Fi network")),
+                                            ]);
                                         } else if v["status"]=="wifi-scan-failed"{
-                                            scan_started=None;last_status=Some(Instant::now());set(public,"scanning",json!(false));
-                                            set(public,"scanError",json!("The screen could not scan Wi-Fi networks. Try again or enter the network name."));
+                                            scan_started = None;
+                                            last_status = Some(Instant::now());
+                                            observer.set_fields(public, [
+                                                ("scanning", json!(false)),
+                                                ("scanError", json!("The screen could not scan Wi-Fi networks. Try again or enter the network name.")),
+                                            ]);
                                         } else if let Some(status) = v["status"].as_str() {
                                             if matches!(status,"panel-unsupported-corrupt-or-over-budget"|"panel-load-failed"|"panel-render-failed") {
                                                 let device=public.lock().unwrap_or_else(|p|p.into_inner())["device"].clone();
@@ -892,7 +918,7 @@ fn worker(
                                                     .bytes()
                                                     .all(|b| b.is_ascii_lowercase() || b == b'-')
                                             {
-                                                set(public, "deviceStatus", json!(status));
+                                                observer.set(public, "deviceStatus", json!(status));
                                             }
                                         }
                                     }
@@ -1070,9 +1096,9 @@ mod tests {
     #[test]
     fn firmware_cancel_only_accepts_the_boot_wait_and_retains_completion() {
         let (send, receive) = mpsc::channel();
-        let manager = Manager::with_flash_observer(Some(Arc::new(move |state| {
+        let manager = Manager::with_observers(Arc::new(move |state| {
             send.send(state.clone()).unwrap();
-        })));
+        }), || {});
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":true,"waitingForBoot":true});
         manager.cancel_firmware_wait().unwrap();
@@ -1084,11 +1110,32 @@ mod tests {
         assert_eq!(manager.status()["flashCancelled"],true);
     }
     #[test]
+    fn releasing_a_link_notifies_only_when_a_link_was_present() {
+        let (send, receive) = mpsc::channel();
+        let manager = Manager::with_observers(Arc::new(|_| {}), move || {
+            send.send(()).unwrap();
+        });
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let port = "fixture";
+        manager.links.lock().unwrap().insert(port.into(), Link {
+            port: port.into(),
+            tx,
+            state: Arc::new(Mutex::new(json!({"connected":true}))),
+            join: None,
+        });
+        manager.release_port(port);
+        receive.try_recv().unwrap();
+        assert!(manager.statuses().is_empty());
+        manager.release_port(port);
+        assert!(receive.try_recv().is_err());
+    }
+
+    #[test]
     fn missing_port_reports_start_and_terminal_failure_for_the_same_operation() {
         let (send, receive) = mpsc::channel();
-        let manager = Manager::with_flash_observer(Some(Arc::new(move |state| {
+        let manager = Manager::with_observers(Arc::new(move |state| {
             send.send(state.clone()).unwrap();
-        })));
+        }), || {});
         let port = format!("missing-firmware-fixture-{}", uuid::Uuid::new_v4());
         let firmware = [(0, 0xe9), (0x8000, 0), (0x10000, 0xe9)]
             .map(|(offset, byte)| OwnedFirmwareSegment { offset, bytes: vec![byte] });

@@ -19,7 +19,8 @@ impl Hub {
         }
     }
 
-    pub(super) fn notify_presence(&self) {
+    /// Wake roster readers after a companion transport commits visible status.
+    pub fn notify_presence(&self) {
         self.presence.0.lock().unwrap_or_else(|p| p.into_inner()).retain(|watch| {
             if let Some(wake) = watch.upgrade() {
                 wake.notify();
