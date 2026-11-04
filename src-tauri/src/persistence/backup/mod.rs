@@ -11,6 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 mod model;
+mod observation;
 use model::*;
 mod assets;
 mod startup;
@@ -24,6 +25,7 @@ pub(crate) struct Runtime {
     database: Result<Database, String>,
     root: PathBuf,
     controls: Mutex<()>,
+    observation: Mutex<Option<observation::Observation>>,
 }
 impl Runtime {
     #[cfg(test)]
@@ -32,6 +34,7 @@ impl Runtime {
             database: Ok(database),
             root,
             controls: Mutex::new(()),
+            observation: Mutex::new(None),
         }
     }
     pub fn new(native: bool) -> Self {
@@ -44,6 +47,7 @@ impl Runtime {
             },
             root: anchor.parent().unwrap_or(Path::new("")).to_owned(),
             controls: Mutex::new(()),
+            observation: Mutex::new(None),
         }
     }
     fn database(&self) -> Result<&Database, String> {
@@ -95,8 +99,9 @@ impl Runtime {
     }
     pub fn status(&self) -> Result<Value, String> {
         let (revision, index) = self.index()?;
+        let pending = self.pending()?.map(|p| p.id);
         Ok(
-            json!({"revision":revision,"epoch":self.database()?.epoch(),"backups":index.entries,"pendingRestore":self.pending()?.map(|p|p.id),"maximumBackups":MAX_BACKUPS-1,"restartRequired":self.pending()?.is_some()}),
+            json!({"revision":revision,"epoch":self.database()?.epoch(),"backups":index.entries,"pendingRestore":pending,"maximumBackups":MAX_BACKUPS-1,"restartRequired":pending.is_some()}),
         )
     }
     fn exact(&self, expected: u64) -> Result<Index, String> {
@@ -178,8 +183,10 @@ impl Runtime {
         if self.index()?.1.entries.len() >= MAX_BACKUPS - 1 {
             return Err("Remove a backup before creating another; one slot is reserved for restore rollback.".into());
         }
-        let entry = self.create_locked(expected)?;
-        Ok(json!({"backup":entry,"status":self.status()?}))
+        self.observe_operation("creating", || {
+            let entry = self.create_locked(expected)?;
+            Ok(json!({"backup":entry,"status":self.status()?}))
+        })
     }
     fn verified(&self, id: &str, expected: u64) -> Result<(PathBuf, Manifest), String> {
         let index = self.exact(expected)?;
@@ -269,17 +276,20 @@ impl Runtime {
         if !index.entries.iter().any(|entry| entry.id == id) {
             return Err("The saved backup no longer exists.".into());
         }
-        index.entries.retain(|entry| entry.id != id);
-        self.save(expected, &index)?;
-        // Retire authority before physical cleanup. If cleanup fails, the unreferenced
-        // bundle remains inert for inspection. No recursive delete follows a link.
-        let directory = self.directory(id)?;
-        let removed = if directory.exists() {
-            remove_bundle(&directory).is_ok()
-        } else {
-            true
-        };
-        Ok(json!({"status":self.status()?,"filesRemoved":removed}))
+        self.observe_operation("removing", || {
+            index.entries.retain(|entry| entry.id != id);
+            self.save(expected, &index)?;
+            self.publish_observation("cleaning-up");
+            // Retire authority before physical cleanup. If cleanup fails, the unreferenced
+            // bundle remains inert for inspection. No recursive delete follows a link.
+            let directory = self.directory(id)?;
+            let removed = if directory.exists() {
+                remove_bundle(&directory).is_ok()
+            } else {
+                true
+            };
+            Ok(json!({"status":self.status()?,"filesRemoved":removed}))
+        })
     }
 }
 fn remove_bundle(directory: &Path) -> Result<(), String> {

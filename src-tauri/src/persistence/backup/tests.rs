@@ -2,12 +2,32 @@ use super::*;
 fn fixture() -> (tempfile::TempDir, Runtime) {
     let directory = crate::test_directory();
     let database = Database::open(directory.path().join("cockpit.sqlite3")).unwrap();
-    let runtime = Runtime {
-        database: Ok(database),
-        root: directory.path().to_owned(),
-        controls: Mutex::new(()),
-    };
+    let runtime = Runtime::fixture(database, directory.path().to_owned());
     (directory, runtime)
+}
+#[test]
+fn backup_observation_publishes_committed_inventory_to_ui_and_mcp_only() {
+    let (_directory, backup) = fixture();
+    let runtime = crate::observations::Runtime::new();
+    backup.bind_observation(&runtime).unwrap();
+    let broker = runtime.broker();
+    assert!(!broker.available_to("storage.backups", "browser"));
+    let mut ui = broker.subscribe("backup-ui", "ui", "storage.backups").unwrap();
+    let mut mcp = broker.subscribe("backup-mcp", "mcp", "storage.backups").unwrap();
+    let initial = ui.try_recv().unwrap().unwrap().payload.unwrap();
+    assert_eq!(initial["phase"], "idle");
+    assert_eq!(initial["status"]["revision"], 0);
+    assert_eq!(mcp.try_recv().unwrap().unwrap().payload.unwrap(), initial);
+    let created = backup.create(0).unwrap();
+    for reader in [&mut ui, &mut mcp] {
+        let payload = reader.try_recv().unwrap().unwrap().payload.unwrap();
+        assert_eq!(payload["phase"], "complete");
+        assert_eq!(payload["status"], created["status"]);
+    }
+    let removed = backup.remove(created["backup"]["id"].as_str().unwrap(), 1).unwrap();
+    let latest = ui.try_recv().unwrap().unwrap().payload.unwrap();
+    assert_eq!(latest["status"], removed["status"]);
+    assert_eq!(latest["status"]["backups"], json!([]));
 }
 fn set(runtime: &Runtime, domain: &str, key: &str, value: &[u8]) {
     let db = runtime.database().unwrap();
@@ -65,6 +85,7 @@ fn online_backup_restore_reopens_content_with_rollback_and_no_historical_authori
         database: Ok(database),
         root: runtime.root.clone(),
         controls: Mutex::new(()),
+        observation: Mutex::new(None),
     };
     let status = next.status().unwrap();
     assert_eq!(status["backups"].as_array().unwrap().len(), 2);

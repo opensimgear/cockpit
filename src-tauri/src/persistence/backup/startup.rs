@@ -33,6 +33,7 @@ fn boot(path: &Path, root: &Path) -> Result<NamespaceLease, String> {
         database: Ok(database),
         root: root.to_owned(),
         controls: Mutex::new(()),
+        observation: Mutex::new(None),
     };
     runtime.finish_pending(&lease)?;
     Ok(lease)

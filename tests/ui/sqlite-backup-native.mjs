@@ -19,8 +19,9 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
  const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
  const native=async request=>{const reply=await invoke('gateway_request',{request:{...request,clientId:'sqlite-backup-acceptance'}});assert.equal(reply.ok,true,reply.error);return reply.state;};
  try{
-  await attach();const before=await invoke('persistence_status');assert.equal((await native({command:'profile_status'})).profiles.profileSession.state,'stopped');
-  const original=(await native({command:'profile_list'})).profiles.profiles.find(p=>p.id==='00000000-0000-4000-8000-000000000100');assert.ok(original);
+  await until(async()=>{try{if(await attach())return true;}catch{}await browser?.close().catch(()=>{});return false;},'Native Cockpit page');
+  const before=await invoke('persistence_status');assert.equal((await native({command:'profile_status'})).profiles.profileSession.state,'stopped');
+  const original=(await native({command:'profile_create',name:'Backup acceptance fixture'})).profiles.document;
   let settings=await invoke('mcp_settings_get');if(settings.enabled)settings=await invoke('mcp_settings_update',{settings:{enabled:false,port:settings.port,expectedSettingsRevision:settings.settingsRevision}});for(const credential of [...settings.credentials]){settings=await invoke('mcp_credential_revoke',{id:credential.id,expectedSettingsRevision:settings.settingsRevision});}assert.equal(settings.enabled,false);
   const write=await invoke('mcp_credential_create',{name:'Backup acceptance writer',scope:'write',expectedSettingsRevision:settings.settingsRevision});settings=await invoke('mcp_settings_get');
   const read=await invoke('mcp_credential_create',{name:'Backup acceptance reader',scope:'read',expectedSettingsRevision:settings.settingsRevision});settings=await invoke('mcp_settings_get');
@@ -39,9 +40,17 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
   }
   await page.getByRole('button',{name:'Settings',exact:true}).click();const section=page.getByRole('region',{name:'Backups',exact:true});await section.getByRole('button',{name:'Create',exact:true}).click();await section.getByText('Backup saved and verified.',{exact:true}).waitFor();
   const captured=(await native({command:'storage_status'})).storage;assert.equal(captured.backups.length,1);const id=captured.backups[0].id;
+  const backupUri='cockpit://observations/storage.backups';
+  assert.ok((await reader.listResources()).resources.some(resource=>resource.uri===backupUri));
+  const readBackupState=async()=>JSON.parse((await reader.readResource({uri:backupUri})).contents[0].text).frame.payload;
+  assert.deepEqual((await readBackupState()).status,captured);
   const mcp=await call(writer,'storage_status');assert.equal(mcp.ok,true);assert.equal(mcp.data.revision,captured.revision);
   const extra=await call(writer,'storage_create',{expectedRevision:captured.revision,operationId:randomUUID()});assert.equal(extra.ok,true,JSON.stringify(extra));
+  const extraRow=section.locator(`[data-backup-id="${extra.data.backup.id}"]`);
+  await extraRow.waitFor({state:'visible'});
   const removed=await call(writer,'storage_remove',{id:extra.data.backup.id,expectedRevision:extra.data.status.revision,operationId:randomUUID()});assert.equal(removed.ok,true);assert.equal(removed.data.filesRemoved,true);
+  await extraRow.waitFor({state:'detached'});
+  assert.deepEqual(await readBackupState(),{phase:'complete',status:removed.data.status});
   const stale=await call(writer,'storage_create',{expectedRevision:captured.revision,operationId:randomUUID()});assert.equal(stale.ok,false);
   await native({command:'profile_rename',id:original.id,expectedRevision:original.revision,name:'After the saved backup'});
   await section.getByRole('button',{name:'Refresh',exact:true}).click();await section.locator('[data-backup-id="'+id+'"]').getByRole('button',{name:'Restore',exact:true}).click();

@@ -559,6 +559,9 @@ impl GatewayManager {
         }
         if let Err(error)=manager.game_read_models.start(){eprintln!("Game observation topics unavailable: {error}");}
         manager.ui_preferences.bind_observations(&manager.observations);
+        if let Err(error) = manager.storage.bind_observation(&manager.observations) {
+            eprintln!("Backup observation unavailable: {error}");
+        }
         if native { manager.start_activity(); }
         manager
     }

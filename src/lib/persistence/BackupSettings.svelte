@@ -2,10 +2,13 @@
   import {onMount} from 'svelte';
   import {invoke,isTauri} from '@tauri-apps/api/core';
   import Icon from '../Icon.svelte';
+  import {SharedObservations} from '../streams/shared';
   type Backup={id:string;createdAt:number;manifestHash:string};
   type Status={revision:number;epoch:string;backups:Backup[];maximumBackups:number;pendingRestore:string|null;restartRequired:boolean};
   let status=$state<Status|null>(null),busy=$state(false),error=$state(''),message=$state('');
   let selected=$state<Backup|null>(null),action=$state<'restore'|'remove'>('restore');
+  let phase=$state('idle');
+  const storageBusy=$derived(['creating','removing','cleaning-up'].includes(phase));
   const native=isTauri();
   const date=(value:number)=>new Date(value).toLocaleString();
   async function request(command:string,fields:Record<string,unknown>={}){
@@ -13,21 +16,40 @@
     if(!reply.ok)throw Error(reply.error??'Storage operation failed.');
     return reply.state?.storage;
   }
-  async function refresh(){if(!native)return;busy=true;error='';try{status=await request('storage_status') as Status;}catch(reason){error=String(reason);}finally{busy=false;}}
-  async function create(){if(!status||busy)return;busy=true;error='';message='';try{const result=await request('storage_create',{expectedRevision:status.revision}) as {status:Status};status=result.status;message='Backup saved and verified.';}catch(reason){error=String(reason);}finally{busy=false;}}
-  async function confirm(){if(!status||!selected||busy)return;busy=true;error='';message='';try{if(action==='restore'){await request('storage_restore',{id:selected.id,expectedRevision:status.revision,confirmed:true});status={...status,pendingRestore:selected.id,restartRequired:true};message='Runtime stopped. Restart to finish restoring this backup.';}else{const result=await request('storage_remove',{id:selected.id,expectedRevision:status.revision}) as {status:Status;filesRemoved:boolean};status=result.status;message=result.filesRemoved?'Backup removed.':'Backup retired. Some files remain in its private export folder.';}selected=null;}catch(reason){error=String(reason);}finally{busy=false;}}
+  function accept(next:Status){
+    if(!status||next.epoch!==status.epoch||next.revision>status.revision
+      ||next.revision===status.revision&&(!status.restartRequired||next.restartRequired))status=next;
+  }
+  async function refresh(){if(!native)return;busy=true;error='';try{accept(await request('storage_status') as Status);}catch(reason){error=String(reason);}finally{busy=false;}}
+  async function create(){if(!status||busy||storageBusy)return;busy=true;error='';message='';try{const result=await request('storage_create',{expectedRevision:status.revision}) as {status:Status};accept(result.status);message='Backup saved and verified.';}catch(reason){error=String(reason);}finally{busy=false;}}
+  async function confirm(){if(!status||!selected||busy||storageBusy)return;busy=true;error='';message='';try{if(action==='restore'){await request('storage_restore',{id:selected.id,expectedRevision:status.revision,confirmed:true});status={...status,pendingRestore:selected.id,restartRequired:true};message='Runtime stopped. Restart to finish restoring this backup.';}else{const result=await request('storage_remove',{id:selected.id,expectedRevision:status.revision}) as {status:Status;filesRemoved:boolean};accept(result.status);message=result.filesRemoved?'Backup removed.':'Backup retired. Some files remain in its private export folder.';}selected=null;}catch(reason){error=String(reason);}finally{busy=false;}}
   async function restart(){busy=true;error='';try{await request('storage_restart');message='Restarting Cockpit…';}catch(reason){error=String(reason);busy=false;}}
   function show(dialog:HTMLDialogElement){dialog.showModal();return()=>dialog.close();}
-  onMount(()=>{void refresh();});
+  onMount(()=>{
+    if(!native)return;
+    const observations=new SharedObservations();
+    observations.subscribe('storage.backups',state=>{
+      if(state.status==='ready'){
+        const payload=state.frame?.payload as {status?:Status|null;phase?:string};
+        if(payload?.status) accept(payload.status);
+        phase=payload?.phase??'idle';
+      }else if(state.status==='error'||state.status==='lost'){
+        phase='idle';
+        if(!status?.restartRequired)error=state.error??'Backup observation is unavailable.';
+      }
+    });
+    return ()=>observations.close();
+  });
 </script>
 
 <section class="panel preferences-panel backup-settings" aria-label="Backups">
-  <div class="panel-heading"><h2>Backups</h2><button class="secondary-button" disabled={!native||busy||!status||status.restartRequired||status.backups.length>=status.maximumBackups} onclick={create}><Icon name="plus" size={14}/>Create</button></div>
+  <div class="panel-heading"><h2>Backups</h2><button class="secondary-button" disabled={!native||busy||storageBusy||!status||status.restartRequired||status.backups.length>=status.maximumBackups} onclick={create}><Icon name="plus" size={14}/>Create</button></div>
+  {#if storageBusy}<p role="status">{phase==='creating'?'Creating backup…':phase==='removing'?'Retiring backup…':'Removing backup files…'}</p>{/if}
   <div class="preference-row"><div><strong>Saved settings and content</strong><p>Each backup includes a consistent database snapshot and verified managed assets. Protection keys stay with your operating system. Keep this computer’s backups private.</p></div><button class="secondary-button" disabled={!native||busy} onclick={refresh}><Icon name="refresh" size={14}/>Refresh</button></div>
   {#if !native}<div class="preference-row"><p>Open the desktop Cockpit to manage backups.</p></div>{/if}
   {#if status?.restartRequired}<div class="preference-row" role="status"><div><strong>Restore ready</strong><p>Native workers are stopped. Restart to replace saved settings and content. Pair companions again and issue new AI credentials afterward.</p></div><button class="primary-button" disabled={busy} onclick={restart}><Icon name="refresh" size={14}/>Restart</button></div>{/if}
   {#if status}
-    {#each status.backups as backup (backup.id)}<div class="preference-row backup-row" data-backup-id={backup.id}><div><strong>{date(backup.createdAt)}</strong><p>{backup.id}</p></div><div class="actions"><button class="secondary-button" disabled={busy||status.restartRequired} onclick={()=>{selected=backup;action='restore';}}><Icon name="refresh" size={14}/>Restore</button><button class="secondary-button" aria-label={'Remove backup '+backup.id} disabled={busy||status.restartRequired} onclick={()=>{selected=backup;action='remove';}}><Icon name="trash" size={14}/>Remove</button></div></div>{/each}
+    {#each status.backups as backup (backup.id)}<div class="preference-row backup-row" data-backup-id={backup.id}><div><strong>{date(backup.createdAt)}</strong><p>{backup.id}</p></div><div class="actions"><button class="secondary-button" disabled={busy||storageBusy||status.restartRequired} onclick={()=>{selected=backup;action='restore';}}><Icon name="refresh" size={14}/>Restore</button><button class="secondary-button" aria-label={'Remove backup '+backup.id} disabled={busy||storageBusy||status.restartRequired} onclick={()=>{selected=backup;action='remove';}}><Icon name="trash" size={14}/>Remove</button></div></div>{/each}
     {#if !status.backups.length}<div class="preference-row"><p>No backups yet.</p></div>{/if}
   {/if}
   {#if message}<div class="preference-row"><p role="status">{message}</p></div>{/if}

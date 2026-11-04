@@ -4,7 +4,7 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 18] = [
+const FIXED_TOPICS: [(&str, &str); 19] = [
     ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
@@ -23,6 +23,7 @@ const FIXED_TOPICS: [(&str, &str); 18] = [
     ("controllers.inventory", "Host controller inventory"),
     ("usb.inventory", "USB module inventory revision"),
     ("system.inventory", "Supplemental system inventory revision"),
+    ("storage.backups", "Backup inventory and operation phase"),
 ];
 
 pub(super) fn resources(broker: osg_streams::Broker) -> impl Iterator<Item = Value> {
