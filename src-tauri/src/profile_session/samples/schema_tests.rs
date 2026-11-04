@@ -49,7 +49,9 @@ fn exact_node_plan_maps_inputs_and_preserves_false_unknown_and_quality_without_a
     assert_eq!(payload["ports"][0]["endpoint"]["portId"],"indicator");
     assert_eq!(payload["ports"][0]["sample"],json!({"status":"known","value":{"kind":"scalar","value":false}}));
     assert_eq!(payload["ports"][2]["sample"],json!({"status":"unknown"}));
-    assert_eq!(payload["ports"][0].as_object().unwrap().len(),4);
+    assert_eq!(payload["ports"][0]["observedUs"],"100");
+    assert_eq!(payload["ports"][2]["observedUs"],Value::Null);
+    assert_eq!(payload["ports"][0].as_object().unwrap().len(),5);
     assert_eq!((phase.at_us(),phase.sample_revision(),phase.sample_revision_us()),before);
     phase.advance(Counter(1_000_100)).unwrap();
     let expired = plan.capture(&phase,&run).unwrap();
@@ -79,7 +81,23 @@ fn node_preparation_and_capture_reject_changed_owners_revisions_hashes_and_unkno
     let mut too_many = document.clone();
     too_many.resources[0].ports = (0..129).map(|id|port(&format!("port-{id}"),Direction::Output)).collect();
     assert!(NodePlan::prepare(&too_many,&document,&run,&topic(&run.owner,"panel")).is_err());
-    assert!(plan.encode(&CapturedSamples {revision:0,captured_us:0,samples:vec![]}).is_err());
+    assert!(plan.encode(&CapturedSamples {revision:0,captured_us:0,samples:vec![],observed_us:vec![]}).is_err());
+}
+
+#[test]
+fn observed_timestamp_is_exact_and_can_be_newer_than_the_revision_capture_clock() {
+    let (document,mut phase,run) = fixture();
+    let plan = plan(&document,&run,"panel");
+    feed(&mut phase,1,100,SignalSample::scalar(PortValue::Boolean(true)));
+    phase.observe_liveness("panel",Counter(1),Counter(110)).unwrap();
+    phase.advance(Counter(110)).unwrap();
+
+    let capture = plan.capture(&phase,&run).unwrap();
+    let payload = plan.encode(&capture).unwrap();
+    // Ports are sorted by id: indicator, pressed, unbound.
+    assert_eq!(capture.captured_us,100);
+    assert_eq!(payload["ports"][1]["observedUs"],"110");
+    assert_eq!(payload["ports"][1]["sample"]["value"]["value"],true);
 }
 
 #[test]

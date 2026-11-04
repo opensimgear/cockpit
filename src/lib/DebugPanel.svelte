@@ -8,6 +8,7 @@
   import type { ProfileRuntimeController, RuntimeControlState } from './profile-runtime-controller';
   import { ProfileInspectorClient } from './profile-inspection';
   import { ProfileInspectionController } from './profile-inspection-controller';
+  import { observeProfileNodeSamples } from './profile-samples/shared';
   import { ProfileTopologyClient } from './profile-activity';
   import { ProfileActivityController } from './profile-activity-controller';
 
@@ -35,7 +36,7 @@
     if (!result) throw new Error('Native applied port inspection is unavailable. Reconnect the service.');
     return result;
   });
-  const inspection = new ProfileInspectionController(inspectionClient);
+  const inspection = new ProfileInspectionController(inspectionClient, observeProfileNodeSamples);
   const activity = new ProfileActivityController(new ProfileTopologyClient(async request => {
     const result = (await gatewayRequest(request)).profileTopology;
     if (!result) throw new Error('Native applied topology is unavailable. Reconnect the service.');

@@ -288,6 +288,11 @@ observation URIs. Use `cockpit://observations/` followed by a topic such as
 `profiles.library`, `profiles.runtime`, `workspace.state`, `games.state`,
 `games.jobs` or `controllers.inventory`. Exact native CAN, USB, controller
 and game detail topics use the same names as the Cockpit observation broker.
+For a node of the exact applied profile, use `profiles.samples.<digest>`.
+Compute the digest as lowercase SHA-256 hex over the UTF-8 JSON array
+`[session,generation,profileId,profileRevision,gameId,nodeId]` with no extra
+whitespace. Use the current owner from `profiles.runtime` and the declared
+node ID. The stream ends when that owner stops or is replaced.
 
 The server acknowledges the accepted topics before emitting
 `notifications/resources/updated`. Each update contains the observation

@@ -40,10 +40,20 @@ test('native profile samples use shared actual-Tauri observations and fence reti
       window.__profileSampleProbe={first:[],second:[],old:[],stopFirst:null,stopSecond:null,stopOld:null,stopReplacement:null};
       window.__profileSampleProbe.stopFirst=observeProfileNodeSamples(${JSON.stringify(owner)},'mirror',state=>window.__profileSampleProbe.first.push(structuredClone(state)));
       window.__profileSampleProbe.stopSecond=observeProfileNodeSamples(${JSON.stringify(owner)},'mirror',state=>window.__profileSampleProbe.second.push(structuredClone(state)));
-      return true;
+      const {ProfileInspectorClient}=await import('/src/lib/profile-inspection.ts');
+      const {ProfileInspectionController}=await import('/src/lib/profile-inspection-controller.ts');
+      const probe=window.__profileSampleProbe;
+      probe.inspections=0;
+      probe.inspector=new ProfileInspectionController(new ProfileInspectorClient(async request=>{
+        probe.inspections++;
+        const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{...request,clientId:'profile-samples-native-acceptance'}});
+        if(!reply.ok)throw new Error(reply.error);
+        return reply.state.profileInspection;
+      }),observeProfileNodeSamples);
+      return probe.inspector.open(${JSON.stringify(owner)});
     })()`);
     assert.equal(installed,true);
-    const states=()=>page.evaluate(`({first:window.__profileSampleProbe.first.at(-1),second:window.__profileSampleProbe.second.at(-1)})`);
+    const states=()=>page.evaluate(`({first:window.__profileSampleProbe.first.at(-1),second:window.__profileSampleProbe.second.at(-1), inspector:window.__profileSampleProbe.inspector.state})`);
     const output=state=>state?.value?.ports?.find(port=>port.endpoint.portId==='out')?.sample;
 
     // Both consumers must receive the native baseline before any explicit debug input.
@@ -54,9 +64,11 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     assert.deepEqual(baseline.second.value.owner,owner);
     assert.equal(baseline.first.value.nodeId,'mirror');
 
+    const inspected=value=>value.inspector.page?.ports.find(port=>port.endpoint.nodeId==='mirror'&&port.endpoint.portId==='out');
+    await until(states,value=>!value.inspector.stale&&inspected(value)?.sample.value?.value===false);
     const streamId=randomUUID();
     await request({command:'profile_debug_controller_input',owner,nodeId:'debug',streamId,sequence:'1',changes:[{portId:'button-1',value:true}]});
-    const high=await until(states,value=>output(value.first)?.value?.value===true&&output(value.second)?.value?.value===true);
+    const high=await until(states,value=>output(value.first)?.value?.value===true&&output(value.second)?.value?.value===true&&!value.inspector.stale&&inspected(value)?.sample.value?.value===true);
     assert.equal(output(high.first).value.value,true);
     assert.equal(output(high.second).value.value,true);
     await request({command:'profile_debug_controller_input',owner,nodeId:'debug',streamId,sequence:'2',changes:[{portId:'button-1',value:false}]});
@@ -65,11 +77,14 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     assert.equal(output(low.first).value.value,false,'A false sample is preserved as a known Boolean.');
     assert.equal(output(low.second).value.value,false,'The second consumer sees the same false sample.');
 
+    await until(states,value=>!value.inspector.stale&&inspected(value)?.sample.value?.value===false);
+    assert.equal(await page.evaluate('window.__profileSampleProbe.inspections'),1,'Live changes reuse the opening inspection page.');
+
     await request({command:'profile_stop'});
-    const stopped=await until(states,value=>value.first?.status==='lost'&&value.second?.status==='lost');
+    const stopped=await until(states,value=>value.first?.status==='lost'&&value.second?.status==='lost'&&value.inspector.stale);
     assert.equal(stopped.first.value,undefined,'Loss clears the first cached value.');
     assert.equal(stopped.second.value,undefined,'Loss clears the second cached value.');
-    await page.evaluate('window.__profileSampleProbe.stopFirst();window.__profileSampleProbe.stopSecond();');
+    await page.evaluate('window.__profileSampleProbe.stopFirst();window.__profileSampleProbe.stopSecond();window.__profileSampleProbe.inspector.dispose();');
     // Re-importing the module gives the same frontend singleton and tests that a retired identity cannot reopen.
     const oldInstalled=await page.evaluate(`(async()=>{
       const {observeProfileNodeSamples}=await import('/src/lib/profile-samples/shared.ts');
@@ -103,7 +118,7 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     const evidence={at:new Date().toISOString(),actualNativeCockpit:true,profile:profile.id,owner:replacement.owner,
       baselineWithoutExplicitInput:baseline,knownTrueChange:high,knownFalseChange:low,lossAfterStop:stopped,
       retiredOwnerReopenRejected:oldRejected,replacementBaseline:fresh,staleInputRejected:true,
-      sharedConsumers:2,noPhysicalOutputs:true,noExternalOutputs:true,simulatorQualified:false,latencyQualified:false};
+      sharedConsumers:3,inspectionRequests:1,noPhysicalOutputs:true,noExternalOutputs:true,simulatorQualified:false,latencyQualified:false};
     await writeFile(`${directory}/evidence.json`,JSON.stringify(evidence,null,2)+'\n');
   }finally{
     try{
@@ -111,7 +126,7 @@ test('native profile samples use shared actual-Tauri observations and fence reti
       if(owner&&equalOwner(active.owner,owner))await request({command:'profile_stop'});
       if(profile)await request({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});
     }finally{
-      try{await page.evaluate("for(const key of ['stopFirst','stopSecond','stopOld','stopReplacement'])window.__profileSampleProbe?.[key]?.();delete window.__profileSampleProbe;");}finally{page.close();}
+      try{await page.evaluate("for(const key of ['stopFirst','stopSecond','stopOld','stopReplacement'])window.__profileSampleProbe?.[key]?.();window.__profileSampleProbe?.inspector?.dispose();delete window.__profileSampleProbe;");}finally{page.close();}
     }
   }
 });

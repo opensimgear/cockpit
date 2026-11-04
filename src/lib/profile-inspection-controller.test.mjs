@@ -18,3 +18,43 @@ test('same-run program/revision changes and native stale-owner errors retain onl
 test('busy polling is coalesced without replay and disposal ignores a pending read without effects',async()=>{
   const h=harness(),wait=deferred();h.client.inspect=async(...args)=>{h.calls.push(args);return wait.promise;};const opening=h.controller.open(owner());assert.equal(await h.controller.refresh(),false);assert.equal(h.calls.length,1);h.controller.dispose();wait.resolve(page({owner:owner(),offset:0}));assert.equal(await opening,false);assert.equal(await h.controller.open(owner()),false);assert.equal(await h.controller.refresh(),false);assert.equal(h.controller.state.page,null);assert.equal(h.calls.length,1);
 });
+
+test('visible pages stream exact node values without inspection requests and fence loss and page replacement', async () => {
+  const h = harness(), subscriptions = [];
+  const controller = new ProfileInspectionController(h.client, (run, nodeId, listener) => {
+    const item = { run, nodeId, listener, stopped: false };
+    subscriptions.push(item);
+    listener({status:'connecting'});
+    return () => { item.stopped = true; };
+  });
+  await controller.open(owner(), 'source');
+  assert.equal(h.calls[0].limit, 16);
+  const first = subscriptions[0], baseline = controller.state.page;
+  const receive = (at, value, changes = {}) => first.listener({status:'ready',value:{
+    owner:owner(), nodeId:'source', appliedSnapshot:baseline.appliedSnapshot, programHash:hash,
+    capturedUs:at, ports:[{...baseline.ports[0],sample:{status:'known',value:{kind:'scalar',value}},observedUs:at}], ...changes,
+  }});
+  receive('99', true);
+  assert.equal(controller.state.page.ports[0].sample.status, 'unknown');
+  receive('105', true);
+  assert.equal(controller.state.page.capturedUs, '105');
+  assert.equal(controller.state.page.ports[0].observedUs, '105');
+  assert.equal(controller.state.page.ports[0].sample.value.value, true);
+  assert.equal(h.calls.length, 1);
+  receive('104', false);
+  assert.equal(controller.state.stale, true);
+  first.listener({status:'lost',error:'Input continuity lost'});
+  assert.match(controller.state.error, /continuity/);
+  receive('107', false);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.page.ports[0].sample.value.value, false);
+  h.client.inspect = async (run, nodeId, offset) => ({...page({owner:run,nodeId,offset}),capturedUs:'110'});
+  await controller.next();
+  assert.equal(first.stopped, true);
+  assert.equal(controller.state.page.offset, 1);
+  receive('120', true);
+  assert.equal(controller.state.page.ports[0].sample.status, 'unknown');
+  controller.clear();
+  assert.equal(subscriptions[1].stopped, true);
+  assert.equal(controller.state.page, null);
+});

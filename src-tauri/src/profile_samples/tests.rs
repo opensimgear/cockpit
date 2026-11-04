@@ -226,7 +226,7 @@ fn failed_capture_and_encode_wake_waiters_without_faulting_the_reducer() {
         let signal = Signal::default();
         let capture = if encode_failure {
             Arc::new(|_: &[Arc<NodePlan>]| vec![Ok(crate::profile_session::inspection::samples::CapturedSamples {
-                revision: 1, captured_us: 0, samples: vec![] })]) as Arc<Capture>
+                revision: 1, captured_us: 0, samples: vec![], observed_us: vec![] })]) as Arc<Capture>
         } else { Arc::new(|_: &[Arc<NodePlan>]| vec![Err("baseline unavailable".into())]) as Arc<Capture> };
         let runtime = Runtime::new(broker, signal, capture, "profile-samples:failure".into());
         let pin = runtime.pin(plan).unwrap();

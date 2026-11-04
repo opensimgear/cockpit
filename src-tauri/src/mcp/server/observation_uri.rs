@@ -25,6 +25,7 @@ pub(super) fn topic(uri: &str) -> Option<&str> {
             | "controllers.inventory"
     ) || topic.strip_prefix("games.detail.")
         .is_some_and(osg_profiles::activation::valid_game_id)
+        || topic.strip_prefix("profiles.samples.").is_some_and(valid_sha256)
         || topic.strip_prefix("controllers.input.").is_some_and(valid_uuid)
         || topic.strip_prefix("usb.inputs.").is_some_and(valid_sha256)
         || topic.strip_prefix("usb.metadata.").is_some_and(valid_sha256)
@@ -78,7 +79,7 @@ mod tests {
             assert_eq!(topic(&format!("cockpit://observations/{expected}")), Some(expected));
         }
         let sha = "a".repeat(64);
-        for name in ["usb.inputs", "usb.metadata"] {
+        for name in ["usb.inputs", "usb.metadata", "profiles.samples"] {
             let expected = format!("{name}.{sha}");
             assert_eq!(topic(&format!("cockpit://observations/{expected}")), Some(expected.as_str()));
         }

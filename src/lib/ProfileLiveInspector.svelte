@@ -18,9 +18,9 @@
     const key=ownerKey,filter=nodeId;
     if(!mounted||!active||!key){inspector.clear();return;}
     const captured=untrack(()=>owner)!;
-    const refresh=()=>{if(!document.hidden){if(!inspector.state.owner)void inspector.open(captured,filter);else void inspector.refresh();}};
-    refresh();const timer=window.setInterval(refresh,1000);document.addEventListener('visibilitychange',refresh);
-    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);inspector.clear();};
+    const visibility=()=>{if(document.hidden)inspector.clear();else if(!inspector.state.owner)void inspector.open(captured,filter);};
+    visibility();document.addEventListener('visibilitychange',visibility);
+    return()=>{document.removeEventListener('visibilitychange',visibility);inspector.clear();};
   }
   $effect(watchInspection);
   function value(port:DeepReadonly<ProfileInspectedPort>):string{
@@ -43,7 +43,7 @@
     {#if selectedId&&editorProfileId===owner.profileId}<label class="follow-selection"><input type="checkbox" bind:checked={followSelection}/> Follow selected block <code>{selectedId}</code></label>{/if}
     <p class="sample-capture" role="status">{#if view.page}{view.stale?'Last capture · stale':'Native capture'} {view.page.capturedUs} μs · {nodeId?`block ${nodeId}`:'all declared applied ports'}{:else if view.loading}Waiting for the native applied capture…{:else}No port capture loaded.{/if}</p>
     {#if view.error}<p class="live-error" role="status">{view.error}</p>{/if}
-    {#if view.page}<div class="sample-table"><table aria-label="Native applied port samples"><thead><tr><th scope="col">Exact graph port</th><th scope="col">Contract</th><th scope="col">Native sample</th><th scope="col">Observed at</th></tr></thead><tbody>{#each view.page.ports as port (JSON.stringify([port.endpoint.nodeId,port.endpoint.portId]))}<tr class:stale={view.stale}><th scope="row"><code>{port.endpoint.nodeId} / {port.endpoint.portId}</code><small>{port.direction==='input'?'Input · upstream/requested':'Output · graph producer'}</small></th><td>{contract(port)}</td><td><span class:unknown={port.sample.status!=='known'}>{value(port)}</span></td><td>{port.observedUs===null?'Never observed':`${port.observedUs} μs`}</td></tr>{:else}<tr><td colspan="4">No declared ports exist in this applied selection.</td></tr>{/each}</tbody></table></div><div class="sample-pages"><span>{view.page.total?view.page.offset+1:0}–{view.page.offset+view.page.ports.length} of {view.page.total} ports · one native capture per page</span><button class="text-button" disabled={view.loading||view.stale||!view.hasPrevious} onclick={()=>inspector.previous()}>Previous ports</button><button class="text-button" disabled={view.loading||view.stale||!view.hasNext} onclick={()=>inspector.next()}>Next ports</button></div>{/if}
+    {#if view.page}<div class="sample-table"><table aria-label="Native applied port samples"><thead><tr><th scope="col">Exact graph port</th><th scope="col">Contract</th><th scope="col">Native sample</th><th scope="col">Observed at</th></tr></thead><tbody>{#each view.page.ports as port (JSON.stringify([port.endpoint.nodeId,port.endpoint.portId]))}<tr class:stale={view.stale}><th scope="row"><code>{port.endpoint.nodeId} / {port.endpoint.portId}</code><small>{port.direction==='input'?'Input · upstream/requested':'Output · graph producer'}</small></th><td>{contract(port)}</td><td><span class:unknown={port.sample.status!=='known'}>{value(port)}</span></td><td>{port.observedUs===null?'Never observed':`${port.observedUs} μs`}</td></tr>{:else}<tr><td colspan="4">No declared ports exist in this applied selection.</td></tr>{/each}</tbody></table></div><div class="sample-pages"><span>{view.page.total?view.page.offset+1:0}–{view.page.offset+view.page.ports.length} of {view.page.total} ports · live native node samples</span><button class="text-button" disabled={view.loading||view.stale||!view.hasPrevious} onclick={()=>inspector.previous()}>Previous ports</button><button class="text-button" disabled={view.loading||view.stale||!view.hasNext} onclick={()=>inspector.next()}>Next ports</button></div>{/if}
   {:else}<p class="live-help">Apply a saved profile to inspect its native run. Browsing ports never starts acquisition or changes a profile.</p>{/if}
 </section>
 

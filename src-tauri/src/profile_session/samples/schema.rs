@@ -46,6 +46,7 @@ pub(crate) struct CapturedSamples {
     pub revision: u64,
     pub captured_us: u64,
     pub samples: Vec<SignalSample>,
+    pub observed_us: Vec<Option<u64>>,
 }
 impl NodeTemplates {
     /// Static preparation runs outside authority locks. The templates retain
@@ -114,25 +115,36 @@ impl NodePlan {
             return Err("The node sample owner expired or its reducer stopped.".into());
         }
         let revision = phase.sample_revision().ok_or("The reducer sample revision exhausted its observation bound.")?;
-        let unknown = SignalSample::Unknown;
-        let values = self.ports.iter().map(|port| port.observed.as_ref()
-            .and_then(|endpoint| phase.sample(endpoint)).unwrap_or(&unknown)).collect::<Vec<_>>();
-        let mut bytes = size_of::<CapturedSamples>() + values.len() * size_of::<SignalSample>();
+        let observations = self.ports.iter().map(|port| port.observed.as_ref()
+            .and_then(|endpoint| phase.inspected_sample(endpoint)))
+            .collect::<Vec<_>>();
+        let mut bytes = size_of::<CapturedSamples>() + observations.len() * (
+            size_of::<SignalSample>() + size_of::<Option<u64>>()
+                + size_of::<Option<(&SignalSample, Option<osg_mapping::engine::Counter>)>>()
+        );
         // Account for every owned allocation before any SignalSample clone.
-        for sample in &values {
+        for (sample, _) in observations.iter().flatten() {
             bytes = bytes.checked_add(sample_bytes(sample)?).ok_or("Node sample allocation overflow.")?;
             if bytes > MAX_PAYLOAD_BYTES { return Err("Node samples exceed the bounded capture budget.".into()); }
         }
+        if bytes > MAX_PAYLOAD_BYTES { return Err("Node samples exceed the bounded capture budget.".into()); }
+        let values = observations.iter().map(|observation| observation
+            .map_or(SignalSample::Unknown, |(sample, _)| sample.clone())).collect::<Vec<_>>();
         Ok(CapturedSamples {revision,captured_us:phase.sample_revision_us().0,
-            samples:values.into_iter().cloned().collect()})
+            samples:values,
+            observed_us:observations.into_iter().map(|observation| observation
+                .and_then(|(_, at)| at.map(|at| at.0))).collect()})
     }
     /// Called off the authority lock; descriptors become transport-owned here.
     pub(crate) fn encode(&self, capture: &CapturedSamples) -> Result<Value, String> {
-        if capture.revision == 0 || capture.samples.len() != self.ports.len() {
+        if capture.revision == 0 || capture.samples.len() != self.ports.len()
+            || capture.observed_us.len() != self.ports.len() {
             return Err("Node samples do not match their immutable declaration.".into());
         }
-        let ports = self.ports.iter().zip(&capture.samples).map(|(port, sample)| json!({
+        let ports = self.ports.iter().zip(&capture.samples).zip(&capture.observed_us)
+            .map(|((port, sample), observed_us)| json!({
             "endpoint":port.endpoint,"direction":port.direction,"contract":port.contract,"sample":sample,
+            "observedUs":observed_us.map(|at| at.to_string()),
         })).collect::<Vec<_>>();
         let payload = json!({"owner":self.owner,"nodeId":self.node_id,"appliedSnapshot":self.applied_snapshot,
             "programHash":self.program_hash,"ports":ports});
