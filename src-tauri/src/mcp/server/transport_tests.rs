@@ -89,6 +89,26 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     }
     assert!(!listed.iter().any(|entry| entry["uri"] == "cockpit://observations/workspace.state"),
         "An unstarted workspace has no current resource");
+    let preference = "cockpit://observations/preferences.theme";
+    for key in crate::persistence::ui::OBSERVED_KEYS {
+        let uri = format!("cockpit://observations/preferences.{key}");
+        assert!(listed.iter().any(|entry| entry["uri"] == uri));
+    }
+    assert!(!listed.iter().any(|entry| entry["uri"] == "cockpit://observations/settings.mcp"));
+    let read = rpc(&endpoint, token, "resources/read", json!({"uri":preference}));
+    let baseline: Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
+    let original = baseline["frame"]["payload"]["value"].as_bool().unwrap();
+    let revision: u64 = baseline["frame"]["payload"]["revision"].as_str().unwrap().parse().unwrap();
+    let mut preferences = listen_observations(&endpoint, token, &[preference]);
+    assert_eq!(preferences.next().unwrap()["method"], "notifications/subscriptions/acknowledged");
+    assert_eq!(preferences.next().unwrap()["params"]["uri"], preference);
+    let saved = server.manager.request(json!({"command":"ui_preferences_save","clientId":"mcp-preferences-fixture",
+        "key":"theme","expectedRevision":revision,"value":!original}));
+    assert_eq!(saved["ok"], true, "{saved}");
+    let change = preferences.next().unwrap();
+    assert_eq!(change["params"]["uri"], preference);
+    assert_eq!(change["params"]["_meta"]["opensimgear.com/observation"]["payload"]["value"], !original);
+    drop(preferences);
     assert_eq!(rpc(&endpoint, token, "resources/templates/list", json!({}))
         ["result"]["resourceTemplates"][0]["uriTemplate"], "cockpit://observations/{topic}");
     let read = rpc(&endpoint, token, "resources/read", json!({"uri":uri}));

@@ -291,6 +291,11 @@ observation URIs. Use `cockpit://observations/` followed by a topic such as
 `workspace.state`, `games.state`,
 `games.jobs` or `controllers.inventory`. Use `controller_update` with a write
 credential to change a controller's saved name and role by source ID.
+The six streamed UI preferences appear as `preferences.theme`,
+`preferences.devices-mode`, `preferences.canvas-navigation`,
+`preferences.canvas-styling`, `preferences.tray` and `preferences.progress`.
+Read or subscribe to the exact preference URI and use `ui_preferences_save`
+with its expected revision to commit a change.
 Exact native CAN, USB, controller
 and game detail topics use the same names as the Cockpit observation broker.
 For a node of the exact applied profile, use `profiles.samples.<digest>`.

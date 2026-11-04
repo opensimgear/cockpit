@@ -1,5 +1,6 @@
 //! Strict URI admission for MCP observation subscriptions.
 
+use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
@@ -25,10 +26,15 @@ const FIXED_TOPICS: [(&str, &str); 18] = [
 ];
 
 pub(super) fn resources(broker: osg_streams::Broker) -> impl Iterator<Item = Value> {
+    let preferences = OBSERVED_KEYS.into_iter().map(|key| {
+        (format!("preferences.{key}"), format!("UI preference: {key}"))
+    });
     FIXED_TOPICS.into_iter()
+        .map(|(topic, title)| (topic.to_owned(), title.to_owned()))
+        .chain(preferences)
         // The controller cache provides an on-demand atomic baseline even
         // before its first observer. Other fixed topics register at startup.
-        .filter(move |(topic, _)| *topic == "controllers.inventory" || broker.available_to(topic, "mcp"))
+        .filter(move |(topic, _)| topic == "controllers.inventory" || broker.available_to(topic, "mcp"))
         .map(|(topic, title)| {
             json!({"uri":format!("{PREFIX}{topic}"),"name":topic,"title":title,"mimeType":"application/json"})
         })
@@ -51,6 +57,7 @@ pub(super) fn topic(uri: &str) -> Option<&str> {
     }
 
     let allowed = FIXED_TOPICS.iter().any(|(name, _)| *name == topic)
+        || topic.strip_prefix("preferences.").is_some_and(|key| OBSERVED_KEYS.contains(&key))
         || topic
             .strip_prefix("games.detail.")
             .is_some_and(osg_profiles::activation::valid_game_id)
@@ -133,6 +140,9 @@ mod tests {
         for uri in [
             "cockpit://observations/",
             "cockpit://observations/games",
+            "cockpit://observations/preferences.windows",
+            "cockpit://observations/preferences.remembered",
+            "cockpit://observations/settings.mcp",
             "cockpit://observations/games.detail.",
             "cockpit://observations/games.detail.bad/id",
             "cockpit://observations/controllers.input.not-a-uuid",

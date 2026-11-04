@@ -5,6 +5,7 @@ use serde_json::{json,Value};
 use std::{collections::BTreeMap,path::Path,sync::{Arc,Mutex}};
 mod validation;
 mod streams;
+pub(crate) use streams::OBSERVED_KEYS;
 pub(crate) mod commands;
 pub(crate) mod window_writer;
 pub(crate) use validation::{validate,WindowGeometry};
