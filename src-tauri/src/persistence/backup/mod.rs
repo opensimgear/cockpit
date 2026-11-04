@@ -129,7 +129,26 @@ impl Runtime {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let directory = self.directory(&id)?;
-        osg_persistence::check_path(&directory.join("snapshot.sqlite3"), true)?;
+        osg_persistence::check_path(&self.root.join("backups").join(".check"), true)?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&directory).map_err(|_| "Cannot reserve backup bundle.")?;
+        let result = self.write_bundle(id, &directory).and_then(|entry| {
+            index.entries.insert(0, entry.clone());
+            self.save(expected, &index)?;
+            Ok(entry)
+        });
+        if result.is_err() {
+            let _ = remove_bundle(&directory);
+        }
+        result
+    }
+    fn write_bundle(&self, id: String, directory: &Path) -> Result<Entry, String> {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "The system clock is unavailable.")?
@@ -150,7 +169,7 @@ impl Runtime {
         self.database()?.backup(&snapshot)?;
         let captured = Database::open_existing(&snapshot)?;
         captured.integrity_check()?;
-        let assets = assets::collect(&captured, &self.root, &directory)?;
+        let assets = assets::collect(&captured, &self.root, directory)?;
         let manifest = Manifest {
             id: id.clone(),
             created_at,
@@ -163,14 +182,11 @@ impl Runtime {
             return Err("Backup manifest exceeds its byte budget.".into());
         }
         assets::write_new(&directory.join("manifest.json"), &bytes)?;
-        let entry = Entry {
+        Ok(Entry {
             id,
             created_at,
             manifest_hash: assets::digest(&bytes),
-        };
-        index.entries.insert(0, entry.clone());
-        self.save(expected, &index)?;
-        Ok(entry)
+        })
     }
     pub fn create(&self, expected: u64) -> Result<Value, String> {
         let _lock = self

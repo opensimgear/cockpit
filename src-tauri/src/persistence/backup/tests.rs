@@ -147,6 +147,7 @@ fn busy_index_commit_and_full_inventory_do_not_publish_success() {
     drop(blocker);
     assert_eq!(runtime.status().unwrap()["revision"], 0);
     assert!(runtime.index().unwrap().1.entries.is_empty());
+    assert_eq!(fs::read_dir(runtime.root.join("backups")).unwrap().count(), 0);
     let entries = (0..MAX_BACKUPS)
         .map(|_| Entry {
             id: uuid::Uuid::new_v4().to_string(),
