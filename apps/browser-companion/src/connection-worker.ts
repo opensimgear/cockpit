@@ -4,17 +4,32 @@ import { BackgroundConnection } from './background-connection.ts';
 const worker=globalThis as typeof globalThis&{onconnect:(event:MessageEvent)=>void};
 worker.onconnect=event=>{
   const port=event.ports[0],socket=new SocketTransport();
-  let closed=false,timer:ReturnType<typeof setInterval>|undefined;
+  let closed=false,connected=false,maintaining=false;
+  let timer:ReturnType<typeof setTimeout>|undefined,deadline:number|undefined;
   let visuals:SocketTransport|undefined;
   const send=(message:Record<string,unknown>)=>{if(!closed)port.postMessage(message);};
   const connection=new BackgroundConnection(socket,()=>performance.now(),(reply,id)=>send({type:'feedback',id,reply}));
-  const stop=()=>{if(closed)return;send({type:'closed'});closed=true;if(timer)clearInterval(timer);visuals?.close();connection.close();port.close();};
-  socket.onclose=()=>{if(timer)stop();};
+  const stop=()=>{if(closed)return;send({type:'closed'});closed=true;clearTimeout(timer);visuals?.close();connection.close();port.close();};
+  const schedule=()=>{
+    if(closed||!connected||maintaining)return;
+    const next=connection.nextMaintenanceAt();
+    if(next===deadline)return;
+    clearTimeout(timer);
+    timer=undefined;deadline=next;
+    if(next!==undefined)timer=setTimeout(maintain,Math.max(0,Math.ceil(next-performance.now())));
+  };
+  const maintain=async()=>{
+    timer=undefined;deadline=undefined;maintaining=true;
+    try{await connection.tick();}catch{stop();}
+    finally{maintaining=false;schedule();}
+  };
+  socket.onclose=()=>{if(connected)stop();};
   port.onmessage=async({data})=>{
     if(data.type==='close'){stop();return;}
     if(data.type==='page-activity'){
       const now=performance.now(), at=data.sentAt-performance.timeOrigin;
       if(Number.isFinite(at))connection.notePageActivity(Math.min(at,now));
+      schedule();
       send({type:'page-activity-ack'});
       return;
     }
@@ -22,7 +37,7 @@ worker.onconnect=event=>{
     if(data.type==='connect'){
       // The worker's retry timer continues when the document is unfocused.
       while(!closed){
-        try{await connection.connect();if(closed)return;timer=setInterval(()=>void connection.tick().catch(stop),250);send({type:'connected'});return;}
+        try{await connection.connect();if(closed)return;connected=true;schedule();send({type:'connected'});return;}
         catch{if(!closed)await new Promise(resolve=>setTimeout(resolve,1000));}
       }
     }else if(data.type==='subscribe-feedback'){
@@ -42,6 +57,7 @@ worker.onconnect=event=>{
     }else if(data.type==='request'){
       try{send({type:'result',id:data.id,reply:await connection.request(data.frame)});}
       catch(error){send({type:'result',id:data.id,error:String(error instanceof Error?error.message:error)});}
+      finally{schedule();}
     }
   };
   port.start();

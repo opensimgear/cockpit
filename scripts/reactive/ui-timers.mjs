@@ -12,13 +12,12 @@ const intervals = new Map([
     "()=>{if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed'&&snapshot.armed){const token=gate.capture();void request({type:'keepalive',epoch:remote.epoch}).catch(value=>{if(gate.current(token))fail(value);});}},100",
   ]],
   ['apps/browser-companion/src/App.svelte', ['sendPreparationHeartbeat,500', '()=>{if(owner)void maintainConnection();},250']],
-  ['apps/browser-companion/src/connection-worker.ts', ['()=>void connection.tick().catch(stop),250']],
 ]);
 
 const timeouts = new Map([
   // Connection retries and protocol deadlines.
   ['apps/browser-companion/src/App.svelte', ['()=>{retryTimer=undefined;void scheduleConnect();},Math.ceil(delay)']],
-  ['apps/browser-companion/src/connection-worker.ts', ['resolve,1000']],
+  ['apps/browser-companion/src/connection-worker.ts', ['resolve,1000','maintain,Math.max(0,Math.ceil(next-performance.now()))']],
   ['apps/browser-companion/src/transport.ts', ['()=>this.fallbackDirect(worker),WORKER_STARTUP_TIMEOUT_MS']],
   ['apps/browser-companion/src/socket-transport.ts', [
     "()=>{socket.close();reject(new Error('Cockpit connection timed out'));},3000",

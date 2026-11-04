@@ -12,13 +12,13 @@ test('frontend interval guard detects multiline direct and property calls', () =
     'const label = "setInterval(fetch, 1)";']]));
 });
 
-test('an approved callback cannot gain a refresh or a second interval', () => {
+test('an approved deadline cannot be replaced or duplicated', () => {
   const file = 'apps/browser-companion/src/connection-worker.ts';
-  const allowed = 'timer = setInterval(() => void connection.tick().catch(stop), 250);';
+  const allowed = 'timer = setTimeout(maintain, Math.max(0, Math.ceil(next - performance.now())));';
   assert.doesNotThrow(() => checkUiTimers([[file, allowed + 'setTimeout(resolve, 1000);']]));
-  assert.throws(() => checkUiTimers([[file, allowed + allowed]]), /unclassified setInterval/);
-  assert.throws(() => checkUiTimers([[file, allowed.replace('connection.tick()', 'fetch("/status")')]]),
-    /unclassified setInterval/);
+  assert.throws(() => checkUiTimers([[file, allowed + allowed]]), /unclassified setTimeout/);
+  assert.throws(() => checkUiTimers([[file, allowed.replace('maintain', '() => fetch("/status")')]]),
+    /unclassified setTimeout/);
 });
 
 test('a self-scheduling timeout requires an explicit owner', () => {

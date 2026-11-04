@@ -10,6 +10,7 @@ export class BackgroundConnection {
   private lastWindowAt:number;
   private authenticated=false;
   private lastPing=0;
+  private heartbeatAt=0;
   private ticking=false;
   private closed=false;
   private transport:ConnectionTransport;
@@ -22,6 +23,14 @@ export class BackgroundConnection {
   constructor(transport:ConnectionTransport,now=()=>performance.now(),feedback:(reply:Record<string,any>,id:number)=>void=()=>{}){this.transport=transport;this.now=now;this.feedback=feedback;this.lastWindowAt=now();}
   connect(){return this.transport.connect();}
   notePageActivity(at:number){this.lastWindowAt=Math.max(this.lastWindowAt,at);}
+  nextMaintenanceAt():number|undefined {
+    if(this.closed)return;
+    const session=this.session;
+    if(!session)return this.authenticated?this.lastPing+2000:undefined;
+    if(session.armed&&Object.entries(session.fallback).some(([id,value])=>session.values[id]!==value))
+      return Math.min(this.heartbeatAt,this.lastWindowAt+1000);
+    return this.heartbeatAt;
+  }
   request(frame:Record<string,any>,fromWindow=true):Promise<Record<string,any>>{
     const queuedAt=this.now();if(fromWindow)this.notePageActivity(queuedAt);
     const work=this.tail.then(async()=>{
@@ -32,6 +41,7 @@ export class BackgroundConnection {
       if(matches&&wire.type==='heartbeat')wire.sequence=String(++session.heartbeat);
       if(matches&&wire.type==='input')wire.sequence=String(++session.input);
       if(matches&&wire.type==='feedback-resync')wire.sequence=String(++session.resync);
+      const sentAt=this.now();
       const reply=await this.transport.request(wire);
       if(this.closed)throw Error('Browser connection stopped');
       if(wire.type==='auth'){this.authenticated=true;this.lastPing=this.now();}
@@ -39,11 +49,12 @@ export class BackgroundConnection {
       else if(wire.type==='open'){
         const identity=Object.fromEntries(['clientId','sessionId','generation','publicationHash'].map(key=>[key,reply[key]]));
         this.resetFeedback();this.session={identity,heartbeat:0n,input:0n,resync:0n,armed:false,fallback:{},values:{}};
+        this.heartbeatAt=sentAt+250;
       }else if(matches&&wire.type==='baseline'){
         session.armed=true;session.input=0n;session.fallback={...wire.values};session.values={...wire.values};session.operation=wire.operation;
       }else if(matches&&wire.type==='input'){
         for(const change of wire.changes)session.values[change.controlId]=change.value;
-      }else if(matches&&wire.type==='heartbeat'){session.panelError=wire.panelError===true;if(wire.operation)session.operation=wire.operation;}
+      }else if(matches&&wire.type==='heartbeat'){this.heartbeatAt=sentAt+250;session.panelError=wire.panelError===true;if(wire.operation)session.operation=wire.operation;}
       else if(matches&&wire.type==='close'){this.session=undefined;this.resetFeedback();}
       return reply;
     });
