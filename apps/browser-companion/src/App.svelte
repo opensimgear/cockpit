@@ -112,7 +112,9 @@
       if(JSON.stringify(reply.assignments)!==JSON.stringify(assignments))stop('Panel assignment updated',0);
       return;
     }
-    if(!session||!panel||!reply.feedback)return;
+    // The dedicated subscription owns the initial visual snapshot. Primary
+    // operation replies can carry deltas from a separate, already advanced cursor.
+    if(!session||!panel||!reply.feedback||(reply.type!=='feedback-event'&&reply.type!=='feedback-resync'))return;
     if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.document.ui,performance.now(),reply.type==='feedback-resync')){suppressFeedbackCues=reply.feedback.mode==='snapshot'||reply.type==='feedback-resync';feedback=feedbackView.snapshot();}
   }
   function resetFeedback(){feedbackView.reset();feedback={};suppressFeedbackCues=true;feedbackNotice='Visual state cleared locally. Controls are unchanged.';}

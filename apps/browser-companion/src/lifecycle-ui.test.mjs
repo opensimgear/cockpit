@@ -34,13 +34,18 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
    if(['heartbeat','baseline','input','close','feedback-resync'].includes(f.type)&&this.lastActivityAt!==undefined){const lease=this.preparing?30000:1500;if(clock-this.lastActivityAt>=lease)throw Error('Session is obsolete; explicitly reconnect.');if(f.type==='heartbeat'){this.lastActivityAt=clock;this.preparing=['checking-cache','downloading','rendering'].includes(f.operation?.phase);}if(f.type==='baseline'){this.lastActivityAt=clock;this.preparing=false;}}
    if(f.type==='auth')return{...saved,connectionId:'primary',assignments:assigned};if(f.type==='pair')return{requestId:'offer'};if(f.type==='pair-status')return{type:'paired',...saved};if(f.type==='presence')return{assignments:assigned};
    if(f.type==='open'){this.lastActivityAt=clock;this.instanceId=f.instanceId;return{clientId:'browser',sessionId:`session-${this.index}-${++this.opens}`,generation:String(this.index),controllerInstanceId:this.instanceId,publicationHash:hash,publication:{canonicalDocument:JSON.stringify(panel),assets:[],publicationHash:hash}};}
-   if(f.type==='baseline'||f.type==='heartbeat')return{ok:true,type:f.type==='baseline'?'baseline':'ack',feedback:{version:1,type:'feedback',clientId:'browser',sessionId:`session-${this.index}-${this.opens}`,generation:String(this.index),controllerInstanceId:this.instanceId,publicationHash:hash,sequence:f.type==='baseline'?'1':'2',bindingGeneration:'1',mode:'snapshot',bindings:[{channelId:'confirmed',outputId:'confirmed'}],values:[{channelId:'confirmed',outputId:'confirmed',status:'fresh',value:true,provenance:'game-confirmed',sourceKind:'simulator',sourceAgeMs:10,unit:'boolean'}]}};
+   if(f.type==='baseline'){
+    const feedback=this.response({type:'heartbeat'}).feedback;
+    feedback.mode='delta';delete feedback.bindings;
+    return{ok:true,type:'ack',feedback};
+   }
+   if(f.type==='heartbeat')return{ok:true,type:'ack',feedback:{version:1,type:'feedback',clientId:'browser',sessionId:`session-${this.index}-${this.opens}`,generation:String(this.index),controllerInstanceId:this.instanceId,publicationHash:hash,sequence:'2',bindingGeneration:'1',mode:'snapshot',bindings:[{channelId:'confirmed',outputId:'confirmed'}],values:[{channelId:'confirmed',outputId:'confirmed',status:'fresh',value:true,provenance:'game-confirmed',sourceKind:'simulator',sourceAgeMs:10,unit:'boolean'}]}};
    return{ok:true,type:'ack'};
   }
   deliver(f){const reply=this.response(f);this.onreply?.(reply);return reply;}
   request(f){if(this.closed)return Promise.reject(Error('Socket closed'));this.requests.push(structuredClone(f));if(hold.includes(f.type))return new Promise((resolve,reject)=>this.pending.push({frame:f,resolve,reject}));return Promise.resolve(this.deliver(f));}
   release(type){const i=this.pending.findIndex(p=>p.frame.type===type);assert.ok(i>=0);const[p]=this.pending.splice(i,1);p.resolve(this.deliver(p.frame));}
-  async subscribeFeedback(frame){this.feedbackSubscription=frame;}
+  async subscribeFeedback(frame){this.feedbackSubscription=frame;if(frame.type==='feedback-subscribe')this.onreply?.({...this.response({type:'heartbeat'}),type:'feedback-event'});}
   close(){this.closed=true;for(const p of this.pending.splice(0))p.reject(Error('Socket closed'));this.onclose?.();}
  }
  const injected=appSource.replace('</script>',`capture({connect,pair,emitOutput,runtimeError,consume,resyncFeedback,queue,resize(width,height){displayWidth=width;displayHeight=height;void reportDisplay();},get epoch(){return epoch;},get active(){return active;},get panel(){return panel;},get surfaces(){return panelSurfaces;},get suppressFeedbackCues(){return suppressFeedbackCues;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get error(){return error;},get feedbackNotice(){return feedbackNotice;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
@@ -262,10 +267,10 @@ test('prepared pixels from an unloaded page are disposed without committing or b
  const h=harness({holdPreparation:true});await flush();try{await h.pagehide();h.finishPreparation();await flush();assert.equal(h.handlers.panel,null);assert.equal(h.handlers.active,false);assert.equal(h.sockets[0].requests.some(f=>f.type==='baseline'),false);assert.equal(h.preparedSurfaces[0].retained.disposed,true,'A stale preparation result must release its candidate surfaces.');}finally{h.close();await flush();}
 });
 test('only accepted live feedback deltas enable cues; snapshots, resync and invalid duplicates cannot replay them',async()=>{
- const h=harness();await flush();try{assert.equal(h.handlers.suppressFeedbackCues,true);const socket=h.sockets[0],delta=socket.response({type:'heartbeat'});delta.feedback.mode='delta';delete delta.feedback.bindings;h.handlers.consume(delta,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,false);
-  const duplicate=socket.response({type:'heartbeat'});h.handlers.consume(duplicate,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,false);
-  const snapshot=structuredClone(duplicate);snapshot.feedback.sequence='3';h.handlers.consume(snapshot,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,true);
-  const resync=structuredClone(snapshot);resync.type='feedback-resync';resync.feedback.sequence='4';h.handlers.consume(resync,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,true);
+ const h=harness();await flush();try{assert.equal(h.handlers.suppressFeedbackCues,true);const socket=h.sockets[0],delta=socket.response({type:'heartbeat'});delta.type='feedback-event';delta.feedback.sequence='3';delta.feedback.mode='delta';delete delta.feedback.bindings;h.handlers.consume(delta,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,false);
+  const duplicate=socket.response({type:'heartbeat'});duplicate.type='feedback-event';duplicate.feedback.sequence='3';h.handlers.consume(duplicate,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,false);
+  const snapshot=structuredClone(duplicate);snapshot.feedback.sequence='4';h.handlers.consume(snapshot,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,true);
+  const resync=structuredClone(snapshot);resync.type='feedback-resync';resync.feedback.sequence='5';h.handlers.consume(resync,h.handlers.epoch);assert.equal(h.handlers.suppressFeedbackCues,true);
  }finally{h.close();await flush();}
 });
 test('a player failure releases held output, closes its session and bounds reconnect attempts',async()=>{

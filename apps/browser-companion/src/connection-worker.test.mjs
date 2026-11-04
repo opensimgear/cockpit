@@ -32,7 +32,11 @@ test('worker entry renews the socket without document messages and reports disco
  const h=harness();await h.send({type:'connect'});
  await h.send({type:'request',id:1,frame:{type:'open',instanceId:'instance'}});
  await h.send({type:'request',id:2,frame:{type:'baseline',...identity,values:{button:false},sequence:'0'}});
- h.setClock(250);await h.tick();await flush();assert.equal(h.sockets[0].sent.at(-1).type,'heartbeat');assert.equal(h.received.at(-1).type,'feedback');const envelope=h.received.at(-1);
+ h.setClock(250);await h.tick();await flush();assert.equal(h.sockets[0].sent.at(-1).type,'heartbeat');assert.equal(h.received.some(message=>message.type==='feedback'),false);
+ await h.send({type:'subscribe-feedback',id:3,frame:{type:'feedback-subscribe'}});
+ h.sockets[1].onfeedback({type:'feedback-event',feedback:{mode:'snapshot',sequence:'1'}});
+ const envelope=h.received.at(-1);assert.equal(envelope.type,'feedback');
+ h.sockets[1].onfeedback({type:'feedback-event',feedback:{mode:'delta',sequence:'2'}});
  h.setClock(500);await h.tick();await flush();assert.equal(h.received.filter(message=>message.type==='feedback').length,1);
  await h.send({type:'feedback-ack',id:envelope.id});assert.equal(h.received.at(-1).reply.feedback.mode,'snapshot');
  h.sockets[0].onclose();assert.equal(h.port.closed,true);assert.equal(h.intervals.size,0);assert.equal(h.received.at(-1).type,'closed');

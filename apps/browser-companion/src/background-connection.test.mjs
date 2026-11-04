@@ -28,7 +28,7 @@ test('worker heartbeats continue while the page is frozen and held inputs are re
  for(const time of [250,500,750,1000,1250,1500]){h.setClock(time);await h.engine.tick();}
  const inputs=h.sent.filter(frame=>frame.type==='input');assert.equal(inputs.length,2);assert.equal(inputs[0].sequence,'1');assert.equal(inputs[1].sequence,'2');
  assert.deepEqual(inputs[1].changes,[{controlId:'button',value:false},{controlId:'axis',value:.5}]);
- assert.equal(h.sent.filter(frame=>frame.type==='heartbeat').length,6);assert.equal(h.feedback.length,1);assert.equal(h.closed,false);
+ assert.equal(h.sent.filter(frame=>frame.type==='heartbeat').length,6);assert.equal(h.feedback.length,0);assert.equal(h.closed,false);
 });
 
 test('page and worker requests share one monotonically ordered heartbeat and input writer',async()=>{
@@ -67,7 +67,7 @@ test('page input that expires behind another request is dropped before reaching 
 test('a frozen page queues one feedback envelope and acknowledges into a complete current snapshot',async()=>{
  const h=harness();await armed(h);const state={first:false,second:0};
  h.socket.request=async frame=>{h.sent.push(structuredClone(frame));return{ok:true,type:frame.type==='feedback-resync'?'feedback-resync':'ack',feedback:{...identity,sequence:String(h.sent.length),mode:frame.type==='feedback-resync'?'snapshot':'delta',values:frame.type==='feedback-resync'?structuredClone(state):{first:state.first}}};};
- for(let tick=1;tick<=100;tick++){state.first=tick%2===0;state.second=tick;h.setClock(tick*250);await h.engine.tick();}
+ for(let tick=1;tick<=100;tick++){state.first=tick%2===0;state.second=tick;h.setClock(tick*250);await h.engine.tick();h.engine.deliverFeedback({type:'feedback-event',feedback:{mode:'delta',sequence:String(tick),values:{first:state.first}}});}
  assert.equal(h.feedback.length,1,'Frozen documents retain at most one queued feedback payload.');
  assert.equal(h.sent.filter(frame=>frame.type==='heartbeat').length,100,'Feedback backpressure must not pause the native lease.');
  const first=h.feedback[0];await h.engine.acknowledgeFeedback(first.id);
@@ -79,7 +79,7 @@ test('a frozen page queues one feedback envelope and acknowledges into a complet
 });
 
 test('replacing the session invalidates pending feedback and ignores acknowledgements for the retired session',async()=>{
- const h=harness();await armed(h);await h.engine.tick();const retired=h.feedback[0];
- await h.engine.request({type:'open',instanceId:'replacement'});await h.engine.tick();assert.equal(h.feedback.length,2);
+ const h=harness();await armed(h);h.engine.deliverFeedback({type:'feedback-event',feedback:{mode:'snapshot'}});const retired=h.feedback[0];
+ await h.engine.request({type:'open',instanceId:'replacement'});h.engine.deliverFeedback({type:'feedback-event',feedback:{mode:'snapshot'}});assert.equal(h.feedback.length,2);
  await h.engine.acknowledgeFeedback(retired.id);assert.equal(h.sent.some(frame=>frame.type==='feedback-resync'),false);
 });

@@ -62,11 +62,10 @@ export class BackgroundConnection {
       }
       if(session.armed&&this.now()-this.lastWindowAt>=1000){
         const changes=Object.entries(session.fallback).filter(([id,value])=>session.values[id]!==value).map(([controlId,value])=>({controlId,value}));
-        for(let offset=0;offset<changes.length;offset+=64){const reply=await this.request({version:1,type:'input',...session.identity,changes:changes.slice(offset,offset+64)},false);this.deliverFeedback(reply);}
+        for(let offset=0;offset<changes.length;offset+=64)await this.request({version:1,type:'input',...session.identity,changes:changes.slice(offset,offset+64)},false);
       }
       if(this.closed||session!==this.session)return;
-      const reply=await this.request({version:1,type:'heartbeat',...session.identity,...(session.panelError?{panelError:true}:{}),...(session.operation?{operation:session.operation}:{})},false);
-      this.deliverFeedback(reply);
+      await this.request({version:1,type:'heartbeat',...session.identity,...(session.panelError?{panelError:true}:{}),...(session.operation?{operation:session.operation}:{})},false);
     }finally{this.ticking=false;}
   }
   private resetFeedback(){this.pendingFeedback=undefined;this.feedbackDirty=false;this.resyncing=false;}
