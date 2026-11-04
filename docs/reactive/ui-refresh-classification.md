@@ -24,15 +24,24 @@ inside interval callbacks. An interval may have more than one responsibility.
 | Cockpit `ProfileDesktopControls.svelte` | Refresh desktop output status in an unreferenced component | No live caller found. Count it as dormant source until removed or wired to a live route. |
 | Cockpit `ProfileInputLearning.svelte` | Refresh capture status in an unreferenced component | No live caller found. The native learning commands remain separate from this dormant UI. |
 
-The rest of R0 still requires classifying the one-shot frontend, native and
-firmware sites and confirming each retained timer's owner and purpose.
+The wider R0 inventory still requires confirming the remaining native and
+firmware timer owners and purposes.
 
-Run `node scripts/reactive/audit.mjs --check-ui-intervals` to check direct
-frontend `setInterval` calls. The check covers Cockpit, the companion apps
-and shared frontend packages. It requires a review when a listed interval
-changes and rejects new production references to either dormant component.
-The timing inventory and runtime traces cover the wider review, including
-recursive timeouts, frame loops, and acquisition below the frontend.
+Run `node scripts/reactive/audit.mjs --check-ui-timers` to check direct
+`setInterval` and `setTimeout` calls in Cockpit, the companion apps and shared
+frontend packages. This includes direct self-scheduling timeouts. The guard
+requires review when a timer's callback or delay changes and rejects production
+references to the two dormant timer components. The reviewed timeouts cover
+connection retries and protocol deadlines, local QR detection, authored actions,
+feedback expiry, compiler yields, user-initiated firmware workflows, debounce,
+dismissal and resource disposal. The static check covers direct calls. Runtime
+traces and the timing inventory cover indirect calls, callback behavior, frame
+loops and acquisition below the frontend.
+
+`CompiledWidget.svelte` still schedules a frame for each mounted widget,
+including idle widgets. It needs separate scheduling for authored deadlines,
+feedback expiry and active playback. The idle network trace cannot detect this
+render loop.
 
 ## Cockpit disposition through `5cc98117`
 
@@ -50,9 +59,10 @@ use the following sources.
 | Retained recovery | Native recovery revision, including provisioning job transitions. |
 | `Esp32Companions.svelte` and `ProfileDesktopControls.svelte` | No production imports. Their intervals are dormant. The latter still has a direct component test. |
 
-The browser companion still has a periodic connection task. Assignments
-arrive over a subscription. Its recurring work includes lease renewal,
-unassigned connection pings, retry and recovery after a suspended renderer.
+Browser companion assignments arrive over a subscription. Reconnect uses
+transport events and a single retry deadline. The worker owns steady-state
+lease renewal and unassigned pings. The page sends local activity for the
+release watchdog and owns wire maintenance in direct mode.
 The shared panel canvas schedules the next pulse or feedback freshness
 deadline. The native companion's lease heartbeat remains independent.
 The browser companion connection timers require separate lifecycle qualification.

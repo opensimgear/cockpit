@@ -15,13 +15,13 @@ const sourceAt = (cwd, file) => committed
   ? execFileSync('git', ['show', `HEAD:${file}`], {cwd, encoding:'utf8'})
   : readFileSync(resolve(cwd, file), 'utf8');
 
-if (process.argv.includes('--check-ui-intervals')) {
-  const { checkUiIntervals } = await import('./ui-intervals.mjs');
+if (process.argv.includes('--check-ui-timers')) {
+  const { checkUiTimers } = await import('./ui-timers.mjs');
   const files = [...new Set(filesFromGit(root))].filter(file =>
     /^(?:src|apps|packages)\//.test(file) && /\.(?:[cm]?[jt]s|[jt]sx|svelte)$/.test(file)
-    && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|[._-](?:tests?|fixtures)\./.test(file));
-  checkUiIntervals(files.map(file => [file, sourceAt(root, file)]));
-  console.log('Frontend intervals match their documented owners.');
+    && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|(?:^|\/)test-fixtures?\.|[._-](?:tests?|fixtures)\./.test(file));
+  checkUiTimers(files.map(file => [file, sourceAt(root, file)]));
+  console.log('Frontend timers match their documented owners.');
   process.exit(0);
 }
 
