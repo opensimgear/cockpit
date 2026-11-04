@@ -6,6 +6,7 @@
 #include "esp_transport.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 typedef struct { esp_transport_handle_t tls, ws; unsigned char ca_der[1536]; size_t ca_bytes; bool direct, feedback_ready; uint64_t serial_sequence; char link[32]; const char *request_error; } osg_socket;
 extern const osg_crypto osg_platform_crypto;
 bool osg_trusted_ca(const osg_settings *, unsigned char *, size_t, size_t *);
@@ -23,6 +24,10 @@ void osg_serial_close(osg_socket *);
 bool osg_serial_request(osg_socket *,cJSON *,cJSON **,unsigned);
 cJSON *osg_serial_take_command(void);
 void osg_serial_receive_feedback(const osg_socket *, cJSON *record);
+bool osg_wifi_feedback_start(const osg_settings *,const osg_live_session *);
+void osg_wifi_feedback_stop(void);
+bool osg_wifi_feedback_running(void);
+cJSON *osg_wifi_feedback_take(void);
 cJSON *osg_wifi_scan(void);
 bool osg_wifi_clock(void);
 bool osg_wifi_start(const osg_settings *);

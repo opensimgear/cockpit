@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-network"
 OUT.mkdir(parents=True, exist_ok=True)
-for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "serial-wire-test-*.gcda", "pixels-test-*.gcda"):
+for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "serial-wire-test-*.gcda", "wifi-feedback-test-*.gcda", "pixels-test-*.gcda"):
     for counter in OUT.glob(pattern):
         counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
@@ -16,7 +16,7 @@ includes = ["test/include", "core", "network", "render", "third_party/cjson", "t
 flags += ["-I" + str(APP / p) for p in includes]
 environment = {**os.environ, "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"}
 common = ["core/companion.c", "core/widget.c", "render/widget_state.c", "render/widget_source.c", "network/input.c", "network/json.c", "network/workspace.c", "network/render_profile.c", "network/publication.c", "network/panel_source.c", "network/scene_bank.c", "network/settings.c", "third_party/cjson/cJSON.c"]
-for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c")):
+for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c"), ("wifi-feedback-test", "wifi_feedback_test.c")):
     serial = [str(APP / "network/serial_json.c")] if binary in ("client-test", "serial-wire-test") else []
     subprocess.run([*flags, *[str(APP / p) for p in common], *serial, str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:
@@ -24,9 +24,9 @@ for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.
     print(binary, "passed")
 subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels-test")], check=True, cwd=ROOT)
 subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT, env=environment)
-subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "serial-wire-test-serial_json.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
+subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "serial-wire-test-serial_json.gcno", "wifi-feedback-test-wifi_feedback_test.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
-for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
+for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("wifi_feedback", "wifi-feedback-test-wifi_feedback_test"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
     data = json.loads(gzip.decompress((OUT / (artifact + ".gcov.json.gz")).read_bytes()))
     source = next(f for f in data["files"] if f["file"].replace("/../", "/").endswith("/network/" + module + ".c"))
     lines, functions = source["lines"], source["functions"]

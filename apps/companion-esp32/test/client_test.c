@@ -18,6 +18,12 @@ static cJSON *mock_pending_command;
 cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_command=NULL;return v;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+bool osg_wifi_feedback_start(const osg_settings *s,const osg_live_session *l){(void)s;(void)l;return false;}
+void osg_wifi_feedback_stop(void){}
+unsigned ulTaskNotifyTake(int clear,unsigned wait){(void)clear;vTaskDelay(wait);return 0;}
+bool osg_wifi_feedback_running(void){return false;}
+static cJSON *mock_wifi_message;
+cJSON *osg_wifi_feedback_take(void){cJSON *message=mock_wifi_message;mock_wifi_message=NULL;return message;}
 void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;osg_network_serial_feedback(record);}
 static uint64_t fake_ms;
 static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
@@ -176,7 +182,15 @@ static void serial_feedback_tests(void){
     osg_network_serial_feedback(event);
     assert(test_dirty&&session.feedback_stream&&input.last_ack_ms==lease&&!remote_armed);
     test_dirty=false;osg_network_serial_feedback(event);assert(!test_dirty);
+    connection.direct=false;
+    connection.ws=(void *)1;
+    mock_wifi_message=cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(event,"frame"),true);
+    wifi_feedback();
+    assert(!test_dirty&&input.last_ack_ms==lease);
     cJSON_Delete(event);
+    mock_wifi_message=cJSON_Parse("{\"ok\":true,\"type\":\"assignments-event\",\"assignments\":[]}");
+    wifi_feedback();
+    assert(state==AUTH&&!remote_armed);
     stop();
 }
 static void live_input_tests(void){

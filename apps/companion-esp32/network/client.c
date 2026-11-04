@@ -24,6 +24,7 @@ typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FA
 static osg_network_ui ui;
 static osg_settings settings;
 static osg_socket connection;
+static uint64_t next_feedback_connect;
 static osg_scene_banks banks;
 static osg_scene_ticket candidate_ticket, checking_ticket;
 static bool candidate_pending, candidate_finished, candidate_success;
@@ -107,7 +108,7 @@ static void cancel_candidate(void){
      * later prepare sees the cleared display fence and reuses that same slot. */
     xSemaphoreGive(ui.mutex);
 }
-static void abort_connection(void){cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
+static void abort_connection(void){osg_wifi_feedback_stop();next_feedback_connect=0;cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
 static const char *failure_message(const char *reason){
     if(!strcmp(reason,"wifi-connection-failed"))return "Wi-Fi connection failed";
     if(!strcmp(reason,"host-tls-or-connection-failed"))return "Could not connect to Cockpit";
@@ -322,14 +323,45 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
+static void apply_feedback(const cJSON *frame){
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const uint64_t sequence=session.feedback_sequence,generation=session.binding_generation;
+    const bool seen=session.feedback_seen;
+    if(osg_feedback_event(frame,&session,ui.runtime,millis())&&
+        (!seen||sequence!=session.feedback_sequence||generation!=session.binding_generation))*ui.dirty=true;
+    xSemaphoreGive(ui.mutex);
+}
 void osg_network_serial_feedback(const cJSON *record){
     if(!connection.direct||state!=LIVE||!equal(osg_string(record,"linkId"),connection.link))return;
-    xSemaphoreTake(ui.mutex,portMAX_DELAY);
-    const uint64_t before=session.feedback_sequence,generation=session.binding_generation;
-    const bool seen=session.feedback_seen;
-    if(osg_feedback_event(cJSON_GetObjectItemCaseSensitive(record,"frame"),&session,ui.runtime,millis())&&
-        (!seen||before!=session.feedback_sequence||generation!=session.binding_generation))*ui.dirty=true;
-    xSemaphoreGive(ui.mutex);
+    apply_feedback(cJSON_GetObjectItemCaseSensitive(record,"frame"));
+}
+static void wifi_feedback(void){
+    if(state!=LIVE||connection.direct||!connection.ws){
+        if(osg_wifi_feedback_running())osg_wifi_feedback_stop();
+        return;
+    }
+    cJSON *message=osg_wifi_feedback_take();
+    if(message){
+        const cJSON *assignments=cJSON_GetObjectItemCaseSensitive(message,"assignments");
+        if(equal(osg_string(message,"type"),"assignments-event")&&
+            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(message,"ok"))&&cJSON_IsArray(assignments)){
+            bool retained=false;
+            for(const cJSON *row=assignments->child;row;row=row->next){
+                if(equal(osg_string(row,"instanceId"),session.instance)&&
+                    equal(osg_string(row,"publicationHash"),session.publication)){retained=true;break;}
+            }
+            if(!retained){
+                cJSON_Delete(message);stop();state=AUTH;next_request=millis();return;
+            }
+        }
+        apply_feedback(message);
+        cJSON_Delete(message);
+    }
+    const uint64_t now=millis();
+    if(!osg_wifi_feedback_running()&&now>=next_feedback_connect){
+        next_feedback_connect=now+2000;
+        if(osg_wifi_feedback_start(&settings,&session))session.feedback_stream=true;
+    }
 }
 void osg_network_status(const char *request_id){
     cJSON *v=cJSON_CreateObject();char encoded[4096],epoch[21];
@@ -738,7 +770,7 @@ static void network_task(void *arg){
         cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
         if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
         int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
-        update_screen();advance();update_screen();arm_when_ready();vTaskDelay(pdMS_TO_TICKS(10));
+        update_screen();advance();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
     }
 }
 void osg_network_touch(bool valid,bool down,int x,int y){
