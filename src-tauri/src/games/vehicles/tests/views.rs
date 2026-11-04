@@ -32,9 +32,11 @@ fn telemetry_requires_a_fresh_enabled_reader_for_the_same_installation() {
     tracker.observe(&game, &json!({}), None, "setup", true, 1);
     let entry = tracker.entries.get_mut("assetto-corsa-rally").unwrap();
     entry.reader = Some(rally_reader());
-    entry.telemetry = Some(capture());
+    entry.telemetry = Some(Arc::new(capture()));
 
-    assert_eq!(tracker.telemetry(&game).unwrap().packet, json!(7));
+    let committed = tracker.telemetry(&game).unwrap();
+    assert_eq!(committed.packet, json!(7));
+    assert!(Arc::ptr_eq(&committed, &tracker.telemetry(&game).unwrap()));
     let mut other_install = game.clone();
     other_install["installPath"] = json!("/sim/other");
     assert!(tracker.telemetry(&other_install).is_none());

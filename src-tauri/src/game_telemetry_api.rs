@@ -131,7 +131,7 @@ impl GamesRuntime {
         let mut result = vec![];
         for game in games {
             let id = game["id"].as_str().unwrap_or("");
-            let capture = captures.get(id).and_then(Option::as_ref);
+            let capture = captures.get(id).and_then(Option::as_deref);
             let fallback_status = if game["installed"] != true {
                 "not-installed"
             } else if game["integrationSetup"]["state"] != "ready" {

@@ -86,7 +86,7 @@ struct Entry {
     process: Option<ProcessIdentity>,
     reader: Option<Reader>,
     current: Option<Value>,
-    telemetry: Option<Capture>,
+    telemetry: Option<Arc<Capture>>,
     inspection: Vec<String>,
     inspected: Instant,
     catalogued: Instant,

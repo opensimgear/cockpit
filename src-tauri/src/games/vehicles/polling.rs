@@ -185,7 +185,7 @@ impl Tracker {
         {
             Ok((current, capture)) => {
                 self.retired.extend(entry.reader.replace(poll.reader));
-                entry.telemetry = Some(capture);
+                entry.telemetry = Some(Arc::new(capture));
                 entry.current = current.and_then(|value| vehicle(&entry.integration, &value));
                 if let Some(value) = &entry.current {
                     if self.seen.contains_key(&poll.id) || self.seen.len() < 512 {

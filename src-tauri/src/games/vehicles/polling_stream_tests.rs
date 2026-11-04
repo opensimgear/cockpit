@@ -74,13 +74,13 @@ fn deadline_renewal_only_reschedules_and_elapsed_cached_view_withdraws_without_p
     let entry = tracker.entries.get_mut("assetto-corsa").unwrap();
     let renewed = Instant::now();
     entry.observed = renewed;
-    entry.telemetry.as_mut().unwrap().at = renewed;
+    Arc::get_mut(entry.telemetry.as_mut().unwrap()).unwrap().at = renewed;
     tracker.publish_visible("assetto-corsa");
     assert!(tracker.view_deadline().unwrap() > initial);
     assert_ne!(changes.wake.observed(), wake);
     assert_eq!(changes.revision(), revision);
     let entry = tracker.entries.get_mut("assetto-corsa").unwrap();
-    entry.telemetry.as_mut().unwrap().at = Instant::now() - Duration::from_secs(3);
+    Arc::get_mut(entry.telemetry.as_mut().unwrap()).unwrap().at = Instant::now() - Duration::from_secs(3);
     assert_eq!(tracker.view_deadline(), None);
     tracker.decorate_summary(&mut game);
     assert!(game["currentVehicle"].is_null());

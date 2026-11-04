@@ -171,7 +171,7 @@ fn process_renewal_cannot_keep_an_old_aircraft_capture_current() {
         assert!(tracker.current("x-plane-12").is_some());
         let pending = detached.then(|| take_poll(&mut tracker));
         let entry = tracker.entries.get_mut("x-plane-12").unwrap();
-        entry.telemetry.as_mut().unwrap().at -= Duration::from_secs(3);
+        Arc::get_mut(entry.telemetry.as_mut().unwrap()).unwrap().at -= Duration::from_secs(3);
         entry.observed = Instant::now();
         assert!(tracker.current("x-plane-12").is_none());
         drop(pending);

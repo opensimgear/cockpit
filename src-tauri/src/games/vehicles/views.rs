@@ -18,7 +18,8 @@ impl Tracker {
             })
             .and_then(|entry| entry.current.clone())
     }
-    pub(crate) fn telemetry(&self, game: &Value) -> Option<Capture> {
+    /// Share the committed capture so projection can run outside the tracker lock.
+    pub(crate) fn telemetry(&self, game: &Value) -> Option<Arc<Capture>> {
         self.entries
             .get(game["id"].as_str()?)
             .filter(|entry| {

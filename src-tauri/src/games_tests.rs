@@ -195,6 +195,21 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
     assert_eq!(game["channels"][0]["unit"], "rpm");
     assert_eq!(game["channels"][0]["status"], "unknown");
     assert_eq!(game["channels"][0]["value"], Value::Null);
+    let mut games = runtime.inner.settings.lock().unwrap().catalogue.clone();
+    games.insert(0, json!({"id":"other-fixture","name":"Other fixture","installed":false}));
+    runtime.seed_test_catalogue(games.clone());
+    let inspect_automatic = || runtime.inspect_telemetry(&json!({
+        "command":"game_telemetry_inspect","search":"engine.rpm","limit":16
+    })).unwrap();
+    let automatic = inspect_automatic();
+    assert_eq!(automatic["games"][0]["total"], 0);
+    assert_eq!(automatic["games"][1]["channels"][0]["id"], "engine.rpm");
+    games[1]["installed"] = json!(false);
+    games.swap(0, 1);
+    runtime.seed_test_catalogue(games);
+    let automatic = inspect_automatic();
+    assert_eq!(automatic["games"][0]["channels"][0]["id"], "engine.rpm");
+    assert_eq!(automatic["games"][1]["total"], 0);
     assert_eq!(runtime.status()["discovery"], before["discovery"]);
     assert_eq!(platform.calls.load(Ordering::Acquire), 0);
     for extra in [

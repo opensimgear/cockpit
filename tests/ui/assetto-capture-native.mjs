@@ -7,8 +7,8 @@ import {mkdir,writeFile,readFile,access,rm} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
-const specs=[['assetto-corsa','acs.exe'],['assetto-corsa-competizione','AC2-Win64-Shipping.exe'],
-  ['assetto-corsa-evo','AssettoCorsaEVO.exe'],['assetto-corsa-rally','acr.exe']];
+const specs=[['assetto-corsa','acs.exe','Assetto Corsa'],['assetto-corsa-competizione','AC2-Win64-Shipping.exe','Assetto Corsa Competizione'],
+  ['assetto-corsa-evo','AssettoCorsaEVO.exe','Assetto Corsa EVO'],['assetto-corsa-rally','acr.exe','Assetto Corsa Rally']];
 const execute=promisify(execFile);
 const normalized=path=>path.replace(/^\\\\\?\\/,'').replaceAll('\\','/').toLowerCase();
 
@@ -31,7 +31,7 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
       'Close real Assetto games before starting private publishers.');
     await native({command:'profile_selection_mode',mode:'manual'});
     await native({command:'profile_stop'});
-    for(const [gameId,basename] of specs){
+    for(const [gameId,basename,name] of specs){
       const working=resolve(directory,gameId);await mkdir(working,{recursive:true});
       if(gameId==='assetto-corsa'){
         const car=resolve(working,'content/cars/osg_expanded_car');
@@ -45,7 +45,6 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
         '/nologo','/target:winexe',`/out:${executable}`,resolve('scripts/fixtures/assetto-telemetry/ExpandedProgram.cs'),
       ],{windowsHide:true});
       const previous=(await games()).catalogue.find(game=>game.id===gameId);
-      assert.ok(previous);
       const record={gameId,phases:{}};evidence.games.push(record);
       let child,exited,profile,installation;
       const stopPublisher=async()=>{
@@ -54,7 +53,7 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
         try{await exited;}finally{clearTimeout(timer);child=null;}
       };
       try{
-        const registered=(await native({command:'game_add',name:previous.name,installPath:working,executable})).games;
+        const registered=(await native({command:'game_add',name:previous?.name??name,installPath:working,executable})).games;
         installation=registered.catalogue.find(game=>game.id===gameId)?.installations.find(item=>normalized(item.installPath)===normalized(working));
         assert.ok(installation,`${gameId}: private installation registration`);
         await native({command:'game_installation_select',gameId,installationId:installation.id});
@@ -104,11 +103,23 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
             port.endpoint.nodeId===`value-${id}`&&port.endpoint.portId==='out'&&port.sample.status==='known'&&Math.abs(port.sample.value.value-value)<1e-5))&&snapshot;
         },Boolean,25000);
         const mode=async value=>{await writeFile(stop+'.mode',value);await until(()=>readFile(stop+'.ack','utf8').then(actual=>actual===value,()=>false));};
+        const inspectRpm=async()=>{
+          const report=(await native({command:'game_telemetry_inspect',gameId,search:'engine.rpm',offset:0,limit:16})).gameTelemetry;
+          return report.games.find(game=>game.id===gameId)?.channels.find(channel=>channel.id==='engine.rpm');
+        };
         record.phases.live=await live();
+        record.phases.inspectorLive=await until(async()=>{
+          const channel=await inspectRpm();
+          return channel?.status==='known'&&channel.value===expected['engine.rpm']&&channel;
+        },Boolean,25000);
         await mode('frozen');
         record.phases.frozen=await until(async()=>{
           const snapshot=await samples();return Object.keys(expected).every(id=>snapshot.ports.some(port=>
             port.endpoint.nodeId===`value-${id}`&&port.endpoint.portId==='out'&&port.sample.status!=='known'))&&snapshot;
+        },Boolean,25000);
+        record.phases.inspectorFrozen=await until(async()=>{
+          const channel=await inspectRpm();
+          return channel&&channel.status!=='known'&&channel.value===null&&channel;
         },Boolean,25000);
         await mode('live');record.phases.recovered=await live();
         console.log(`${gameId}: native processing, frozen expiry and recovery pass`);
@@ -117,11 +128,17 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
         await cleanup('publisher',stopPublisher);
         if(profile){await cleanup('stop',()=>native({command:'profile_stop'}));await cleanup('delete',()=>native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision}));}
         if(installation)await cleanup('installation',async()=>{
-          if(previous.selectedInstallationId)await native({command:'game_installation_select',gameId,installationId:previous.selectedInstallationId});
+          if(previous?.selectedInstallationId)await native({command:'game_installation_select',gameId,installationId:previous.selectedInstallationId});
           assert.ok(directory.startsWith(resolve('.research/assetto-capture-native')+sep));
           assert.ok(working.startsWith(directory+sep));
           assert.equal(normalized(installation.installPath),normalized(working));
           await rm(working,{recursive:true,force:true});
+          if(!previous){
+            await native({command:'game_remove',gameId});
+            assert.ok(!(await games()).catalogue.some(game=>game.id===gameId));
+            record.installationRestored=true;
+            return;
+          }
           await until(async()=>(await games()).discovery?.status!=='scanning',Boolean,90000);
           const scan=async paths=>{
             await native({command:'game_discovery_start',paths});
