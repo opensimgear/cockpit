@@ -68,7 +68,9 @@ fn passive_subscription_wakes_only_for_the_bound_session_and_keeps_its_own_curso
     assert_eq!(delta["mode"], "delta");
     assert_eq!(delta["values"][0]["value"], 42.0);
     let heartbeat = hub.handle_wire(frame(&opened, "heartbeat", "1"), "primary", hub.now_ms());
-    assert_eq!(heartbeat["feedback"]["mode"], "snapshot");
+    assert!(heartbeat.get("feedback").is_none());
+    let resync = hub.handle_wire(frame(&opened, "feedback-resync", "1"), "primary", hub.now_ms());
+    assert_eq!(resync["feedback"]["mode"], "snapshot");
     let replacement = Arc::new(osg_streams::NativeWake::default());
     let mut next = subscribe(&credential, replacement).unwrap();
     assert!(visuals.take().is_err());

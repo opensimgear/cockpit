@@ -141,6 +141,9 @@
     const values=Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
     await socket.request(frame('baseline',{sequence:'0',values,operation:{...preparationOperation,phase:'ready'}}));
     if(!current(socket,version))return;
+    if(!credential)throw Error('Missing companion credential');
+    await socket.subscribeFeedback({type:'feedback-subscribe',token:credential.token,sessionId:opened.sessionId,generation:opened.generation,publicationHash:opened.publicationHash});
+    if(!current(socket,version))return;
     inputReady=focused();if(inputReady)queue.start();else queue.stop();
     active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
   }
@@ -148,6 +151,7 @@
     if(!owner || connecting || connection || !credential || disposed || pageHidden || performance.now()<nextAttempt)return;
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
     socket.onreply=reply=>consume(reply,version);
+    socket.onfeedbackclose=()=>{recoverObsoleteSession(Error('Session is obsolete: feedback stream ended'),socket,version);};
     socket.onclose=()=>{if(connection===socket){stop('Offline · reconnecting to Cockpit');nextAttempt=0;void connect();}};
     try {
       await socket.connect();if(!current(socket,version))return;

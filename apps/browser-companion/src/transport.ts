@@ -23,6 +23,7 @@ export function clearCredential(storage:Pick<Storage,'getItem'|'removeItem'>,tok
 /** A shared worker owns the socket and leases while this document stays open. */
 export class BrowserTransport {
   private direct:SocketTransport|undefined;
+  private visuals:SocketTransport|undefined;
   private worker:SharedWorker|undefined;
   private pending=new Map<number,{resolve:(reply:any)=>void;reject:(error:Error)=>void}>();
   private counter=0;
@@ -31,6 +32,7 @@ export class BrowserTransport {
   private startupTimer:ReturnType<typeof setTimeout>|undefined;
   private workerConnected=false;
   onclose:()=>void=()=>{};
+  onfeedbackclose:()=>void=()=>{};
   onreply:(reply:Record<string,any>)=>void=()=>{};
   private connectDirect(){const direct=this.direct=new SocketTransport();direct.onreply=reply=>this.onreply(reply);direct.onclose=()=>{if(!this.closed)this.onclose();};return direct.connect();}
   async connect(){
@@ -42,6 +44,7 @@ export class BrowserTransport {
       if(this.closed||this.worker!==worker)return;
       if(data.type==='connected'){this.workerConnected=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.connected?.resolve();this.connected=undefined;}
       else if(data.type==='closed'){if(!this.workerConnected)this.fallbackDirect(worker);else{this.fail(Error('Cockpit connection closed'));this.onclose();}}
+      else if(data.type==='feedback-closed'){this.onfeedbackclose();}
       else if(data.type==='feedback'){try{this.onreply(data.reply);worker.port.postMessage({type:'feedback-ack',id:data.id});}catch(error){this.fail(error instanceof Error?error:Error(String(error)));this.onclose();}}
       else if(data.type==='result'){
         const pending=this.pending.get(data.id);if(!pending)return;this.pending.delete(data.id);
@@ -75,11 +78,26 @@ export class BrowserTransport {
       this.connected=undefined;pending.reject(error instanceof Error?error:Error(String(error)));
     });
   }
+  async subscribeFeedback(frame:Record<string,unknown>):Promise<void>{
+    if(this.closed)throw Error('Browser connection stopped');
+    if(this.direct){
+      const previous=this.visuals;
+      const socket=this.visuals=new SocketTransport();
+      previous?.close();
+      socket.onfeedback=reply=>{if(this.visuals===socket)this.onreply(reply);};
+      socket.onclose=()=>{if(!this.closed&&this.visuals===socket){this.visuals=undefined;this.onfeedbackclose();}};
+      await socket.connect();
+      await socket.request(frame);
+    }else await this.sendWorker('subscribe-feedback',frame);
+  }
   request(frame:Record<string,unknown>):Promise<any>{
     if(this.direct)return this.direct.request(frame);
+    return this.sendWorker('request',frame);
+  }
+  private sendWorker(type:string,frame:Record<string,unknown>):Promise<any>{
     if(this.closed||!this.worker)return Promise.reject(Error('Browser connection stopped'));
     if(this.pending.size>=32){this.close();return Promise.reject(Error('Browser request queue exhausted'));}
-    return new Promise((resolve,reject)=>{const id=++this.counter;this.pending.set(id,{resolve,reject});this.worker!.port.postMessage({type:'request',id,frame});});
+    return new Promise((resolve,reject)=>{const id=++this.counter;this.pending.set(id,{resolve,reject});this.worker!.port.postMessage({type,id,frame});});
   }
   private fail(error:Error){
     this.connected?.reject(error);this.connected=undefined;
@@ -87,7 +105,7 @@ export class BrowserTransport {
     this.close();
   }
   close(){
-    if(this.closed)return;this.closed=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.direct?.close();
+    if(this.closed)return;this.closed=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.visuals?.close();this.direct?.close();
     try{this.worker?.port.postMessage({type:'close'});}catch{}try{this.worker?.port.close();}catch{}this.worker=undefined;
     const error=Error('Browser connection stopped');this.connected?.reject(error);this.connected=undefined;
     for(const pending of this.pending.values())pending.reject(error);this.pending.clear();

@@ -203,6 +203,9 @@ impl Hub {
             .sessions
             .get(session_id)
             .ok_or("Feedback session ended.")?;
+        if frame["type"] != "feedback-resync" && session.feedback_wake.as_ref().is_some_and(|wake| wake.strong_count() != 0) {
+            return Ok(());
+        }
         // Image/font preparation runs before the device installs its new runtime.
         // It validates these ACKs without applying feedback to the old panel.
         // Preserve the cursor so the first rendered-panel ACK is a snapshot.

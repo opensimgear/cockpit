@@ -522,7 +522,9 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     assert_ne!(initial["feedback"]["bindingGeneration"], changed["feedback"]["bindingGeneration"]);
 
     let mut input=frame("input","1");input["changes"]=json!([{"controlId":"press","value":true}]);
-    assert_eq!(call(&mut socket,input)["ok"],true);
+    let accepted = call(&mut socket,input);
+    assert_eq!(accepted["ok"], true);
+    assert!(accepted.get("feedback").is_none());
     assert!(sink.events.lock().unwrap().iter().any(|e|e.contains("true")));
     socket.close(None).unwrap();drop(socket);
     wait(||sink.events.lock().unwrap().iter().any(|e|e=="loss"));

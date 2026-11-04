@@ -34,6 +34,7 @@ export class SocketTransport {
   private decoder=new TransferDecoder();
   onclose:()=>void=()=>{};
   onreply:(reply:Record<string,any>)=>void=()=>{};
+  onfeedback?: (reply:Record<string,any>)=>void;
   async connect(){
     const socket=new WebSocket(location.origin.replace(/^http/,'ws')+'/socket','opensimgear-companion-v1'); this.socket=socket;
     await new Promise<void>((resolve,reject)=>{
@@ -46,6 +47,10 @@ export class SocketTransport {
     socket.onmessage=event=>{messages=messages.then(async()=>{
       if(typeof event.data!=='string' || new TextEncoder().encode(event.data).length>16384)throw new Error('Invalid Cockpit frame');
       const value=await this.decoder.accept(JSON.parse(event.data)); if(value===null)return;
+      if(value.type==='feedback-event'&&this.onfeedback){
+        if(value.ok!==true||!value.feedback)throw new Error('Invalid Cockpit feedback event');
+        this.onfeedback(value);return;
+      }
       const pending=this.pending;if(!pending)throw new Error('Unexpected Cockpit reply');
       clearTimeout(pending.timer);this.pending=null;
       if(value.ok!==true)pending.reject(new Error(String(value.error??'Cockpit rejected the request')));else{try{this.onreply(value);pending.resolve(value);}catch(error){pending.reject(error instanceof Error?error:new Error(String(error)));throw error;}}

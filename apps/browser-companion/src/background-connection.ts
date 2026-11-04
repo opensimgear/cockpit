@@ -62,7 +62,7 @@ export class BackgroundConnection {
     }finally{this.ticking=false;}
   }
   private resetFeedback(){this.pendingFeedback=undefined;this.feedbackDirty=false;this.resyncing=false;}
-  private deliverFeedback(reply:Record<string,any>){
+  deliverFeedback(reply:Record<string,any>){
     if(!reply.feedback)return;
     if(this.pendingFeedback!==undefined||this.resyncing){this.feedbackDirty=true;return;}
     this.pendingFeedback=++this.deliveryId;this.feedback(reply,this.pendingFeedback);

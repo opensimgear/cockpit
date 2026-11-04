@@ -54,6 +54,44 @@ test('browser transport uses same-origin WSS and serializes requests without inp
   }finally{globalThis.WebSocket=previousSocket;globalThis.location=previousLocation;}
 });
 
+test('dedicated browser feedback does not settle a pending input request',async()=>{
+  const previousSocket=globalThis.WebSocket,previousLocation=globalThis.location;
+  const sockets=[];
+  class Socket {
+    static OPEN=1; readyState=1; sent=[];
+    constructor(){sockets.push(this);queueMicrotask(()=>this.onopen());}
+    send(raw){this.sent.push(JSON.parse(raw));}
+    close(){this.readyState=3;this.onclose?.();}
+    reply(value){this.onmessage({data:JSON.stringify(value)});}
+  }
+  globalThis.WebSocket=Socket;globalThis.location={origin:'https://localhost:54437'};
+  const transport=new BrowserTransport(), visuals=[];
+  transport.onreply=reply=>{if(reply.feedback)visuals.push(reply.feedback);};
+  try{
+    await transport.connect();
+    const subscribe=transport.subscribeFeedback({type:'feedback-subscribe'});
+    await new Promise(resolve=>setImmediate(resolve));
+    const [primary,visual]=sockets;
+    assert.deepEqual(visual.sent,[{type:'feedback-subscribe'}]);
+    visual.reply({ok:true,type:'feedback-subscribed'});
+    await subscribe;
+    let settled=false;
+    const input=transport.request({type:'input'}).then(()=>{settled=true;});
+    await new Promise(resolve=>setImmediate(resolve));
+    visual.reply({ok:true,type:'feedback-event',feedback:{sequence:'1'}});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(visuals,[{sequence:'1'}]);
+    assert.equal(settled,false);
+    primary.reply({ok:true,type:'ack'});
+    await input;
+    assert.deepEqual(primary.sent,[{type:'input'}]);
+  }finally{
+    transport.close();
+    globalThis.WebSocket=previousSocket;globalThis.location=previousLocation;
+  }
+  assert.ok(sockets.every(socket=>socket.readyState===3));
+});
+
 test('an obsolete browser tab cannot erase replacement credentials',()=>{
  const values=new Map();const storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  const old={token:'a'.repeat(43),companionId:'old',hostId:'host'};
