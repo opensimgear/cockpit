@@ -700,7 +700,7 @@ static void serial_byte(int c){
         const char *type=osg_string(v,"command");
         /* A late transport reply can finish after its request timed out. It is
          * never a console command or authority to cancel current panel work. */
-        if(equal(type,"serial-feedback")){osg_network_serial_feedback(v);cJSON_Delete(v);}
+        if(equal(type,"serial-feedback")){osg_serial_receive_feedback(&connection,v);cJSON_Delete(v);}
         else if(equal(type,"serial-reply"))cJSON_Delete(v);
         else if(capture_command&&command_mutates(type))interrupted_command=v;
         else {command(v);cJSON_Delete(v);}

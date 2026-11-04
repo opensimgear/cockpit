@@ -94,7 +94,11 @@ bool osg_endpoint(const char *url, char host[254], int *port) {
 int osg_reply_feed(osg_transfer *t, const char *bytes, size_t n, osg_crypto crypto, cJSON **out) {
     *out = NULL;
     if (!t || !crypto.sha256 || !crypto.base64 || n > OSG_FRAME_BYTES) return -1;
-    cJSON *v = osg_json_parse(bytes, n); if (!v || !cJSON_IsObject(v)) { cJSON_Delete(v); return -1; }
+    return osg_reply_feed_object(t, osg_json_parse(bytes, n), crypto, out);
+}
+int osg_reply_feed_object(osg_transfer *t, cJSON *v, osg_crypto crypto, cJSON **out) {
+    *out = NULL;
+    if (!cJSON_IsObject(v)) { cJSON_Delete(v); return -1; }
     const char *type = osg_string(v, "type");
     int result = -1;
     if (type && !strcmp(type, "transfer-start")) {

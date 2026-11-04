@@ -34,6 +34,34 @@ void osg_network_serial_feedback(const cJSON *record){
     assert(!strcmp(osg_string(record,"linkId"),"test-link"));
     feedback_events++;
 }
+static void chunked_feedback(osg_socket *socket,bool valid){
+    const char *payload="{\"ok\":true,\"type\":\"feedback-event\"}";
+    size_t size=strlen(payload);char hash[72],encoded[128],stream[1024];
+    assert(sha(payload,size,hash));
+    if(!valid)hash[7]=hash[7]=='0'?'1':'0';
+    assert(EVP_EncodeBlock((unsigned char *)encoded,(const unsigned char *)payload,(int)size)>0);
+    snprintf(stream,sizeof(stream),
+        "{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"type\":\"transfer-start\",\"id\":\"feedback\",\"bytes\":%zu,\"sha256\":\"%s\"}}\n"
+        "{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n"
+        "{\"command\":\"serial-feedback\",\"linkId\":\"old-link\",\"frame\":{\"type\":\"transfer-end\",\"id\":\"feedback\"}}\n"
+        "{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"type\":\"transfer-chunk\",\"id\":\"feedback\",\"index\":0,\"base64\":\"%s\"}}\n"
+        "{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"type\":\"transfer-end\",\"id\":\"feedback\"}}\n",
+        size,hash,socket->serial_sequence+1,encoded);
+    incoming=stream;
+    unsigned before=feedback_events;
+    cJSON *reply=NULL;
+    assert(osg_serial_request(socket,cJSON_CreateObject(),&reply,10));
+    assert(feedback_events==before);
+    cJSON_Delete(reply);
+    while(*incoming){
+        cJSON *record=NULL;
+        if(osg_serial_json_byte(serial_getchar(),&record)==OSG_SERIAL_JSON){
+            osg_serial_receive_feedback(socket,record);
+            cJSON_Delete(record);
+        }
+    }
+    assert(feedback_events==before+(valid?1:0));
+}
 static void large_reply(osg_socket *socket,bool accepted){
     const size_t text_bytes=40*1024,capacity=96*1024;const char *prefix="{\"ok\":true,\"padding\":\"";
     char *payload=malloc(text_bytes+strlen(prefix)+3),*stream=malloc(capacity);assert(payload&&stream);
@@ -134,6 +162,7 @@ int main(void){
     assert(!reply&&!strcmp(socket.request_error,"USB reply exceeds buffer"));
     snprintf(frames,sizeof(frames),"{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n",socket.serial_sequence+1);
     incoming=frames;assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));cJSON_Delete(reply);
+    chunked_feedback(&socket,true);chunked_feedback(&socket,false);
     large_reply(&socket,true);osg_transport_reply_capacity=32768;large_reply(&socket,false);osg_transport_reply_capacity=sizeof(reply_storage);
     osg_serial_close(&socket);
     incoming="{\"command\":\"connect\",\"unixMs\":12345}\n";

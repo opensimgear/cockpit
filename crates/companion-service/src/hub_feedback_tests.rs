@@ -85,6 +85,36 @@ fn passive_subscription_wakes_only_for_the_bound_session_and_keeps_its_own_curso
     assert!(next.take().is_err());
 }
 #[test]
+fn usb_feedback_uses_only_the_authenticated_serial_session() {
+    let hub = Hub::new("usb-host".into(), Arc::new(Sink::default()));
+    let credential = paired(&hub, "peer");
+    let publication = publish(&hub, fixture());
+    assign(&hub, "peer", "instance", &publication.publication_hash);
+    let usb = |frame| hub.handle_serial_wire(frame, "usb-primary", hub.now_ms());
+    assert_eq!(usb(json!({"type":"auth","token":credential}))["ok"], true);
+    let opened = usb(json!({"type":"open","instanceId":"instance"}));
+    assert_eq!(opened["ok"], true);
+    let session = opened["sessionId"].as_str().unwrap();
+    assert!(hub.subscribe_serial_feedback("usb-primary", session).is_err());
+    let mut neutral = frame(&opened, "baseline", "0");
+    neutral["values"] = json!(publication.controls.iter().map(|c| (&c.id, c.fallback())).collect::<BTreeMap<_, _>>());
+    assert_eq!(usb(neutral)["ok"], true);
+    assert!(hub.subscribe_serial_feedback("other", session).is_err());
+
+    hub.configure_feedback("instance", &publication.publication_hash, &[binding(&publication)]).unwrap();
+    let mut feedback = hub.subscribe_serial_feedback("usb-primary", session).unwrap();
+    assert_eq!(feedback.take().unwrap().unwrap()["mode"], "snapshot");
+    let observed = feedback.observed();
+    let token = hub.feedback_token("instance").unwrap();
+    hub.publish_feedback(&token, &[sample(&publication)], FeedbackMode::Delta, hub.now_ms()).unwrap();
+    assert!(feedback.observed() > observed);
+    assert_eq!(feedback.take().unwrap().unwrap()["values"][0]["value"], 42.0);
+    assert!(usb(frame(&opened, "heartbeat", "1")).get("feedback").is_none());
+    hub.disconnect_connection("usb-primary", hub.now_ms());
+    assert!(feedback.take().is_err());
+}
+
+#[test]
 fn native_feedback_preserves_provenance_freshness_and_source_acceptance_separation() {
     let (h, sink, p, open) = setup();
     assert!(h.feedback_token("instance").is_err());

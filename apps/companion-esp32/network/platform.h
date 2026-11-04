@@ -19,6 +19,7 @@ bool osg_serial_open(osg_socket *);
 void osg_serial_close(osg_socket *);
 bool osg_serial_request(osg_socket *,cJSON *,cJSON **,unsigned);
 cJSON *osg_serial_take_command(void);
+void osg_serial_receive_feedback(const osg_socket *, cJSON *record);
 cJSON *osg_wifi_scan(void);
 bool osg_wifi_clock(void);
 bool osg_wifi_start(const osg_settings *);

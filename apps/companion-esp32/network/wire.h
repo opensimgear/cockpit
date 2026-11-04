@@ -55,6 +55,8 @@ bool osg_stable_id(const char *);
 bool osg_hash_id(const char *);
 bool osg_endpoint(const char *, char host[254], int *port);
 /* Returns -1 on error, 0 awaiting transfer chunks, 1 with caller-owned JSON. */
+/* Consumes the parsed frame, returning ownership of a complete reply in out. */
+int osg_reply_feed_object(osg_transfer *, cJSON *, osg_crypto, cJSON **);
 int osg_reply_feed(osg_transfer *, const char *, size_t, osg_crypto, cJSON **);
 bool osg_decode_publication(const cJSON *, const char *expected_hash, osg_crypto, osg_image *, uint16_t width, uint16_t height);
 bool osg_open_identity(const cJSON *, const char *host, const char *companion, const char *instance, const char *publication, osg_live_session *);

@@ -18,6 +18,7 @@ static cJSON *mock_pending_command;
 cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_command=NULL;return v;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;osg_network_serial_feedback(record);}
 static uint64_t fake_ms;
 static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
 static bool request_ok=true,wrong_identity,wrong_session;

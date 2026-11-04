@@ -8,6 +8,42 @@
 #include <stdio.h>
 #include <string.h>
 static cJSON *deferred;
+static osg_transfer feedback_transfer;
+
+static void clear_feedback_transfer(void){
+    cJSON_free(feedback_transfer.bytes);
+    memset(&feedback_transfer,0,sizeof(feedback_transfer));
+}
+
+void osg_serial_receive_feedback(const osg_socket *s,cJSON *record){
+    const char *link=osg_string(record,"linkId");
+    if(!s->direct||!link||strcmp(link,s->link))return;
+    cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
+    const char *type=osg_string(frame,"type");
+    if(!type)return;
+    if(!strcmp(type,"feedback-event")){
+        clear_feedback_transfer();
+        osg_network_serial_feedback(record);
+        return;
+    }
+    if(!strcmp(type,"transfer-start")){
+        clear_feedback_transfer();
+        const double size=cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(frame,"bytes"));
+        if(!(size>=1&&size<=OSG_REPLY_BYTES))return;
+        feedback_transfer.capacity=(size_t)size;
+        feedback_transfer.bytes=cJSON_malloc(feedback_transfer.capacity);
+        if(!feedback_transfer.bytes)return;
+    }
+    if(!feedback_transfer.bytes)return;
+    cJSON *complete=NULL;
+    int result=osg_reply_feed_object(&feedback_transfer,cJSON_DetachItemViaPointer(record,frame),osg_platform_crypto,&complete);
+    if(result==0)return;
+    clear_feedback_transfer();
+    if(result==1){
+        cJSON_AddItemToObject(record,"frame",complete);
+        osg_network_serial_feedback(record);
+    }
+}
 cJSON *osg_serial_take_command(void){cJSON *v=deferred;deferred=NULL;return v;}
 bool osg_serial_open(osg_socket *s){
     unsigned char random[8];esp_fill_random(random,sizeof(random));
@@ -16,6 +52,7 @@ bool osg_serial_open(osg_socket *s){
     printf("{\"type\":\"serial-open\",\"linkId\":\"%s\"}\n",s->link);fflush(stdout);return true;
 }
 void osg_serial_close(osg_socket *s){
+    clear_feedback_transfer();
     if(s->direct){printf("{\"type\":\"serial-close\",\"linkId\":\"%s\"}\n",s->link);fflush(stdout);}
     /* Reconnect is a console command, not a reply owned by the closing link.
      * It can arrive while boot-time authentication is still waiting for a
@@ -30,6 +67,8 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     char id[21],outbound[8192];
     snprintf(id,sizeof(id),"%" PRIu64,++s->serial_sequence);
     cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"type","serial-request");
+    const char *type=osg_string(request,"type");
+    if(type&&!strcmp(type,"baseline"))cJSON_AddBoolToObject(v,"pushFeedback",true);
     cJSON_AddStringToObject(v,"linkId",s->link);cJSON_AddStringToObject(v,"requestId",id);cJSON_AddItemToObject(v,"frame",request);
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);
     if(!ok){s->request_error="USB request exceeds buffer";mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
@@ -51,7 +90,7 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
             osg_network_status(osg_string(v,"requestId"));cJSON_Delete(v);continue;
         }
         if(command&&!strcmp(command,"serial-feedback")){
-            osg_network_serial_feedback(v);cJSON_Delete(v);continue;
+            osg_serial_receive_feedback(s,v);cJSON_Delete(v);continue;
         }
         if(!command||strcmp(command,"serial-reply")){
             if(deferred){s->request_error="Too many pending USB commands";cJSON_Delete(v);break;}

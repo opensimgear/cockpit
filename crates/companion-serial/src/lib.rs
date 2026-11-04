@@ -8,7 +8,7 @@ mod status_observation;
 use status_observation::StatusObserver;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
-use osg_companion_service::Hub;
+use osg_companion_service::{FeedbackSubscription, Hub};
 use serde_json::{json, Value};
 use serialport::{SerialPort, SerialPortType};
 use sha2::{Digest, Sha256};
@@ -537,6 +537,9 @@ struct Wire {
     link: String,
     connection: String,
     sequence: u64,
+    feedback: Option<FeedbackSubscription>,
+    feedback_observed: Option<u64>,
+    feedback_frames: std::collections::VecDeque<Value>,
 }
 impl Wire {
     fn new() -> Self {
@@ -544,6 +547,9 @@ impl Wire {
             link: String::new(),
             connection: uuid::Uuid::new_v4().to_string(),
             sequence: 0,
+            feedback: None,
+            feedback_observed: None,
+            feedback_frames: Default::default(),
         }
     }
     fn reset(&mut self, hub: &Hub, link: &str) {
@@ -551,6 +557,28 @@ impl Wire {
         self.connection = uuid::Uuid::new_v4().to_string();
         self.link = link.into();
         self.sequence = 0;
+        self.clear_feedback();
+    }
+    fn clear_feedback(&mut self) {
+        self.feedback = None;
+        self.feedback_observed = None;
+        self.feedback_frames.clear();
+    }
+    fn take_feedback(&mut self) -> Result<Option<Value>, String> {
+        let Some(reader) = self.feedback.as_mut() else { return Ok(None); };
+        let observed = reader.observed();
+        if self.feedback_frames.is_empty() && self.feedback_observed != Some(observed) {
+            self.feedback_observed = Some(observed);
+            match reader.take() {
+                Ok(Some(feedback)) => {
+                    let event = json!({"ok":true,"type":"feedback-event","feedback":feedback});
+                    self.feedback_frames = reply_frames(&event)?.into();
+                }
+                Ok(None) => {}
+                Err(_) => self.clear_feedback(),
+            }
+        }
+        Ok(self.feedback_frames.pop_front().map(|frame| json!({"command":"serial-feedback","linkId":self.link,"frame":frame})))
     }
     fn handle(&mut self, hub: &Hub, v: &Value) -> Result<Vec<Value>, String> {
         let link = v["linkId"].as_str().ok_or("Missing link identity.")?;
@@ -567,7 +595,15 @@ impl Wire {
         if !frame.is_object() {
             return Err("Invalid USB frame.".into());
         }
+        let closes_session = matches!(frame["type"].as_str(), Some("close" | "cancel"));
+        let baseline = (frame["type"] == "baseline").then(|| frame["sessionId"].clone());
         let response = hub.handle_serial_wire(frame, &self.connection, hub.now_ms());
+        if closes_session && response["ok"] == true { self.clear_feedback(); }
+        if let Some(session) = baseline.as_ref().and_then(Value::as_str).filter(|_| response["ok"] == true && v["pushFeedback"] == true) {
+            self.clear_feedback();
+            self.feedback = Some(hub.subscribe_serial_feedback(&self.connection, session)?);
+            self.feedback_observed = None;
+        }
         Ok(reply_frames(&response)?.into_iter().map(|frame|json!({"command":"serial-reply","linkId":link,"requestId":id,"frame":frame})).collect())
     }
 }
@@ -741,6 +777,9 @@ fn worker(
                     observer.set(public, "provisioning", json!(false));
                 }
             }
+            if let Some(feedback) = wire.take_feedback()? {
+                send(&mut *port, &feedback, public)?;
+            }
             match port.read(&mut bytes) {
                 Ok(n) => {
                     for &b in &bytes[..n] {
@@ -769,6 +808,7 @@ fn worker(
                                                 hub.now_ms(),
                                             );
                                             wire.link.clear();
+                                            wire.clear_feedback();
                                         }
                                     }
                                     Some("serial-request") => {
@@ -1236,5 +1276,36 @@ mod tests {
             wire.handle(&hub, &fresh).unwrap()[0]["frame"]["type"],
             "authenticated"
         );
+
+        let fixture: Value = serde_json::from_str(include_str!("../../../apps/companion-esp32/test/live-publication.json")).unwrap();
+        let hash = &fixture["publicationHash"];
+        hub.retain_legacy_test_fixture(serde_json::from_value(json!({"canonicalDocument":fixture["canonicalDocument"],
+            "publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap()).unwrap();
+        hub.command(&json!({"command":"companion_assign","instanceId":"usb-panel","companionId":"test-screen","publicationHash":hash})).unwrap();
+        let mut request = json!({"type":"serial-request","linkId":"usb-new","requestId":"2","frame":{"type":"open","instanceId":"usb-panel"}});
+        let open = wire.handle(&hub, &request).unwrap()[0]["frame"].clone();
+        assert_eq!(open["type"], "session-open");
+        let mut frame = json!({"version":1,"type":"baseline","clientId":open["clientId"],"sessionId":open["sessionId"],
+            "generation":open["generation"],"publicationHash":hash,"sequence":"0","values":{"master":false}});
+        request["requestId"] = json!("3");
+        request["frame"] = frame.clone();
+        request["pushFeedback"] = json!(true);
+        let response = wire.handle(&hub, &request).unwrap();
+        assert_eq!(response[0]["frame"]["ok"], true, "{response:?}");
+        let event = wire.take_feedback().unwrap().unwrap();
+        assert_eq!(event["command"], "serial-feedback");
+        assert_eq!(event["linkId"], "usb-new");
+        assert_eq!(event["frame"]["feedback"]["mode"], "snapshot");
+        assert!(wire.take_feedback().unwrap().is_none());
+        frame["type"] = json!("heartbeat");
+        frame["sequence"] = json!("1");
+        frame.as_object_mut().unwrap().remove("values");
+        request["requestId"] = json!("4");
+        request["frame"] = frame;
+        let ack = wire.handle(&hub, &request).unwrap();
+        assert_eq!(ack[0]["frame"]["type"], "ack");
+        assert!(ack[0]["frame"].get("feedback").is_none());
+        wire.reset(&hub, "usb-reconnected");
+        assert!(wire.take_feedback().unwrap().is_none());
     }
 }

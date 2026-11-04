@@ -100,6 +100,26 @@ impl Hub {
         })
     }
 
+    /// The serial worker has already authenticated this exact local connection.
+    pub fn subscribe_serial_feedback(&self, connection: &str, session_id: &str) -> Result<FeedbackSubscription, String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let companion = inner.connections.get(connection).ok_or("USB connection ended.")?.clone();
+        let digest = inner.record.credentials.iter().find(|row| row.companion_id == companion)
+            .ok_or("USB credential was revoked.")?.token_hash.clone();
+        let session = inner.sessions.get_mut(session_id).ok_or("Feedback session ended.")?;
+        ensure(session.connection == connection && session.companion_id == companion
+            && session.transport == SourceTransport::Usb && session.armed,
+            "Feedback subscription belongs to another or disarmed USB session.")?;
+        let wake = Arc::new(NativeWake::default());
+        if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|wake| wake.upgrade()) {
+            previous.notify();
+        }
+        Ok(FeedbackSubscription {
+            hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
+            generation: session.token.generation, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
+        })
+    }
+
     pub(super) fn wake_feedback(inner: &Inner, instance: &str) {
         for session in inner.sessions.values().filter(|session| session.token.source_id == instance) {
             if let Some(wake) = session.feedback_wake.as_ref().and_then(|wake| wake.upgrade()) {
@@ -116,6 +136,8 @@ impl FeedbackSubscription {
             && equal_hash(&credential.token_hash, &self.credential_hash)) { return None; }
         changed_assignments(&inner, &self.companion_id, &mut self.assignments)
     }
+
+    pub fn observed(&self) -> u64 { self.wake.observed() }
 
     pub(crate) fn resync_sequence(&self) -> Option<u64> { self.resync_sequence }
 
