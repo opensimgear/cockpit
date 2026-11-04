@@ -94,7 +94,7 @@ struct State {
     storage_loaded: bool,
     credential: Option<SavedCredential>,
     publication: Option<Value>,
-    sender: Option<SyncSender<QueuedInput>>,
+    sender: Option<SessionInput>,
     queued_transitions: Arc<AtomicUsize>,
     feedback_schema: Vec<crate::FeedbackDescriptor>,
     feedback_accumulator: crate::feedback::FeedbackAccumulator,
@@ -122,6 +122,12 @@ impl Drop for InputReservation {
         self.counter.fetch_sub(self.count, Ordering::SeqCst);
     }
 }
+#[derive(Clone)]
+struct SessionInput {
+    sender: SyncSender<QueuedInput>,
+    wake: Arc<osg_streams::NativeWake>,
+}
+
 struct QueuedInput {
     frame: Value,
     _reservation: InputReservation,
@@ -245,7 +251,7 @@ impl ClientRuntime {
             state.status.last_error = Some(reason.into());
             clear_session_status(&mut state);
             state.publication = None;
-            state.sender = None;
+            if let Some(input) = state.sender.take() { input.wake.notify(); }
         }
         self.shared.status_wake.notify();
     }
@@ -418,6 +424,7 @@ impl ClientRuntime {
                     self.shared.started.elapsed().as_millis() as u64,
                     Ordering::SeqCst,
                 );
+                if let Some(input) = &state.sender { input.wake.notify(); }
                 self.shared.status_wake.notify();
                 Ok(json!({"ok":true,"epoch":epoch}))
             }
@@ -439,6 +446,7 @@ impl ClientRuntime {
                 state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
                 state.feedback_accumulator = Default::default();
                 state.feedback_reset_pending = true;
+                if let Some(input) = &state.sender { input.wake.notify(); }
                 self.shared.status_wake.notify();
                 Ok(json!({"ok":true,"feedbackRevision":state.status.feedback_revision}))
             }
@@ -451,13 +459,13 @@ impl ClientRuntime {
                 Ok(json!({"ok":true}))
             }
             "input" => {
-                checked_epoch(&self.shared, &request)?;
+                let epoch = checked_epoch(&self.shared, &request)?;
                 let state = self
                     .shared
                     .state
                     .lock()
                     .map_err(|_| "Client state lock poisoned")?;
-                if state.status.phase != "armed" {
+                if state.status.phase != "armed" || state.status.epoch != epoch {
                     return Err("Remote panel is disarmed".into());
                 }
                 let changes = request["changes"]
@@ -483,10 +491,11 @@ impl ClientRuntime {
                     _reservation: reservation,
                 };
                 drop(state);
-                if sender.try_send(frame).is_err() {
+                if sender.sender.try_send(frame).is_err() {
                     self.invalidate("Client input queue overflow; reconnect and Start explicitly");
                     return Err("Input queue is full; session stopped".into());
                 }
+                sender.wake.notify();
                 Ok(json!({"ok":true}))
             }
             "disconnect" | "neutralize" => {
@@ -1279,6 +1288,8 @@ fn session_worker(
     }
     let ack = session_request(&mut socket, baseline, Duration::from_millis(700))?;
     let (tx, rx) = mpsc::sync_channel::<QueuedInput>(128);
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    let _ = wake.bind_thread(thread::current());
     let queued_transitions = Arc::new(AtomicUsize::new(0));
     set_state(&shared, epoch, |state| {
         state.status.phase = "ready".into();
@@ -1288,15 +1299,19 @@ fn session_worker(
         );
         state.publication = Some(publication);
         state.feedback_schema = feedback_schema;
-        state.sender = Some(tx);
+        state.sender = Some(SessionInput { sender: tx, wake: wake.clone() });
         state.queued_transitions = queued_transitions;
     });
     apply_worker_ack(&shared, epoch, ack, false)?;
     let mut resync_seen = 0;
     let mut sequence = 0u64;
     let mut heartbeat = 0u64;
+    const HEARTBEAT: Duration = Duration::from_millis(250);
+    const UI_LEASE_MS: u64 = 600;
     let mut last_heartbeat = Instant::now();
-    while current(&shared, epoch) {
+    loop {
+        let observed = wake.observed();
+        if !current(&shared, epoch) { break; }
         let armed = shared
             .state
             .lock()
@@ -1305,7 +1320,7 @@ fn session_worker(
         if armed
             && (shared.started.elapsed().as_millis() as u64)
                 .saturating_sub(shared.ui_tick.load(Ordering::SeqCst))
-                > 600
+                > UI_LEASE_MS
         {
             break;
         }
@@ -1319,7 +1334,9 @@ fn session_worker(
             apply_worker_ack(&shared, epoch, reply, current_resync)?;
             resync_seen = resync;
         }
-        if let Ok(queued) = rx.try_recv() {
+        let queued = rx.try_recv().ok();
+        let had_input = queued.is_some();
+        if let Some(queued) = queued {
             let input = &queued.frame;
             if !armed {
                 continue;
@@ -1345,7 +1362,7 @@ fn session_worker(
             let reply = session_request(&mut socket, frame, Duration::from_millis(700))?;
             apply_worker_ack(&shared, epoch, reply, false)?;
         }
-        if last_heartbeat.elapsed() >= Duration::from_millis(250) {
+        if last_heartbeat.elapsed() >= HEARTBEAT {
             heartbeat = heartbeat
                 .checked_add(1)
                 .ok_or("Heartbeat counter exhausted; reconnect")?;
@@ -1356,7 +1373,15 @@ fn session_worker(
             apply_worker_ack(&shared, epoch, reply, false)?;
             last_heartbeat = Instant::now();
         }
-        thread::sleep(Duration::from_millis(5));
+        if !had_input {
+            let heartbeat_due = HEARTBEAT.saturating_sub(last_heartbeat.elapsed());
+            let wait = if armed {
+                let age = (shared.started.elapsed().as_millis() as u64)
+                    .saturating_sub(shared.ui_tick.load(Ordering::SeqCst));
+                heartbeat_due.min(Duration::from_millis((UI_LEASE_MS + 1).saturating_sub(age)))
+            } else { heartbeat_due };
+            wake.wait_scheduled(observed, Some(wait));
+        }
     }
     for changes in fallback_batches(&primitives) {
         sequence = sequence
@@ -1720,7 +1745,7 @@ mod tests {
         {
             let mut state = client.shared.state.lock().unwrap();
             state.status.phase = "ready".into();
-            state.sender = Some(tx);
+            state.sender = Some(SessionInput { sender: tx, wake: Default::default() });
         }
         client.command(json!({"type":"arm","epoch":0})).unwrap();
         client
@@ -1835,13 +1860,15 @@ mod tests {
         let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         let (sender, receiver) = mpsc::sync_channel(128);
+        let wake = Arc::new(osg_streams::NativeWake::default());
         let counter = {
             let mut state = client.shared.state.lock().unwrap();
             state.status.phase = "ready".into();
-            state.sender = Some(sender);
+            state.sender = Some(SessionInput { sender, wake: wake.clone() });
             state.queued_transitions.clone()
         };
         client.command(json!({"type":"arm","epoch":0})).unwrap();
+        assert_eq!(wake.observed(), 1);
         let changes = vec![json!({"controlId":"trigger","value":true}); 64];
         for _ in 0..4 {
             client
@@ -1849,11 +1876,13 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(counter.load(Ordering::SeqCst), 256);
+        assert_eq!(wake.observed(), 5);
         assert!(client
             .command(json!({"type":"input","epoch":0,"changes":changes}))
             .is_err());
         assert_ne!(client.status().phase, "armed");
         assert!(client.status().epoch > 0);
+        assert_eq!(wake.observed(), 6);
         assert!(client
             .command(json!({"type":"input","epoch":0,"changes":changes}))
             .is_err());
