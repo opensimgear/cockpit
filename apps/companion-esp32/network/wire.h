@@ -60,6 +60,8 @@ int osg_reply_feed_object(osg_transfer *, cJSON *, osg_crypto, cJSON **);
 int osg_reply_feed(osg_transfer *, const char *, size_t, osg_crypto, cJSON **);
 bool osg_decode_publication(const cJSON *, const char *expected_hash, osg_crypto, osg_image *, uint16_t width, uint16_t height);
 bool osg_open_identity(const cJSON *, const char *host, const char *companion, const char *instance, const char *publication, osg_live_session *);
+cJSON *osg_feedback_subscription(const osg_live_session *,const char *token);
+bool osg_feedback_subscribed(const cJSON *);
 bool osg_feedback_event(const cJSON *, osg_live_session *, osg_runtime *, uint64_t now);
 bool osg_ack(const cJSON *, osg_live_session *, const char *sequence, osg_runtime *, uint64_t now);
 #endif

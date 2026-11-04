@@ -159,6 +159,17 @@ static cJSON *modern_ack(void){
 static void modern_feedback_tests(void){
     osg_live_session session={.client="client",.session="session",.generation="1",.instance="instance"};osg_copy(session.publication,sizeof(session.publication),osg_demo_panel.publication_hash);
     osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text,NULL},NULL,NULL));osg_connected(&r,true);
+    const char *token="abcdefghijklmnopqrstuvwxyz0123456789abcdefg";
+    cJSON *subscription=osg_feedback_subscription(&session,token);
+    assert(subscription&&strcmp(osg_string(subscription,"type"),"esp32-feedback-subscribe")==0);
+    assert(strcmp(osg_string(subscription,"sessionId"),session.session)==0);
+    assert(strcmp(osg_string(subscription,"generation"),session.generation)==0);
+    assert(strcmp(osg_string(subscription,"publicationHash"),session.publication)==0);
+    assert(strcmp(osg_string(subscription,"token"),token)==0);
+    assert(!osg_feedback_subscribed(subscription));cJSON_Delete(subscription);
+    assert(!osg_feedback_subscription(&session,"invalid"));
+    subscription=json("{\"ok\":true,\"type\":\"feedback-subscribed\"}");
+    assert(osg_feedback_subscribed(subscription));cJSON_Delete(subscription);
     cJSON *base=modern_ack();assert(osg_ack(base,&session,"1",&r,100));assert(session.feedback_envelope&&r.samples[3].number==125.5);
     assert(osg_ack(base,&session,"1",&r,700));assert(r.samples[3].received_ms==100);
     cJSON *event=cJSON_Duplicate(base,true);

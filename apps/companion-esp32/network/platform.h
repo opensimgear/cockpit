@@ -12,6 +12,9 @@ bool osg_trusted_ca(const osg_settings *, unsigned char *, size_t, size_t *);
 bool osg_socket_open(osg_socket *,const osg_settings *);
 void osg_socket_close(osg_socket *);
 bool osg_socket_request(osg_socket *, cJSON *, cJSON **, unsigned timeout_ms);
+/* Text I/O owns only the supplied socket and buffer. Capacity excludes the NUL byte. */
+bool osg_socket_read_text(osg_socket *,char *buffer,size_t capacity,size_t *length,int64_t deadline_us);
+bool osg_socket_write_text(osg_socket *,const char *buffer,size_t length,unsigned timeout_ms);
 /* One network-task owner; retained for its process lifetime. Frame size stays
  * unchanged. Reply assembly may use a larger PSRAM workspace on rich boards. */
 extern char osg_transport_frame[OSG_FRAME_BYTES+1];

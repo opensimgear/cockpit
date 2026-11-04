@@ -223,6 +223,23 @@ static bool feedback_envelope(const cJSON *frame, osg_live_session *session, osg
     osg_tick(r,now);
     return true;
 }
+cJSON *osg_feedback_subscription(const osg_live_session *session,const char *token) {
+    uint64_t generation;
+    if(!osg_stable_id(session->session)||!osg_hash_id(session->publication)||
+        !osg_counter(session->generation,&generation)||!generation||!osg_stable_id(token)||strlen(token)!=43)return NULL;
+    cJSON *frame=cJSON_CreateObject();
+    if(!frame||!cJSON_AddStringToObject(frame,"type","esp32-feedback-subscribe")||
+        !cJSON_AddStringToObject(frame,"sessionId",session->session)||
+        !cJSON_AddStringToObject(frame,"generation",session->generation)||
+        !cJSON_AddStringToObject(frame,"publicationHash",session->publication)||
+        !cJSON_AddStringToObject(frame,"token",token)){
+        cJSON_Delete(frame);return NULL;
+    }
+    return frame;
+}
+bool osg_feedback_subscribed(const cJSON *frame) {
+    return cJSON_IsTrue(get(frame,"ok"))&&same(osg_string(frame,"type"),"feedback-subscribed");
+}
 bool osg_feedback_event(const cJSON *v, osg_live_session *session, osg_runtime *r, uint64_t now) {
     if(!cJSON_IsTrue(get(v,"ok"))||!same(osg_string(v,"type"),"feedback-event"))return false;
     const cJSON *frame=get(v,"feedback");
