@@ -12,6 +12,10 @@ pub(crate) struct Qualification {
     qualified: Option<bool>,
 }
 impl Qualification {
+    pub(crate) fn without_renewal(mut self) -> Self {
+        if self.qualified == Some(true) { self.qualified = None; }
+        self
+    }
     pub(crate) fn verify(
         mut self,
         games: &[Value],
@@ -69,11 +73,20 @@ impl VehiclePoll {
 }
 impl Tracker {
     pub(crate) fn poll_candidates(&self) -> Vec<Qualification> {
+        self.candidates(false)
+    }
+    pub(crate) fn capture_candidates(&self) -> Vec<Qualification> {
+        self.candidates(true)
+    }
+    fn candidates(&self, capture_only: bool) -> Vec<Qualification> {
         self.entries
             .iter()
             .filter_map(|(id, entry)| {
                 #[cfg(test)]
                 if entry.injected {
+                    return None;
+                }
+                if capture_only && entry.capture_watch.is_none() {
                     return None;
                 }
                 Some(Qualification {
@@ -111,6 +124,7 @@ impl Tracker {
                 entry.polling = false;
                 entry.opening = None;
                 entry.detached_physics = None;
+                entry.capture_watch = None;
                 self.retired.extend(entry.reader.take());
                 entry.current = None;
                 entry.telemetry = None;
@@ -170,6 +184,7 @@ impl Tracker {
             entry.generation = entry.generation.wrapping_add(1);
             entry.current = None;
             entry.telemetry = None;
+            entry.capture_watch = None;
             self.retired.push(poll.reader);
             self.publish_visible(&poll.id);
             return;
@@ -197,6 +212,7 @@ impl Tracker {
                 }
             }
             Err(error) => {
+                entry.capture_watch = None;
                 self.retired.push(poll.reader);
                 entry.current = None;
                 entry.telemetry = None;

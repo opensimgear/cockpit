@@ -159,6 +159,12 @@ impl Reader {
     pub(super) fn poll(&mut self, now_ms: u64) -> Result<Option<String>, String> {
         self.poll_telemetry(now_ms).map(|(vehicle, _)| vehicle)
     }
+    pub(super) fn capture_watch(&self, wake: Arc<osg_streams::NativeWake>) -> Result<Option<crate::acr_windows::Watch>, String> {
+        match self {
+            Self::Rally { source, .. } => source.watch(wake),
+            _ => Ok(None),
+        }
+    }
     pub(super) fn inspect(&mut self, game: &str, ids: &[String]) -> Result<(), String> {
         if let Self::Xplane(source) = self {
             source.set_inspection_channels(&crate::game_channels::native_ids(game, ids))?;

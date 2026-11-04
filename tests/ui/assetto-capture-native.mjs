@@ -28,9 +28,12 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
   try{
     await page.evaluate(`import('/src/lib/streams/shared.ts').then(({SharedObservations})=>{
       const observations=new SharedObservations();
-      window.__assettoTelemetryObservation={observations,revision:'0'};
+      window.__assettoTelemetryObservation={observations,revision:'0',frames:0};
       observations.subscribe('games.telemetry',state=>{
-        if(state.status==='ready')window.__assettoTelemetryObservation.revision=state.frame.revision;
+        if(state.status==='ready'){
+          window.__assettoTelemetryObservation.revision=state.frame.revision;
+          window.__assettoTelemetryObservation.frames++;
+        }
       });
     })`);
     const telemetryRevision=()=>page.evaluate('window.__assettoTelemetryObservation.revision');
@@ -123,6 +126,12 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           const channel=await inspectRpm();
           return channel?.status==='known'&&channel.value===expected['engine.rpm']&&channel;
         },Boolean,25000);
+        const frames=()=>page.evaluate('window.__assettoTelemetryObservation.frames');
+        const framesBefore=await frames();
+        await new Promise(resolve=>setTimeout(resolve,1250));
+        record.phases.liveNotifications=await frames()-framesBefore;
+        assert.ok(record.phases.liveNotifications>=16,
+          `${gameId}: expected source wakes beyond the 100 ms maintenance cadence, got ${record.phases.liveNotifications}`);
         await mode('frozen');
         record.phases.frozen=await until(async()=>{
           const snapshot=await samples();return Object.keys(expected).every(id=>snapshot.ports.some(port=>

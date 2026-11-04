@@ -127,6 +127,7 @@ impl Tracker {
             polling: false,
             opening: None,
             detached_physics: None,
+            capture_watch: None,
             inventory_revision: 0,
             published: Visible::default(),
             published_capture: None,
@@ -144,6 +145,7 @@ impl Tracker {
                 entry.inspection = inspection::Demand::default();
             }
             entry.integration = integration.into();
+            entry.capture_watch = None;
             self.retired.extend(entry.reader.take());
             entry.current = None;
             entry.telemetry = None;
@@ -211,6 +213,7 @@ impl Tracker {
             entry.polling = false;
             entry.opening = None;
             entry.detached_physics = None;
+            entry.capture_watch = None;
             self.retired.extend(entry.reader.take());
             entry.current = None;
             entry.telemetry = None;
@@ -231,6 +234,8 @@ impl Tracker {
         if let Some(reader) = observation.reader {
             match reader {
                 Ok(reader) => {
+                    entry.capture_watch = self.capture_wake.as_ref()
+                        .and_then(|wake| reader.capture_watch(wake.clone()).ok().flatten());
                     self.retired.extend(entry.reader.replace(reader));
                     entry.error = None;
                 }

@@ -168,15 +168,29 @@ impl GamesRuntime {
             let polling_closed = Arc::new(AtomicBool::new(false));
             let polling_inner = inner.clone();
             let polling_stop = polling_closed.clone();
+            let capture_wake = Arc::new(osg_streams::NativeWake::default());
+            inner.update_vehicles(|vehicles| vehicles.watch_captures(capture_wake.clone()));
+            let worker_wake = capture_wake.clone();
             // Catalogue parsing and setup inspection can take longer than the
             // native freshness window. Keep exact process checks and telemetry
             // draining independent of that work, without extending either lease.
             let polling = thread::spawn(move || {
+                let _ = worker_wake.bind_thread(thread::current());
+                let mut next_maintenance = Instant::now();
+                let mut drained = worker_wake.observed();
                 while !polling_inner.closed.load(Ordering::Acquire)
                     && !polling_stop.load(Ordering::Acquire)
                 {
-                    polling_inner.poll_vehicle_telemetry();
-                    thread::sleep(Duration::from_millis(100));
+                    let observed = worker_wake.observed();
+                    let now = Instant::now();
+                    if now >= next_maintenance {
+                        polling_inner.poll_vehicle_telemetry(false);
+                        next_maintenance = Instant::now() + Duration::from_millis(100);
+                    } else if observed != drained {
+                        polling_inner.poll_vehicle_telemetry(true);
+                    }
+                    drained = observed;
+                    worker_wake.wait_scheduled(observed, Some(next_maintenance.saturating_duration_since(Instant::now())));
                 }
             });
             while !inner.closed.load(Ordering::Acquire) {
@@ -189,6 +203,7 @@ impl GamesRuntime {
                 }
             }
             polling_closed.store(true, Ordering::Release);
+            capture_wake.notify();
             let _ = polling.join();
         }));
     }
@@ -280,37 +295,50 @@ impl Inner {
         drop(retired);
         value
     }
-    fn poll_vehicle_telemetry(&self) {
-        let games = if self.guard_installation_metadata().is_ok() {
+    fn vehicle_telemetry_games(&self, capture_only: bool) -> Vec<Value> {
+        if self.guard_installation_metadata().is_ok() {
             self.settings
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .catalogue
                 .iter()
-                .filter(|game| crate::game_discovery::integration_key(game).is_some())
+                .filter(|game| crate::game_discovery::integration_key(game)
+                    .is_some_and(|key| !capture_only || key.starts_with("assetto-corsa")))
                 .cloned()
                 .collect()
         } else {
             vec![]
+        }
+    }
+    fn poll_vehicle_telemetry(&self, capture_only: bool) {
+        let games = self.vehicle_telemetry_games(capture_only);
+        let candidates = {
+            let vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
+            if capture_only { vehicles.capture_candidates() } else { vehicles.poll_candidates() }
         };
-        let candidates = self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).poll_candidates();
-        let verified = candidates.into_iter().map(|candidate| candidate.verify(&games,
-            |id| {
+        // The shared Assetto sampler validates its exact process handle around
+        // each read. Capture wakes still check configuration, without extending
+        // the process observation or re-querying Windows for every packet.
+        let alive = |process: &crate::game_discovery::ProcessIdentity| {
+            capture_only || self.platform.alive(process).unwrap_or(false)
+        };
+        let verified = candidates.into_iter().map(|candidate| {
+            let checked = candidate.verify(&games, |id| {
                 let key = games.iter().find(|game| game["id"] == id)
                     .and_then(crate::game_discovery::integration_key).unwrap_or("");
                 self.setup.provider_setup_revision(key)
-            },
-            |process| self.platform.alive(process).unwrap_or(false),
-        )).collect();
+            }, alive);
+            if capture_only { checked.without_renewal() } else { checked }
+        }).collect();
         let polls = self.update_vehicles(|vehicles| vehicles.begin_polls(verified));
         for poll in polls {
             let result = poll.read();
-            let current_games = self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone();
+            let current_games = self.vehicle_telemetry_games(capture_only);
             let result = result.verify(&current_games, |id| {
                 let key = current_games.iter().find(|game| game["id"] == id)
                     .and_then(crate::game_discovery::integration_key).unwrap_or("");
                 self.setup.provider_setup_revision(key)
-            }, |process| self.platform.alive(process).unwrap_or(false));
+            }, alive);
             self.update_vehicles(|vehicles| vehicles.apply_poll(result));
         }
     }

@@ -100,6 +100,7 @@ struct Entry {
     polling: bool,
     opening: Option<u64>,
     detached_physics: Option<crate::dcs_physics::SourceView>,
+    capture_watch: Option<crate::acr_windows::Watch>,
     inventory_revision: u64,
     published: Visible,
     published_capture: Option<std::sync::Weak<Capture>>,
@@ -115,11 +116,19 @@ pub(crate) struct Tracker {
     retired: Vec<Reader>,
     changes: Option<Arc<crate::game_read_models::signals::Signal>>,
     published_deadline: Option<Instant>,
+    capture_wake: Option<Arc<osg_streams::NativeWake>>,
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
     fn installation_fields(game: &Value) -> [Value; 5] {
         ["installPath", "executable", "installed", "integrationKey", "provider"].map(|field| game[field].clone())
+    }
+    pub(crate) fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
+        for entry in self.entries.values_mut() {
+            entry.capture_watch = entry.reader.as_ref()
+                .and_then(|reader| reader.capture_watch(wake.clone()).ok().flatten());
+        }
+        self.capture_wake = Some(wake);
     }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let weak = Arc::downgrade(&changes);
@@ -256,6 +265,7 @@ impl Tracker {
             retired: vec![],
             changes: None,
             published_deadline: None,
+            capture_wake: None,
         }
     }
 

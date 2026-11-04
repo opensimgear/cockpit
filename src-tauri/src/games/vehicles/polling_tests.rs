@@ -28,6 +28,20 @@ fn take_poll(tracker: &mut Tracker) -> VehiclePoll {
     tracker.begin_polls(candidates).pop().unwrap()
 }
 #[test]
+fn capture_drain_does_not_extend_the_process_observation() {
+    let (_directory, mut tracker, game) = fixture();
+    assert!(tracker.capture_candidates().is_empty());
+    let entry = tracker.entries.get_mut("x-plane-12").unwrap();
+    entry.observed = Instant::now() - Duration::from_secs(1);
+    let observed = entry.observed;
+    let checked = tracker.poll_candidates().pop().unwrap()
+        .verify(&[game], |_| "setup".into(), |_| true).without_renewal();
+    let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
+    tracker.apply_poll(poll.read());
+    assert_eq!(tracker.entries["x-plane-12"].observed, observed);
+}
+
+#[test]
 fn late_poll_cannot_restore_replaced_or_withdrawn_process_reader() {
     for changed in ["epoch", "process", "setup", "installation", "expiry"] {
         let (_directory, mut tracker, game) = fixture();
