@@ -204,6 +204,17 @@ impl GameIntegrationSetup {
         self.inner.retain_setup_scopes(catalogue);
         self.refresh_admitted(catalogue);
     }
+
+    pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {
+        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        for game in catalogue.iter().filter(|game| {
+            crate::game_discovery::integration_key(game)
+                .is_some_and(|key| key == "dcs" || key.starts_with("assetto-corsa"))
+        }) {
+            self.refresh_admitted(std::slice::from_ref(game));
+        }
+    }
+
     // Request admission already owns this mutex. Keep passive inspection and
     // its state publication together so it cannot overwrite a new setup worker.
     fn refresh_admitted(&self, catalogue: &[Value]) {

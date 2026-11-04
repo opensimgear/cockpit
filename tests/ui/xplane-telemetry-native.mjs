@@ -9,7 +9,8 @@ import {promisify} from 'node:util';
 import {mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
 
-const enabled=process.env.OSG_XPLANE_TELEMETRY_NATIVE==='1',execute=promisify(execFile);
+const setupOnly=process.env.OSG_XPLANE_SETUP_NATIVE==='1';
+const enabled=setupOnly||process.env.OSG_XPLANE_TELEMETRY_NATIVE==='1',execute=promisify(execFile);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const near=(actual,expected)=>typeof actual==='number'&&Math.abs(actual-expected)<1e-5*Math.max(1,Math.abs(expected));
 const normalizedPath=value=>value.replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
@@ -85,12 +86,12 @@ async function publisher(version){
   };
 }
 
-test('full installed X-Plane metadata supplies selected physics and canonical channels to native processing',{skip:!enabled,timeout:600000},async t=>{
+test(setupOnly?'X-Plane setup readiness survives the external inspection interval':'full installed X-Plane metadata supplies selected physics and canonical channels to native processing',{skip:!enabled,timeout:600000},async t=>{
   assert.equal(process.platform,'win32');
   const directory=resolve('.research/xplane-telemetry-native',String(Date.now()));await mkdir(directory,{recursive:true});
   const cdp=await connect();t.after(()=>cdp.close());
   await wait(async()=>{try{return await cdp.evaluate("typeof window.__TAURI_INTERNALS__?.invoke==='function'");}catch{return false;}},'Native Cockpit IPC did not initialize',60000);
-  const evidence={actualNativeCockpit:true,authoredRrefPublisher:true,actualSimulatorQualified:false,ipcOnly:true,noPhysicalOutputs:true,games:[],checks:[]};
+  const evidence={actualNativeCockpit:true,authoredRrefPublisher:!setupOnly,actualSimulatorQualified:false,ipcOnly:true,noPhysicalOutputs:true,games:[],checks:[]};
   const request=async value=>{
     await writeFile(resolve(directory,'last-request.json'),JSON.stringify({command:value.command,gameId:value.gameId,offset:value.offset,at:new Date().toISOString()})+'\n');
     const reply=await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'expanded-xplane-native-acceptance'})}})`);
@@ -137,6 +138,14 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
         await request({command:'game_installation_select',gameId,installationId:fixtureInstallation.id});
         await request({command:'game_integration_setup',gameId,connection:{host:'127.0.0.1',port:telemetry.port,listenPort:0,updateHz:20,freshnessMs:500}});
         record.setup=await wait(async()=>{const game=(await gameState()).catalogue.find(game=>game.id===gameId);return game.integrationSetup?.state==='ready'&&game.integrationSetup;},`${name} installation setup never completed`);
+        if(setupOnly){
+          await sleep(2300);
+          const settled=(await gameState()).catalogue.find(game=>game.id===gameId).integrationSetup;
+          assert.equal(settled.state,'ready');
+          assert.equal(settled.providerSetupRevision,record.setup.providerSetupRevision);
+          evidence.checks.push(name+' setup stayed ready at the same committed revision.');
+          continue;
+        }
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
         await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
         await wait(async()=>{

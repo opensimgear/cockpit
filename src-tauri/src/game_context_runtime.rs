@@ -409,8 +409,11 @@ impl Inner {
             .context_setup_check
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if force_setup || checked.is_none_or(|last| last.elapsed() >= Duration::from_secs(2)) {
+        if force_setup || checked.is_none() {
             self.setup.refresh(&games);
+            *checked = Some(Instant::now());
+        } else if checked.is_some_and(|last| last.elapsed() >= Duration::from_secs(2)) {
+            self.setup.refresh_external_setup(&games);
             *checked = Some(Instant::now());
         }
         drop(checked);

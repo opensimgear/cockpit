@@ -23,6 +23,15 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
         assert_eq!(game["integrationSetup"]["installed"], true);
         assert_eq!(game["integrationSetup"]["removable"], true);
     }
+    let (entered, _observed) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    release.send(()).unwrap();
+    *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
+    runtime.refresh_external_setup(std::slice::from_ref(&xplane));
+    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
+    runtime.refresh_external_setup(std::slice::from_ref(&acr));
+    assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
+
     for game in [&xplane, &acr] {
         runtime
             .request(

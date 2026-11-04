@@ -28,9 +28,16 @@ own resource worker on commits and first readiness.
 The game-context owner parks after its initial pass when the library has no
 configured integration. A committed library replacement wakes the owner after
 the new catalogue is visible. Configured integrations still use the 500 ms
-process pass and the two-second provider setup recheck. The vehicle capture
-worker and explicit launch and setup checks are separate. Removing the
-configured-integration recheck requires native invalidations for provider files.
+process pass. The two-second external setup recheck covers DCS and Assetto.
+X-Plane setup readiness comes from committed local settings and executable
+selection. Its SDK catalogue has a separate file dependency. The vehicle
+capture worker and explicit launch and setup checks are separate.
+
+| Provider | External source still requiring native invalidation |
+| --- | --- |
+| DCS | Saved Games folder discovery, managed export and BIOS scripts, catalogue JSON, and selected optional aircraft mod files. |
+| Assetto | The selected executable and, for Rally or Competizione, the supported sibling runtime executable when the selection is a launcher. |
+| X-Plane | The selected installation's SDK catalogue at `Resources/plugins/DataRefs.txt`. |
 
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
