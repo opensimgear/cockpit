@@ -23,16 +23,20 @@ native arrival/removal notifications. Changes in the serial topology cache,
 including enumeration failure and recovery, wake the aggregate resource worker.
 Unchanged enumeration results leave it parked. USB fleet identity and capability
 changes also wake the worker, which projects cached USB state without starting
-another device probe. The one-second fallback still retries endpoint
-connections and reads other provider models. Host-controller metadata wakes its
-own resource worker on commits and first readiness.
+another device probe. The aggregate worker parks when sources have no pending
+work. Missing endpoint capabilities retain bounded retry delays. Catalogue
+failures, catalogues without an active file watch, and publication evidence
+expiry schedule cache projection separately.
+Host-controller metadata wakes its own resource worker on commits and first
+readiness.
 
 Companion pairing, assignment and transport readiness wake resource projection
 from the native host. An accepted input baseline makes the transport visible
 to profile inventory. Ordinary input values do not drive inventory updates.
 STM32 gateway cache commits wake inventory for connection, module identity and
 capability changes. Input cursors, output receipts and timestamp-only commits
-stay off the inventory path. Missing capability probes still use the fallback.
+stay off the inventory path. A fresh timestamp after expired evidence wakes
+inventory so the new proof can be used.
 Game library commits, setup and process context changes, and current vehicle
 changes wake profile inventory. Watched SDK and DCS catalogue changes also
 invalidate the profile inventory's catalogue cache by source generation.
@@ -68,7 +72,7 @@ worker and explicit launch and setup checks are separate.
 | Controller input | controller-input capture + stream journal | Windows report receive publishes batches; replace Linux/macOS 4 ms backend polling with platform report streams; share journal wakeups and descriptor cache |
 | Controller/device visibility | HostControllers, DeviceVisibility, visibility coordinator | Platform device/process notifications plus acknowledged visibility mutations; quiet controls remain connected |
 | USB/CAN/module inputs | Direct CDC input stream and advertised CAN panel stream with boot/config fences | Verify physical burst continuity, disconnect and rebaseline. Explicit diagnostic journal reads are separate from native acquisition. |
-| Resource/system inventory | profile_resources native discovery 1 s; system_inventory cache miss I/O | Device/process/commit invalidation; collectors run off capture path, publish committed cache revision; passive subscriptions never collect/mint tokens |
+| Resource/system inventory | Device/process/commit invalidation with retries for unresolved resources and one-shot evidence expiry | Qualify the remaining system inventory cache miss I/O; collectors run off capture path and publish committed cache revisions |
 | Profile library/editor/resources/ports | ProfilesPanel and editor previews | Durable document/resource commits and capture topics; revision-pinned pages, query replacement disposal |
 | Runtime/activation/progress | profile_session_host health drain; activation windows 150/200 ms | Source/completion wakeups and next authored deadline; publish health/progress commits; independent Stop, compensation and heartbeat |
 | Automatic selection/recovery/learning | UI status loops and native game/process tracking | Process notifications, explicit recovery/learning transitions and captured input; no authority in passive subscribers |

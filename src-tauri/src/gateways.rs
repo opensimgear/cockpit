@@ -378,7 +378,7 @@ impl GatewayManager {
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
         let host_inventory_wake = Arc::new(osg_streams::NativeWake::default());
-        let (collect, project, collect_host) = crate::profile_resource_sources::collector(
+        let (collect, project, collect_host, schedule) = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().filter_map(|(id, adapter)| {
                 let state = adapter.cached_state();
@@ -397,7 +397,7 @@ impl GatewayManager {
             }),
             module_usb.clone(), native,
         );
-        let profile_resources = Arc::new(crate::profile_resources::Runtime::new_with_projection(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, project, native));
+        let profile_resources = Arc::new(crate::profile_resources::Runtime::new_with_projection(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, project, schedule, native));
         if native {
             serial_topology.watch_inventory(profile_resources.inventory_wake());
             companion_host.watch_resource_inventory(profile_resources.projection_wake());

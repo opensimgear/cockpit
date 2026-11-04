@@ -2,7 +2,9 @@
 //! absence can establish that a physical publisher is disabled.
 use crate::module_usb_fleet::SlotSnapshot;
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const FRESH_MS: u64 = 3000;
 
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
@@ -14,7 +16,15 @@ pub(crate) fn now_ms() -> u64 {
 fn fresh(value: Option<u64>, now: u64) -> bool {
     value
         .and_then(|at| now.checked_sub(at))
-        .is_some_and(|age| age <= 3000)
+        .is_some_and(|age| age <= FRESH_MS)
+}
+pub(crate) fn freshness_delay(value: Option<u64>, now: u64) -> Option<Duration> {
+    let remaining = value?.checked_add(FRESH_MS + 1)?.checked_sub(now)?;
+    (remaining > 0).then(|| Duration::from_millis(remaining))
+}
+
+pub(crate) fn freshness_restored(before: Option<u64>, after: Option<u64>, now: u64) -> bool {
+    before != after && !fresh(before, now) && fresh(after, now)
 }
 pub(crate) fn can_status(gateway: &str, state: &Value, module: &Value) -> &'static str {
     let uid = state["gatewaySerial"].as_str().unwrap_or("");

@@ -48,6 +48,11 @@ impl Cache {
             let changed = visible_changed || snapshot.owners != owners;
             let inventory = snapshot.inventory_wake.upgrade().filter(|_| {
                 visible_changed && inventory_changed(&snapshot.state, &state)
+                    || state["connected"] == true && crate::profile_resource_sources::hid_publication::freshness_restored(
+                        snapshot.state["nativeSnapshotAtMs"].as_u64(),
+                        state["nativeSnapshotAtMs"].as_u64(),
+                        crate::profile_resource_sources::hid_publication::now_ms(),
+                    )
             });
             if snapshot.state.as_ref() != &state { snapshot.state = Arc::new(state); }
             if visible_changed { snapshot.visible = Arc::new(visible); }

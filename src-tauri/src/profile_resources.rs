@@ -19,6 +19,13 @@ use std::{
 
 pub(crate) type Collect =
     Arc<dyn Fn(u64) -> Vec<(String, Result<ProviderBatch, String>)> + Send + Sync>;
+pub(crate) type Schedule = Arc<dyn Fn(Instant, u64) -> InventorySchedule + Send + Sync>;
+
+#[derive(Default)]
+pub(crate) struct InventorySchedule {
+    pub retry_discovery: bool,
+    pub project_at: Option<Instant>,
+}
 type PreparedBatches = Vec<(String, Result<(ProviderBatch, String), String>)>;
 /// Native Hub-verified desired metadata. Never accepted from an IPC request.
 #[derive(Clone)]
@@ -428,13 +435,14 @@ impl Runtime {
 
     #[cfg(test)]
     pub(crate) fn new(root: Option<PathBuf>, collect: Collect, native: bool) -> Self {
-        Self::new_with_projection(root, collect.clone(), collect, native)
+        Self::new_with_projection(root, collect.clone(), collect, Arc::new(|_, _| InventorySchedule::default()), native)
     }
 
     pub(crate) fn new_with_projection(
         root: Option<PathBuf>,
         collect: Collect,
         project: Collect,
+        schedule: Schedule,
         native: bool,
     ) -> Self {
         let store = root.map(Store::new);
@@ -494,12 +502,15 @@ impl Runtime {
                             .expect("resource inventory wake has one owner");
                         projection_signal.bind_thread(thread::current())
                             .expect("inventory projection wake has one owner");
-                        let mut seen_discovery = wake.observed();
-                        let mut deadline = Instant::now();
+                        let mut seen_discovery = None;
+                        let mut retry = None::<Instant>;
                         while !stopped.load(Ordering::Acquire) {
                             let observed = wake.observed();
                             let projection_observed = projection_signal.observed();
-                            let discover = observed != seen_discovery || Instant::now() >= deadline;
+                            let now = Instant::now();
+                            let wall_ms = crate::profile_resource_sources::hid_publication::now_ms();
+                            let discover = seen_discovery != Some(observed)
+                                || retry.is_some_and(|at| at <= now);
                             {
                                 let _collector =
                                     collectors.lock().unwrap_or_else(|p| p.into_inner());
@@ -518,15 +529,23 @@ impl Runtime {
                                 Self::adopt_prepared(&state, batches);
                             }
                             Self::persist(&state, &persistence);
-                            // Providers that still lack notifications share the
-                            // existing recovery interval.
-                            if discover {
-                                seen_discovery = observed;
-                                deadline = Instant::now() + Duration::from_secs(1);
-                            }
+                            let next = schedule(now, wall_ms);
+                            seen_discovery = Some(observed);
+                            retry = next.retry_discovery.then(|| {
+                                retry.filter(|_| !discover)
+                                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
+                            });
+                            let pending_save = {
+                                let state = state.lock().unwrap_or_else(|p| p.into_inner());
+                                !state.read_only && state.pending_save
+                            };
+                            let expiry = next.project_at.into_iter()
+                                .chain(pending_save.then(|| Instant::now() + Duration::from_secs(1)))
+                                .min();
+                            let deadline = retry.into_iter().chain(expiry).min();
                             while !stopped.load(Ordering::Acquire) && projection_signal.observed() == projection_observed {
-                                let remaining = deadline.saturating_duration_since(Instant::now());
-                                if remaining.is_zero() || !wake.wait(observed, remaining) {
+                                let remaining = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+                                if remaining.is_some_and(|delay| delay.is_zero()) || !wake.wait_scheduled(observed, remaining) {
                                     break;
                                 }
                             }

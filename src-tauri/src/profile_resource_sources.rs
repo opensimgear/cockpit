@@ -3,7 +3,7 @@
 pub(crate) mod hid_publication;
 use crate::{
     profile_resource_ports as ports,
-    profile_resources::{attributes, batch, Collect},
+    profile_resources::{attributes, batch, Collect, InventorySchedule, Schedule},
 };
 use osg_profiles::resources::{
     EvidenceKind, IdentityEvidence, Observation, ProviderBatch, ResourceType, Route, Transport,
@@ -65,7 +65,7 @@ struct Sources {
     can_scopes: BTreeSet<String>,
     can_retained: BTreeMap<String, Vec<Observation>>,
     refreshing: Arc<Mutex<BTreeSet<String>>>,
-    catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>, Option<u64>)>,
+    catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>, Option<u64>, String)>,
 }
 pub(crate) fn collector(
     controllers: Arc<osg_controller_input::ControllerService>,
@@ -76,7 +76,7 @@ pub(crate) fn collector(
     panel: Panel,
     usb: Arc<crate::module_usb_fleet::Fleet>,
     native: bool,
-) -> (Collect, Collect, Collect) {
+) -> (Collect, Collect, Collect, Schedule) {
     let host_usb_evidence = Arc::new(Mutex::new(HostUsbEvidence::default()));
     let host_controllers = controllers.clone();
     let sources = Arc::new(Mutex::new(Sources {
@@ -96,6 +96,7 @@ pub(crate) fn collector(
         catalogues: BTreeMap::new(),
     }));
     let cached_sources = sources.clone();
+    let scheduled_sources = sources.clone();
     let aggregate = Arc::new(move |revision| {
         sources
             .lock()
@@ -112,7 +113,10 @@ pub(crate) fn collector(
         let evidence = host_usb_evidence.lock().unwrap_or_else(|p| p.into_inner());
         vec![("host-controllers".into(), collect_host(&host_controllers, &evidence, revision))]
     });
-    (aggregate, project_usb, host)
+    let schedule = Arc::new(move |now, wall_ms| {
+        scheduled_sources.lock().unwrap_or_else(|p| p.into_inner()).schedule(now, wall_ms)
+    });
+    (aggregate, project_usb, host, schedule)
 }
 fn evidence(kind: EvidenceKind, value: String) -> IdentityEvidence {
     IdentityEvidence { kind, value }

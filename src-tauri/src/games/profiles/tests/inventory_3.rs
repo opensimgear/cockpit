@@ -62,6 +62,7 @@ fn dormant_game_catalogue_failure_recovers_without_starting_an_integration() {
             setup_revision,
             Err("Catalogue unavailable".into()),
             sources.games.resource_catalogue_generation("x-plane-11"),
+            "x-plane-11".into(),
         ),
     );
     let batches = sources.collect(1);
@@ -137,6 +138,36 @@ fn game_catalogue_cache_is_scoped_by_game_and_invalidates_changed_setup_revision
     assert!(refreshed.ports.as_ref().unwrap().total > 0);
 }
 #[test]
+fn inventory_schedule_distinguishes_idle_retries_and_freshness() {
+    let (mut sources, _temporary) = sources();
+    let now = Instant::now();
+    let idle = sources.schedule(now, 1000);
+    assert!(!idle.retry_discovery);
+    assert!(idle.project_at.is_none());
+
+    sources.collect_games(1);
+    let catalogue = sources.catalogues.get_mut("x-plane-11").unwrap();
+    assert!(catalogue.2.is_ok());
+    catalogue.0 = now;
+    sources.catalogues.retain(|id, _| id == "x-plane-11");
+    let unwatched = sources.schedule(now, 1000);
+    assert_eq!(unwatched.project_at, Some(now + Duration::from_secs(60)));
+    sources.catalogues.get_mut("x-plane-11").unwrap().2 = Err("Unavailable".into());
+    assert_eq!(sources.schedule(now, 1000).project_at, Some(now + Duration::from_secs(5)));
+
+    let mut gateway = can_state();
+    gateway["nativeSnapshotAtMs"] = json!(1000);
+    gateway["moduleActions"] = json!({});
+    sources.gateways = Arc::new(move || vec![("gateway".into(), gateway.clone())]);
+    let unresolved = sources.schedule(now, 1000);
+    assert!(unresolved.retry_discovery);
+    assert_eq!(unresolved.project_at, Some(now + Duration::from_millis(3001)));
+    let expired = sources.schedule(now + Duration::from_millis(3001), 4001);
+    assert!(expired.retry_discovery);
+    assert_eq!(expired.project_at, Some(now + Duration::from_secs(5)));
+}
+
+#[test]
 fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_gateway() {
     let (mut sources, _temporary) = sources();
     sources.native = true;
@@ -183,7 +214,7 @@ fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_
 #[test]
 fn retained_collector_preserves_provider_sessions_across_read_only_refreshes() {
     let (sources, _temporary) = sources();
-    let (collect, _, _) = collector(
+    let (collect, _, _, _) = collector(
         sources.controllers,
         sources.companions,
         sources.host,

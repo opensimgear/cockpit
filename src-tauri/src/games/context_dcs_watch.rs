@@ -38,6 +38,7 @@ impl DcsWatch {
             self.pending = self.source.active();
             inner.setup.set_setup_watch("dcs", self.pending);
             inner.setup.set_dcs_discovery_watch(self.pending && children.is_some());
+            if !self.pending { inner.changes.mark_resources(); }
         }
         if self.pending {
             if let Some(game) = &game {

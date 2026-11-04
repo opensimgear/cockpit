@@ -92,6 +92,8 @@ mod tests {
     fn aggregate_inventory_projects_usb_changes_without_restarting_discovery() {
         let (sent, received) = mpsc::channel();
         let projected = sent.clone();
+        let deadline = Arc::new(std::sync::Mutex::new(None));
+        let schedule = deadline.clone();
         let runtime = Runtime::new_with_projection(
             None,
             Arc::new(move |revision| {
@@ -102,13 +104,20 @@ mod tests {
                 projected.send((revision, "cached")).unwrap();
                 Vec::new()
             }),
+            Arc::new(move |now, _| super::super::InventorySchedule {
+                retry_discovery: false,
+                project_at: schedule.lock().unwrap().filter(|at| *at > now),
+            }),
             true,
         );
         assert_eq!(received.recv_timeout(Duration::from_secs(2)).unwrap(), (1, "discovery"));
+        assert!(received.recv_timeout(Duration::from_millis(1100)).is_err());
+        *deadline.lock().unwrap() = Some(std::time::Instant::now() + Duration::from_millis(250));
         runtime.projection_wake().notify();
         assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (2, "cached"));
+        assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (3, "cached"));
         runtime.inventory_wake().notify();
-        assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (3, "discovery"));
+        assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (4, "discovery"));
         runtime.shutdown();
     }
 

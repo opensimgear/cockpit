@@ -27,6 +27,7 @@ impl SdkWatches {
         let mut changed = false;
         for ((watch, path), id) in self.0.iter_mut().zip(paths).zip(XPLANE) {
             if watch.refresh(path.into_iter().collect()) {
+                inner.setup.set_setup_watch(id, watch.active());
                 inner.setup.invalidate_xplane_catalogue(id);
                 changed = true;
             }

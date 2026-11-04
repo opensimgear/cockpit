@@ -400,6 +400,21 @@ impl Fleet {
         }
         Ok(state.slots.iter().map(|(key, slot)| snapshot(key, slot, None)).collect())
     }
+    pub(crate) fn inventory_retry_needed(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.diagnostic.is_none() && state.slots.values().any(|slot| {
+            if !slot.present || !slot.automatic || slot.suppressed || slot.ambiguous {
+                return false;
+            }
+            slot.service.as_ref().is_none_or(|service| {
+                let snapshot = service.snapshot();
+                let route = json!(snapshot.route);
+                !snapshot.connected
+                    || snapshot.events.as_ref().is_none_or(|events| events["route"] != route)
+                    || snapshot.actions.as_ref().is_none_or(|actions| actions["route"] != route)
+            })
+        })
+    }
     pub(crate) fn output_activity(&self)->bool{
         if self.endpoint_activity.active(){return true;}
         self.state.lock().unwrap_or_else(|p|p.into_inner()).slots.values().any(|slot|slot.service.as_ref().is_some_and(|service|service.output_activity())||slot.retiring_service.as_ref().is_some_and(|service|service.output_activity()))

@@ -1,4 +1,39 @@
+fn catalogue_age(integration: &str, ready: bool) -> Duration {
+    if ready && integration.starts_with("x-plane-") {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
 impl Sources {
+    fn schedule(&self, now: Instant, wall_ms: u64) -> InventorySchedule {
+        let gateways = (self.gateways)();
+        let can_expiry = gateways.iter().map(|(_, state)| state)
+            .filter(|state| state["connected"] == true && state["canProtocol"] == 3
+                && state["modules"].as_array().is_some_and(|modules| !modules.is_empty()))
+            .filter_map(|state| hid_publication::freshness_delay(state["nativeSnapshotAtMs"].as_u64(), wall_ms));
+        let slots = self.usb.snapshots();
+        let usb_expiry = slots.iter().filter(|slot| slot.present && slot.admissible
+            && slot.snapshot.connected && slot.snapshot.config.is_some())
+            .filter_map(|slot| hid_publication::freshness_delay(slot.snapshot.observed_at_ms, wall_ms));
+        let catalogue_retry = self.catalogues.values()
+            .filter_map(|(captured, _, result, generation, integration)| {
+                if result.is_err() {
+                    return Some(*captured + catalogue_age(integration, false));
+                }
+                (generation.is_some() && !self.games.resource_catalogue_watched(integration))
+                    .then(|| *captured + catalogue_age(integration, true))
+            })
+            .filter(|deadline| *deadline > now);
+        InventorySchedule {
+            retry_discovery: self.usb.inventory_retry_needed()
+                || gateways.iter().any(|(_, state)| Self::missing_can_capabilities(state).next().is_some()),
+            project_at: can_expiry.chain(usb_expiry).filter_map(|delay| now.checked_add(delay))
+                .chain(catalogue_retry).min(),
+        }
+    }
+
     fn collect_games(&mut self, revision: u64) -> Vec<(String, Result<ProviderBatch, String>)> {
         let scope = "game-catalogue";
         let catalogue = match self.games.authoritative_resource_catalogue() {
@@ -81,15 +116,10 @@ impl Sources {
             if self
                 .catalogues
                 .get(id)
-                .is_none_or(|(at, revision, result, generation)| {
+                .is_none_or(|(at, revision, result, generation, _)| {
                     revision != setup_revision
                         || *generation != catalogue_generation
-                        || at.elapsed()
-                            >= if result.is_ok() && integration.starts_with("x-plane-") {
-                                Duration::from_secs(60)
-                            } else {
-                                Duration::from_secs(5)
-                            }
+                        || at.elapsed() >= catalogue_age(integration, result.is_ok())
                 })
             {
                 self.catalogues.insert(
@@ -101,6 +131,7 @@ impl Sources {
                             .resource_integration_catalogue(id)
                             .and_then(GameCatalogue::parse),
                         catalogue_generation,
+                        integration.into(),
                     ),
                 );
             }
@@ -177,7 +208,7 @@ impl Sources {
                 for module in modules {
                     let key = format!("{id}:{module}");
                     let scope = format!("game:{key}");
-                    if self.catalogues.get(&key).is_none_or(|(at, known, _, generation)| {
+                    if self.catalogues.get(&key).is_none_or(|(at, known, _, generation, _)| {
                         known != setup_revision || *generation != catalogue_generation
                             || at.elapsed() >= Duration::from_secs(5)
                     }) {
@@ -187,7 +218,7 @@ impl Sources {
                             .and_then(GameCatalogue::parse);
                         self.catalogues.insert(
                             key.clone(),
-                            (Instant::now(), setup_revision.into(), capture, catalogue_generation),
+                            (Instant::now(), setup_revision.into(), capture, catalogue_generation, integration.into()),
                         );
                     }
                     let mut item = base.clone();

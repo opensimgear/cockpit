@@ -223,6 +223,9 @@ impl GameIntegrationSetup {
     pub(crate) fn catalogue_generation(&self, id: &str) -> Option<u64> {
         self.inner.catalogue_generation(id).map(|generation| generation.load(Ordering::Acquire))
     }
+    pub(crate) fn catalogue_watched(&self, id: &str) -> bool {
+        self.inner.watched_setup.lock().unwrap_or_else(|p| p.into_inner()).contains(id)
+    }
 
     pub(crate) fn dcs_setup_watch_scope(&self, game: &Value) -> Option<(PathBuf, Option<PathBuf>)> {
         let install = game["installPath"].as_str().map(Path::new).filter(|path| path.is_absolute());

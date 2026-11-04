@@ -37,6 +37,7 @@ impl Fleet {
         let initial = self.snapshots();
         let mut previous = inventory_signature(&initial);
         let mut previous_profiles = profile_wake.as_ref().map(|_| profile_signature(&initial));
+        let mut previous_stamps = profile_wake.as_ref().map(|_| stamps(&initial));
         let fleet = Arc::downgrade(self);
         let runtime = runtime.clone();
         let active = publisher.clone();
@@ -51,7 +52,15 @@ impl Fleet {
                 let rows = inventory_signature(&slots);
                 if let Some(wake) = profile_wake.as_ref().and_then(|wake| wake.upgrade()) {
                     let profiles = profile_signature(&slots);
-                    if previous != rows || previous_profiles.as_ref() != Some(&profiles) {
+                    let current_stamps = stamps(&slots);
+                    let now = crate::profile_resource_sources::hid_publication::now_ms();
+                    let restored = previous_stamps.as_ref().is_some_and(|prior| {
+                        prior.iter().zip(&current_stamps).any(|(&before, &after)| {
+                            crate::profile_resource_sources::hid_publication::freshness_restored(before, after, now)
+                        })
+                    });
+                    previous_stamps = Some(current_stamps);
+                    if restored || previous != rows || previous_profiles.as_ref() != Some(&profiles) {
                         previous_profiles = Some(profiles);
                         wake.notify();
                     }
@@ -84,6 +93,10 @@ fn inventory_signature(slots: &[SlotSnapshot]) -> Vec<Value> {
 
 fn profile_signature(slots: &[SlotSnapshot]) -> Vec<Value> {
     slots.iter().cloned().map(crate::profile_resource_sources::usb_inventory_entry).collect()
+}
+
+fn stamps(slots: &[SlotSnapshot]) -> Vec<Option<u64>> {
+    slots.iter().map(|slot| slot.snapshot.observed_at_ms).collect()
 }
 
 impl Drop for Observation {

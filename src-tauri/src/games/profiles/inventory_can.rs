@@ -156,16 +156,13 @@ impl Sources {
         }
         Ok(observed)
     }
-    fn refresh_can_capabilities(&self, id: &str, state: &Value) {
-        if !self.native || state["connected"] != true {
-            return;
-        }
-        let modules = state["modules"]
+    fn missing_can_capabilities(state: &Value) -> impl Iterator<Item = (&Value, Vec<&'static str>)> {
+        state["modules"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|m| m["online"] == true && m["canConfigure"] == true)
-            .filter_map(|module| {
+            .filter(move |m| state["connected"] == true && m["online"] == true && m["canConfigure"] == true)
+            .filter_map(move |module| {
                 let id = module["id"].as_str()?;
                 let expected = json!([
                     state["epoch"],
@@ -190,9 +187,13 @@ impl Sources {
                 .into_iter()
                 .filter_map(|(command, known)| (!known).then_some(command))
                 .collect::<Vec<_>>();
-                (!commands.is_empty()).then(|| (module.clone(), commands))
+                (!commands.is_empty()).then_some((module, commands))
             })
-            .collect::<Vec<_>>();
+    }
+    fn refresh_can_capabilities(&self, id: &str, state: &Value) {
+        if !self.native { return; }
+        let modules = Self::missing_can_capabilities(state).take(32)
+            .map(|(module, commands)| (module.clone(), commands)).collect::<Vec<_>>();
         if modules.is_empty()
             || !self
                 .refreshing
@@ -206,7 +207,7 @@ impl Sources {
         let pending = self.refreshing.clone();
         let gateway = id.to_owned();
         thread::spawn(move || {
-            for (module, commands) in modules.into_iter().take(32) {
+            for (module, commands) in modules {
                 for command in commands {
                     let _ = panel(
                         json!({"command":command,"gatewayId":gateway,"moduleId":module["id"],"boot":module["boot"],"clientId":"profile-resource-discovery"}),
