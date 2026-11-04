@@ -3548,11 +3548,13 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "espflash",
+ "libc",
  "osg-companion-service",
  "serde_json",
  "serialport",
  "sha2",
  "uuid",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

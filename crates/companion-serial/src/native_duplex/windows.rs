@@ -132,8 +132,8 @@ impl DeadlineWriter for Writer {
         Ok(())
     }
 }
-pub(super) fn open(port: &PortInfo) -> Result<DuplexParts, String> {
-    let path = if port.path.starts_with('\\') { port.path.clone() } else { format!("\\\\.\\{}", port.path) };
+pub(super) fn open(path: &str, baud: u32) -> Result<DuplexParts, String> {
+    let path = if path.starts_with('\\') { path.to_owned() } else { format!("\\\\.\\{}", path) };
     let path = path.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
     let port = unsafe { CreateFileW(path.as_ptr(), GENERIC_READ | GENERIC_WRITE, 0, ptr::null(), OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, ptr::null_mut()) };
@@ -141,9 +141,9 @@ pub(super) fn open(port: &PortInfo) -> Result<DuplexParts, String> {
     let port = Handle(port);
     let mut dcb: DCB = unsafe { std::mem::zeroed() };dcb.DCBlength = std::mem::size_of::<DCB>() as u32;
     if unsafe { GetCommState(port.0, &mut dcb) } == 0 { return Err(error("Could not read USB serial configuration")); }
-    dcb.BaudRate = 115_200;dcb.ByteSize = 8;dcb.Parity = NOPARITY;dcb.StopBits = ONESTOPBIT;
+    dcb.BaudRate = baud;dcb.ByteSize = 8;dcb.Parity = NOPARITY;dcb.StopBits = ONESTOPBIT;
     dcb._bitfield = 1; // Binary; no parity, software/hardware flow, DTR or RTS handshake.
-    if unsafe { SetCommState(port.0, &dcb) } == 0 { return Err(error("Could not configure USB 115200 8N1")); }
+    if unsafe { SetCommState(port.0, &dcb) } == 0 { return Err(error("Could not configure USB serial 8N1")); }
     let timeouts: COMMTIMEOUTS = unsafe { std::mem::zeroed() };
     if unsafe { SetCommTimeouts(port.0, &timeouts) } == 0 { return Err(error("Could not disable USB serial polling timeouts")); }
     let shared = Arc::new(Shared { port, stop: event()?, stopped: AtomicBool::new(false) });

@@ -89,8 +89,7 @@ fn serial_adapter_contract_delivers_first_byte_and_rejects_unavailable_control_s
 
 #[test]
 fn absent_native_device_open_reports_the_os_error_without_creating_a_device(){
-    let port=PortInfo{path:format!("\\\\.\\pipe\\osg-absent-{}",uuid::Uuid::new_v4()),
-        serial_number:None,vendor_id:None,product_id:None,manufacturer:None,friendly_name:None};
-    let error=open(&port).err().expect("a nonexistent private endpoint cannot open");
+    let path=format!("\\\\.\\pipe\\osg-absent-{}",uuid::Uuid::new_v4());
+    let error=open(&path, 115_200).err().expect("a nonexistent private endpoint cannot open");
     assert!(error.contains("Could not open USB duplex port"));
 }

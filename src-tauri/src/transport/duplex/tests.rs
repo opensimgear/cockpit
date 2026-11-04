@@ -76,17 +76,3 @@ fn unix_sockets_cancel_without_read_timeouts_and_support_duplex() {
     let (parts, _peer) = sockets::unix_fixture();cancel_blocked(parts);
     let (parts, peer) = sockets::unix_fixture();independent(parts, peer);
 }
-#[cfg(unix)]
-#[test]
-fn native_tty_readiness_wait_has_persistent_cancel_and_independent_writes() {
-    let (parts, _peer) = unix::fixture();cancellation(parts);
-    let (parts, _peer) = unix::fixture();cancel_blocked(parts);
-    let (parts, peer) = unix::fixture();independent(parts, peer);
-}
-#[cfg(unix)]
-#[test]
-fn native_tty_blocked_writes_expire_without_waiting_for_rx() {
-    let (mut parts, _peer) = unix::fixture();let started = Instant::now();
-    assert!(parts.writer.write_all(&vec![0; 1024 * 1024], started + Duration::from_millis(40)).is_err());
-    parts.cancel.cancel();assert!(started.elapsed() < Duration::from_secs(2));
-}

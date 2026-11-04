@@ -108,8 +108,8 @@ fn parts(serial: serialport::TTYPort) -> Result<DuplexParts, String> {
     Ok(DuplexParts { receiver: Box::new(Receiver(shared.clone())), writer: Box::new(Writer(shared.clone())),
         cancel: Arc::new(Cancel(Arc::downgrade(&shared))) })
 }
-pub(super) fn open(port: &PortInfo) -> Result<DuplexParts, String> {
-    let serial = serialport::new(&port.path, 115_200).data_bits(serialport::DataBits::Eight)
+pub(super) fn open(path: &str, baud: u32) -> Result<DuplexParts, String> {
+    let serial = serialport::new(path, baud).data_bits(serialport::DataBits::Eight)
         .parity(serialport::Parity::None).stop_bits(serialport::StopBits::One).flow_control(serialport::FlowControl::None)
         .open_native().map_err(|error| error.to_string())?;
     parts(serial)
@@ -120,3 +120,7 @@ pub(super) fn fixture() -> (DuplexParts, serialport::TTYPort) {
     let (serial, peer) = serialport::TTYPort::pair().unwrap();
     (parts(serial).unwrap(), peer)
 }
+
+#[cfg(test)]
+#[path = "unix_tests.rs"]
+mod tests;

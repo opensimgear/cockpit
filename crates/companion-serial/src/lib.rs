@@ -1,5 +1,6 @@
 //! USB companion transport. Operator messages stay on the local side of Hub.
 mod boot_wait;
+pub mod native_duplex;
 mod flash;
 mod reconnect;
 mod recovery;
