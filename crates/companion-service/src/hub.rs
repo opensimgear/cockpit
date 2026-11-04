@@ -173,6 +173,7 @@ pub struct Hub {
     confirmed_assignments: Arc<Mutex<BTreeMap<String, u64>>>,
     panel_operation_wakes: Arc<Mutex<Vec<std::sync::Weak<osg_streams::NativeWake>>>>,
     presence: presence::Signal,
+    record_changes: presence::Signal,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -380,6 +381,7 @@ impl Hub {
             confirmed_assignments: Arc::new(Mutex::new(BTreeMap::new())),
             panel_operation_wakes: Arc::new(Mutex::new(Vec::new())),
             presence: presence::Signal::default(),
+            record_changes: presence::Signal::default(),
         })
     }
 
@@ -478,6 +480,7 @@ impl Hub {
         // Even an uncertain attempted native edit expires in-flight metadata
         // proofs. This fence grants no ownership and is never a wire field.
         self.record_revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.record_changes.notify();
         if let Some(storage) = &self.storage {
             let bytes = Zeroizing::new(serde_json::to_vec(record).map_err(|e| e.to_string())?);
             let result = if let Some(store)=storage.host_snapshot_store(){store.write_host_record(&bytes)}else{storage.write(&bytes)};
@@ -488,6 +491,7 @@ impl Hub {
     }
     fn persist_content(&self,record:&Record,inner:&Inner)->Result<(),String>{
         self.record_revision.fetch_add(1,std::sync::atomic::Ordering::AcqRel);
+        self.record_changes.notify();
         if let Some(storage)=&self.storage {
             let bytes=Zeroizing::new(serde_json::to_vec(record).map_err(|_|"Cannot encode host state.")?);
             if let Some(store)=storage.host_snapshot_store(){store.write_host_snapshot(&bytes,&Self::content_bytes(inner)?)}else{storage.write(&bytes)}

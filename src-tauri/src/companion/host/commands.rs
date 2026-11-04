@@ -330,11 +330,13 @@ impl Runtime {
                 if services.server.status().enabled{return Err("Companion listener is already enabled.".into());}
                 services.saved_listener.save(Some(config),payload.get("expectedSettingsRevision").map(|v|v.as_u64().ok_or("Invalid listener revision.")).transpose()?)?;
                 self.start_saved_listener(services);
+                self.detection.wake.notify();
                 self.notify_listener(Ok(services));
                 self.status(services)
             }
             "companion_disable" => {
                 services.saved_listener.save_with_effect(None,payload.get("expectedSettingsRevision").map(|v|v.as_u64().ok_or("Invalid listener revision.")).transpose()?,||services.server.stop())?;
+                self.detection.wake.notify();
                 self.notify_listener(Ok(services));
                 self.status(services)
             }

@@ -106,6 +106,7 @@ pub type FlashObserver = Arc<dyn Fn(&Value) + Send + Sync>;
 pub struct Manager {
     flash_observer: Option<FlashObserver>,
     status_observer: StatusObserver,
+    discovery_observer: StatusObserver,
     flash_state: Arc<Mutex<Value>>,
     flash_candidates: Mutex<Vec<Value>>,
     flash_owner: Mutex<Option<String>>,
@@ -116,10 +117,15 @@ pub struct Manager {
     selected: Mutex<Option<String>>,
 }
 impl Manager {
-    pub fn with_observers(observer: FlashObserver, status_changed: impl Fn() + Send + Sync + 'static) -> Self {
+    pub fn with_observers(
+        observer: FlashObserver,
+        status_changed: impl Fn() + Send + Sync + 'static,
+        discovery_changed: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let mut manager = Self::default();
         manager.flash_observer = Some(observer);
         manager.status_observer = StatusObserver::new(status_changed);
+        manager.discovery_observer = StatusObserver::new(discovery_changed);
         manager
     }
 
@@ -155,7 +161,9 @@ impl Manager {
     }
     pub fn attach(&self, port: &str, hub: Hub) -> Result<(), String> {
         let _operation = self.operation.lock().unwrap_or_else(|p| p.into_inner());
-        self.auto_released.store(false, Ordering::SeqCst);
+        if self.auto_released.swap(false, Ordering::SeqCst) {
+            self.discovery_observer.notify();
+        }
         self.attach_inner(port, hub, None)?;
         let mut selected = self.selected.lock().unwrap_or_else(|p|p.into_inner());
         if selected.as_deref() != Some(port) {
@@ -171,7 +179,10 @@ impl Manager {
         }
         *self.flash_state.lock().unwrap_or_else(|p| p.into_inner()) = Value::Null;
         if self.links.lock().unwrap_or_else(|p|p.into_inner()).get(port)
-            .is_some_and(|l|l.join.as_ref().is_some_and(|j|!j.is_finished())){return Ok(());}
+            .is_some_and(|link| link.join.as_ref().is_some_and(|worker| !worker.is_finished())
+                && link.state.lock().unwrap_or_else(|p| p.into_inner())["connected"] == true) {
+            return Ok(());
+        }
         let valid = ports()?
             .as_array()
             .is_some_and(|rows| rows.iter().any(|p| p["port"].as_str() == Some(port)));
@@ -197,6 +208,7 @@ impl Manager {
         let public = state.clone();
         let path = port.to_owned();
         let observer = self.status_observer.clone();
+        let discovery = self.discovery_observer.clone();
         let join = thread::spawn(move || {
             let result = worker(&path, &hub, &rx, &public, expected.as_deref(), &observer);
             if let Err(error) = result {
@@ -219,6 +231,7 @@ impl Manager {
                 state["provisioning"] = json!(false);
             }
             observer.notify();
+            discovery.notify();
         });
         self.links.lock().unwrap_or_else(|p|p.into_inner()).insert(port.into(),Link {
             port: port_name,
@@ -378,41 +391,43 @@ impl Manager {
     }
     /// Only a nonce-matched saved identity already paired with this Hub can reconnect.
     /// Detection never flashes, provisions, resets credentials, or assigns a panel.
-    pub fn reconnect_detected(&self, hub: &Hub) -> Result<(), String> {
+    pub fn reconnect_detected(&self, hub: &Hub) -> Result<Option<Duration>, String> {
         let Ok(_operation) = self.operation.try_lock() else {
-            return Ok(());
+            return Ok(Some(Duration::from_secs(2)));
         };
         if self.auto_released.load(Ordering::SeqCst) {
-            return Ok(());
+            return Ok(None);
         }
         let status = self.status();
         if status["flashing"] == true
             || status["flashFinished"] == true
             || status["flashError"].is_string()
         {
-            return Ok(());
+            return Ok(None);
         }
         let paired = hub.command(&json!({"command":"companion_status"}))?["clients"]
             .as_array()
             .cloned()
             .unwrap_or_default();
         if paired.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let rows = ports()?.as_array().cloned().unwrap_or_default();
         let mut detection = self.detection.lock().unwrap_or_else(|p| p.into_inner());
         let candidates = self.flash_candidates.lock().unwrap_or_else(|p| p.into_inner());
         let active=self.statuses();
-        let rows: Vec<_> = rows.into_iter().filter(|row|
+        let mut rows: Vec<_> = rows.into_iter().filter(|row|
             !active.iter().any(|link|link["connected"]==true && link["port"]==row["port"]) &&
             !candidates.iter().any(|candidate| same_usb_candidate(candidate, row))).collect();
         drop(candidates);
         for port in detection.candidates(&rows) {
             if let Ok(Some(id)) = reconnect::probe(&port, &paired) {
-                self.attach_inner(&port, hub.clone(), Some(id))?;
+                if self.attach_inner(&port, hub.clone(), Some(id)).is_ok() {
+                    rows.retain(|row| row["port"] != port);
+                }
             }
         }
-        Ok(())
+        Ok(detection.next_retry(&rows))
     }
     fn enqueue(&self, action: Action) -> Result<(), String> {
         let selected=self.selected.lock().unwrap_or_else(|p|p.into_inner()).clone().ok_or("Connect a USB device first.")?;
@@ -1098,7 +1113,7 @@ mod tests {
         let (send, receive) = mpsc::channel();
         let manager = Manager::with_observers(Arc::new(move |state| {
             send.send(state.clone()).unwrap();
-        }), || {});
+        }), || {}, || {});
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":true,"waitingForBoot":true});
         manager.cancel_firmware_wait().unwrap();
@@ -1114,7 +1129,7 @@ mod tests {
         let (send, receive) = mpsc::channel();
         let manager = Manager::with_observers(Arc::new(|_| {}), move || {
             send.send(()).unwrap();
-        });
+        }, || {});
         let (tx, _rx) = mpsc::sync_channel(1);
         let port = "fixture";
         manager.links.lock().unwrap().insert(port.into(), Link {
@@ -1135,7 +1150,7 @@ mod tests {
         let (send, receive) = mpsc::channel();
         let manager = Manager::with_observers(Arc::new(move |state| {
             send.send(state.clone()).unwrap();
-        }), || {});
+        }), || {}, || {});
         let port = format!("missing-firmware-fixture-{}", uuid::Uuid::new_v4());
         let firmware = [(0, 0xe9), (0x8000, 0), (0x10000, 0xe9)]
             .map(|(offset, byte)| OwnedFirmwareSegment { offset, bytes: vec![byte] });

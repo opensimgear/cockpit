@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock, Weak},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
@@ -24,6 +24,9 @@ mod presentation;
 mod listener_observation;
 mod presence_observation;
 mod firmware_observation;
+mod detection;
+#[cfg(test)]
+use std::time::Duration;
 use presentation::*;
 
 #[path = "../../profile_companion_authoring.rs"]
@@ -60,6 +63,7 @@ pub struct Runtime {
     listener_observation: Mutex<Option<listener_observation::Observation>>,
     presence_observation: Mutex<Option<presence_observation::Observation>>,
     firmware_observation: Arc<OnceLock<osg_companion_serial::FlashObserver>>,
+    detection: detection::Detection,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
@@ -92,36 +96,11 @@ impl Runtime {
             listener_observation: Mutex::new(None),
             presence_observation: Mutex::new(None),
             firmware_observation: Arc::new(OnceLock::new()),
+            detection: detection::Detection::default(),
             panel_operation_wakes: Mutex::new(Vec::new()),
             #[cfg(test)]
             profile_wire_fixture: false,
         }
-    }
-    pub fn start_detection(self: &Arc<Self>) {
-        let owner = Arc::downgrade(self);
-        std::thread::spawn(move || loop {
-            let Some(runtime) = owner.upgrade() else {
-                break;
-            };
-            if runtime.stopped.load(Ordering::SeqCst) {
-                break;
-            }
-            // Initialize the installation's protected host identity on first
-            // native startup, even before the listener is enabled. `services`
-            // caches startup errors so an unavailable store cannot trigger a
-            // fresh CA on a later polling pass.
-            match runtime.services() {
-                Ok(services) => {
-                    runtime.start_saved_listener(services);
-                    if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
-                        let _ = services.usb.reconnect_detected(&services.hub);
-                    }
-                }
-                Err(error) => runtime.notify_listener(Err(&error)),
-            }
-            drop(runtime);
-            std::thread::sleep(Duration::from_secs(2));
-        });
     }
     fn existing_metadata(&self)->Result<Option<&Metadata>,String>{
         if self.stopped.load(Ordering::SeqCst){return Err("Companion service is stopped.".into());}
@@ -172,13 +151,14 @@ impl Runtime {
                 let saved_listener=crate::companion_settings::Listener::open(&directory)?;
                 let firmware_observation = self.firmware_observation.clone();
                 let usb_hub = hub.clone();
+                let discovery = self.detection.wake.clone();
                 let services=Services {
                     hub, server, directory,
                     saved_listener,
                     panel_cache:Mutex::new(()),
                     usb: osg_companion_serial::Manager::with_observers(Arc::new(move |state| {
                         if let Some(observe) = firmware_observation.get() { observe(state); }
-                    }), move || usb_hub.notify_presence()),
+                    }), move || usb_hub.notify_presence(), move || discovery.notify()),
                     usb_setup: Mutex::new(()),
                     firmware_releases: crate::firmware_releases::Resolver::default(),
                 };
@@ -190,9 +170,9 @@ impl Runtime {
         }
         result.map_err(Clone::clone)
     }
-    fn start_saved_listener(&self, services: &Services) {
+    fn start_saved_listener(&self, services: &Services) -> bool {
         if !crate::companion_panels::ready(&services.hub).unwrap_or(false) {
-            return;
+            return false;
         }
         let attempted = services.saved_listener.with_config(|config| {
             let Some(config) = config else { return false; };
@@ -203,6 +183,7 @@ impl Runtime {
             true
         });
         if attempted && self.services.get().is_some() { self.notify_listener(Ok(services)); }
+        attempted && !services.server.status().enabled
     }
     fn inventory(&self, listener_only: bool)->Result<Value,String>{
         if self.stopped.load(Ordering::SeqCst){return Err("Companion service is stopped.".into());}
@@ -383,6 +364,7 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+        self.detection.stop();
         self.presence_observation.lock().unwrap_or_else(|p| p.into_inner()).take();
         if let Some(Ok(services)) = self.services.get() {
             services.usb.release();

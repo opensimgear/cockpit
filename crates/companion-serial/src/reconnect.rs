@@ -4,6 +4,16 @@ use std::{
     io::{Read, Write},
     time::{Duration, Instant},
 };
+const RETRY: Duration = Duration::from_secs(15);
+
+fn candidate_port(row: &Value) -> Option<&str> {
+    // ESP32 devices and common USB bridges still require a nonce-bound probe.
+    if ![0x303a, 0x1a86, 0x10c4, 0x0403].contains(&row["vid"].as_u64().unwrap_or(0)) {
+        return None;
+    }
+    row["port"].as_str()
+}
+
 #[derive(Default)]
 pub(crate) struct Detection {
     attempted: BTreeMap<String, Instant>,
@@ -21,18 +31,13 @@ impl Detection {
             if result.len() >= 4 {
                 break;
             }
-            // Espressif and common ESP32 USB bridges. Non-companion devices are
-            // rejected by the read-only nonce/identity probe before connect.
-            if ![0x303a, 0x1a86, 0x10c4, 0x0403].contains(&row["vid"].as_u64().unwrap_or(0)) {
-                continue;
-            }
-            let Some(port) = row["port"].as_str() else {
+            let Some(port) = candidate_port(row) else {
                 continue;
             };
             if self
                 .attempted
                 .get(port)
-                .is_some_and(|at| now.saturating_duration_since(*at) < Duration::from_secs(15))
+                .is_some_and(|at| now.saturating_duration_since(*at) < RETRY)
             {
                 continue;
             }
@@ -40,6 +45,16 @@ impl Detection {
             result.push(port.to_owned());
         }
         result
+    }
+
+    pub(crate) fn next_retry(&self, pending: &[Value]) -> Option<Duration> {
+        self.next_retry_at(pending, Instant::now())
+    }
+
+    fn next_retry_at(&self, pending: &[Value], now: Instant) -> Option<Duration> {
+        pending.iter().filter_map(candidate_port).map(|port| {
+            self.attempted.get(port).map_or(Duration::ZERO, |at| RETRY.saturating_sub(now.saturating_duration_since(*at)))
+        }).min()
     }
 }
 fn paired_identity(
@@ -161,6 +176,26 @@ mod tests {
         }
         assert!(paired_identity(&valid, "fresh", &[], true).is_none());
     }
+    #[test]
+    fn retry_waits_only_for_pending_candidates_and_keeps_batch_capacity() {
+        let mut detection = Detection::default();
+        let now = Instant::now();
+        let mut rows: Vec<_> = (1..=5).map(|port| json!({"port":format!("COM{port}"),"vid":0x303a})).collect();
+        rows.push(json!({"port":"COM99","vid":0xffff}));
+        assert_eq!(detection.candidates_at(&rows, now).len(), 4);
+        assert_eq!(detection.next_retry_at(&rows, now), Some(Duration::ZERO));
+        assert_eq!(detection.candidates_at(&rows, now), vec!["COM5"]);
+        assert_eq!(detection.next_retry_at(&rows, now + Duration::from_secs(4)), Some(Duration::from_secs(11)));
+        assert_eq!(detection.next_retry_at(&rows[5..], now), None);
+        assert_eq!(detection.next_retry_at(&[], now), None);
+        let mut detection = Detection::default();
+        assert_eq!(detection.next_retry(&rows), Some(Duration::ZERO));
+        assert_eq!(detection.candidates(&rows).len(), 4);
+        assert_eq!(detection.candidates(&rows), vec!["COM5"]);
+        assert!(detection.next_retry(&rows).is_some_and(|delay| delay > Duration::ZERO && delay <= RETRY));
+        assert_eq!(detection.next_retry(&[]), None);
+    }
+
     #[test]
     fn redetection_handles_restart_unplug_replug_and_changed_com_ports() {
         let mut detection = Detection::default();

@@ -35,9 +35,12 @@ test('Companion listener settings observe commits and retry readiness without id
     const target = await page.call('Runtime.evaluate', { expression: 'window.__TAURI_INTERNALS__.invoke' });
     ({ breakpointId: breakpoint } = await page.call('Debugger.setBreakpointOnFunctionCall', {
       objectId: target.result.objectId,
-      condition: "(cmd==='gateway_request' && payload?.request?.command==='companion_inventory' && ++window.__listenerReads, false)",
+      condition: "(cmd==='gateway_request' && payload?.request?.command==='companion_inventory' && payload.request.companion?.listenerOnly===true && ++window.__listenerReads, false)",
     }));
-    await new Promise(resolve => setTimeout(resolve, 1900));
+    // Let the initial observation and WebView focus refresh settle before measuring.
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await page.evaluate('window.__listenerReads=0');
+    await new Promise(resolve => setTimeout(resolve, 2200));
     assert.equal(await page.evaluate('window.__listenerReads'), 0);
     const waiting = await native('companion_enable', {
       address: '127.0.0.1', advertisedHost: '127.0.0.1',
@@ -47,6 +50,7 @@ test('Companion listener settings observe commits and retry readiness without id
     assert.equal(waiting.configuredEnabled, true);
     assert.equal(waiting.enabled, false);
     await until(badge, value => value === 'Waiting to start');
+    await until(() => page.evaluate('window.__listenerReads'), value => value > 0);
     await new Promise((resolve, reject) => occupied.close(error => error ? reject(error) : resolve()));
     await until(badge, value => value === 'Listening');
     await disable();

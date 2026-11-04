@@ -130,7 +130,12 @@ fn presence_notifications_follow_pairing_and_connections_without_poll_noise() {
     let baseline = wake.observed();
     hub.observe_presence(wake.clone());
     assert_eq!(wake.observed(), baseline);
+    let record = Arc::new(osg_streams::NativeWake::default());
+    hub.observe_record_changes(record.clone());
+    let before_pairing = record.observed();
     let token = paired(&hub, "presence-screen");
+    let record_after_pairing = record.observed();
+    assert!(record_after_pairing > before_pairing);
     let paired = wake.observed();
     assert!(paired > baseline);
     assert_eq!(wire(&hub, "presence-connection", json!({"type":"auth","token":token}))["ok"], true);
@@ -143,6 +148,7 @@ fn presence_notifications_follow_pairing_and_connections_without_poll_noise() {
     assert_eq!(wake.observed(), authenticated + 1);
     hub.disconnect_connection("presence-connection", hub.now_ms());
     assert_eq!(wake.observed(), authenticated + 1);
+    assert_eq!(record.observed(), record_after_pairing);
 }
 
 #[test]
