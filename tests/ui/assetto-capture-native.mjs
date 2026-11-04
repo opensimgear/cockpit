@@ -116,10 +116,11 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
             port.endpoint.nodeId===`value-${id}`&&port.endpoint.portId==='out'&&port.sample.status==='known'&&Math.abs(port.sample.value.value-value)<1e-5))&&snapshot;
         },Boolean,25000);
         const mode=async value=>{await writeFile(stop+'.mode',value);await until(()=>readFile(stop+'.ack','utf8').then(actual=>actual===value,()=>false));};
-        const inspectRpm=async()=>{
+        const inspectGame=async()=>{
           const report=(await native({command:'game_telemetry_inspect',gameId,search:'engine.rpm',offset:0,limit:16,observationId:await telemetryLease()})).gameTelemetry;
-          return report.games.find(game=>game.id===gameId)?.channels.find(channel=>channel.id==='engine.rpm');
+          return report.games.find(game=>game.id===gameId);
         };
+        const inspectRpm=async()=>(await inspectGame())?.channels.find(channel=>channel.id==='engine.rpm');
         record.phases.live=await live();
         const revision=await telemetryRevision();
         record.phases.inspectorRevision=await until(telemetryRevision,value=>BigInt(value)>BigInt(revision));
@@ -164,6 +165,13 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           await new Promise(resolve=>setTimeout(resolve,2200));
           record.phases.quietFrozenNotifications=await frames()-frozenFrames;
           assert.equal(record.phases.quietFrozenNotifications,0,'A frozen capture must not publish age-only refreshes');
+          const frozenPacket=(await inspectGame()).packet;
+          assert.ok(Number.isInteger(frozenPacket));
+          const frozenRevision=await telemetryRevision();
+          await mode('paused-frozen');
+          await until(telemetryRevision,value=>BigInt(value)>BigInt(frozenRevision));
+          record.phases.graphicsOnlyPause=await until(inspectGame,game=>game?.status==='inactive');
+          assert.equal(record.phases.graphicsOnlyPause.packet,frozenPacket);
         }
         await mode('live');record.phases.recovered=await live();
         console.log(`${gameId}: native processing, frozen expiry and recovery pass`);

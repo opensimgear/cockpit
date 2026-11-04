@@ -98,6 +98,7 @@ impl Owner {
                 let mut source = source;
                 let origin = Instant::now();
                 let mut previous_packet = None;
+                let mut previous_sample: Option<Arc<RawSample>> = None;
                 let mut previous_error = None;
                 while !cancelled.load(Ordering::Acquire) {
                     let began = Instant::now();
@@ -111,9 +112,17 @@ impl Owner {
                             let generation =
                                 sample.capture.as_ref().map(|capture| capture.generation);
                             let key = (sample.source.epoch, generation, packet);
-                            let changed = previous_packet.replace(key) != Some(key);
+                            let changed = previous_packet.replace(key) != Some(key)
+                                || previous_sample.as_ref().is_some_and(|previous| {
+                                    previous.graphics != sample.graphics
+                                        || previous.statics != sample.statics
+                                });
                             let recovered = previous_error.take().is_some();
-                            (changed || recovered).then(|| Frame::Sample(Arc::new(sample)))
+                            (changed || recovered).then(|| {
+                                let sample = Arc::new(sample);
+                                previous_sample = Some(sample.clone());
+                                Frame::Sample(sample)
+                            })
                         }
                         Ok(None) => None,
                         Err(error) => {

@@ -54,10 +54,10 @@ class ExpandedAssettoTelemetryFixture
             sv.WriteArray(0,statics,0,staticSize);
             var watch=Stopwatch.StartNew(); int counter=0; string mode="live",acknowledged="";
             while (watch.Elapsed<TimeSpan.FromMinutes(5) && !File.Exists(args[1])) {
-                try { if (File.Exists(args[1]+".mode")) { var requested=File.ReadAllText(args[1]+".mode").Trim(); if(requested=="live"||requested=="paused"||requested=="frozen"||requested=="invalid")mode=requested; } } catch(IOException) {}
-                Int(graphics,4,mode=="paused" ? 3 : 2);
+                try { if (File.Exists(args[1]+".mode")) { var requested=File.ReadAllText(args[1]+".mode").Trim(); if(requested=="live"||requested=="paused"||requested=="paused-frozen"||requested=="frozen"||requested=="invalid")mode=requested; } } catch(IOException) {}
+                Int(graphics,4,mode=="paused"||mode=="paused-frozen" ? 3 : 2);
                 Float(physics,48,mode=="invalid" ? Single.NaN : 3f);
-                if(mode!="frozen")counter++;
+                if(mode!="frozen"&&mode!="paused-frozen")counter++;
                 Int(physics,0,counter); Int(graphics,0,counter);
                 gv.WriteArray(0,graphics,0,graphicsSize); pv.WriteArray(0,physics,0,physicsSize);
                 if(acknowledged!=mode) { File.WriteAllText(args[1]+".ack",mode); acknowledged=mode; }

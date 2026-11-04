@@ -62,6 +62,21 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
     }
     assert!(ordered.poll().unwrap().is_none());
     assert_eq!(latest.poll().unwrap().unwrap().physics, 3u32.to_le_bytes());
+    let before_context = wake.observed();
+    let mut context = sample(3);
+    context.graphics = vec![1];
+    send.send(context.clone()).unwrap();
+    context.statics = vec![2];
+    send.send(context).unwrap();
+    wait_for(|| wake.observed() >= before_context + 2);
+    let graphics = ordered.poll().unwrap().unwrap();
+    assert_eq!(graphics.physics, 3u32.to_le_bytes());
+    assert_eq!(graphics.graphics, [1]);
+    assert!(graphics.statics.is_empty());
+    let statics = ordered.poll().unwrap().unwrap();
+    assert_eq!(statics.physics, 3u32.to_le_bytes());
+    assert_eq!(statics.statics, [2]);
+    assert_eq!(latest.poll().unwrap().unwrap().statics, [2]);
     let before_overflow = wake.observed();
     for packet in 4..=4 + LIMITS.max_pending_frames as u32 {
         send.send(sample(packet)).unwrap();
