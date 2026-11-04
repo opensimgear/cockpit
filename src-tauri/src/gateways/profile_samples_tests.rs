@@ -59,6 +59,8 @@ fn profile_samples_gateway_is_lazy_delivers_actual_mapping_and_retires_exact_own
     let (manager, owner) = fixture();
     let broker = manager.observations.broker();
     let sample_topic = topic(&owner, "identity");
+    let mut debug = broker.subscribe("debug-preview", "mcp", "profiles.debug-inputs").unwrap();
+    assert_eq!(frame(&mut debug).revision, "1");
     assert!(broker.subscribe("before", "ui", &sample_topic).is_err(), "Apply must not eagerly register samples");
     assert_eq!(manager.profile_session.lock().unwrap().service_interval(), None);
     let before = request(&manager, json!({"command":"profile_debug_controller_status","owner":owner,"nodeId":"debug"}));
@@ -86,6 +88,7 @@ fn profile_samples_gateway_is_lazy_delivers_actual_mapping_and_retires_exact_own
     request(&manager, json!({"command":"profile_debug_controller_input","owner":owner,"nodeId":"debug",
         "streamId":"22222222-2222-4222-8222-222222222222","sequence":"1",
         "changes":[{"portId":"axis-1","value":7}]}));
+    assert_eq!(frame(&mut debug).revision, "2");
     manager.profile_session.lock().unwrap().poll().unwrap();
     let changed = frame(&mut reader);
     assert_eq!(changed.kind, "snapshot");

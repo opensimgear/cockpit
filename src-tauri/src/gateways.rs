@@ -215,6 +215,7 @@ mod workspace;
 pub struct GatewayManager {
     workspace:workspace::Runtime,
     pub(crate) observations: crate::observations::Runtime,
+    debug_inputs_observation: Option<osg_streams::Publisher>,
     pub(crate) can_input_observations: crate::stm32_panel_observations::Bridges,
     profile_read_models: crate::profile_read_models::Runtime,
     game_read_models: crate::game_read_models::Runtime,
@@ -440,6 +441,10 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        let debug_inputs_observation = observations.broker().register(osg_streams::TopicSpec {
+            topic: "profiles.debug-inputs".into(), source: "profile-debug-inputs".into(),
+            audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
+        }, json!({}), observations.captured_us(), "profile-debug-inputs".into()).ok();
         if let Err(error) = retired_recovery.observe(&observations) {
             eprintln!("Retained recovery observation unavailable: {error}");
         }
@@ -493,6 +498,7 @@ impl GatewayManager {
         let manager = Self {
             workspace:workspace::Runtime::new(),
             observations,
+            debug_inputs_observation,
             can_input_observations: Default::default(),
             profile_read_models,
             game_read_models,
@@ -1314,7 +1320,14 @@ impl GatewayManager {
         if matches!(command.as_str(),"profile_debug_controller_status"|"profile_debug_controller_input") {
             request.as_object_mut().unwrap().remove("clientId");
             let result=crate::profile_debug_controller::Request::parse(&request).and_then(|request|self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).debug_controller(&request));
-            if command=="profile_debug_controller_input" && result.is_ok() {self.profile_wake.notify();}
+            if command=="profile_debug_controller_input" && result.is_ok() {
+                self.profile_wake.notify();
+                if result.as_ref().is_ok_and(|state| state["replayed"] != true) {
+                    if let Some(publisher) = &self.debug_inputs_observation {
+                        let _ = publisher.publish_latest_state(publisher.generation(), json!({}), self.observations.captured_us(), "profile-debug-inputs");
+                    }
+                }
+            }
             return match result {Ok(state)=>json!({"ok":true,"state":{"debugController":state}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
         }
         if command == "profile_runtime_inspect" {
@@ -1622,6 +1635,7 @@ impl GatewayManager {
     pub(crate) fn system_inventory_changed(&self) { self.system_inventory.changed(); }
 
     pub fn shutdown(&self) {
+        if let Some(publisher) = &self.debug_inputs_observation { self.observations.broker().retire(publisher); }
         self.closed.store(true,Ordering::Release);
         self.workspace.shutdown();
         for adapter in self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values(){adapter.set_workspace_owned(false);}

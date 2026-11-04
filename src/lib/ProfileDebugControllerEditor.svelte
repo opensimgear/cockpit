@@ -2,12 +2,17 @@
   import {onDestroy,onMount,untrack} from 'svelte';
   import DebugControllerControls from './DebugControllerControls.svelte';
   import {debugControllerLayout,debugControllerPorts,createDebugControllerClient,type DebugControllerClient,type DebugControllerChange,type DebugControllerLayout,type DebugControllerRequest} from './profile-debug-controller';
-  import {nativeProfileStatus} from './profile-runtime';
+  import type {NativeProfileOwner} from './profile-runtime';
+  import {profileOwnersEqual} from './profile-inspection';
+  import {observeProfileRuntime} from './profile-read-models/shared';
+  import {SharedObservations} from './streams/shared';
   import {gatewayRequest} from './gateway';
   import type {DeepReadonly,ProfileResource} from './profiles';
   let {resource,profileId,revision,active,disabled=false,update}:{resource:DeepReadonly<ProfileResource>;profileId:string;revision:number;active:boolean;disabled?:boolean;update:(resource:ProfileResource)=>void}=$props();
   const applyHint='Apply this profile to use these controls.';
   let layoutError=$state(''),values=$state<Record<string,boolean|number>>({}),interacting=$state(false),liveError=$state(''),ready=$state(false),mounted=$state(false);
+  let interactionReleased:(()=>void)|undefined;
+  function setInteracting(value:boolean){interacting=value;if(!value)interactionReleased?.();}
   let client=$state.raw<DebugControllerClient|null>(null);
   const layout=$derived(debugControllerLayout(resource));
   const controlsActive=$derived(active&&!disabled&&ready&&!liveError);
@@ -34,23 +39,55 @@
     const sendRequest=(request:DebugControllerRequest)=>gatewayRequest(request as never);
     const next=createDebugControllerClient(sendRequest,id,error=>{if(untrack(()=>client===next)){ready=false;liveError=error instanceof Error?error.message:'Debug input update failed.';}});
     untrack(()=>client)?.close();client=next;values={};ready=false;liveError=applyHint;
-    let disposed=false,refreshing=false;
+    let disposed=false,refreshing=false,pending=false,streamReady=false;
+    let owner:DeepReadonly<NativeProfileOwner>|null=null;
+    const clear=()=>{
+      owner=null;next.clearOwner();values={};ready=false;liveError=applyHint;
+    };
     async function refresh(){
-      if(disposed||refreshing||untrack(()=>interacting))return;refreshing=true;
+      pending=true;
+      if(disposed||refreshing||!streamReady||!owner||document.hidden||untrack(()=>interacting))return;
+      refreshing=true;
       try{
-        const status=nativeProfileStatus((await gatewayRequest({command:'profile_status'})).profiles?.profileSession),owner=status.owner;
-        if(disposed)return;
-        if(!owner||owner.profileId!==currentProfile||owner.profileRevision!==currentRevision){next.clearOwner();values={};ready=false;liveError=applyHint;return;}
-        const samples=await next.status(owner);if(disposed)return;
-        if(!untrack(()=>interacting))values=Object.fromEntries(samples.map(sample=>[sample.portId,sample.value]));ready=true;liveError='';
-      }catch(error){if(!disposed){next.clearOwner();ready=false;liveError=error instanceof Error?error.message:'Debug controller status is unavailable.';}}
-      finally{refreshing=false;}
+        while(pending&&streamReady&&owner&&!disposed&&!document.hidden&&!untrack(()=>interacting)){
+          pending=false;
+          const expected:DeepReadonly<NativeProfileOwner>=owner;
+          try{
+            const samples=await next.status(expected);
+            if(disposed||!streamReady||expected!==owner||document.hidden)continue;
+            if(!untrack(()=>interacting))values=Object.fromEntries(samples.map(sample=>[sample.portId,sample.value]));
+            else { pending=true; }
+            ready=true;liveError='';
+          }catch(error){
+            if(!disposed&&streamReady&&expected===owner&&!document.hidden){
+              next.clearOwner();ready=false;
+              liveError=error instanceof Error?error.message:'Debug controller status is unavailable.';
+            }
+          }
+        }
+      }finally{refreshing=false;}
     }
-    const refreshNow=()=>{if(!document.hidden)void refresh();};
-    // The initial exact-owner check also works when the window is occluded or unfocused.
-    untrack(()=>void refresh());const timer=window.setInterval(refreshNow,500);
-    window.addEventListener('focus',refreshNow);document.addEventListener('visibilitychange',refreshNow);
-    return()=>{disposed=true;window.clearInterval(timer);window.removeEventListener('focus',refreshNow);document.removeEventListener('visibilitychange',refreshNow);next.close();if(untrack(()=>client===next))client=null;};
+    const observations=new SharedObservations();
+    const stopRuntime=untrack(()=>observeProfileRuntime(state=>{
+      if(disposed)return;
+      const current=state.status==='ready'?state.value?.profileSession.owner:null;
+      if(!current||current.profileId!==currentProfile||current.profileRevision!==currentRevision){clear();return;}
+      if(owner&&profileOwnersEqual(owner,current))return;
+      clear();owner=current;void refresh();
+    }));
+    observations.subscribe('profiles.debug-inputs',state=>{
+      streamReady=state.status==='ready';
+      if(streamReady)void refresh();
+      if(state.status==='lost'||state.status==='error'){
+        next.clearOwner();values={};ready=false;
+        liveError=state.error??'Debug controller observation is unavailable.';
+      }
+    });
+    const visibility=()=>{if(document.hidden){next.clearOwner();ready=false;}else void refresh();};
+    const interactionEnd=()=>{if(pending)void refresh();};
+    interactionReleased=interactionEnd;
+    document.addEventListener('visibilitychange',visibility);
+    return()=>{disposed=true;interactionReleased=undefined;stopRuntime();observations.close();document.removeEventListener('visibilitychange',visibility);next.close();if(untrack(()=>client===next))client=null;};
   });
   onDestroy(()=>{client?.close();});
 </script>
@@ -60,7 +97,7 @@
   <div class="count-grid">{#each [{key:'buttons' as const,label:'Buttons'},{key:'axes' as const,label:'Axes'},{key:'hats' as const,label:'Hats'}] as item}<label>{item.label}<input type="number" min="0" max={limits[item.key]} step="1" value={layout[item.key].length} disabled={disabled} aria-label={item.label} onchange={event=>resize(item.key,event.currentTarget)}/></label>{/each}</div>
   {#each layout.axes as axis,index (axis.portId)}<div class="axis-settings"><span>Axis {index+1}</span><label>Range<select value={axis.range} disabled={disabled} aria-label={`Axis ${index+1} range`} onchange={event=>editAxis(index,event.currentTarget)}><option value="bipolar">−32768…32767</option><option value="unipolar">0…32767</option></select></label></div>{/each}
   {#if layoutError}<p class="layout-error" role="alert">{layoutError}</p>{/if}
-  <section class="live-section" aria-label="Interactive debug controls"><div class="live-heading"><h3>Live controls</h3><span class:active={controlsActive}>{controlsActive?'Active':'Inactive'}</span></div><!-- The inactive hint and transport errors share one status line. -->{#if liveError&&active}<p class="live-message" class:live-error={liveError!==applyHint} role="status">{liveError}</p>{/if}<DebugControllerControls {layout} active={controlsActive} {disabled} {values} change={send} onInteract={value=>interacting=value}/></section>
+  <section class="live-section" aria-label="Interactive debug controls"><div class="live-heading"><h3>Live controls</h3><span class:active={controlsActive}>{controlsActive?'Active':'Inactive'}</span></div><!-- The inactive hint and transport errors share one status line. -->{#if liveError&&active}<p class="live-message" class:live-error={liveError!==applyHint} role="status">{liveError}</p>{/if}<DebugControllerControls {layout} active={controlsActive} {disabled} {values} change={send} onInteract={setInteracting}/></section>
 </section>
 
 <style>

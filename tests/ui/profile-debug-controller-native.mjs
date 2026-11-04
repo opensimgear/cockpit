@@ -53,6 +53,21 @@ test('debug controller authors, drives native inputs, releases buttons and round
     const value=async id=>(await read()).values.find(port=>port.portId===id).value;
     const pad=editor.getByLabel('XY pad for axes 1 and 2',{exact:true});
     await expect(pad).toBeEnabled();
+    const ipc=await page.context().newCDPSession(page);
+    await ipc.send('Network.enable');
+    let debugReads=0;
+    ipc.on('Network.requestWillBeSent',({request})=>{
+      if(request.postData?.includes('"profile_debug_controller_status"'))debugReads++;
+    });
+    await page.waitForTimeout(300);
+    const settled=debugReads;
+    await page.waitForTimeout(1200);
+    assert.equal(debugReads,settled,'The active inspector must stay idle across former polling intervals.');
+    await native({command:'profile_debug_controller_input',owner,nodeId:resource.id,
+      streamId:crypto.randomUUID(),sequence:'1',changes:[{portId:'hat-1',value:2}]});
+    await expect(editor.getByRole('button',{name:'Hat 1: E',exact:true})).toHaveAttribute('aria-pressed','true');
+    assert.ok(debugReads>settled,'An external input commit must wake the exact status read.');
+    await ipc.detach();
     const one=editor.getByRole('button',{name:'Button 1',exact:true});
     await one.focus();await page.keyboard.down('Space');
     await expect.poll(()=>value('button-1')).toBe(true);
@@ -67,8 +82,9 @@ test('debug controller authors, drives native inputs, releases buttons and round
     await page.mouse.move(sliderBox.x+sliderBox.width*.25,sliderBox.y+sliderBox.height/2);await page.mouse.down();
     await page.mouse.move(sliderBox.x+sliderBox.width*.75,sliderBox.y+sliderBox.height/2,{steps:6});await page.mouse.up();
     await expect.poll(()=>value('axis-3')).toBeGreaterThan(15000);
-    await editor.getByLabel('Hat 1',{exact:true}).selectOption('3');await expect.poll(()=>value('hat-1')).toBe(3);
-    await expect(editor.getByLabel('Hat 1',{exact:true})).toHaveValue('3');
+    const southEast=editor.getByRole('button',{name:'Hat 1: SE',exact:true});
+    await southEast.click();await expect.poll(()=>value('hat-1')).toBe(3);
+    await expect(southEast).toHaveAttribute('aria-pressed','true');
     await editor.getByRole('button',{name:'Reset axes to neutral',exact:true}).click();
     await expect.poll(async()=> (await read()).values.filter(port=>port.portId.startsWith('axis-')).every(port=>port.value===0)).toBe(true);
     // Closing an inspector while a control is held must release its native value.
