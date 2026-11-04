@@ -3,12 +3,13 @@
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 16] = [
+const FIXED_TOPICS: [(&str, &str); 17] = [
     ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
     ("profiles.activation", "Profile activation progress"),
     ("profiles.learning", "Physical input learning revision"),
+    ("profiles.retired-recovery", "Retained output recovery revision"),
     ("profiles.resources", "Profile resource inventory revision"),
     ("workspace.state", "Gateway workspace state"),
     ("games.state", "Configured games"),
@@ -103,6 +104,7 @@ mod tests {
             "profiles.runtime",
             "profiles.activation",
             "profiles.learning",
+            "profiles.retired-recovery",
             "profiles.resources",
             "workspace.state",
             "games.state",

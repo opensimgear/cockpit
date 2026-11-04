@@ -103,7 +103,8 @@ fn setup() -> (tempfile::TempDir, Recovery, Arc<Fake>) {
     let recovery = Recovery {
         root: Some(root.path().canonicalize().unwrap()),
         ops: Arc::new(fake.clone()),
-        operation: Mutex::new(()),
+        operation: Mutex::default(),
+        observation: Arc::default(),
     };
     (root, recovery, fake)
 }
@@ -257,7 +258,8 @@ fn retained_paths_and_inventory_bounds_fail_closed() {
     let relative = Recovery {
         root: Some("relative".into()),
         ops: recovery.ops.clone(),
-        operation: Mutex::new(()),
+        operation: Mutex::default(),
+        observation: Arc::default(),
     };
     assert!(relative.status().required);
     let regular = root.path().join("ordinary-file");
@@ -265,7 +267,8 @@ fn retained_paths_and_inventory_bounds_fail_closed() {
     let invalid = Recovery {
         root: Some(regular),
         ops: recovery.ops.clone(),
-        operation: Mutex::new(()),
+        operation: Mutex::default(),
+        observation: Arc::default(),
     };
     assert!(invalid.status().required);
 }
@@ -318,6 +321,19 @@ fn stale_owner_hash_or_raced_record_never_opens_a_feeder() {
 #[test]
 fn ambiguous_acknowledgement_requires_exact_owner_and_locked_full_record_without_output() {
     let (root, recovery, fake) = setup();
+    let observations = crate::observations::Runtime::new();
+    recovery.observe(&observations).unwrap();
+    let broker = observations.broker();
+    let mut revisions = broker.subscribe("recovery-test", "mcp", TOPIC).unwrap();
+    let mut next = || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(frame) = revisions.try_recv().unwrap() { return frame; }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    };
+    assert_eq!(next().revision, "1");
     let (path, saved) = record(root.path(), JournalId::Manual, Phase::Intent);
     let reference = journal_ref(JournalId::Manual, &saved);
     assert!(recovery
@@ -334,6 +350,11 @@ fn ambiguous_acknowledgement_requires_exact_owner_and_locked_full_record_without
         .contains("Another Cockpit"));
     drop(locked);
     recovery.acknowledge(&reference).unwrap();
+    let changed = next();
+    assert_eq!(changed.revision, "2");
+    assert_eq!(changed.payload, Some(serde_json::json!({})));
+    recovery.shutdown();
+    assert!(!broker.available_to(TOPIC, "mcp"));
     assert_eq!(
         output_journal::inspect(&path).unwrap().unwrap().phase,
         Phase::Clean
@@ -608,7 +629,8 @@ fn redirected_existing_ancestor_never_reads_or_mutates_the_retained_target() {
     let redirected = Recovery {
         root: Some(alias.join("nested")),
         ops: recovery.ops.clone(),
-        operation: Mutex::new(()),
+        operation: Mutex::default(),
+        observation: Arc::default(),
     };
     let status = redirected.status();
     assert!(status.required && status.outputs.is_empty());
@@ -622,7 +644,8 @@ fn redirected_existing_ancestor_never_reads_or_mutates_the_retained_target() {
     assert!(Recovery {
         root: Some(alias.join("not-created")),
         ops: recovery.ops.clone(),
-        operation: Mutex::new(())
+        operation: Mutex::default(),
+        observation: Arc::default(),
     }
     .guard_clear()
     .is_err());

@@ -1,25 +1,43 @@
 <script lang="ts">
  import{onDestroy,onMount,untrack}from'svelte';
  import{gatewayRequest}from'./gateway';
+ import{SharedObservations}from'./streams/shared';
  import{RetiredRecoveryClient,RetiredRecoveryController,needsRetiredRecovery,type RetiredJournalRef,type RetiredProvisionRef}from'./profile-retired-recovery';
  import type{DeepReadonly}from'./profiles';
  let{active=true,controller:supplied}:{active?:boolean;controller?:RetiredRecoveryController}=$props();
  const provided=untrack(()=>supplied),controller=provided??new RetiredRecoveryController(new RetiredRecoveryClient(async request=>(await gatewayRequest(request)).retiredRecovery));
  let view=$state.raw(controller.state),mounted=$state(false),acknowledged=$state<string[]>([]);
- const visible=$derived(needsRetiredRecovery(view.status)||!!view.error);
- const blocked=$derived(!active||view.stale||!!view.pending);
+ let refreshPending=$state(false),observationError=$state('');
+ const visible=$derived(needsRetiredRecovery(view.status)||!!view.error||!!observationError);
+ const blocked=$derived(!active||view.stale||!!view.pending||!!observationError);
  const refKey=(ref:DeepReadonly<RetiredJournalRef>)=>JSON.stringify(ref);
  function confirm(ref:DeepReadonly<RetiredJournalRef>,checked:boolean){const key=refKey(ref);acknowledged=checked?[...acknowledged.filter(v=>v!==key),key]:acknowledged.filter(v=>v!==key);}
  async function output(ref:DeepReadonly<RetiredJournalRef>,acknowledge=false){if(blocked||!view.status?.outputQualified||acknowledge&&!acknowledged.includes(refKey(ref)))return;await controller.output(ref,acknowledge);acknowledged=[];}
  async function recoverProvision(ref:DeepReadonly<RetiredProvisionRef>){if(blocked||!view.status?.provisioningQualified)return;await controller.recoverProvision(ref);}
  function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
  onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
- function watchStatus(){if(!mounted||!active)return;const refresh=()=>{if(!document.hidden)void controller.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,1000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}
- $effect(watchStatus);
+ $effect(()=>{
+   if(!mounted||!active)return;
+   const observations=new SharedObservations();
+   const refresh=()=>{if(!document.hidden)refreshPending=true;};
+   observations.subscribe('profiles.retired-recovery',state=>{
+     if(state.status==='ready'){observationError='';refresh();}
+     if(state.status==='lost'||state.status==='error')observationError=state.error??'Native cleanup observation unavailable.';
+   });
+   refresh();
+   document.addEventListener('visibilitychange',refresh);
+   return()=>{observations.close();document.removeEventListener('visibilitychange',refresh);};
+ });
+ $effect(()=>{
+   if(!mounted||!active||!refreshPending||view.loading||view.pending)return;
+   refreshPending=false;
+   if(!document.hidden)untrack(()=>void controller.refresh());
+ });
 </script>
 {#if visible}
  <section class="retired-recovery panel" aria-label="Previous output setup recovery">
   <div class="recovery-heading"><div><h2>Previous output setup recovery</h2><p>These retained ownership records belong to the previous mapping system. Cleanup cannot create or apply a profile.</p></div><button class="text-button" disabled={view.loading||!!view.pending} onclick={()=>controller.refresh()}>Refresh cleanup records</button></div>
+  {#if observationError}<p class="recovery-warning" role="status">{observationError}</p>{/if}
   {#if view.stale}<p class="recovery-warning" role="status">Native cleanup status is unavailable or changing. Refresh before choosing a record.</p>{/if}
   {#each view.status?.diagnostics??[] as message,index(index)}<p class="recovery-warning" role="status">{message}</p>{/each}
   {#each view.status?.outputs??[] as record(refKey(record.reference))}

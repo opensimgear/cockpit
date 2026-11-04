@@ -8,6 +8,14 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
+const TOPIC: &str = "profiles.retired-recovery";
+type Observation = Mutex<Option<(crate::observations::Runtime, osg_streams::Publisher)>>;
+fn publish(observation: &Observation) {
+    let slot = observation.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((runtime, publisher)) = slot.as_ref() {
+        let _ = publisher.publish_latest_state(publisher.generation(), serde_json::json!({}), runtime.captured_us(), TOPIC);
+    }
+}
 const MAX_COMPANION_JOURNALS: usize = 32;
 const QUALIFICATION: &str = osg_mapping_host::service::QUALIFICATION;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,18 +268,34 @@ pub(crate) struct Recovery {
     root: Option<PathBuf>,
     ops: Arc<dyn Operations>,
     operation: Mutex<()>,
+    observation: Arc<Observation>,
 }
 impl Recovery {
     pub(crate) fn new(root: Option<PathBuf>, native: bool) -> Self {
+        let observation = Arc::new(Observation::default());
+        #[cfg(windows)]
+        let job_observation = observation.clone();
         Self {
             root,
             ops: Arc::new(Native {
                 enabled: native,
                 #[cfg(windows)]
-                provisioning: Mutex::new(Default::default()),
+                provisioning: Mutex::new(osg_virtual_controller::windows_jobs::Manager::default()
+                    .with_observer(Arc::new(move || publish(&job_observation)))),
             }),
             operation: Mutex::new(()),
+            observation,
         }
+    }
+    pub(crate) fn observe(&self, runtime: &crate::observations::Runtime) -> Result<(), String> {
+        let mut slot = self.observation.lock().unwrap_or_else(|p| p.into_inner());
+        let publisher = runtime.broker().register(osg_streams::TopicSpec {
+            topic: TOPIC.into(),
+            source: "retired-recovery".into(),
+            audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
+        }, serde_json::json!({}), runtime.captured_us(), TOPIC.into()).map_err(|error| error.to_string())?;
+        *slot = Some((runtime.clone(), publisher));
+        Ok(())
     }
     fn root(&self) -> Result<Option<&Path>, String> {
         let Some(root) = self.root.as_deref() else {
@@ -425,6 +449,8 @@ impl Recovery {
         if let Some(job) = self.ops.job().filter(|job| job.active) {
             let _ = self.ops.cancel_provision(&job.job_id);
         }
+        let slot = self.observation.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some((runtime, publisher)) = slot { runtime.broker().retire(&publisher); }
     }
     fn matches(reference: &JournalRef, record: &Record) -> Result<(), String> {
         if !canonical(&reference.owner.session)
@@ -448,7 +474,9 @@ impl Recovery {
         if record.phase != Phase::Confirmed {
             return Err("Only confirmed retained ownership can perform cleanup; ambiguous gaps require explicit exact-owner acknowledgement without output.".into());
         }
-        self.ops.recover_output(path.clone(), &record)?;
+        let result = self.ops.recover_output(path.clone(), &record);
+        publish(&self.observation);
+        result?;
         let after =
             output_journal::inspect(&path)?.ok_or("The retained cleanup record disappeared.")?;
         if after.pending() || after.token != reference.owner {
@@ -500,7 +528,9 @@ impl Recovery {
             .record()
             .ok_or("The retained ownership journal disappeared.")?;
         Self::matches(reference, record)?;
-        store.acknowledge(&reference.owner)
+        let result = store.acknowledge(&reference.owner);
+        publish(&self.observation);
+        result
     }
     pub(crate) fn recover_provision(
         &self,

@@ -440,6 +440,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = retired_recovery.observe(&observations) {
+            eprintln!("Retained recovery observation unavailable: {error}");
+        }
         if let Err(error) = profile_learning.observe(&observations) {
             eprintln!("Cannot start input learning observations: {error}");
         }

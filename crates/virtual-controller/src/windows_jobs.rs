@@ -24,6 +24,7 @@ struct Shared {
     status: Status,
     cancelled: bool,
     signal: Option<Arc<Cancellation>>,
+    changed: Arc<dyn Fn() + Send + Sync>,
 }
 #[derive(Clone)]
 struct Control(Arc<Mutex<Shared>>);
@@ -47,6 +48,7 @@ impl Control {
             "running"
         }
         .into();
+        (state.changed)();
     }
 }
 type Runner = Arc<dyn Fn(Request, Control) -> Result<Outcome, String> + Send + Sync>;
@@ -54,6 +56,7 @@ pub struct Manager {
     current: Option<Control>,
     worker: Option<thread::JoinHandle<()>>,
     runner: Runner,
+    changed: Arc<dyn Fn() + Send + Sync>,
 }
 impl Default for Manager {
     fn default() -> Self {
@@ -61,10 +64,15 @@ impl Default for Manager {
             current: None,
             worker: None,
             runner: Arc::new(native),
+            changed: Arc::new(|| {}),
         }
     }
 }
 impl Manager {
+    pub fn with_observer(mut self, changed: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.changed = changed;
+        self
+    }
     pub fn status(&self) -> Option<Status> {
         self.current
             .as_ref()
@@ -100,6 +108,7 @@ impl Manager {
             status: status.clone(),
             cancelled: false,
             signal: None,
+            changed: self.changed.clone(),
         })));
         let task = control.clone();
         let runner = self.runner.clone();
@@ -121,6 +130,7 @@ impl Manager {
                 shared.status.state = if success { "complete" } else { "attention" }.into();
                 shared.status.message = message.chars().take(512).collect();
                 shared.signal = None;
+                (shared.changed)();
             })
             .map_err(|e| e.to_string())?;
         if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
@@ -128,6 +138,7 @@ impl Manager {
         }
         self.current = Some(control);
         self.worker = Some(worker);
+        (self.changed)();
         Ok(status)
     }
     pub fn shutdown(&self) {
@@ -149,6 +160,7 @@ impl Manager {
         state.cancelled = true;
         state.status.state = "cancelling".into();
         state.status.message = "Cancellation requested; waiting for verified cleanup.".into();
+        (state.changed)();
         if let Some(signal) = &state.signal {
             signal.cancel()?;
         }

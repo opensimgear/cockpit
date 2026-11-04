@@ -14,6 +14,7 @@ fn finish(manager: &Manager) -> Status {
 fn asynchronous_job_cancellation_precedes_signal_registration_and_preserves_exact_identity() {
     let observed = Arc::new(Mutex::new(false));
     let captured = observed.clone();
+    let (sent, received) = std::sync::mpsc::channel();
     let mut manager = Manager {
         runner: Arc::new(move |request, control| {
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -28,6 +29,7 @@ fn asynchronous_job_cancellation_precedes_signal_registration_and_preserves_exac
             Err("cancelled before mutation".into())
         }),
         current: None,
+        changed: Arc::new(move || { let _ = sent.send(()); }),
         worker: None,
     };
     assert!(manager.status().is_none());
@@ -40,6 +42,9 @@ fn asynchronous_job_cancellation_precedes_signal_registration_and_preserves_exac
     assert_eq!(status.state, "attention");
     assert!(status.message.contains("cancelled"));
     assert!(*observed.lock().unwrap());
+    for _ in 0..4 {
+        received.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
     assert!(manager.cancel(&job.job_id).is_err());
 }
 #[test]
@@ -53,6 +58,7 @@ fn completion_failure_panic_and_shutdown_are_reported_without_starting_another_j
             })
         }),
         current: None,
+        changed: Arc::new(|| {}),
         worker: None,
     };
     let first = manager.start(Action::Create(2), None).unwrap();
