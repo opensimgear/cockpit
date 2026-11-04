@@ -119,11 +119,13 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     let change = preferences.next().unwrap();
     assert_eq!(change["params"]["uri"], preference);
     assert_eq!(change["params"]["_meta"]["opensimgear.com/observation"]["payload"]["value"], !original);
-    drop(preferences);
     assert_eq!(snapshot(read_after(&cursor))["cursorStatus"], "advanced");
     let restored = server.manager.request(json!({"command":"ui_preferences_save","clientId":"mcp-preferences-fixture",
         "key":"theme","expectedRevision":revision+1,"value":original}));
     assert_eq!(restored["ok"], true, "{restored}");
+    let restored_preference = preferences.next().unwrap();
+    assert_eq!(restored_preference["params"]["uri"], preference);
+    assert_eq!(restored_preference["params"]["_meta"]["opensimgear.com/observation"]["payload"]["value"], original);
     let gap = snapshot(read_after(&cursor));
     assert_eq!(gap["cursorStatus"], "gap");
     assert_eq!(gap["frame"]["payload"]["value"], original);
@@ -144,7 +146,7 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     assert!(unavailable.next().unwrap()["error"].is_object());
     drop(unavailable);
 
-    let permits = server.subscriptions.try_acquire_many(8).unwrap();
+    let permits = server.subscriptions.try_acquire_many(7).unwrap();
     let mut busy = listen_observations(&endpoint, token, &[uri]);
     assert_eq!(busy.next().unwrap()["method"], "notifications/subscriptions/acknowledged");
     assert!(busy.next().unwrap()["error"].is_object());
@@ -168,6 +170,7 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     let id = server.status()["credentials"][0]["id"].as_str().unwrap().to_owned();
     server.revoke_credential(&id, 2).unwrap();
     assert_eq!(stream.next().unwrap()["id"], 42);
+    assert_eq!(preferences.next().unwrap()["id"], 42, "The idle preference stream must close without another update");
     server.shutdown();
 }
 
