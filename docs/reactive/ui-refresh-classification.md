@@ -27,6 +27,13 @@ inside interval callbacks. An interval may have more than one responsibility.
 The rest of R0 still requires classifying the one-shot frontend, native and
 firmware sites and confirming each retained timer's owner and purpose.
 
+Run `node scripts/reactive/audit.mjs --check-ui-intervals` to check direct
+frontend `setInterval` calls. The check covers Cockpit, the companion apps
+and shared frontend packages. It requires a review when a listed interval
+changes and rejects new production references to either dormant component.
+The timing inventory and runtime traces cover the wider review, including
+recursive timeouts, frame loops, and acquisition below the frontend.
+
 ## Cockpit disposition through `5cc98117`
 
 The table above records the original audit. The current Cockpit entry points

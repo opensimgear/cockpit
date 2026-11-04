@@ -7,6 +7,24 @@ import {fileURLToPath} from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const check = process.argv.includes('--check');
 const committed = process.argv.includes('--committed');
+const filesFromGit = cwd => execFileSync('git', committed
+  ? ['ls-tree', '-r', '--name-only', '-z', 'HEAD']
+  : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+{cwd, encoding:'utf8'}).split('\0');
+const sourceAt = (cwd, file) => committed
+  ? execFileSync('git', ['show', `HEAD:${file}`], {cwd, encoding:'utf8'})
+  : readFileSync(resolve(cwd, file), 'utf8');
+
+if (process.argv.includes('--check-ui-intervals')) {
+  const { checkUiIntervals } = await import('./ui-intervals.mjs');
+  const files = [...new Set(filesFromGit(root))].filter(file =>
+    /^(?:src|apps|packages)\//.test(file) && /\.(?:[cm]?[jt]s|[jt]sx|svelte)$/.test(file)
+    && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|[._-](?:tests?|fixtures)\./.test(file));
+  checkUiIntervals(files.map(file => [file, sourceAt(root, file)]));
+  console.log('Frontend intervals match their documented owners.');
+  process.exit(0);
+}
+
 const output = resolve(root, 'docs/reactive/refresh-sites.json');
 const trees = ['src/', 'src-tauri/src/', 'crates/', 'apps/', 'packages/', 'scripts/native-gateway-bridge.mjs'];
 const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simulation)(?:\/|$)|(?:[._-](?:tests?|fixtures)\.|\/tests?\.rs$)/;
@@ -16,10 +34,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
   const cwd = resolve(root, repository);
   let files;
   try {
-    const args = committed
-      ? ['ls-tree', '-r', '--name-only', '-z', 'HEAD']
-      : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'];
-    files = execFileSync('git', args, {cwd, encoding:'utf8'}).split('\0');
+    files = filesFromGit(cwd);
   } catch (error) {
     throw new Error(`Cannot inventory ${cwd}: ${error.message}`);
   }
@@ -27,9 +42,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
     if (!/\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) || excluded.test(file)) continue;
     if (repository === '.' && !trees.some(tree => file.startsWith(tree))) continue;
     const path = resolve(cwd, file);
-    const source = committed
-      ? execFileSync('git', ['show', `HEAD:${file}`], {cwd, encoding:'utf8'})
-      : readFileSync(path, 'utf8');
+    const source = sourceAt(cwd, file);
     const lines = source.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
