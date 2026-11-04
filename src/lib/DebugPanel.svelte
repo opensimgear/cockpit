@@ -2,7 +2,8 @@
   import { onDestroy, onMount } from 'svelte';
   import ProfileDebugView from './ProfileDebugView.svelte';
   import { gatewayRequest } from './gateway';
-  import { ProfilesClient, captureProfileSummaries, type DeepReadonly, type ProfileSummary } from './profiles';
+  import { ProfilesClient, type DeepReadonly, type ProfileSummary } from './profiles';
+  import { observeProfileLibrary } from './profile-read-models/shared';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
   import { ProfileCompilerClient } from './profile-compilation';
   import type { ProfileRuntimeController, RuntimeControlState } from './profile-runtime-controller';
@@ -52,29 +53,32 @@
     if (refreshing || disposed || document.hidden) return;
     refreshing = true;
     try {
-      await Promise.all([
-        profiles.list().then(result => {
-          if (disposed) return;
-          savedProfiles = captureProfileSummaries(result.profiles);
-          profileError = '';
-        }).catch(error => { if (!disposed) profileError = error instanceof Error ? error.message : String(error); }),
-        resources.listAll().then(result => {
-          if (disposed) return;
-          const signature = JSON.stringify([result.session, result.revision, result.resources]);
-          if (signature !== inventorySignature) { inventorySignature = signature; inventoryRevision++; }
-          inventory = result.resources;
-          inventoryError = result.inventoryDiagnostics?.join(' ') ?? '';
-        }).catch(error => { if (!disposed) inventoryError = error instanceof Error ? error.message : String(error); }),
-      ]);
+      const result = await resources.listAll();
+      if (disposed) return;
+      const signature = JSON.stringify([result.session, result.revision, result.resources]);
+      if (signature !== inventorySignature) { inventorySignature = signature; inventoryRevision++; }
+      inventory = result.resources;
+      inventoryError = result.inventoryDiagnostics?.join(' ') ?? '';
+    } catch(error) {
+      if (!disposed) inventoryError = error instanceof Error ? error.message : String(error);
     } finally { refreshing = false; }
   }
   onMount(() => {
+    const stopLibrary = observeProfileLibrary(state => {
+      if (state.status === 'ready' && state.value) {
+        savedProfiles = state.value.profiles;
+        profileError = '';
+      } else if (state.status !== 'connecting') {
+        profileError = state.error ?? 'Waiting for the current profile library.';
+      }
+    });
     const update = () => { void refresh(); };
     update();
     const timer = window.setInterval(update, 3000);
     document.addEventListener('visibilitychange', update);
     window.addEventListener('focus', update);
     return () => {
+      stopLibrary();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', update);
       window.removeEventListener('focus', update);
