@@ -99,6 +99,17 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     let baseline: Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
     let original = baseline["frame"]["payload"]["value"].as_bool().unwrap();
     let revision: u64 = baseline["frame"]["payload"]["revision"].as_str().unwrap().parse().unwrap();
+    let mut cursor = json!({
+        "topic":baseline["frame"]["topic"], "session":baseline["frame"]["session"],
+        "generation":baseline["frame"]["generation"], "revision":baseline["frame"]["revision"]
+    });
+    let read_after = |cursor: &Value| rpc(&endpoint, token, "resources/read", json!({
+        "uri":preference, "_meta":{"opensimgear.com/observationCursor":cursor}
+    }));
+    let snapshot = |reply: Value| -> Value {
+        serde_json::from_str(reply["result"]["contents"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    assert_eq!(snapshot(read_after(&cursor))["cursorStatus"], "unchanged");
     let mut preferences = listen_observations(&endpoint, token, &[preference]);
     assert_eq!(preferences.next().unwrap()["method"], "notifications/subscriptions/acknowledged");
     assert_eq!(preferences.next().unwrap()["params"]["uri"], preference);
@@ -109,6 +120,17 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     assert_eq!(change["params"]["uri"], preference);
     assert_eq!(change["params"]["_meta"]["opensimgear.com/observation"]["payload"]["value"], !original);
     drop(preferences);
+    assert_eq!(snapshot(read_after(&cursor))["cursorStatus"], "advanced");
+    let restored = server.manager.request(json!({"command":"ui_preferences_save","clientId":"mcp-preferences-fixture",
+        "key":"theme","expectedRevision":revision+1,"value":original}));
+    assert_eq!(restored["ok"], true, "{restored}");
+    let gap = snapshot(read_after(&cursor));
+    assert_eq!(gap["cursorStatus"], "gap");
+    assert_eq!(gap["frame"]["payload"]["value"], original);
+    cursor["session"] = json!("previous-session");
+    assert_eq!(snapshot(read_after(&cursor))["cursorStatus"], "replaced");
+    cursor["revision"] = json!("01");
+    assert!(read_after(&cursor)["error"].is_object());
     assert_eq!(rpc(&endpoint, token, "resources/templates/list", json!({}))
         ["result"]["resourceTemplates"][0]["uriTemplate"], "cockpit://observations/{topic}");
     let read = rpc(&endpoint, token, "resources/read", json!({"uri":uri}));

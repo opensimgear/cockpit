@@ -296,6 +296,13 @@ The six streamed UI preferences appear as `preferences.theme`,
 `preferences.canvas-styling`, `preferences.tray` and `preferences.progress`.
 Read or subscribe to the exact preference URI and use `ui_preferences_save`
 with its expected revision to commit a change.
+For an on-demand observation read, optionally send
+`_meta["opensimgear.com/observationCursor"]` with the previous frame's
+`topic`, `session`, `generation` and `revision` strings. The response
+includes the current baseline and a `cursorStatus` of `unchanged`,
+`advanced` for one revision, `gap` for multiple revisions, or `replaced`
+for a different session or generation or a regressed revision. Treat a gap
+or replacement as a new baseline. This read does not replay missed events.
 Exact native CAN, USB, controller
 and game detail topics use the same names as the Cockpit observation broker.
 For a node of the exact applied profile, use `profiles.samples.<digest>`.

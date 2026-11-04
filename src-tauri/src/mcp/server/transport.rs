@@ -305,6 +305,12 @@ impl ServerHandler for Handler {
         let (server, principal) = self.principal(&context, false)?;
         let tools = server.tools.clone();
         let uri = request.uri;
+        let cursor = context.meta.0.get(observation_stream::CURSOR_KEY).map(|value| {
+            let topic = observation_uri::topic(&uri).ok_or_else(|| {
+                ErrorData::invalid_params("Observation cursors require a Cockpit observation URI.", None)
+            })?;
+            observation_stream::Cursor::parse(value, topic)
+        }).transpose()?;
         let permit = server.calls.clone().try_acquire_owned().map_err(|_| {
             ErrorData::internal_error("Cockpit is busy; retry the context read later.", None)
         })?;
@@ -318,7 +324,7 @@ impl ServerHandler for Handler {
                 }
                 if let Some(topic) = observation_uri::topic(&read_uri) {
                     let client = mcp_tools::native_client(&format!("mcp-{}", principal.id));
-                    return bounded(observation_stream::read(&server, &client, topic));
+                    return bounded(observation_stream::read(&server, &client, topic, cursor.as_ref()));
                 }
                 bounded(tools.read_resource(&read_uri, &format!("mcp-{}", principal.id)))
             }),

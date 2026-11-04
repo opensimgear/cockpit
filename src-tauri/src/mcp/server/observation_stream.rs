@@ -1,12 +1,59 @@
 use super::*;
 use crate::observations::{Delivery, Runtime};
+use osg_streams::WireFrame;
 use rmcp::service::SubscriptionContext;
 use std::collections::BTreeSet;
 
 const MAX_TOPICS: usize = 8;
 const SEND_DEADLINE: Duration = Duration::from_secs(2);
 
-pub(super) fn read(server: &Server, client: &str, topic: &str) -> Value {
+pub(super) const CURSOR_KEY: &str = "opensimgear.com/observationCursor";
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Cursor {
+    topic: String,
+    session: String,
+    generation: String,
+    revision: String,
+}
+
+impl Cursor {
+    pub(super) fn parse(value: &Value, topic: &str) -> Result<Self, ErrorData> {
+        let invalid = || ErrorData::invalid_params("Invalid Cockpit observation cursor.", None);
+        let cursor: Self = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+        if cursor.topic != topic
+            || cursor.session.is_empty()
+            || cursor.session.len() > 128
+            || cursor.session.chars().any(char::is_control)
+            || !Self::counter(&cursor.generation)
+            || !Self::counter(&cursor.revision)
+        {
+            return Err(invalid());
+        }
+        Ok(cursor)
+    }
+
+    fn counter(value: &str) -> bool {
+        value.parse::<u64>().is_ok_and(|counter| counter.to_string() == value)
+    }
+
+    fn compare(&self, frame: &WireFrame) -> &'static str {
+        if self.session != frame.session || self.generation != frame.generation {
+            return "replaced";
+        }
+        let previous: u64 = self.revision.parse().expect("Validated cursor revision");
+        let current: u64 = frame.revision.parse().expect("Native observation revision");
+        match current.checked_sub(previous) {
+            Some(0) => "unchanged",
+            Some(1) => "advanced",
+            Some(_) => "gap",
+            None => "replaced",
+        }
+    }
+}
+
+pub(super) fn read(server: &Server, client: &str, topic: &str, cursor: Option<&Cursor>) -> Value {
     let broker = server.manager.observations.broker();
     let result = server.manager.with_observation_topic(topic, || {
         let mut reader = broker
@@ -19,7 +66,10 @@ pub(super) fn read(server: &Server, client: &str, topic: &str) -> Value {
     });
     result.map_or_else(
         |error| mcp_tools::failure("observation_unavailable", &error, false),
-        |frame| json!({"ok":true,"frame":frame}),
+        |frame| match cursor {
+            Some(cursor) => json!({"ok":true,"frame":frame,"cursorStatus":cursor.compare(&frame)}),
+            None => json!({"ok":true,"frame":frame}),
+        },
     )
 }
 
