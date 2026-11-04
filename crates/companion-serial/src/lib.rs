@@ -8,7 +8,7 @@ mod status_observation;
 use status_observation::StatusObserver;
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
-use osg_companion_service::{FeedbackSubscription, Hub};
+use osg_companion_service::{AssignmentSubscription, FeedbackSubscription, Hub};
 use serde_json::{json, Value};
 use serialport::{SerialPort, SerialPortType};
 use sha2::{Digest, Sha256};
@@ -538,6 +538,7 @@ struct Wire {
     connection: String,
     sequence: u64,
     feedback: Option<FeedbackSubscription>,
+    assignments: Option<AssignmentSubscription>,
     feedback_observed: Option<u64>,
     feedback_frames: std::collections::VecDeque<Value>,
 }
@@ -548,6 +549,7 @@ impl Wire {
             connection: uuid::Uuid::new_v4().to_string(),
             sequence: 0,
             feedback: None,
+            assignments: None,
             feedback_observed: None,
             feedback_frames: Default::default(),
         }
@@ -561,21 +563,28 @@ impl Wire {
     }
     fn clear_feedback(&mut self) {
         self.feedback = None;
+        self.assignments = None;
         self.feedback_observed = None;
         self.feedback_frames.clear();
     }
     fn take_feedback(&mut self) -> Result<Option<Value>, String> {
-        let Some(reader) = self.feedback.as_mut() else { return Ok(None); };
-        let observed = reader.observed();
-        if self.feedback_frames.is_empty() && self.feedback_observed != Some(observed) {
-            self.feedback_observed = Some(observed);
-            match reader.take() {
-                Ok(Some(feedback)) => {
-                    let event = json!({"ok":true,"type":"feedback-event","feedback":feedback});
-                    self.feedback_frames = reply_frames(&event)?.into();
+        if self.feedback_frames.is_empty() {
+            let observed = self.assignments.as_ref().map(AssignmentSubscription::observed)
+                .or_else(|| self.feedback.as_ref().map(FeedbackSubscription::observed));
+            if observed != self.feedback_observed {
+                self.feedback_observed = observed;
+                let update = if let Some(reader) = self.assignments.as_mut() {
+                    reader.take().map(|rows| rows.map(|rows| json!({"ok":true,"type":"assignments-event","assignments":rows})))
+                } else if let Some(reader) = self.feedback.as_mut() {
+                    reader.take().map(|value| value.map(|value| json!({"ok":true,"type":"feedback-event","feedback":value})))
+                } else {
+                    Ok(None)
+                };
+                match update {
+                    Ok(Some(event)) => self.feedback_frames = reply_frames(&event)?.into(),
+                    Ok(None) => {}
+                    Err(_) => self.clear_feedback(),
                 }
-                Ok(None) => {}
-                Err(_) => self.clear_feedback(),
             }
         }
         Ok(self.feedback_frames.pop_front().map(|frame| json!({"command":"serial-feedback","linkId":self.link,"frame":frame})))
@@ -597,11 +606,17 @@ impl Wire {
         }
         let ends_feedback = matches!(frame["type"].as_str(), Some("auth" | "open" | "close" | "cancel"))
             || frame["panelError"] == true;
+        let start_assignments = v["pushAssignments"] == true && frame["type"] == "auth";
         let start_feedback = v["pushFeedback"] == true && frame["panelError"] != true
             && matches!(frame["type"].as_str(), Some("baseline" | "heartbeat"));
         let session = start_feedback.then(|| frame["sessionId"].clone());
         let mut response = hub.handle_serial_wire(frame, &self.connection, hub.now_ms());
         if ends_feedback && response["ok"] == true { self.clear_feedback(); }
+        if start_assignments && response["ok"] == true
+            && response["assignments"].as_array().is_some_and(|rows| rows.len() != 1) {
+            self.assignments = Some(hub.subscribe_serial_assignments(&self.connection)?);
+            response["assignmentsPush"] = json!(true);
+        }
         if let Some(session) = session.as_ref().and_then(Value::as_str).filter(|_| response["ok"] == true && self.feedback.is_none()) {
             self.clear_feedback();
             self.feedback = Some(hub.subscribe_serial_feedback(&self.connection, session)?);
@@ -1276,16 +1291,23 @@ mod tests {
         let mut fresh = auth;
         fresh["linkId"] = json!("usb-new");
         fresh["requestId"] = json!("1");
-        assert_eq!(
-            wire.handle(&hub, &fresh).unwrap()[0]["frame"]["type"],
-            "authenticated"
-        );
+        fresh["pushAssignments"] = json!(true);
+        let authenticated = wire.handle(&hub, &fresh).unwrap();
+        assert_eq!(authenticated[0]["frame"]["type"], "authenticated");
+        assert_eq!(authenticated[0]["frame"]["assignmentsPush"], true);
+        let idle = wire.take_feedback().unwrap().unwrap();
+        assert_eq!(idle["frame"]["type"], "assignments-event");
+        assert_eq!(idle["frame"]["assignments"], json!([]));
 
         let fixture: Value = serde_json::from_str(include_str!("../../../apps/companion-esp32/test/live-publication.json")).unwrap();
         let hash = &fixture["publicationHash"];
         hub.retain_legacy_test_fixture(serde_json::from_value(json!({"canonicalDocument":fixture["canonicalDocument"],
             "publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap()).unwrap();
         hub.command(&json!({"command":"companion_assign","instanceId":"usb-panel","companionId":"test-screen","publicationHash":hash})).unwrap();
+        let pushed = wire.take_feedback().unwrap().unwrap();
+        assert_eq!(pushed["linkId"], "usb-new");
+        assert_eq!(pushed["frame"]["assignments"][0]["instanceId"], "usb-panel");
+        assert!(wire.take_feedback().unwrap().is_none());
         let mut request = json!({"type":"serial-request","linkId":"usb-new","requestId":"2","frame":{"type":"open","instanceId":"usb-panel"}});
         let open = wire.handle(&hub, &request).unwrap()[0]["frame"].clone();
         assert_eq!(open["type"], "session-open");

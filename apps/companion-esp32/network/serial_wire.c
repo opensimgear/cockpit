@@ -21,7 +21,7 @@ void osg_serial_receive_feedback(const osg_socket *s,cJSON *record){
     cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
     const char *type=osg_string(frame,"type");
     if(!type)return;
-    if(!strcmp(type,"feedback-event")){
+    if(!strcmp(type,"feedback-event")||!strcmp(type,"assignments-event")){
         clear_feedback_transfer();
         osg_network_serial_feedback(record);
         return;
@@ -68,6 +68,7 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     snprintf(id,sizeof(id),"%" PRIu64,++s->serial_sequence);
     cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"type","serial-request");
     const char *type=osg_string(request,"type");
+    if(type&&!strcmp(type,"auth"))cJSON_AddBoolToObject(v,"pushAssignments",true);
     if(type&&(!strcmp(type,"baseline")||(s->feedback_ready&&!strcmp(type,"heartbeat"))))cJSON_AddBoolToObject(v,"pushFeedback",true);
     cJSON_AddStringToObject(v,"linkId",s->link);cJSON_AddStringToObject(v,"requestId",id);cJSON_AddItemToObject(v,"frame",request);
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);

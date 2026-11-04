@@ -23,6 +23,7 @@ void osg_wifi_feedback_stop(void){}
 unsigned ulTaskNotifyTake(int clear,unsigned wait){(void)clear;vTaskDelay(wait);return 0;}
 bool osg_wifi_feedback_running(void){return false;}
 static cJSON *mock_wifi_message;
+static bool mock_serial_assignments;
 cJSON *osg_wifi_feedback_take(void){cJSON *message=mock_wifi_message;mock_wifi_message=NULL;return message;}
 void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;osg_network_serial_feedback(record);}
 static uint64_t fake_ms;
@@ -111,6 +112,7 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         }
         cJSON_AddStringToObject(*out,"type",!strcmp(type,"auth")?"authenticated":"paired");
         if(!strcmp(type,"auth")&&!settings.direct)cJSON_AddStringToObject(*out,"connectionId","wifi-primary");
+        if(!strcmp(type,"auth")&&mock_serial_assignments)cJSON_AddBoolToObject(*out,"assignmentsPush",true);
         cJSON_AddStringToObject(*out,"hostId",wrong_identity?"wrong-host":"host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
         if(!strcmp(type,"pair-status"))cJSON_AddStringToObject(*out,"token","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         cJSON *list=cJSON_AddArrayToObject(*out,"assignments");
@@ -552,6 +554,20 @@ int main(int argc,char **argv){
     push_wifi_assignment();
     assert(state==OPEN&&socket_opens==idle_opened&&socket_closes==idle_closed);
     advance();assert(state==LIVE&&!remote_armed);
+    stop();
+    setup();state=AUTH;assigned_now=false;settings.direct=true;mock_serial_assignments=true;
+    osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    advance();assert(state==WAIT_ASSIGNMENT&&serial_assignments);
+    fake_ms=next_request;advance();assert(!strcmp(requested_type,"ping"));
+    connection.direct=true;osg_copy(connection.link,sizeof(connection.link),"test-link");
+    char assignment_record[512];
+    snprintf(assignment_record,sizeof(assignment_record),"{\"linkId\":\"old-link\",\"frame\":{\"ok\":true,\"type\":\"assignments-event\",\"assignments\":[{\"instanceId\":\"instance\",\"publicationHash\":\"%s\"}]}}",osg_string(fixture,"publicationHash"));
+    cJSON *assignment_event=cJSON_Parse(assignment_record);
+    osg_network_serial_feedback(assignment_event);usb_assignments();assert(state==WAIT_ASSIGNMENT);
+    cJSON_ReplaceItemInObjectCaseSensitive(assignment_event,"linkId",cJSON_CreateString(connection.link));
+    osg_network_serial_feedback(assignment_event);assert(state==WAIT_ASSIGNMENT);
+    usb_assignments();assert(state==OPEN&&!remote_armed);
+    cJSON_Delete(assignment_event);mock_serial_assignments=false;
     stop();
     candidate_handoff_tests();portable_delivery_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);

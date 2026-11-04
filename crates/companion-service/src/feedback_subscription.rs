@@ -1,7 +1,7 @@
 use super::*;
 use osg_streams::NativeWake;
 
-pub(crate) struct AssignmentSubscription {
+pub struct AssignmentSubscription {
     hub: Hub,
     primary: String,
     companion: String,
@@ -20,7 +20,9 @@ fn changed_assignments(inner: &Inner, companion: &str, previous: &mut Option<Val
 }
 
 impl AssignmentSubscription {
-    pub(crate) fn take(&mut self) -> Result<Option<Value>, String> {
+    pub fn observed(&self) -> u64 { self.wake.observed() }
+
+    pub fn take(&mut self) -> Result<Option<Value>, String> {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         ensure(inner.connections.get(&self.primary) == Some(&self.companion)
             && inner.record.credentials.iter().any(|row| row.companion_id == self.companion
@@ -57,12 +59,27 @@ impl Hub {
         let companion = inner.connections.get(primary).ok_or("Primary connection ended.")?.clone();
         ensure(inner.record.credentials.iter().any(|row| row.companion_id == companion
             && equal_hash(&row.token_hash, &digest)), "Installation credential is invalid or revoked.")?;
-        Self::retire_assignment_reader(&mut inner, primary);
+        Ok(self.attach_assignment_reader(&mut inner, primary, companion, digest, wake))
+    }
+
+    /// The USB worker already owns and authenticated the primary link.
+    pub fn subscribe_serial_assignments(&self, primary: &str) -> Result<AssignmentSubscription, String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let companion = inner.connections.get(primary).ok_or("Primary connection ended.")?.clone();
+        let digest = inner.record.credentials.iter().find(|row| row.companion_id == companion)
+            .ok_or("USB credential was revoked.")?.token_hash.clone();
+        Ok(self.attach_assignment_reader(&mut inner, primary, companion, digest, Arc::new(NativeWake::default())))
+    }
+
+    fn attach_assignment_reader(&self, inner: &mut Inner, primary: &str, companion: String,
+        digest: String, wake: Arc<NativeWake>,
+    ) -> AssignmentSubscription {
+        Self::retire_assignment_reader(inner, primary);
         inner.assignment_wakes.insert(primary.into(), Arc::downgrade(&wake));
         self.observe_record_changes(wake.clone());
-        Ok(AssignmentSubscription {
+        AssignmentSubscription {
             hub: self.clone(), primary: primary.into(), companion, credential_hash: digest, wake, previous: None,
-        })
+        }
     }
 
     pub(super) fn retire_assignment_reader(inner: &mut Inner, primary: &str) {

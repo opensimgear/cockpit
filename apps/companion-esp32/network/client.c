@@ -26,6 +26,8 @@ static osg_settings settings;
 static osg_socket connection;
 static uint64_t next_feedback_connect;
 static char primary_connection[65];
+static bool serial_assignments;
+static cJSON *serial_assignment_event;
 static osg_scene_banks banks;
 static osg_scene_ticket candidate_ticket, checking_ticket;
 static bool candidate_pending, candidate_finished, candidate_success;
@@ -109,7 +111,7 @@ static void cancel_candidate(void){
      * later prepare sees the cleared display fence and reuses that same slot. */
     xSemaphoreGive(ui.mutex);
 }
-static void abort_connection(void){osg_wifi_feedback_stop();next_feedback_connect=0;primary_connection[0]=0;cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
+static void abort_connection(void){osg_wifi_feedback_stop();next_feedback_connect=0;primary_connection[0]=0;serial_assignments=false;cJSON_Delete(serial_assignment_event);serial_assignment_event=NULL;cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
 static const char *failure_message(const char *reason){
     if(!strcmp(reason,"wifi-connection-failed"))return "Wi-Fi connection failed";
     if(!strcmp(reason,"host-tls-or-connection-failed"))return "Could not connect to Cockpit";
@@ -333,10 +335,23 @@ static void apply_feedback(const cJSON *frame){
     xSemaphoreGive(ui.mutex);
 }
 void osg_network_serial_feedback(const cJSON *record){
-    if(!connection.direct||state!=LIVE||!equal(osg_string(record,"linkId"),connection.link))return;
-    apply_feedback(cJSON_GetObjectItemCaseSensitive(record,"frame"));
+    if(!connection.direct||!equal(osg_string(record,"linkId"),connection.link))return;
+    const cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
+    if(state==LIVE)apply_feedback(frame);
+    if(state==WAIT_ASSIGNMENT&&serial_assignments&&equal(osg_string(frame,"type"),"assignments-event")&&
+        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(frame,"ok"))){
+        cJSON *event=cJSON_Duplicate(frame,true);
+        if(event){cJSON_Delete(serial_assignment_event);serial_assignment_event=event;}
+    }
 }
 static bool choose(const cJSON *reply);
+static void usb_assignments(void){
+    cJSON *event=serial_assignment_event;
+    serial_assignment_event=NULL;
+    const cJSON *rows=cJSON_GetObjectItemCaseSensitive(event,"assignments");
+    if(state==WAIT_ASSIGNMENT&&cJSON_IsArray(rows)&&cJSON_GetArraySize(rows)==1&&choose(event))next_request=millis();
+    cJSON_Delete(event);
+}
 static void wifi_feedback(void){
     const bool waiting=state==WAIT_ASSIGNMENT&&primary_connection[0];
     if((state!=LIVE&&!waiting)||connection.direct||!connection.ws){
@@ -559,11 +574,11 @@ static void advance(void){
                 if(settings.persist&&!osg_store_save(&settings)){cJSON_Delete(reply);fail("setup-save-failed-repair-required");return;}
                 installation_saved=settings.persist;state=AUTH;report("paired");}
         }else if(ok){ok=equal(osg_string(reply,"type"),"pair-pending")&&equal(osg_string(reply,"requestId"),pending);next_request=millis()+400;}
-    }else if(state==WAIT_ASSIGNMENT&&!connection.direct&&primary_connection[0]){
+    }else if(state==WAIT_ASSIGNMENT&&(serial_assignments||primary_connection[0])){
         ok=request(message("ping"),&reply,700)&&equal(osg_string(reply,"type"),"pong");
         if(ok)next_request=millis()+2000;
     }else if(state==AUTH||state==WAIT_ASSIGNMENT){
-        /* USB still refreshes the idle assignment on the existing link cadence. */
+        /* A link without an admitted stream must refresh its authenticated assignment. */
         if(state==WAIT_ASSIGNMENT)osg_socket_close(&connection);
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
         v=message("auth");cJSON_AddStringToObject(v,"token",settings.token);
@@ -575,6 +590,7 @@ static void advance(void){
             const char *id=osg_string(reply,"connectionId");
             ok=osg_stable_id(id)&&osg_copy(primary_connection,sizeof(primary_connection),id);
         }
+        if(ok&&settings.direct)serial_assignments=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"assignmentsPush"));
         if(ok)ok=choose(reply);
     }else if(state==OPEN){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
@@ -785,7 +801,7 @@ static void network_task(void *arg){
         cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
         if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
         int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
-        update_screen();advance();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
+        update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
     }
 }
 void osg_network_touch(bool valid,bool down,int x,int y){

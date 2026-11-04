@@ -91,7 +91,12 @@ fn usb_feedback_uses_only_the_authenticated_serial_session() {
     let publication = publish(&hub, fixture());
     assign(&hub, "peer", "instance", &publication.publication_hash);
     let usb = |frame| hub.handle_serial_wire(frame, "usb-primary", hub.now_ms());
+    assert!(hub.subscribe_serial_assignments("usb-primary").is_err());
     assert_eq!(usb(json!({"type":"auth","token":credential}))["ok"], true);
+    let mut assignments = hub.subscribe_serial_assignments("usb-primary").unwrap();
+    assert_eq!(assignments.take().unwrap().unwrap()[0]["instanceId"], "instance");
+    let observed = assignments.observed();
+    assert!(assignments.take().unwrap().is_none());
     let opened = usb(json!({"type":"open","instanceId":"instance"}));
     assert_eq!(opened["ok"], true);
     let session = opened["sessionId"].as_str().unwrap();
@@ -119,6 +124,8 @@ fn usb_feedback_uses_only_the_authenticated_serial_session() {
     assert!(usb(frame(&opened, "heartbeat", "3")).get("feedback").is_none());
     hub.disconnect_connection("usb-primary", hub.now_ms());
     assert!(feedback.take().is_err());
+    assert!(assignments.observed() > observed);
+    assert!(assignments.take().is_err());
 }
 
 #[test]

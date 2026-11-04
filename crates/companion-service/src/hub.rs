@@ -1611,4 +1611,4 @@ mod assignments_api;
 mod feedback_api;
 #[path = "feedback_subscription.rs"]
 mod feedback_subscription;
-pub use feedback_subscription::FeedbackSubscription;
+pub use feedback_subscription::{AssignmentSubscription, FeedbackSubscription};
