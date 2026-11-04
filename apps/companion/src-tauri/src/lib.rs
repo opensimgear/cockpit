@@ -1,4 +1,6 @@
 mod lifecycle;
+mod status_events;
+use status_events::StatusEvents;
 use lifecycle::{Lifecycle, LifecycleSnapshot};
 use osg_companion_service::client::ClientRuntime;
 use serde_json::{json, Value};
@@ -40,8 +42,10 @@ fn companion_lifecycle(state: tauri::State<'_, Lifecycle>) -> LifecycleSnapshot 
 #[tauri::command]
 async fn companion_client_request(
     state: tauri::State<'_, ClientBridge>,
+    events: tauri::State<'_, StatusEvents>,
     request: Value,
 ) -> Result<Value, String> {
+    if request["type"] == "status" { events.acknowledge(); }
     if state.0.get().is_none() && request["type"] == "status" {
         return Ok(json!({"phase":"initializing","busy":true,"epoch":0,
             "protectedStoreAvailable":false,"authenticationAvailable":false,
@@ -102,6 +106,9 @@ pub fn run() {
             app.manage(CacheDirectory(path.clone()));
             let bridge = ClientBridge::default();
             app.manage(bridge.clone());
+            let events = StatusEvents::default();
+            app.manage(events.clone());
+            let app_handle = app.handle().clone();
             #[cfg(target_os = "android")]
             let store = app
                 .state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>()
@@ -118,6 +125,11 @@ pub fn run() {
                 #[cfg(not(target_os = "android"))]
                 let client = ClientRuntime::open(path);
                 let _ = bridge.0.set(client.map(Arc::new));
+                if let Ok(client) = bridge.client() {
+                    events.start(app_handle, &client);
+                } else {
+                    let _ = app_handle.emit(status_events::CHANGED, ());
+                }
             });
             Ok(())
         })
@@ -131,8 +143,13 @@ pub fn run() {
                 invalidate(window, reason);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error running OpenSimGear Companion");
+        .build(tauri::generate_context!())
+        .expect("error building OpenSimGear Companion")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<StatusEvents>().stop();
+            }
+        });
 }
 
 #[cfg(test)]

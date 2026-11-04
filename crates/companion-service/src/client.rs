@@ -128,6 +128,7 @@ struct QueuedInput {
 }
 struct Shared {
     state: Mutex<State>,
+    status_wake: Arc<osg_streams::NativeWake>,
     cancel: AtomicBool,
     running: AtomicBool,
     epoch: AtomicU64,
@@ -187,6 +188,7 @@ impl ClientRuntime {
                     feedback_reset_pending: false,
                     feedback_received_ms: 0,
                 }),
+                status_wake: Arc::new(osg_streams::NativeWake::default()),
                 cancel: AtomicBool::new(false),
                 running: AtomicBool::new(false),
                 epoch: AtomicU64::new(0),
@@ -198,6 +200,10 @@ impl ClientRuntime {
         };
         start_presence(Arc::downgrade(&runtime.shared));
         Ok(runtime)
+    }
+    /// A coalescing invalidation for one passive renderer bridge.
+    pub fn status_wake(&self) -> Arc<osg_streams::NativeWake> {
+        self.shared.status_wake.clone()
     }
     pub fn status(&self) -> ClientStatus {
         self.shared
@@ -241,6 +247,7 @@ impl ClientRuntime {
             state.publication = None;
             state.sender = None;
         }
+        self.shared.status_wake.notify();
     }
     pub fn command(&self, request: Value) -> Result<Value, String> {
         let command = request["type"]
@@ -282,6 +289,7 @@ impl ClientRuntime {
                 }
             }
             set_storage_status(&mut state.status, availability);
+            self.shared.status_wake.notify();
             if command != "storage-status"
                 && !(if matches!(command, "pair-start" | "pair-code-start") {
                     state.status.protected_store_available && state.status.storage_error.is_none()
@@ -410,6 +418,7 @@ impl ClientRuntime {
                     self.shared.started.elapsed().as_millis() as u64,
                     Ordering::SeqCst,
                 );
+                self.shared.status_wake.notify();
                 Ok(json!({"ok":true,"epoch":epoch}))
             }
             "feedback-resync" => {
@@ -430,6 +439,7 @@ impl ClientRuntime {
                 state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
                 state.feedback_accumulator = Default::default();
                 state.feedback_reset_pending = true;
+                self.shared.status_wake.notify();
                 Ok(json!({"ok":true,"feedbackRevision":state.status.feedback_revision}))
             }
             "keepalive" => {
@@ -500,6 +510,7 @@ impl ClientRuntime {
                     ..Default::default()
                 };
                 set_storage_status(&mut state.status, availability);
+                self.shared.status_wake.notify();
                 Ok(json!({"ok":true}))
             }
             "discover" => discover(Duration::from_millis(
@@ -542,6 +553,7 @@ impl ClientRuntime {
             state.status.request_id = None;
             state.publication = None;
         }
+        self.shared.status_wake.notify();
         let shared = self.shared.clone();
         thread::spawn(move || {
             let result = work(shared.clone(), epoch);
@@ -554,6 +566,7 @@ impl ClientRuntime {
                 });
             }
             shared.running.store(false, Ordering::SeqCst);
+            shared.status_wake.notify();
         });
         Ok(())
     }
@@ -615,12 +628,19 @@ fn apply_worker_ack(shared: &Shared, epoch: u64, reply: Value, resync: bool) -> 
         .lock()
         .map_err(|_| "Client state lock poisoned")?;
     if state.status.epoch == epoch && current(shared, epoch) {
+        let revision = state.status.feedback_revision;
+        let changed_ack = ["ackStage", "submitted"].into_iter().any(|key| {
+            state.status.ack.as_ref().and_then(|ack| ack.get(key)) != reply.get(key)
+        });
         apply_ack(
             &mut state,
             reply,
             shared.started.elapsed().as_millis() as u64,
             resync,
         )?;
+        if changed_ack || revision != state.status.feedback_revision {
+            shared.status_wake.notify();
+        }
     }
     Ok(())
 }
@@ -681,6 +701,7 @@ fn set_state(shared: &Shared, epoch: u64, apply: impl FnOnce(&mut State)) {
     if let Ok(mut state) = shared.state.lock() {
         if state.status.epoch == epoch {
             apply(&mut state);
+            shared.status_wake.notify();
         }
     }
 }
@@ -936,8 +957,10 @@ fn start_presence(owner: std::sync::Weak<Shared>) {
                                     .as_ref()
                                     .is_some_and(|c| c.token == credential.token)
                                     && !shared.running.load(Ordering::SeqCst)
+                                    && state.status.assignments != reply["assignments"]
                                 {
                                     state.status.assignments = reply["assignments"].clone();
+                                    shared.status_wake.notify();
                                 }
                             }
                         }
@@ -1049,10 +1072,13 @@ fn pair_worker(
             .filter(|id| id.len() <= 64)
             .ok_or("Host did not return a pairing request ID")?
             .to_string();
-        set_state(&shared, epoch, |state| {
-            state.status.phase = "awaiting-approval".into();
-            state.status.request_id = Some(id.clone());
-        });
+        if let Ok(mut state) = shared.state.lock() {
+            if state.status.epoch == epoch && state.status.request_id.as_ref() != Some(&id) {
+                state.status.phase = "awaiting-approval".into();
+                state.status.request_id = Some(id.clone());
+                shared.status_wake.notify();
+            }
+        }
         if Instant::now() > deadline {
             return Err("Pairing approval expired; create a new offer".into());
         }
@@ -1418,6 +1444,22 @@ mod tests {
             probes: AtomicUsize::new(0),
         })
     }
+    #[test]
+    fn status_wake_reports_ack_transitions_and_invalidation_without_heartbeat_noise() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
+        let wake = client.status_wake();
+        let before = wake.observed();
+        apply_worker_ack(&client.shared, 0, json!({"ackStage":"source-accepted","sequence":"1"}), false).unwrap();
+        assert_eq!(wake.observed(), before + 1);
+        apply_worker_ack(&client.shared, 0, json!({"ackStage":"source-accepted","sequence":"2"}), false).unwrap();
+        assert_eq!(wake.observed(), before + 1);
+        client.invalidate("test lifecycle boundary");
+        assert_eq!(wake.observed(), before + 2);
+        apply_worker_ack(&client.shared, 0, json!({"ackStage":"submitted","sequence":"3"}), false).unwrap();
+        assert_eq!(wake.observed(), before + 2);
+    }
+
     #[test]
     fn native_adapter_probe_and_mobile_qualification_are_distinct_admission_boundaries() {
         assert!(authentication_reason(None, false).is_none());
