@@ -127,12 +127,17 @@ pub(crate) struct Runtime {
     observations: observations::Runtime,
     worker: Mutex<Option<JoinHandle<()>>>,
     pages: Arc<pages::Pages>,
+    inventory_change: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl Runtime {
     pub(crate) fn new(observations: observations::Runtime) -> Self {
         Self { inner: Arc::new(Inner { queue: Mutex::new(Queue { events: VecDeque::new(),
             latest: Captured::default(), overflow: false, bytes: 0, failed: false, closed: false, ready: None }), wake: Condvar::new() }),
-            observations, worker: Mutex::new(None), pages: Arc::new(pages::Pages::default()) }
+            observations, worker: Mutex::new(None), pages: Arc::new(pages::Pages::default()), inventory_change: None }
+    }
+    pub(crate) fn with_inventory_change(mut self, changed: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.inventory_change = Some(changed);
+        self
     }
     pub(crate) fn library_observer(&self) -> osg_profiles::service::read_model::Observer {
         let inner = self.inner.clone();
@@ -154,8 +159,9 @@ impl Runtime {
             let inner = self.inner.clone();
             let observations = self.observations.clone();
             let pages = self.pages.clone();
+            let inventory_change = self.inventory_change.clone();
             *worker = Some(std::thread::Builder::new().name("profile-read-models".into())
-                .spawn(move || run(inner, observations, pages)).map_err(|error| error.to_string())?);
+                .spawn(move || run(inner, observations, pages, inventory_change)).map_err(|error| error.to_string())?);
         }
         drop(worker);
         let mut queue = self.inner.queue.lock().unwrap_or_else(|p| p.into_inner());
@@ -188,13 +194,16 @@ impl Runtime {
 }
 impl Drop for Runtime { fn drop(&mut self) { self.shutdown(); } }
 
-fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages::Pages>) {
+fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages::Pages>,
+    inventory_change: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
     let broker = observations.broker();
     let clock = format!("profiles:{}", uuid::Uuid::new_v4());
     let mut captured = Captured::default();
     let mut publishers = Vec::<osg_streams::Publisher>::new();
     let mut previous = None::<[Value; 2]>;
     let mut source_generation = 0;
+    let mut previous_inventory_owner = None;
     let mut rules = pages::PreparedRules::default();
     loop {
         let (events, overflow) = {
@@ -220,6 +229,13 @@ fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages:
         if overflow { steps.push(None); }
         for event in steps {
             if let Some(event) = event { captured.apply(event); }
+            if let (Some(changed), Some(native)) = (&inventory_change, &captured.native) {
+                let owner = (native.state.clone(), native.owner.clone(), native.applied_snapshot.clone());
+                if previous_inventory_owner.as_ref().is_some_and(|previous| previous != &owner) {
+                    changed();
+                }
+                previous_inventory_owner = Some(owner);
+            }
             if !captured.complete() { continue; }
             if let Err(error) = rules.prepare(&captured.automatic.as_ref().expect("registered automatic source").rules, &pages) {
                 let mut queue = inner.queue.lock().unwrap_or_else(|p| p.into_inner());

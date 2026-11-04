@@ -293,13 +293,15 @@ async fn open_vjoy() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn optional_dependency_install(app: tauri::AppHandle, id: String) -> Result<String, String> {
+async fn optional_dependency_install(app: tauri::AppHandle, state: tauri::State<'_, NativeGateway>, id: String) -> Result<String, String> {
     let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         optional_dependencies::install(&resources, &id).map(str::to_owned)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if result.is_ok() { state.0.system_inventory_changed(); }
+    result
 }
 
 #[tauri::command]

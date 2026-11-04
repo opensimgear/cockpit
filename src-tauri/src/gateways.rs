@@ -245,7 +245,7 @@ pub struct GatewayManager {
     serial_topology: Arc<serial_topology::SerialTopology>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
-    system_inventory: crate::system_inventory::Runtime,
+    system_inventory: Arc<crate::system_inventory::Runtime>,
     pub(crate) ui_preferences:crate::persistence::ui::Preferences,
     configuration_gate: Arc<Mutex<()>>,
     profile_panels: Arc<ProfilePanelIo>,
@@ -461,7 +461,13 @@ impl GatewayManager {
         if let Err(error) = profile_activations.observe(&observations.broker(), companion_host.clone(), profile_admission_epoch.clone()) {
             eprintln!("Cannot start profile activation observations: {error}");
         }
-        let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone());
+        let system_inventory = Arc::new(crate::system_inventory::Runtime::new(native));
+        if let Err(error) = system_inventory.observe(&observations) {
+            eprintln!("Cannot start supplemental inventory observations: {error}");
+        }
+        let profile_inventory = system_inventory.clone();
+        let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone())
+            .with_inventory_change(Arc::new(move || profile_inventory.changed()));
         let game_read_models=crate::game_read_models::Runtime::new(observations.clone(),games.clone());
         observations.watch_reader_lifecycle(games.read_model_signal().wake.clone());
         let sample_session = Arc::downgrade(&profile_session);
@@ -476,10 +482,6 @@ impl GatewayManager {
         let profile_samples = crate::profile_samples::Runtime::new(observations.broker(), profile_sample_signal,
             sample_capture, format!("profile-samples:{}", controllers.capture_clock().id()));
         observations.watch_reader_lifecycle(profile_samples.reader_wake());
-        let system_inventory = crate::system_inventory::Runtime::new(native);
-        if let Err(error) = system_inventory.observe(&observations) {
-            eprintln!("Cannot start supplemental inventory observations: {error}");
-        }
         let manager = Self {
             workspace:workspace::Runtime::new(),
             observations,
@@ -1438,6 +1440,9 @@ impl GatewayManager {
                     let mut response =
                         self.decorate(json!({"ok":true,"state":empty_state()}), None);
                     response["state"]["controllers"] = state;
+                    if matches!(command.as_str(), "controller_visibility_enable" | "controller_visibility_inspect" | "controller_visibility_restore") {
+                        self.system_inventory_changed();
+                    }
                     response
                 }
                 Err(error) => self.error(&error, None),
@@ -1606,6 +1611,8 @@ impl GatewayManager {
         self.workspace.changed();
         self.decorate(response, Some(&id))
     }
+    pub(crate) fn system_inventory_changed(&self) { self.system_inventory.changed(); }
+
     pub fn shutdown(&self) {
         self.closed.store(true,Ordering::Release);
         self.workspace.shutdown();

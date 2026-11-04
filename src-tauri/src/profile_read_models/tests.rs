@@ -12,7 +12,9 @@ fn automatic() -> AutomaticSnapshot {
 }
 fn fixture() -> (Runtime, osg_profiles::service::Service) {
     let observations = observations::Runtime::new();
-    let runtime = Runtime::new(observations);
+    start_fixture(Runtime::new(observations))
+}
+fn start_fixture(runtime: Runtime) -> (Runtime, osg_profiles::service::Service) {
     let mut service = osg_profiles::service::Service::new(None);
     service.observe_read_model(runtime.library_observer());
     runtime.native_observer()(status(State::Stopped));
@@ -52,6 +54,34 @@ fn committed_second_client_changes_arrive_and_new_readers_start_current() {
     runtime.shutdown();
     assert!(broker.subscribe("after", "ui", TOPICS[0]).is_err());
     assert!(broker.subscribe("after", "ui", TOPICS[1]).is_err());
+}
+
+#[test]
+fn applied_owner_changes_invalidate_inventory_without_republishing_diagnostics() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let changes = Arc::new(AtomicU64::new(0));
+    let delivered = changes.clone();
+    let runtime = Runtime::new(observations::Runtime::new()).with_inventory_change(Arc::new(move || {
+        delivered.fetch_add(1, Ordering::AcqRel);
+    }));
+    let (runtime, _) = start_fixture(runtime);
+    let mut reader = runtime.observations.broker().subscribe("inventory-test", "ui", TOPICS[1]).unwrap();
+    next(&mut reader);
+    assert_eq!(changes.load(Ordering::Acquire), 0);
+    let capture = runtime.native_observer();
+    let mut running = status(State::Running);
+    running.owner = Some(RunOwner { session: uuid::Uuid::new_v4().to_string(), generation: 1,
+        profile_id: osg_profiles::DEFAULT_PROFILE_ID.into(), profile_revision: 1, game_id: None });
+    capture(running.clone());
+    next(&mut reader);
+    assert_eq!(changes.load(Ordering::Acquire), 1);
+    running.degradation.push("Input is stale".into());
+    capture(running);
+    next(&mut reader);
+    assert_eq!(changes.load(Ordering::Acquire), 1);
+    capture(status(State::Stopped));
+    next(&mut reader);
+    assert_eq!(changes.load(Ordering::Acquire), 2);
 }
 
 #[test]
