@@ -29,19 +29,20 @@ fn paths_match(left: &str, right: &str) -> bool {
 fn basename(image: &str) -> &str {
     image.rsplit(['\\', '/']).next().unwrap_or(image)
 }
-fn is_competing_image(image: &str) -> bool {
-    matches!(
-        basename(image).to_ascii_lowercase().as_str(),
-        "acr.exe"
-            | "acs.exe"
-            | "acs_x86.exe"
-            | "ac2-win64-shipping.exe"
-            | "assettocorsaevo.exe"
-    )
+const LEGACY_MAPPING_IMAGES: &[&str] = &["acr.exe", "acs.exe", "acs_x86.exe", "AC2-Win64-Shipping.exe"];
+const EVO_MAPPING_IMAGES: &[&str] = &["AssettoCorsaEVO.exe"];
+
+pub(crate) fn mapping_process_images(game: Game) -> &'static [&'static str] {
+    match game {
+        Game::Evo => EVO_MAPPING_IMAGES,
+        Game::Corsa | Game::Competizione | Game::Rally => LEGACY_MAPPING_IMAGES,
+    }
 }
+
 fn shares_mapping(game: Game, image: &str) -> bool {
-    is_competing_image(image)
-        && (game == Game::Evo) == basename(image).eq_ignore_ascii_case("AssettoCorsaEVO.exe")
+    mapping_process_images(game)
+        .iter()
+        .any(|name| basename(image).eq_ignore_ascii_case(name))
 }
 /// Stable durable evidence for a selected executable, never a persisted process PID.
 pub(crate) fn fingerprint(executable: &Path) -> Result<Value, String> {
@@ -467,9 +468,9 @@ fn failure_status(error: &str) -> &'static str {
         "process-exited"
     } else if text.contains("not available") && text.contains("os error 2") {
         "waiting"
-    } else if text.contains("car/track context") {
+    } else if text.contains("native process monitoring") || text.contains("process notification permission") {
         "waiting"
-    } else if text.contains("changed during all bounded") {
+    } else if text.contains("car/track context") || text.contains("changed during all bounded") {
         "waiting"
     } else {
         "unsupported-layout"
@@ -539,14 +540,6 @@ fn probe_acquired(
             if !platform.alive(&process)? {
                 return Ok(result(fingerprint,"process-exited",vec!["The selected Assetto process exited. Recheck after relaunch to attach its new identity.".into()]));
             }
-            let competing = competitors(process.pid)?;
-            if !competing.is_empty() {
-                return Ok(result(
-                    fingerprint,
-                    "conflicting-producer",
-                    vec![conflict_message(&competing)],
-                ));
-            }
             let now = clock();
             progress(
                 "Checking native Assetto telemetry",
@@ -557,14 +550,6 @@ fn probe_acquired(
                     Ok(snapshot) => {
                         last_error = None;
                         if required_channels_valid(&snapshot) {
-                            let competing = competitors(process.pid)?;
-                            if !competing.is_empty() {
-                                return Ok(result(
-                                    fingerprint,
-                                    "conflicting-producer",
-                                    vec![conflict_message(&competing)],
-                                ));
-                            }
                             if !platform.alive(&process)? {
                                 return Ok(result(
                                     fingerprint,
@@ -581,6 +566,9 @@ fn probe_acquired(
                             let after = fingerprint_for_game(executable, telemetry_game)?;
                             if after["fingerprint"] != fingerprint["fingerprint"] {
                                 return Ok(result(&after,"executable-changed",vec!["Assetto was updated during verification. Recheck its new version.".into()]));
+                            }
+                            if let Some(error) = attached.source.terminal_error() {
+                                return Ok(result(fingerprint, failure_status(&error), vec![error]));
                             }
                             let mut assessed = verifier.assessment(now);
                             assessed["nativeVerified"] = json!(false);

@@ -200,6 +200,7 @@ impl RawSample {
 }
 
 pub(crate) trait Source: Send {
+    fn terminal_error(&self) -> Option<String> { None }
     fn poll(&mut self) -> Result<Option<RawSample>, String>;
     fn close(&mut self);
     fn watch(&self, _wake: std::sync::Arc<osg_streams::NativeWake>) -> Result<Option<crate::acr_windows::Watch>, String> {

@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte';
   import {gameCatalogue, type GameCommandName} from './games';
   import {gatewayRequest} from './gateway';
-  let {gameId}:{gameId:string}=$props();
+  let {gameId,disabled=false}:{gameId:string;disabled?:boolean}=$props();
   let busy=$state(false),error=$state('');
   const game=$derived($gameCatalogue.find(game=>game.id===gameId));
   const monitor=$derived(game?.processMonitor);
@@ -16,13 +16,13 @@
   }
 </script>
 
-{#if game?.provider==='x-plane'}
+{#if game && (game.provider==='x-plane' || monitor)}
   <section class="process-monitor" aria-label="Process monitoring">
     <div><h3>Process monitoring</h3><p role="status">{monitor?.message??'Start the game to prepare native process monitoring.'}</p></div>
     {#if pending||ready}
       <button class="secondary-button" disabled={busy} onclick={()=>request('game_process_monitor_cancel')}><Icon name={pending?'close':'stop'} size={14}/>{pending?'Cancel':'Stop'}</button>
     {:else}
-      <button class="secondary-button" disabled={busy||!game.installed||game.processMonitoringSupported===false} onclick={()=>request('game_process_monitor_enable')}><Icon name="check" size={14}/>Allow</button>
+      <button class="secondary-button" disabled={busy||disabled||!game.installed||game.processMonitoringSupported===false} onclick={()=>request('game_process_monitor_enable')}><Icon name="check" size={14}/>Allow</button>
     {/if}
     {#if error}<p class="monitor-error" role="alert">{error}</p>{/if}
     {#if monitor?.state==='needs-permission'||monitor?.state==='failed'}<p class="monitor-help">Windows may ask for permission. Monitoring ends with the game or Cockpit.</p>{/if}

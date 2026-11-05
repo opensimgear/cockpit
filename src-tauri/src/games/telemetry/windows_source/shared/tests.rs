@@ -103,3 +103,34 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
     let (_, next) = mpsc::channel();
     assert!(SharedSource::attach(&replacement, game, false, || Ok(Input(next))).is_ok());
 }
+
+#[test]
+fn failed_process_lease_releases_the_owner_even_with_an_attached_reader() {
+    struct Retired(Arc<AtomicBool>);
+    impl Source for Retired {
+        fn poll(&mut self) -> Result<Option<RawSample>, String> {
+            self.terminal_error().map_or(Ok(None), Err)
+        }
+        fn close(&mut self) {}
+        fn terminal_error(&self) -> Option<String> { self.0.load(Ordering::Acquire).then(|| "Process lease lost.".into()) }
+    }
+
+    let identity = ProcessIdentity { pid: 2, epoch: 1, path: "test.exe".into() };
+    let game = Game::Corsa;
+    let failed = Arc::new(AtomicBool::new(false));
+    let mut retired = SharedSource::attach(&identity, game, false, || Ok(Retired(failed.clone()))).unwrap();
+    failed.store(true, Ordering::Release);
+    wait_for(|| retired.owner.done.load(Ordering::Acquire));
+    assert_eq!(retired.poll().unwrap_err(), "Process lease lost.");
+    assert_eq!(retired.terminal_error().as_deref(), Some("Process lease lost."));
+
+    let (_, input) = mpsc::channel();
+    let replacement = SharedSource::attach(&identity, game, false, || Ok(Input(input))).unwrap();
+    assert!(!Arc::ptr_eq(&retired.owner, &replacement.owner));
+}
+
+#[test]
+fn ordered_reader_rejects_an_invalid_process_identity_before_attachment() {
+    let identity = ProcessIdentity { pid: 0, epoch: 1, path: "acr.exe".into() };
+    assert!(SharedSource::open(&identity, Game::Rally).is_err());
+}

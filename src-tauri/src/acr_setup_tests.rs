@@ -90,7 +90,7 @@ fn known_assetto_producers_are_filtered_before_process_queries() {
         "AC2-Win64-Shipping.exe",
         "AssettoCorsaEVO.exe",
     ] {
-        assert!(is_competing_image(name), "{name}");
+        assert!(shares_mapping(Game::Rally, name) || shares_mapping(Game::Evo, name), "{name}");
     }
     for name in [
         "AssettoCorsa.exe",
@@ -101,7 +101,7 @@ fn known_assetto_producers_are_filtered_before_process_queries() {
         "acr-not-a-game.exe",
         "C:/acr.exe/helper.exe",
     ] {
-        assert!(!is_competing_image(name), "{name}");
+        assert!(!shares_mapping(Game::Rally, name) && !shares_mapping(Game::Evo, name), "{name}");
     }
     assert!(paths_match(
         "\\\\?\\C:\\Games\\ACR\\acr.exe",
@@ -536,21 +536,18 @@ fn closed_or_wrong_selected_process_never_opens_an_acquisition() {
     }
 }
 #[test]
-fn producer_conflicts_are_checked_before_attach_during_poll_and_before_qualification() {
+fn producer_conflicts_are_reported_from_preflight_or_the_attached_reader() {
     let harness = ProbeHarness::new();
-    for conflict_at in [1, 2, 4] {
+    let competitor = json!({"pid":901,"image":"acs.exe"});
+    for preflight in [true, false] {
         let queries = Cell::new(0);
         let (result, closed) = harness.run(
             &ProbePlatform::running(harness.process.clone()),
-            vec![Ok(Some(sample(10, 2))), Ok(Some(sample(11, 2)))],
+            vec![Err(conflict_message(&[competitor.clone()]))],
             Some(harness.process.path.clone()),
             |_| {
                 queries.set(queries.get() + 1);
-                Ok(if queries.get() == conflict_at {
-                    vec![json!({"pid":901,"image":"acs.exe"})]
-                } else {
-                    vec![]
-                })
+                Ok(if preflight { vec![competitor.clone()] } else { vec![] })
             },
             || false,
             None,
@@ -559,7 +556,8 @@ fn producer_conflicts_are_checked_before_attach_during_poll_and_before_qualifica
         assert_eq!(proof["status"], "conflicting-producer");
         assert!(proof["diagnostics"].to_string().contains("PID 901"));
         assert_eq!(proof["nativeVerified"], false);
-        assert_eq!(closed.load(Ordering::Acquire), conflict_at != 1);
+        assert_eq!(closed.load(Ordering::Acquire), !preflight);
+        assert_eq!(queries.get(), 1);
     }
 }
 #[test]
@@ -729,7 +727,7 @@ fn executable_update_and_source_epoch_reuse_cannot_qualify_previous_evidence() {
     assert!(closed.load(Ordering::Acquire));
 }
 #[test]
-fn producer_query_failure_closes_attached_source_instead_of_using_unqualified_packets() {
+fn producer_preflight_failure_prevents_attachment_and_unqualified_packets() {
     let harness = ProbeHarness::new();
     let queries = Cell::new(0);
     let (result, closed) = harness.run(
@@ -738,17 +736,14 @@ fn producer_query_failure_closes_attached_source_instead_of_using_unqualified_pa
         Some(harness.process.path.clone()),
         |_| {
             queries.set(queries.get() + 1);
-            if queries.get() == 2 {
-                Err("Process query denied".into())
-            } else {
-                Ok(vec![])
-            }
+            Err("Process query denied".into())
         },
         || false,
         None,
     );
     assert_eq!(result.unwrap_err(), "Process query denied");
-    assert!(closed.load(Ordering::Acquire));
+    assert!(!closed.load(Ordering::Acquire));
+    assert_eq!(queries.get(), 1);
 }
 
 #[test]

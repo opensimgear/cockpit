@@ -59,6 +59,7 @@ struct Owner {
     stream: Stream,
     stop: Arc<AtomicBool>,
     worker: Thread,
+    terminal_error: Arc<OnceLock<String>>,
     done: Arc<AtomicBool>,
 }
 
@@ -86,6 +87,8 @@ impl Owner {
             .map_err(|error| format!("{error:?}"))?;
         let stop = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
+        let terminal_error = Arc::new(OnceLock::new());
+        let worker_error = terminal_error.clone();
         let shutdown = Shutdown {
             stream: stream.clone(),
             done: done.clone(),
@@ -153,6 +156,10 @@ impl Owner {
                             break;
                         }
                     }
+                    if let Some(error) = source.terminal_error() {
+                        let _ = worker_error.set(error);
+                        break;
+                    }
                     let period = if previous_error.is_some() {
                         RETRY_PERIOD
                     } else {
@@ -168,6 +175,7 @@ impl Owner {
             stream,
             stop,
             worker: worker.thread().clone(),
+            terminal_error,
             done,
         })
     }
@@ -210,7 +218,7 @@ impl SharedSource {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let slot = registry.get(game.id());
-        let owner = match slot.and_then(|slot| slot.owner.upgrade()) {
+        let owner = match slot.filter(|slot| !slot.done.load(Ordering::Acquire)).and_then(|slot| slot.owner.upgrade()) {
             Some(owner) => {
                 if owner.identity.pid != identity.pid
                     || owner.identity.epoch != identity.epoch
@@ -248,8 +256,10 @@ impl SharedSource {
 }
 
 impl Source for SharedSource {
+    fn terminal_error(&self) -> Option<String> { self.owner.terminal_error.get().cloned() }
     fn poll(&mut self) -> Result<Option<RawSample>, String> {
         let owner = &self.owner;
+        if let Some(error) = owner.terminal_error.get() { return Err(error.clone()); }
         if self.reader.is_none() {
             self.reader = Some(
                 owner

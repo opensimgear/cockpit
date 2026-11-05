@@ -20,8 +20,8 @@ impl GamesRuntime {
             .cloned()
             .ok_or("Choose a registered game.")?;
         let integration = crate::game_discovery::integration_binding(&game)
-            .filter(|integration| integration.starts_with("x-plane-"))
-            .ok_or("Choose an X-Plane game for process notification permission.")?;
+            .filter(|integration| crate::xplane::permissions::supports(integration))
+            .ok_or("Choose a supported game for process notification permission.")?;
         if cancel {
             crate::xplane::permissions::cancel(integration);
             return Ok(());

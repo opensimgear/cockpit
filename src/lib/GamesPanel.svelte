@@ -7,6 +7,7 @@
   import {pickGameExecutable} from './gateway';
   import Icon from './Icon.svelte';
   import GameProviderSettings from './GameProviderSettings.svelte';
+  import GameProcessMonitor from './GameProcessMonitor.svelte';
   import GameProfileRule from './GameProfileRule.svelte';
   import GameProfileLaunch from './GameProfileLaunch.svelte';
   import type {DeepReadonly,ProfileSummary} from './profiles';
@@ -201,6 +202,7 @@
             {/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
+          <GameProcessMonitor gameId={selected.id} disabled={locked||!!profileBlockedReason}/>
           {#key selected.id}<GameProviderSettings game={selected} busy={locked||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>

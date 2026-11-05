@@ -101,6 +101,7 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
         let epoch = process.epoch;
         let mut capture_owner = CaptureOwner::new();
         capture_owner.begin_generation().unwrap();
+        let (monitor, _) = crate::xplane::process_events::test_monitor();
         let mut source = WindowsSource {
             game,
             pid,
@@ -110,7 +111,7 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
             pages: Some(pages),
             capture_owner,
             last_packet: None,
-            producer_checked_at: Some(std::time::Instant::now()),
+            monitor: std::sync::Arc::new(monitor),
         };
         assert!(source
             .process_image()
@@ -131,7 +132,6 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
             ],
             [4, 5, 6]
         );
-        source.producer_checked_at = None;
         physics.packet(11);
         let second = source.poll().unwrap().unwrap();
         assert_eq!(&second.physics[..4], 11u32.to_le_bytes());

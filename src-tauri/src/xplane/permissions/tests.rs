@@ -149,3 +149,17 @@ fn a_cancelled_late_success_is_revoked_without_replacing_the_new_ready_watcher()
     assert!(acquire(&game, &expected).unwrap().error().is_none());
     cancel(&game);
 }
+
+#[cfg(windows)]
+#[test]
+fn assetto_permission_job_rejects_the_wrong_mapping_family_before_consent() {
+    let game = "assetto-corsa-evo";
+    let expected = ProcessIdentity {
+        path: format!("C:/permission-test/{}/acs.exe", uuid::Uuid::new_v4()),
+        ..identity()
+    };
+    enable(game, expected.clone()).unwrap();
+    let failed = observed(game, "failed");
+    assert!(failed["details"].as_str().unwrap().contains("monitoring scope"));
+    assert!(acquire(game, &expected).is_err());
+}

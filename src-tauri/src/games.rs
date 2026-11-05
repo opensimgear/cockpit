@@ -229,7 +229,7 @@ impl GamesRuntime {
         if summary {self.inner.setup.decorate_summary(catalogue);} else {self.inner.setup.decorate(catalogue);}
         for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
             if let Some(integration) = crate::game_discovery::integration_binding(game)
-                .filter(|integration| integration.starts_with("x-plane-")) {
+                .filter(|integration| crate::xplane::permissions::supports(integration)) {
                 game["processMonitor"] = crate::xplane::permissions::status(integration);
             }
         }

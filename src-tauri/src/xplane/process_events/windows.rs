@@ -6,7 +6,7 @@ use crate::game_discovery::ProcessIdentity;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TryRecvError},
-    Arc,
+    Arc, OnceLock,
 };
 use tokio::sync::watch;
 use windows::{
@@ -32,6 +32,7 @@ pub(super) enum Event {
 pub(super) struct Inbox {
     sender: SyncSender<Event>,
     overflow: AtomicBool,
+    scope: OnceLock<ProcessScope>,
     wake: Handle,
 }
 impl Inbox {
@@ -47,7 +48,13 @@ impl Inbox {
         }
         loop {
             match receiver.try_recv() {
-                Ok(Event::Started(observed)) => started(pid, observed)?,
+                Ok(Event::Started(observed)) => {
+                    started(pid, observed).map_err(|error| match self.scope.get() {
+                        Some(ProcessScope::AssettoLegacy | ProcessScope::AssettoEvo) =>
+                            format!("Another Assetto process started (PID {observed}). Re-enable process monitoring after closing competing games."),
+                        _ => error,
+                    })?;
+                }
                 Ok(Event::Failed(error)) => return Err(error),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
@@ -93,13 +100,60 @@ impl Drop for Worker {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub(super) enum ProcessScope {
+    XPlane,
+    AssettoLegacy,
+    AssettoEvo,
+}
+
+impl ProcessScope {
+    pub(super) fn for_integration(integration: &str) -> Result<Self, String> {
+        use crate::game_telemetry::Game;
+        match integration {
+            "x-plane-11" | "x-plane-12" => Ok(Self::XPlane),
+            _ => match Game::from_id(integration)? {
+                Game::Evo => Ok(Self::AssettoEvo),
+                Game::Corsa | Game::Competizione | Game::Rally => Ok(Self::AssettoLegacy),
+            },
+        }
+    }
+
+    pub(super) fn images(self) -> &'static [&'static str] {
+        use crate::game_telemetry::Game;
+        match self {
+            Self::XPlane => &["X-Plane.exe"],
+            Self::AssettoLegacy => crate::acr_setup::mapping_process_images(Game::Corsa),
+            Self::AssettoEvo => crate::acr_setup::mapping_process_images(Game::Evo),
+        }
+    }
+
+    fn exclusive(self, expected: &ProcessIdentity) -> Result<(), String> {
+        use crate::game_telemetry::Game;
+        match self {
+            Self::XPlane => crate::game_discovery::exclusive_xplane(expected),
+            Self::AssettoLegacy => crate::acr_setup::ensure_single_producer_for_game(expected.pid, Game::Corsa),
+            Self::AssettoEvo => crate::acr_setup::ensure_single_producer_for_game(expected.pid, Game::Evo),
+        }
+    }
+
+    fn start_query(self) -> String {
+        let filter = self.images().iter()
+            .map(|image| format!("ProcessName = '{image}'"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        format!("SELECT * FROM Win32_ProcessStartTrace WHERE {filter}")
+    }
+}
+
 pub(super) fn start(
     expected: ProcessIdentity,
+    scope: ProcessScope,
 ) -> Result<(watch::Receiver<Option<String>>, Worker), String> {
     start_with(
         expected,
-        subscribe,
-        crate::game_discovery::exclusive_xplane,
+        move |inbox, cancelled| subscribe(inbox, cancelled, scope),
+        move |expected| scope.exclusive(expected),
         std::time::Duration::from_secs(30),
     )
 }
@@ -210,6 +264,7 @@ where
     let inbox = Arc::new(Inbox {
         sender,
         overflow: AtomicBool::new(false),
+        scope: OnceLock::new(),
         wake: Handle::event()?,
     });
     let _subscription = subscription(inbox.clone(), cancelled)?;
@@ -236,13 +291,14 @@ where
         }
     }
 }
-fn subscribe(inbox: Arc<Inbox>, cancelled: &AtomicBool) -> Result<Subscription, String> {
-    let result = unsafe { subscribe_com(inbox, cancelled) };
+fn subscribe(inbox: Arc<Inbox>, cancelled: &AtomicBool, scope: ProcessScope) -> Result<Subscription, String> {
+    let _ = inbox.scope.set(scope);
+    let result = unsafe { subscribe_com(inbox, cancelled, scope) };
     result.map_err(|error| {
         let action = if error.contains("0x80041003") || error.contains("0x80070005") {
             " Windows denied process-event access. Use the explicit native monitoring enable action to request a temporary elevated helper."
         } else { "" };
-        format!("Cannot subscribe to native X-Plane process notifications (ROOT\\CIMV2): {error}.{action}")
+        format!("Cannot subscribe to native game process notifications (ROOT\\CIMV2): {error}.{action}")
     })
 }
 fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
@@ -252,7 +308,7 @@ fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
         Ok(())
     }
 }
-unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool) -> Result<Subscription, String> {
+unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool, scope: ProcessScope) -> Result<Subscription, String> {
     let locator: IWbemLocator =
         unsafe { CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER) }
             .map_err(|e| format!("WMI locator: {e}"))?;
@@ -295,15 +351,13 @@ unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool) -> Result<Sub
         local_sinks: Vec::new(),
         _apartment: apartment,
     };
+    let start_query = scope.start_query();
     for (query, dropped) in [
         // Includes the __EventQueueOverflowEvent subclass. Any loss fails closed,
         // even if it belonged to another consumer: ownership cannot be inferred.
         // Register loss detection before the process subscription itself.
         ("SELECT * FROM __EventDroppedEvent", true),
-        (
-            "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = 'X-Plane.exe'",
-            false,
-        ),
+        (start_query.as_str(), false),
     ] {
         let local = sink::create(inbox.clone(), dropped);
         let stub = unsafe {
@@ -340,6 +394,7 @@ pub(super) fn test_inbox(capacity: usize) -> (Arc<Inbox>, Receiver<Event>) {
         Arc::new(Inbox {
             sender,
             overflow: AtomicBool::new(false),
+        scope: OnceLock::new(),
             wake: Handle::event().unwrap(),
         }),
         receiver,
@@ -360,7 +415,7 @@ pub(super) fn test_subscription() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let _apartment = Apartment;
     let (inbox, _) = test_inbox(256);
-    let _subscription = subscribe(inbox, &AtomicBool::new(false))?;
+    let _subscription = subscribe(inbox, &AtomicBool::new(false), ProcessScope::XPlane)?;
     Ok(())
 }
 

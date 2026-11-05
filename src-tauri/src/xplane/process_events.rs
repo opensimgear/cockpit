@@ -26,22 +26,26 @@ enum Backend {
     Test(watch::Sender<Option<String>>),
 }
 
-pub(super) struct Monitor {
+pub(crate) struct Monitor {
     failure: watch::Receiver<Option<String>>,
     #[cfg(any(windows, test))]
     _worker: Backend,
 }
 impl Monitor {
-    pub(super) fn start(expected: &ProcessIdentity) -> Result<Self, String> {
+    pub(super) fn start(expected: &ProcessIdentity, integration: &str) -> Result<Self, String> {
         #[cfg(windows)]
         {
-            Self::direct(windows::start(expected.clone()))
+            Self::start_scoped(expected, windows::ProcessScope::for_integration(integration)?)
         }
         #[cfg(not(windows))]
         {
-            let _ = expected;
-            Err("Native X-Plane process events are available only on Windows.".into())
+            let _ = (expected, integration);
+            Err("Native game process events are available only on Windows.".into())
         }
+    }
+    #[cfg(windows)]
+    fn start_scoped(expected: &ProcessIdentity, scope: windows::ProcessScope) -> Result<Self, String> {
+        Self::direct(windows::start(expected.clone(), scope))
     }
     #[cfg(windows)]
     fn direct(
@@ -74,10 +78,12 @@ impl Monitor {
     pub(super) fn start_elevated_with_cancel(
         expected: &ProcessIdentity,
         cancel: watch::Receiver<bool>,
+        integration: &str,
     ) -> Result<Self, String> {
         #[cfg(windows)]
         {
-            let (failure, worker) = bridge::start_with_cancel(expected.clone(), cancel)?;
+            let scope = windows::ProcessScope::for_integration(integration)?;
+            let (failure, worker) = bridge::start_with_cancel(expected.clone(), cancel, scope)?;
             Ok(Self {
                 failure,
                 _worker: Backend::Elevated(worker),
@@ -85,11 +91,11 @@ impl Monitor {
         }
         #[cfg(not(windows))]
         {
-            let _ = (expected, cancel);
+            let _ = (expected, cancel, integration);
             Err("Elevated native X-Plane monitoring is available only on Windows.".into())
         }
     }
-    pub(super) fn error(&self) -> Option<String> {
+    pub(crate) fn error(&self) -> Option<String> {
         self.failure
             .borrow()
             .clone()
@@ -126,7 +132,7 @@ impl Monitor {
 }
 
 #[cfg(test)]
-pub(super) fn test_monitor() -> (Monitor, watch::Receiver<Option<String>>) {
+pub(crate) fn test_monitor() -> (Monitor, watch::Receiver<Option<String>>) {
     let (sender, failure) = watch::channel(None);
     let observed = failure.clone();
     (

@@ -5,7 +5,7 @@ use crate::game_read_models::signals::{Domain, Signal};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, OnceLock, PoisonError, Weak},
     time::Instant,
 };
 use tokio::sync::watch;
@@ -28,7 +28,7 @@ fn entries() -> &'static Mutex<BTreeMap<String, Entry>> {
 struct ChangeWatchers(Mutex<Vec<Weak<Signal>>>);
 impl ChangeWatchers {
     fn register(&self, signal: &Arc<Signal>) {
-        let mut watchers = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut watchers = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         watchers.retain(|watcher| watcher.strong_count() > 0);
         let watcher = Arc::downgrade(signal);
         if watchers.len() < 64 && !watchers.iter().any(|old| old.ptr_eq(&watcher)) {
@@ -37,7 +37,7 @@ impl ChangeWatchers {
     }
     fn notify(&self) {
         let signals = {
-            let mut watchers = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            let mut watchers = self.0.lock().unwrap_or_else(PoisonError::into_inner);
             let signals = watchers
                 .iter()
                 .filter_map(Weak::upgrade)
@@ -68,9 +68,13 @@ fn key(expected: &ProcessIdentity) -> String {
     )
 }
 
-pub(super) fn acquire(game: &str, expected: &ProcessIdentity) -> Result<Arc<Monitor>, String> {
+pub(crate) fn supports(game: &str) -> bool {
+    matches!(game, "x-plane-11" | "x-plane-12") || crate::game_telemetry::Game::from_id(game).is_ok()
+}
+
+pub(crate) fn acquire(game: &str, expected: &ProcessIdentity) -> Result<Arc<Monitor>, String> {
     {
-        let registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+        let registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = registry.get(&key(expected)) {
             if let Some(monitor) = &entry.monitor {
                 if let Some(error) = monitor.error() {
@@ -93,14 +97,14 @@ pub(super) fn acquire(game: &str, expected: &ProcessIdentity) -> Result<Arc<Moni
 }
 
 pub(crate) fn enable(game: &str, expected: ProcessIdentity) -> Result<(), String> {
-    if !matches!(game, "x-plane-11" | "x-plane-12") {
-        return Err("Choose a supported X-Plane game.".into());
+    if !supports(game) {
+        return Err("Choose a game with native process notifications.".into());
     }
     if !cfg!(windows) {
         return Err("Native process notification permission requires Windows.".into());
     }
     {
-        let registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+        let registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = registry.get(&key(&expected)) {
             if entry.state == "starting" {
                 return Err("A process monitoring permission request is already pending.".into());
@@ -117,11 +121,12 @@ pub(crate) fn enable(game: &str, expected: ProcessIdentity) -> Result<(), String
     begin(game, expected, true)
 }
 fn begin(game: &str, expected: ProcessIdentity, elevated: bool) -> Result<(), String> {
+    let integration = game.to_owned();
     begin_with(game, expected, elevated, move |expected, cancelled| {
         if elevated {
-            Monitor::start_elevated_with_cancel(&expected, cancelled)
+            Monitor::start_elevated_with_cancel(&expected, cancelled, &integration)
         } else {
-            Monitor::start(&expected)
+            Monitor::start(&expected, &integration)
         }
     })
     .map(|_| ())
@@ -138,7 +143,7 @@ fn begin_with(
     let operation = uuid::Uuid::new_v4().to_string();
     let (cancel, cancelled) = watch::channel(false);
     {
-        let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+        let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = registry.get(&identity) {
             if !elevated {
                 return Ok(None);
@@ -195,7 +200,7 @@ fn begin_with(
                 factory(expected, cancelled)
             }))
             .unwrap_or_else(|_| Err("Native process monitor startup panicked.".into()));
-            let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+            let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
             let current = registry
                 .get_mut(&job_identity)
                 .filter(|entry| entry.operation == job_operation && !*entry.cancel.borrow());
@@ -240,7 +245,7 @@ fn begin_with(
         Ok(worker) => Ok(Some(worker)),
         Err(error) => {
             let changed = {
-                let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+                let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
                 if let Some(entry) = registry
                     .get_mut(&identity)
                     .filter(|entry| entry.operation == operation && !*entry.cancel.borrow())
@@ -275,7 +280,7 @@ async fn observe_failure(
         error = super::process_events::wait_failure(&mut failure) => error,
     };
     let changed = {
-        let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+        let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = registry.get_mut(&identity).filter(|entry| {
             entry.operation == operation && entry.state == "ready" && !*entry.cancel.borrow()
         }) {
@@ -292,7 +297,7 @@ async fn observe_failure(
 }
 
 pub(crate) fn cancel(game: &str) {
-    let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+    let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
     let mut changed = false;
     for entry in registry.values_mut().filter(|entry| entry.game == game) {
         changed |= entry.state != "disabled" || entry.error.is_some();
@@ -309,7 +314,7 @@ pub(crate) fn cancel(game: &str) {
     }
 }
 pub(crate) fn cancel_all() {
-    let mut registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+    let mut registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
     let mut changed = false;
     for entry in registry.values_mut() {
         changed |= entry.state != "disabled" || entry.error.is_some();
@@ -326,7 +331,7 @@ pub(crate) fn cancel_all() {
     }
 }
 pub(crate) fn status(game: &str) -> Value {
-    let registry = entries().lock().unwrap_or_else(|p| p.into_inner());
+    let registry = entries().lock().unwrap_or_else(PoisonError::into_inner);
     let Some(entry) = registry
         .values()
         .filter(|entry| entry.game == game)

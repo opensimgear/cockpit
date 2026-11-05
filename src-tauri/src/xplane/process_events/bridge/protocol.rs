@@ -1,3 +1,4 @@
+use super::super::windows::ProcessScope;
 use crate::game_discovery::ProcessIdentity;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -54,6 +55,7 @@ fn valid_nonce(nonce: &str) -> bool {
 #[serde(tag = "type", deny_unknown_fields)]
 pub(super) enum Frame {
     Begin {
+        scope: ProcessScope,
         nonce: String,
         pid: u32,
         epoch: u64,
@@ -68,8 +70,9 @@ pub(super) enum Frame {
     },
 }
 impl Frame {
-    pub(super) fn begin(request: &Request, expected: &ProcessIdentity) -> Self {
+    pub(super) fn begin(request: &Request, expected: &ProcessIdentity, scope: ProcessScope) -> Self {
         Self::Begin {
+            scope,
             nonce: request.nonce.clone(),
             pid: expected.pid,
             epoch: expected.epoch,
@@ -81,19 +84,19 @@ impl Frame {
             Self::Begin { nonce, .. } | Self::Ready { nonce } | Self::Failed { nonce, .. } => nonce,
         }
     }
-    pub(super) fn into_process(self) -> Result<ProcessIdentity, String> {
+    pub(super) fn into_process(self) -> Result<(ProcessIdentity, ProcessScope), String> {
         let Self::Begin {
-            pid, epoch, path, ..
+            pid, epoch, path, scope, ..
         } = self
         else {
             return Err("Expected a single Begin request.".into());
         };
         let expected = ProcessIdentity { pid, epoch, path };
-        validate_process(&expected)?;
-        Ok(expected)
+        validate_process(&expected, scope)?;
+        Ok((expected, scope))
     }
 }
-pub(super) fn validate_process(expected: &ProcessIdentity) -> Result<(), String> {
+pub(super) fn validate_process(expected: &ProcessIdentity, scope: ProcessScope) -> Result<(), String> {
     if expected.pid == 0
         || expected.epoch == 0
         || expected.path.len() > 32768
@@ -103,10 +106,10 @@ pub(super) fn validate_process(expected: &ProcessIdentity) -> Result<(), String>
             .path
             .rsplit(['\\', '/'])
             .next()
-            .is_some_and(|name| name.eq_ignore_ascii_case("X-Plane.exe"))
+            .is_some_and(|name| scope.images().iter().any(|image| name.eq_ignore_ascii_case(image)))
     {
         return Err(
-            "Choose one valid native X-Plane process identity before enabling monitoring.".into(),
+            "Choose one valid native process identity for this monitoring scope.".into(),
         );
     }
     Ok(())

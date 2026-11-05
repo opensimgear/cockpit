@@ -22,7 +22,7 @@ include!("xplane/snapshot.rs");
 include!("xplane/session.rs");
 include!("xplane/source.rs");
 mod subscriptions;
-mod process_events;
+pub(crate) mod process_events;
 pub(crate) mod permissions;
 pub(crate) fn process_helper_main() -> Option<i32> { process_events::helper_main() }
 mod owner;

@@ -36,7 +36,7 @@ fn elevated_facade_rejects_invalid_and_cancelled_requests_without_launching() {
     };
     assert!(Monitor::start_elevated(&invalid).is_err());
     let (_sender, receiver) = watch::channel(true);
-    assert!(Monitor::start_elevated_with_cancel(&invalid, receiver).is_err());
+    assert!(Monitor::start_elevated_with_cancel(&invalid, receiver, "x-plane-12").is_err());
     assert!(
         helper_main().is_none(),
         "ordinary test invocation must not dispatch the helper"

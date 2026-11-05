@@ -297,7 +297,7 @@ fn ordinary_user_wmi_capability_and_native_facade_failures_are_explicit() {
             if error.contains("0x80041003") || error.contains("0x80070005") { assert!(error.contains("explicit native monitoring enable")); }
         }
     }
-    let result = Monitor::start(&current());
+    let result = Monitor::start(&current(), "x-plane-12");
     match result {
         Ok(monitor) => {
             monitor.cancel();

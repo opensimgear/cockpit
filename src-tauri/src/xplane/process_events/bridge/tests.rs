@@ -88,14 +88,14 @@ fn selected_identity_is_narrow_and_error_frames_are_utf8_bounded() {
         epoch: 1,
         path: r"C:\Games\X-Plane.exe".into(),
     };
-    assert!(protocol::validate_process(&expected).is_ok());
+    assert!(protocol::validate_process(&expected, ProcessScope::XPlane).is_ok());
     for path in [
         r"C:\Games\cmd.exe",
         "X-Plane.exe",
         "C:\\Games\\X-Plane.exe\0",
     ] {
         expected.path = path.into();
-        assert!(protocol::validate_process(&expected).is_err());
+        assert!(protocol::validate_process(&expected, ProcessScope::XPlane).is_err());
     }
     let Frame::Failed { error, .. } = protocol::failure(&"a".repeat(64), "🛫".repeat(3000))
     else {
@@ -311,7 +311,7 @@ fn closing_pipe_exits_child_even_when_monitor_factory_is_stalled() {
             .unwrap()
             .unwrap();
         security::authenticate_child(&pipe, &child_handle).unwrap();
-        protocol::write(&mut pipe, &Frame::begin(&request, &selected.identity))
+        protocol::write(&mut pipe, &Frame::begin(&request, &selected.identity, ProcessScope::XPlane))
             .await
             .unwrap();
         let stdout = child.0.stdout.take().unwrap();
@@ -357,7 +357,7 @@ fn ordinary_child_fixture() {
         .collect();
     let request = Request::parse(&args).unwrap();
     let mode = std::env::var("OSG_PROCESS_EVENTS_TEST_MODE").unwrap();
-    let result = runtime().block_on(helper(request, move |_| {
+    let result = runtime().block_on(helper(request, move |_, _| {
         if mode == "observe" {
             println!("factory-entered");
         }
@@ -405,5 +405,25 @@ fn selected_child_fixture() {
             Some(ClientOptions::new().open(pipe).unwrap())
         };
         std::thread::park();
+    }
+}
+
+#[test]
+fn begin_scope_binds_the_selected_executable_to_its_mapping_family() {
+    let request = Request {
+        nonce: "a".repeat(64),
+        parent_pid: 1,
+        parent_epoch: 1,
+    };
+    for (name, scope, other) in [
+        ("acs_x86.exe", ProcessScope::AssettoLegacy, ProcessScope::AssettoEvo),
+        ("AssettoCorsaEVO.exe", ProcessScope::AssettoEvo, ProcessScope::AssettoLegacy),
+        ("X-Plane.exe", ProcessScope::XPlane, ProcessScope::AssettoLegacy),
+    ] {
+        let expected = ProcessIdentity { pid: 2, epoch: 3, path: format!(r"C:\Games\{name}") };
+        let frame = Frame::begin(&request, &expected, scope);
+        let frame: Frame = serde_json::from_value(serde_json::to_value(frame).unwrap()).unwrap();
+        assert_eq!(frame.into_process().unwrap(), (expected.clone(), scope));
+        assert!(Frame::begin(&request, &expected, other).into_process().is_err());
     }
 }

@@ -1,6 +1,6 @@
 //! Explicit, operation-scoped elevation. No service is installed and ordinary
 //! monitor startup never calls this path.
-use super::{native::Handle, Monitor};
+use super::{native::Handle, windows::ProcessScope, Monitor};
 use crate::game_discovery::ProcessIdentity;
 use std::sync::mpsc::{self, SyncSender};
 use tokio::{
@@ -57,8 +57,9 @@ pub(super) fn start(
 pub(super) fn start_with_cancel(
     expected: ProcessIdentity,
     cancel: watch::Receiver<bool>,
+    scope: ProcessScope,
 ) -> Result<(watch::Receiver<Option<String>>, Worker), String> {
-    start_controlled(expected, Some(cancel), launch::elevated)
+    start_scoped(expected, Some(cancel), launch::elevated, scope)
 }
 fn start_with<F>(
     expected: ProcessIdentity,
@@ -77,8 +78,20 @@ fn start_controlled<F>(
 where
     F: FnOnce(&Request) -> Result<Handle, String> + Send + 'static,
 {
+    start_scoped(expected, external_cancel, launch, ProcessScope::XPlane)
+}
+
+fn start_scoped<F>(
+    expected: ProcessIdentity,
+    external_cancel: Option<watch::Receiver<bool>>,
+    launch: F,
+    scope: ProcessScope,
+) -> Result<(watch::Receiver<Option<String>>, Worker), String>
+where
+    F: FnOnce(&Request) -> Result<Handle, String> + Send + 'static,
+{
     check_external_cancel(&external_cancel)?;
-    protocol::validate_process(&expected)?;
+    protocol::validate_process(&expected, scope)?;
     // Reject stale selections before the user can be shown a consent prompt.
     Handle::process(&expected)?;
     let (failure_sender, failure) = watch::channel(None);
@@ -99,6 +112,7 @@ where
                     stop_receiver,
                     external_cancel,
                     &ready_sender,
+                    scope,
                 ))
             }));
             let error = match result {
@@ -173,6 +187,7 @@ async fn parent<F>(
     mut stop: watch::Receiver<bool>,
     mut external_cancel: Option<watch::Receiver<bool>>,
     ready: &SyncSender<Result<(), String>>,
+    scope: ProcessScope,
 ) -> Result<(), String>
 where
     F: FnOnce(&Request) -> Result<Handle, String>,
@@ -211,7 +226,7 @@ where
     security::authenticate_child(&pipe, child_exit.process())?;
     check_external_cancel(&external_cancel)?;
     let startup = async {
-        protocol::write(&mut pipe, &Frame::begin(&request, &expected)).await?;
+        protocol::write(&mut pipe, &Frame::begin(&request, &expected, scope)).await?;
         match protocol::read(&mut pipe, &request.nonce).await? {
             Frame::Ready { .. } => Ok(()),
             Frame::Failed { error, .. } => Err(error),
@@ -259,7 +274,7 @@ pub(crate) fn helper_main() -> Option<i32> {
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
-        runtime.block_on(helper(request, Monitor::start))
+        runtime.block_on(helper(request, Monitor::start_scoped))
     })();
     match result {
         Ok(()) => Some(0),
@@ -271,7 +286,7 @@ pub(crate) fn helper_main() -> Option<i32> {
 }
 async fn helper<F>(request: Request, factory: F) -> Result<(), String>
 where
-    F: FnOnce(&ProcessIdentity) -> Result<Monitor, String> + Send + 'static,
+    F: FnOnce(&ProcessIdentity, ProcessScope) -> Result<Monitor, String> + Send + 'static,
 {
     // The server already exists before this helper is launched; no reconnect or
     // name-based retry can switch us onto a later, substituted pipe instance.
@@ -280,7 +295,7 @@ where
         .map_err(|e| format!("Cannot open the Cockpit process-events pipe: {e}"))?;
     let parent = security::authenticate_parent(&request, &pipe)?;
     let mut parent_exit = wait::Exit::new(parent)?;
-    let expected = tokio::select! {
+    let (expected, scope) = tokio::select! {
         result = parent_exit.wait() => { result?; return Ok(()); },
         result = timeout(STARTUP, protocol::read(&mut pipe, &request.nonce)) => result.map_err(|_| "The process-events Begin request timed out.")??.into_process()?,
     };
@@ -293,7 +308,7 @@ where
     std::thread::Builder::new()
         .name("xplane-elevated-wmi".into())
         .spawn(move || {
-            let _ = sender.send(factory(&expected).map(DeferredMonitor::new));
+            let _ = sender.send(factory(&expected, scope).map(DeferredMonitor::new));
         })
         .map_err(|e| format!("Cannot start elevated process monitoring: {e}"))?;
     let monitor = tokio::select! {

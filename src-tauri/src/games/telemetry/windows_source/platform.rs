@@ -196,7 +196,7 @@ pub(crate) struct WindowsSource {
     pages: Option<Pages>,
     capture_owner: CaptureOwner,
     last_packet: Option<u32>,
-    producer_checked_at: Option<std::time::Instant>,
+    monitor: std::sync::Arc<crate::xplane::process_events::Monitor>,
 }
 impl WindowsSource {
     pub fn new(process_id: u32) -> Result<Self, String> {
@@ -209,33 +209,33 @@ impl WindowsSource {
         if process_id == 0 {
             return Err("Select a nonzero ACR process ID.".into());
         }
-        crate::acr_setup::ensure_single_producer_for_game(process_id, game)?;
-        let process = Process::open(process_id)?;
+        Self::from_process(Process::open(process_id)?, process_id, expected_image, game)
+    }
+    fn from_process(process: Process, process_id: u32, expected_image: &str, game: Game) -> Result<Self, String> {
         selected_game_image_matches(&process.image, expected_image, game)?;
+        let identity = crate::game_discovery::ProcessIdentity { pid: process_id, epoch: process.epoch, path: process.image.clone() };
+        let monitor = crate::xplane::permissions::acquire(game.id(), &identity)?;
         Ok(Self {
             game,
             pid: process_id,
             expected_image: expected_image.into(),
             process: Some(process),
-            identity: None,
+            identity: Some(identity),
             pages: None,
             capture_owner: CaptureOwner::new(),
             last_packet: None,
-            producer_checked_at: Some(std::time::Instant::now()),
+            monitor,
         })
     }
     pub(super) fn exact(identity: &crate::game_discovery::ProcessIdentity, game: Game) -> Result<Self, String> {
         let image = identity.path.rsplit(['\\', '/']).next().unwrap_or(&identity.path);
-        let mut source = Self::new_for_game(identity.pid, image, game)?;
-        source.identity = Some(identity.clone());
-        source.verify_identity(source.process.as_ref().unwrap())?;
-        Ok(source)
+        let process = Process::open(identity.pid)?;
+        Self::verify_identity(identity, &process)?;
+        Self::from_process(process, identity.pid, image, game)
     }
-    fn verify_identity(&self, process: &Process) -> Result<(), String> {
+    fn verify_identity(identity: &crate::game_discovery::ProcessIdentity, process: &Process) -> Result<(), String> {
         use crate::game_discovery::normalized_path;
-        if self.identity.as_ref().is_some_and(|identity| {
-            process.epoch != identity.epoch || normalized_path(&process.image) != normalized_path(&identity.path)
-        }) {
+        if process.epoch != identity.epoch || normalized_path(&process.image) != normalized_path(&identity.path) {
             return Err("Assetto process identity changed; acquire the replacement explicitly.".into());
         }
         Ok(())
@@ -244,10 +244,11 @@ impl WindowsSource {
         self.process.as_ref().map(|p| p.image.as_str())
     }
     fn read(&mut self) -> Result<RawSample, String> {
+        if let Some(error) = self.monitor.error() { return Err(error); }
         if self.process.is_none() {
             let process = Process::open(self.pid)?;
             selected_game_image_matches(&process.image, &self.expected_image, self.game)?;
-            self.verify_identity(&process)?;
+            if let Some(identity) = &self.identity { Self::verify_identity(identity, &process)?; }
             self.process = Some(process);
         }
         let process = self.process.as_ref().unwrap();
@@ -272,6 +273,7 @@ impl WindowsSource {
         if !process.running() {
             return Err("Selected ACR process exited during telemetry capture.".into());
         }
+        if let Some(error) = self.monitor.error() { return Err(error); }
         Ok(sample)
     }
 }
@@ -279,19 +281,8 @@ impl WindowsSource {
 // concurrently accessed; the Source trait intentionally has no Sync bound.
 unsafe impl Send for WindowsSource {}
 impl Source for WindowsSource {
+    fn terminal_error(&self) -> Option<String> { self.monitor.error() }
     fn poll(&mut self) -> Result<Option<RawSample>, String> {
-        if self
-            .producer_checked_at
-            .is_none_or(|last| last.elapsed() >= std::time::Duration::from_millis(250))
-        {
-            if let Err(error) =
-                crate::acr_setup::ensure_single_producer_for_game(self.pid, self.game)
-            {
-                self.close();
-                return Err(error);
-            }
-            self.producer_checked_at = Some(std::time::Instant::now());
-        }
         match self.read() {
             Ok(sample) => {
                 let packet = u32::from_le_bytes(sample.physics[..4].try_into().unwrap());
@@ -313,7 +304,6 @@ impl Source for WindowsSource {
         self.pages = None;
         self.process = None;
         self.last_packet = None;
-        self.producer_checked_at = None;
     }
 }
 impl Drop for WindowsSource {
