@@ -32,13 +32,13 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, resource_wake:Mutex<Weak<osg_streams::NativeWake>> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>> }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),resource_wake:Mutex::default()}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),activation_wake:Default::default(),resource_wake:Mutex::default()}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
@@ -55,6 +55,7 @@ impl Signal {
     pub(crate) fn mark_library_commit(&self) {
         self.mark(Domain::Library);
         self.context_wake.notify();
+        self.activation_wake.notify();
         self.mark_resources();
     }
     pub(crate) fn watch_resources(&self, wake: &Arc<osg_streams::NativeWake>) {
@@ -122,6 +123,7 @@ mod tests {
     fn only_library_commits_wake_the_parked_game_context_owner() {
         let signal = Signal::default();
         let before = signal.context_wake.observed();
+        let activation_before = signal.activation_wake.observed();
         let resources = Arc::new(osg_streams::NativeWake::default());
         signal.watch_resources(&resources);
         let before_resources = resources.observed();
@@ -130,9 +132,11 @@ mod tests {
         }
         signal.mark_telemetry();
         assert_eq!(signal.context_wake.observed(), before);
+        assert_eq!(signal.activation_wake.observed(), activation_before);
         assert_eq!(resources.observed(), before_resources);
         signal.mark_library_commit();
         assert_ne!(signal.context_wake.observed(), before);
+        assert_ne!(signal.activation_wake.observed(), activation_before);
         assert_ne!(resources.observed(), before_resources);
     }
 

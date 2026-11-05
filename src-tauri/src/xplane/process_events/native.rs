@@ -143,3 +143,12 @@ pub(super) fn wait(stop: &Handle, wake: &Handle, process: &Handle) -> Result<u32
         _ => Err(last_error("Cannot wait for X-Plane process events")),
     }
 }
+
+pub(super) fn wait_events(stop: &Handle, wake: &Handle) -> Result<bool, String> {
+    let handles = [stop.0, wake.0];
+    match unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, u32::MAX) } {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(last_error("Cannot wait for game process inventory notifications")),
+    }
+}

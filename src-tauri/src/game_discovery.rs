@@ -14,6 +14,14 @@ pub(crate) trait Platform: Send + Sync {
     fn process_monitoring_supported(&self) -> bool {
         false
     }
+    #[cfg(windows)]
+    fn watch_activation_processes(
+        &self,
+        _games: &[Value],
+        _wake: std::sync::Arc<osg_streams::NativeWake>,
+    ) -> Option<crate::xplane::process_events::InventoryEvents> {
+        None
+    }
     fn integration_setup_supported(&self) -> bool {
         false
     }

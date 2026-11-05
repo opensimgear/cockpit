@@ -5,11 +5,28 @@ use osg_profiles::activation::{GameIdentity, VerifiedGame};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc,Condvar,Mutex,OnceLock},
+    sync::{atomic::{AtomicU8, Ordering},Arc,Condvar,Mutex,OnceLock},
     time::{Duration, Instant},
 };
 
 const MAX_AGE: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+pub(crate) struct ProcessContinuity(AtomicU8);
+
+impl ProcessContinuity {
+    pub(crate) fn begin(&self) -> bool {
+        self.0.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+
+    pub(crate) fn is_live(&self) -> bool {
+        self.0.load(Ordering::Acquire) == 1
+    }
+
+    pub(crate) fn retire(&self) {
+        self.0.store(2, Ordering::Release);
+    }
+}
 #[derive(Clone,PartialEq,Eq)]
 struct Proof {
     identity: GameIdentity,
@@ -26,14 +43,22 @@ struct Entry {
 #[derive(Default)]
 struct State {
     at: Option<Instant>,
+    continuity: Option<Arc<ProcessContinuity>>,
     entries: BTreeMap<String, Entry>,
 }
 #[derive(Default)]
 pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>,Condvar);
 
 impl State {
+    fn fresh(&self) -> bool {
+        self.continuity.as_ref().map_or_else(
+            || self.at.is_some_and(|at| at.elapsed() <= MAX_AGE),
+            |live| live.is_live(),
+        )
+    }
+
     fn exact_proof(&self, identity: &GameIdentity, process: &ProcessIdentity) -> Option<&Proof> {
-        if self.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+        if !self.fresh() {
             return None;
         }
         self.entries
@@ -99,7 +124,9 @@ fn checked_process(
 impl Observer {
     pub(crate) fn watch_changes(&self,changes:Arc<crate::game_read_models::signals::Signal>) {let _=self.1.set(changes);}
     pub(crate) fn view_deadline(&self)->Option<Instant> {
-        self.0.lock().unwrap_or_else(|p|p.into_inner()).at.and_then(|at|at.checked_add(MAX_AGE)).filter(|at|*at>Instant::now())
+        let state = self.0.lock().unwrap_or_else(|p|p.into_inner());
+        if state.continuity.is_some() { return None; }
+        state.at.and_then(|at|at.checked_add(MAX_AGE)).filter(|at|*at>Instant::now())
     }
     /// Live desktop scope selection consumes the background process proof.
     /// Missing/contended evidence waits; it never starts a foreground scan on
@@ -111,7 +138,7 @@ impl Observer {
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => return CurrentProcessObservation::Busy,
         };
-        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+        if !state.fresh() {
             return CurrentProcessObservation::Unavailable;
         }
         state.entries.get(id).map_or(
@@ -121,7 +148,17 @@ impl Observer {
             ),
         )
     }
+    #[cfg(test)]
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
+        self.observe_with_continuity(platform, games, None);
+    }
+
+    pub(crate) fn observe_with_continuity(
+        &self,
+        platform: &dyn Platform,
+        games: &[Value],
+        continuity: Option<Arc<ProcessContinuity>>,
+    ) {
         // Capture one process inventory for the whole registered catalogue.
         // Reject duplicates before discovery so one cycle cannot satisfy the
         // consecutive-observation requirement for the same registration.
@@ -166,6 +203,14 @@ impl Observer {
         }).collect::<Vec<_>>();
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let previous=state.entries.clone();
+        let same_source = match (&state.continuity, &continuity) {
+            (None, None) => true,
+            (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+            _ => false,
+        };
+        if !same_source { state.entries.clear(); }
+        let event_owned = continuity.is_some();
+        state.continuity = continuity;
         state.entries.retain(|id, _| seen.contains(id));
         for (id, result) in scans {
             let entry = state.entries.entry(id).or_insert_with(|| Entry {
@@ -183,7 +228,7 @@ impl Observer {
                     {
                         entry.status = "verified".into();
                         entry.message.clear();
-                    } else if entry.pending.as_ref() == Some(&(identity.clone(), process.clone())) {
+                    } else if event_owned || entry.pending.as_ref() == Some(&(identity.clone(), process.clone())) {
                         entry.confirmed = Some(Proof {
                             identity,
                             process,
@@ -232,7 +277,7 @@ impl Observer {
     }
     pub(crate) fn snapshot(&self) -> Result<Vec<VerifiedGame>, String> {
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+        if !state.fresh() {
             return Err("Native game process observations are stale; automatic activation is waiting for the watcher.".into());
         }
         Ok(state
@@ -282,7 +327,7 @@ impl Observer {
     ) -> Result<(), String> {
         let proof = {
             let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-            if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+            if !state.fresh() {
                 return Err("The automatic game observation expired during preparation.".into());
             }
             state
@@ -301,7 +346,7 @@ impl Observer {
     }
     pub(crate) fn view(&self, id: &str) -> Value {
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        let fresh = state.at.is_some_and(|at| at.elapsed() <= MAX_AGE);
+        let fresh = state.fresh();
         match state.entries.get(id).filter(|_| fresh) {
             Some(entry) => {
                 json!({"status":entry.status,"message":entry.message,"processSession":entry.confirmed.as_ref().map(|proof| &proof.session)})

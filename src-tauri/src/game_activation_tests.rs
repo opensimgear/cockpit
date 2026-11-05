@@ -408,3 +408,33 @@ fn large_custom_catalogue_uses_one_batch_and_relocation_removal_revoke_old_proce
     assert!(observer.snapshot().unwrap().iter().all(|game|game.identity.game_id != first));
     assert_eq!(platform.batches.load(Ordering::Relaxed), 6);
 }
+
+#[test]
+fn live_inventory_continuity_withdraws_proof_immediately_and_fences_replacement() {
+    let platform = fake();
+    let observer = Observer::default();
+    let process = running(1);
+    let selected = identity(&platform, &game()).unwrap();
+    *platform.current.lock().unwrap() = Ok(Some(process.clone()));
+
+    let live = Arc::new(ProcessContinuity::default());
+    assert!(live.begin());
+    observer.observe_with_continuity(&platform, &[game()], Some(live.clone()));
+    let first = observer.confirmed_process(&selected, &process).unwrap();
+    observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE * 2);
+    assert_eq!(observer.snapshot().unwrap(), [first.clone()]);
+    assert!(observer.view_deadline().is_none());
+
+    live.retire();
+    assert!(!live.begin());
+    assert!(observer.confirmed_process(&selected, &process).is_none());
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Unavailable);
+
+    observer.observe(&platform, &[game()]);
+    assert!(observer.confirmed_process(&selected, &process).is_none());
+    let replacement = Arc::new(ProcessContinuity::default());
+    assert!(replacement.begin());
+    observer.observe_with_continuity(&platform, &[game()], Some(replacement));
+    let second = observer.confirmed_process(&selected, &process).unwrap();
+    assert_ne!(first.process_session, second.process_session);
+}

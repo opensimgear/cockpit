@@ -262,6 +262,10 @@
         let runtime = scratch.write("AC/acs.exe", "");
         let launcher = scratch.write("AC/AssettoCorsa.exe", "");
         let game = json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":"assetto-corsa","executable":runtime});
+        let targets = activation_process_paths(&[game.clone(), game.clone()]);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(normalized_path(&targets[0]), normalized_path(&runtime.to_string_lossy()));
+        assert_eq!(normalized_path(&targets[1]), normalized_path(&launcher.to_string_lossy()));
         let menu = ProcessIdentity {
             pid: 42,
             epoch: 1,

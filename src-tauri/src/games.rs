@@ -422,6 +422,7 @@ impl GamesRuntime {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
         self.inner.changes.context_wake.notify();
+        self.inner.changes.activation_wake.notify();
         self.inner.prepared_sources.close(None);
         if let Some(owner) = &self.inner.artwork_owner { owner.shutdown(); }
         for worker in [&self.activation_observer, &self.observer, &self.discovery_worker, &self.prepared_sources_worker] {

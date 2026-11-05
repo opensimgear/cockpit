@@ -45,7 +45,18 @@ impl GamesRuntime {
         let worker = thread::Builder::new()
             .name("profile-game-context".into())
             .spawn(move || {
+                let wake = &inner.changes.activation_wake;
+                if wake.bind_thread(thread::current()).is_err() {
+                    return;
+                }
+                #[cfg(windows)]
+                let mut events: Option<crate::xplane::process_events::InventoryEvents> = None;
+                #[cfg(windows)]
+                let mut watched_library = None;
                 while !inner.closed.load(Ordering::Acquire) {
+                    let observed = wake.observed();
+                    #[cfg(windows)]
+                    let library = inner.changes.context_wake.observed();
                     let games = if inner.guard_installation_metadata().is_ok() {
                         inner
                             .settings
@@ -56,12 +67,26 @@ impl GamesRuntime {
                     } else {
                         vec![]
                     };
-                    inner.activation.observe(inner.platform.as_ref(), &games);
-                    for _ in 0..5 {
-                        if inner.closed.load(Ordering::Acquire) {
-                            break;
+                    #[cfg(windows)]
+                    {
+                        if watched_library != Some(library) {
+                            if events.as_ref().is_none_or(|events| events.is_finished()) {
+                                events = inner.platform.watch_activation_processes(&games, wake.clone());
+                                watched_library = Some(library);
+                            } else if let Some(events) = &events {
+                                events.retire();
+                            }
                         }
-                        thread::sleep(Duration::from_millis(100));
+                    }
+                    #[cfg(windows)]
+                    let continuity = events.as_ref().and_then(|events| events.continuity());
+                    #[cfg(not(windows))]
+                    let continuity = None;
+                    let event_owned = continuity.is_some();
+                    inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity);
+                    if !inner.closed.load(Ordering::Acquire) {
+                        let retry = (!event_owned).then_some(Duration::from_millis(500));
+                        wake.wait_scheduled(observed, retry);
                     }
                 }
             })

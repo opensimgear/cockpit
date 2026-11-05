@@ -14,6 +14,8 @@ mod sink;
 #[cfg(windows)]
 #[path = "process_events/windows.rs"]
 mod windows;
+#[cfg(windows)]
+pub(crate) use windows::InventoryEvents;
 
 #[cfg(any(windows, test))]
 #[allow(dead_code)] // Variants retain the owning worker until Monitor is dropped.

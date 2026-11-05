@@ -33,12 +33,20 @@ pub(super) struct Inbox {
     sender: SyncSender<Event>,
     overflow: AtomicBool,
     scope: OnceLock<ProcessScope>,
+    continuity: Option<Arc<crate::game_activation::ProcessContinuity>>,
     wake: Handle,
 }
 impl Inbox {
     pub(super) fn push(&self, event: Event) {
-        if self.sender.try_send(event).is_err() {
+        let failed = matches!(&event, Event::Failed(_));
+        let overflow = self.sender.try_send(event).is_err();
+        if overflow {
             self.overflow.store(true, Ordering::Release);
+        }
+        if failed || overflow {
+            if let Some(continuity) = &self.continuity {
+                continuity.retire();
+            }
         }
         self.wake.signal();
     }
@@ -265,6 +273,7 @@ where
         sender,
         overflow: AtomicBool::new(false),
         scope: OnceLock::new(),
+        continuity: None,
         wake: Handle::event()?,
     });
     let _subscription = subscription(inbox.clone(), cancelled)?;
@@ -293,7 +302,7 @@ where
 }
 fn subscribe(inbox: Arc<Inbox>, cancelled: &AtomicBool, scope: ProcessScope) -> Result<Subscription, String> {
     let _ = inbox.scope.set(scope);
-    let result = unsafe { subscribe_com(inbox, cancelled, scope) };
+    let result = unsafe { subscribe_com(inbox, cancelled, &[scope.start_query()]) };
     result.map_err(|error| {
         let action = if error.contains("0x80041003") || error.contains("0x80070005") {
             " Windows denied process-event access. Use the explicit native monitoring enable action to request a temporary elevated helper."
@@ -308,7 +317,7 @@ fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
         Ok(())
     }
 }
-unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool, scope: ProcessScope) -> Result<Subscription, String> {
+unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool, queries: &[String]) -> Result<Subscription, String> {
     let locator: IWbemLocator =
         unsafe { CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER) }
             .map_err(|e| format!("WMI locator: {e}"))?;
@@ -351,14 +360,9 @@ unsafe fn subscribe_com(inbox: Arc<Inbox>, cancelled: &AtomicBool, scope: Proces
         local_sinks: Vec::new(),
         _apartment: apartment,
     };
-    let start_query = scope.start_query();
-    for (query, dropped) in [
-        // Includes the __EventQueueOverflowEvent subclass. Any loss fails closed,
-        // even if it belonged to another consumer: ownership cannot be inferred.
-        // Register loss detection before the process subscription itself.
-        ("SELECT * FROM __EventDroppedEvent", true),
-        (start_query.as_str(), false),
-    ] {
+    // Register loss detection first, including __EventQueueOverflowEvent.
+    let dropped_events = std::iter::once(("SELECT * FROM __EventDroppedEvent", true));
+    for (query, dropped) in dropped_events.chain(queries.iter().map(|query| (query.as_str(), false))) {
         let local = sink::create(inbox.clone(), dropped);
         let stub = unsafe {
             subscription._apartment.CreateSinkStub(
@@ -395,6 +399,7 @@ pub(super) fn test_inbox(capacity: usize) -> (Arc<Inbox>, Receiver<Event>) {
             sender,
             overflow: AtomicBool::new(false),
         scope: OnceLock::new(),
+        continuity: None,
             wake: Handle::event().unwrap(),
         }),
         receiver,
@@ -422,3 +427,7 @@ pub(super) fn test_subscription() -> Result<(), String> {
 #[cfg(test)]
 #[path = "worker_tests.rs"]
 mod tests;
+
+#[path = "inventory_events.rs"]
+mod inventory_events;
+pub(crate) use inventory_events::InventoryEvents;

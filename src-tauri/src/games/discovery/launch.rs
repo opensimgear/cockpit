@@ -122,6 +122,24 @@ fn find_game_process(
         .map_err(|error| format!("Cannot inspect the Assetto Corsa launcher: {error}"))?;
     inspect(&[path_string(&launcher).ok_or("The Assetto Corsa launcher path is not valid text.")?])
 }
+/// Process inventory and event subscriptions share the same registered targets.
+/// Include the persistent Corsa launcher without treating it as a telemetry source.
+pub(crate) fn activation_process_paths(games: &[Value]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut paths = Vec::new();
+    for game in games {
+        let _ = find_game_process(game, false, |items| {
+            for item in items {
+                if seen.insert(normalized_path(item)) {
+                    paths.push(item.clone());
+                }
+            }
+            Ok(None)
+        });
+    }
+    paths
+}
+
 fn selected_process(
     candidates: &[(ProcessIdentity, u32)],
     exclusive_xplane: bool,
@@ -192,6 +210,21 @@ impl Platform for NativePlatform {
     fn process_monitoring_supported(&self) -> bool {
         cfg!(windows)
     }
+    #[cfg(windows)]
+    fn watch_activation_processes(
+        &self,
+        games: &[Value],
+        wake: std::sync::Arc<osg_streams::NativeWake>,
+    ) -> Option<crate::xplane::process_events::InventoryEvents> {
+        if games.len() > osg_profiles::activation::MAX_GAMES {
+            return None;
+        }
+        let monitored: Vec<_> = games.iter()
+            .filter(|game| game["installed"] == true && game["processMonitoringSupported"] == true)
+            .cloned().collect();
+        crate::xplane::process_events::InventoryEvents::start(&activation_process_paths(&monitored), wake)
+            .ok().flatten()
+    }
     fn integration_setup_supported(&self) -> bool {
         cfg!(windows)
     }
@@ -230,18 +263,7 @@ impl Platform for NativePlatform {
         find_game_process(game, false, native::find)
     }
     fn find_many(&self, games: &[Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
-        let mut paths = Vec::new();
-        // Include AC's persistent launcher as well as its driving executable.
-        for game in games {
-            let _ = find_game_process(game, false, |items| {
-                for item in items {
-                    if !paths.contains(item) {
-                        paths.push(item.clone());
-                    }
-                }
-                Ok(None)
-            });
-        }
+        let paths = activation_process_paths(games);
         let inventory = native::inventory(&paths);
         games
             .iter()
