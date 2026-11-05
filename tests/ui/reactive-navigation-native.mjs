@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
+import {dirname, resolve} from 'node:path';
 import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
@@ -43,6 +44,10 @@ async function browserPage(url) {
 
 test(`${transport} main view navigation retires observation readers without duplicate baselines`, {timeout:60000}, async () => {
   const page = browserUrl ? await browserPage(browserUrl) : await nativePage();
+  const addedGames = [];
+  const discardDraft = () => page.evaluate(`Array.from(document.querySelectorAll('dialog[open] button'))
+    .find(button => button.textContent.trim() === 'Discard and continue')?.click()`);
+  const request = value => page.evaluate(`import('/src/lib/gateway.ts').then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`);
   const pending = new Map();
   const active = new Map();
   const baselines = new Map();
@@ -143,10 +148,55 @@ test(`${transport} main view navigation retires observation readers without dupl
     }
     await navigate('Overview');
     await until(async () => pending.size === 0 && active.size === 0);
+    const fixtures = [
+      ['x-plane-11', 'X-Plane 11', process.env.OSG_NAVIGATION_XPLANE11_EXE],
+      ['x-plane-12', 'X-Plane 12', process.env.OSG_NAVIGATION_XPLANE12_EXE],
+    ];
+    if (fixtures.every(([, , executable]) => executable)) {
+      const {games} = await request({command:'game_get_state'});
+      for (const [id, name, path] of fixtures) {
+        if (games.catalogue.some(game => game.id === id && game.installed)) continue;
+        const executable = resolve(path);
+        const registered = await request({command:'game_add', name, executable, installPath:dirname(executable)});
+        assert.ok(registered.games.catalogue.some(game => game.id === id && game.installed));
+        addedGames.push(id);
+      }
+      await navigate('Profiles');
+      const button = label => page.evaluate(`Array.from(document.querySelectorAll('main button'))
+        .find(button => button.checkVisibility() && button.textContent.trim() === ${JSON.stringify(label)} && !button.disabled)?.click()`);
+      await button('Add');
+      const select = '[aria-label="Game context"]';
+      await until(() => page.evaluate(`[...document.querySelector(${JSON.stringify(select)})?.options ?? []].some(option => option.value === 'x-plane-11')`));
+      await page.evaluate(`(() => {
+        const context = document.querySelector(${JSON.stringify(select)});
+        context.value = 'x-plane-11';
+        context.dispatchEvent(new Event('change', {bubbles:true}));
+      })()`);
+      await settled(['games.detail.x-plane-11']);
+      await page.evaluate("window.dispatchEvent(new CustomEvent('osg:open-game-settings', {detail:{gameId:'x-plane-12'}}))");
+      await settled(['games.detail.x-plane-12']);
+      await until(async () => ![...active.values()].some(reader => reader.topic === 'games.detail.x-plane-11'));
+      await navigate('Profiles');
+      await settled(['games.detail.x-plane-11']);
+      assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(select)}).value`), 'x-plane-11');
+      await button('Cancel');
+      await navigate('Overview');
+      await until(async () => pending.size === 0 && active.size === 0);
+    }
     assert.deepEqual(errors, []);
     assert.ok([...baselines.values()].every(count => count === 1));
   } finally {
-    try { await navigate('Overview'); }
-    finally { stopTrace(); await page.close(); }
+    try {
+      await discardDraft();
+      const navigation = navigate('Overview');
+      await page.evaluate('new Promise(resolve => setTimeout(resolve, 150))');
+      await discardDraft();
+      await navigation;
+    }
+    finally {
+      stopTrace();
+      try { for (const gameId of addedGames.reverse()) await request({command:'game_remove', gameId}); }
+      finally { await page.close(); }
+    }
   }
 });

@@ -85,11 +85,11 @@
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));const stopLibrary=observeProfileLibrary(state=>store.observeLibrary(state)),stopRuntime=observeProfileRuntime(state=>store.observeRuntime(state)),stopGames=observeGamesState(state=>gameState=state);return()=>{stopRuntime();stopLibrary();stopGames();stop();stopSaved();}; });
   onDestroy(() => { dcsCatalogueEpoch++;companionCatalogueEpoch++;companionDropEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
-  $effect(()=>{const gameId=selectedGame;gameDetailState={status:'connecting'};if(!gameId)return;return observeGameDetails(gameId,state=>gameDetailState=state);});
+  $effect(()=>{const gameId=selectedGame;gameDetailState={status:'connecting'};if(!active||!gameId)return;return observeGameDetails(gameId,state=>gameDetailState=state);});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
   $effect(()=>{void editorContext;companionDropEpoch++;companionDropBusy=false;});
-  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>{const next=profileSyncGameContext(editor,editorInventory);change(next.document,next.assignments,'Select integration catalogue');});});
+  $effect(()=>{if(active&&editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>{const next=profileSyncGameContext(editor,editorInventory);change(next.document,next.assignments,'Select integration catalogue');});});
   $effect(()=>{const key=dcsCatalogueKey;if(requestedDcsCatalogue===key)return;requestedDcsCatalogue=key;dcsCatalogueEpoch++;dcsCatalogueBusy=false;dcsCatalogueError='';if(key)untrack(()=>void loadDcsVehicleCatalogue());});
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
