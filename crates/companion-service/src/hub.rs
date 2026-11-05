@@ -169,6 +169,7 @@ struct Inner {
     offer: Option<Offer>,
     code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
+    pairing_readers: BTreeMap<String, pairing_subscription::PairingReader>,
     connections: BTreeMap<String, String>,
     assignment_wakes: BTreeMap<String, std::sync::Weak<osg_streams::NativeWake>>,
     display_reports: BTreeMap<String, display::DisplayReport>,
@@ -383,6 +384,7 @@ impl Hub {
                 offer: None,
                 code_offer: None,
                 pending: BTreeMap::new(),
+                pairing_readers: BTreeMap::new(),
                 connections: BTreeMap::new(),
                 assignment_wakes: BTreeMap::new(),
                 display_reports: BTreeMap::new(),
@@ -554,6 +556,9 @@ impl Hub {
         let now = now.max(inner.last_now);
         inner.last_now = now;
         let pending = inner.pending.len();
+        let expired_pairings = inner.pending.iter().filter(|(_, p)| p.expires <= now)
+            .map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        for id in expired_pairings { Self::notify_pairing(inner, &id, Some("Pairing approval expired; create a new offer.")); }
         inner.pending.retain(|_, p| p.expires > now);
         if inner.pending.len() != pending { self.notify_presence(); }
         if inner.code_offer.as_ref().is_some_and(|o| o.expires <= now) {
@@ -588,6 +593,7 @@ impl Hub {
         let sessions = inner.sessions.len();
         let _ = self.expire(&mut inner, now_ms);
         let disconnected = inner.connections.remove(connection_id).is_some();
+        Self::retire_pairing_reader(&mut inner, connection_id);
         Self::retire_assignment_reader(&mut inner, connection_id);
         inner.display_reports.remove(connection_id);
         inner.render_profiles.remove(connection_id);
@@ -606,6 +612,7 @@ impl Hub {
         if disconnected { self.notify_presence(); }
     }
     pub fn disconnect_all(&self) {
+        Self::retire_pairing_readers(&mut self.inner.lock().unwrap_or_else(|p| p.into_inner()));
         let ids: Vec<_> = self
             .inner
             .lock()
@@ -670,6 +677,11 @@ impl Hub {
         inner.display_reports.retain(|connection,_|connected.contains(connection));
         inner.record = record;
         inner.pending.get_mut(request_id).unwrap().token = Some(token);
+        let replaced = inner.pending.iter().filter(|(id, pending)| id.as_str() != request_id
+            && pending.companion_id == credential.companion_id && pending.token.is_some())
+            .map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        for id in replaced { Self::notify_pairing(inner, &id, Some("Pairing approval was revoked or replaced.")); }
+        Self::notify_pairing(inner, request_id, None);
         Ok(json!({"approved":true,"companionId":credential.companion_id}))
     }
 
@@ -692,7 +704,8 @@ impl Hub {
                 let connected=inner.connections.keys().cloned().collect::<BTreeSet<_>>();
                 inner.display_reports.retain(|connection,_|connected.contains(connection));
                 inner.render_profiles.retain(|connection,_|connected.contains(connection));
-                inner.pending.retain(|_, p| p.companion_id != companion);
+                let pairings=inner.pending.iter().filter(|(_, p)| p.companion_id == companion).map(|(id,_)|id.clone()).collect::<Vec<_>>();
+                for id in pairings { Self::notify_pairing(inner, &id, Some("Pairing approval was revoked.")); inner.pending.remove(&id); }
                 inner.record = record;
                 let retained=inner.record.instances.iter().map(|a|a.instance_id.clone()).collect::<BTreeSet<_>>();
                 inner.feedback.retain(|id,_|retained.contains(id));
@@ -768,14 +781,18 @@ impl Hub {
             }
             "companion_pair_cancel" => {
                 inner.offer = None; inner.code_offer = None;
+                let cancelled=inner.pending.iter().filter(|(_, p)| p.token.is_none()).map(|(id,_)|id.clone()).collect::<Vec<_>>();
+                for id in cancelled { Self::notify_pairing(&mut inner, &id, Some("Pairing was cancelled by Cockpit.")); }
                 inner.pending.retain(|_, p| p.token.is_some());
                 Ok(json!({"cancelled":true}))
             }
             "companion_reject" => {
+                let request_id = field(request, "requestId")?;
                 ensure(
-                    inner.pending.remove(field(request, "requestId")?).is_some(),
+                    inner.pending.remove(request_id).is_some(),
                     "Unknown pairing request.",
                 )?;
+                Self::notify_pairing(&mut inner, request_id, Some("Pairing was rejected by Cockpit."));
                 Ok(json!({"rejected":true}))
             }
             "companion_update" => {
@@ -1640,3 +1657,6 @@ mod feedback_api;
 #[path = "feedback_subscription.rs"]
 mod feedback_subscription;
 pub use feedback_subscription::{AssignmentSubscription, FeedbackSubscription};
+#[path = "pairing_subscription.rs"]
+mod pairing_subscription;
+pub(crate) use pairing_subscription::PairingSubscription;

@@ -31,7 +31,7 @@ pub(super) fn serve_assignments<S: Read + Write>(
     Ok(())
 }
 
-fn reject<S: Read + Write>(
+pub(super) fn reject<S: Read + Write>(
     socket: &mut WebSocket<S>, attempts: &Mutex<Attempts>, peer: IpAddr, error: String,
 ) -> Result<(), String> {
     let error = if attempts.lock().map_err(|_| "Admission lock poisoned")?.allow(peer) {

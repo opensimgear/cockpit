@@ -50,7 +50,7 @@ def main():
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["persistence/sqlite", "hub_retirement", "browser"])
     targets[0][3].append(root / "crates/companion-service/src/profile/feedback.rs")
     targets[0][3].append(root / "crates/companion-service/src/profile/confirmed.rs")
-    targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["server/listener", "hub_deadlines"])
+    targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["server/listener", "hub_deadlines", "server/pairing_socket", "pairing_subscription"])
     targets[0][3].extend(root / f"crates/companion-service/src/server/{name}.rs" for name in ["connections", "deadline_io", "socket_io"])
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client/io", "client_feedback", "client_presence", "client_cache/mod", "client/cache_validation", "host_content/mod", "host_content/selection", "persistence/sqlite_host"])
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"

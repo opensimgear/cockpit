@@ -13,7 +13,7 @@ ledger exactly once.
 (not a separate site in this historical sleep/channel-wait ledger) is retired.
 Each peer owns nonblocking Mio I/O, actual handshake/idle/probe/write deadlines
 and a direct cancellation Waker. Native client read polls are also retired;
-pairing-status polling remains open. See [client verification](../verification/2026-11-05-native-client-event-io.md).
+native pending pairing also uses one terminal approval subscription. See [client verification](../verification/2026-11-05-native-client-event-io.md).
 See [verification](../verification/2026-11-05-companion-peer-io.md).
 
 | Ledger site | Owner and trigger | Disposition and verification |
@@ -53,7 +53,7 @@ See [verification](../verification/2026-11-05-companion-peer-io.md).
 | `crates/mapping-host/src/game.rs:381,488` | Mapping-host game lifecycle, bounded acquire or restore wait | Replace repeated state checks with completion wakes and keep deadlines. Existing game tests cover restore. |
 | `crates/companion-serial/src/boot_wait.rs:35` | Firmware installer, retry bootloader reconnect after failure | Keep bounded retry, with cancellation able to interrupt it. Boot wait tests cover expiry. |
 | `crates/companion-service/src/client_feedback.rs:41` | Feedback receiver, reconnect after a transport failure | Keep the 250 ms retry deadline; scoped cancellation wakes it directly. Native blocked-TLS cancellation passes against the running Cockpit; mobile app qualification remains open. |
-| `crates/companion-service/src/client.rs:1038` | Pending pairing, check operator approval every 400 ms | Replace status checks with a pairing event and a deadline. Verify denial, cancellation and replacement. |
+| `crates/companion-service/src/client.rs:1038` | Pending pairing, check operator approval every 400 ms | Retired: one secret-bound subscription receives the terminal host result, with the original offer expiry. Approval races, rejection, cancellation, expiry, revocation and reader retirement are covered; mobile qualification remains open. |
 | `crates/companion-service/src/server.rs:437` | Historical listener accept retry | Retired 2026-11-05: `server/listener.rs` waits on socket readiness, earlier Hub expiry, peer completion and Stop. Native TLS/WSS, autonomous expiry and actual Cockpit reload/Stop pass; see [verification](../verification/2026-11-05-companion-listener-readiness.md). |
 | `crates/desktop-output/src/audit/collector.rs:454` | Output audit flush, wait for space in the bounded writer queue | Replace the 1 ms retry with capacity notification. Retain the flush reply deadline and verify saturation. |
 | `crates/companion-service/src/client.rs:1363` | mDNS receive, wait for a reply within the discovery deadline | Keep bounded blocking receive. Qualify actual discovery separately. |

@@ -1079,17 +1079,18 @@ fn pair_worker(
         if Instant::now() > deadline {
             return Err("Pairing approval expired; create a new offer".into());
         }
-        let observed = io.observed();
-        if !current(&shared, epoch) { return Ok(()); }
-        io.wait(observed, Duration::from_millis(400));
         if !current(&shared, epoch) {
             return Ok(());
         }
         reply = request(
             &mut socket,
-            json!({"type":"pair-status","requestId":id,"secret":secret.as_str()}),
-            Duration::from_secs(3),
+            json!({"type":"pair-subscribe","requestId":id,"secret":secret.as_str()}),
+            deadline.checked_duration_since(Instant::now())
+                .ok_or("Pairing approval expired; create a new offer")?,
         )?;
+        if reply["type"] != "paired" || reply["requestId"] != id {
+            return Err("Host returned an inconsistent pairing approval event".into());
+        }
     }
 }
 #[path="client/cache_validation.rs"]

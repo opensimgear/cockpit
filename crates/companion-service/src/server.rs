@@ -599,6 +599,10 @@ pub(crate) fn serve_messages<S: Read + Write + ReadDeadline>(
                     )?;
                     return Err("Pre-authentication attempt budget exceeded".into());
                 }
+                if frame["type"] == "pair-subscribe" {
+                    socket.get_mut().set_read_deadline(None).map_err(|error| error.to_string())?;
+                    return pairing_socket::serve(socket, hub, id, stop, attempts, peer, &frame);
+                }
                 if frame["type"] == "assignments-subscribe" {
                     socket.get_mut().set_read_deadline(None).map_err(|error| error.to_string())?;
                     return feedback_socket::serve_assignments(socket, hub, id, stop, attempts, peer, &frame);
@@ -814,6 +818,9 @@ mod tests {
 }
 #[path = "feedback_socket.rs"]
 mod feedback_socket;
+
+#[path = "server/pairing_socket.rs"]
+mod pairing_socket;
 
 #[path = "server/listener.rs"]
 mod listener;

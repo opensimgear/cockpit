@@ -208,3 +208,57 @@ fn invalidating_a_partial_pairing_reply_cancels_the_client_read_without_saving()
     assert!(storage.value.lock().unwrap().is_none());
     peer.join().unwrap();
 }
+
+#[test]
+fn pending_pairing_sends_one_subscription_and_no_status_acquisition() {
+    let (client, storage, _directory) = fixture();
+    let identity = NativeIdentity::generate("fixture-host", vec!["127.0.0.1".into()]).unwrap();
+    let host_id = identity.host_id.clone();
+    let config = identity.server_config().unwrap();
+    let listener = localhost_listener();
+    let payload = pairing_payload(format!("wss://127.0.0.1:{}/companion",listener.local_addr().unwrap().port()), &identity);
+    let (subscribed_tx,subscribed_rx)=mpsc::channel();
+    let peer=thread::spawn(move||{
+        let (tcp,_)=listener.accept().unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut socket=accept_tls_websocket(tcp,config);
+        let pair:Value=serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(pair["type"],"pair");
+        crate::server::send_json(&mut socket,&json!({"ok":true,"type":"pair-pending","requestId":"request"})).unwrap();
+        let subscribe:Value=serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(subscribe,json!({"type":"pair-subscribe","requestId":"request","secret":pair["secret"]}));
+        socket.get_mut().sock.set_read_timeout(Some(Duration::from_millis(650))).unwrap();
+        assert!(socket.read().is_err_and(|error|crate::server::timed_out(&error)),"client must not poll pending approval");
+        subscribed_tx.send(()).unwrap();
+        crate::server::send_json(&mut socket,&json!({"ok":true,"type":"paired","requestId":"request","hostId":host_id,"companionId":pair["companionId"],"token":"fixture-token","assignments":[]})).unwrap();
+    });
+    start_pairing(&client,payload);
+    subscribed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    wait_for_status(&client,Duration::from_secs(2),|status|status.phase=="paired"&&!status.busy);
+    assert_eq!(storage.writes.load(Ordering::SeqCst),1);
+    peer.join().unwrap();
+}
+
+#[test]
+fn native_pending_pairing_observes_reject_cancel_and_listener_stop() {
+    use crate::{Hub,NullSourceSink,server::{ServerConfig,ServerRuntime}};
+    for action in ["companion_reject","companion_pair_cancel","listener-stop"] {
+        let (client,storage,directory)=fixture();
+        let hub=Hub::new("host-test".into(),Arc::new(NullSourceSink));
+        let server=ServerRuntime::new(hub.clone(),directory.path().join("host")).unwrap();
+        server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:"127.0.0.1".into(),discovery:false}).unwrap();
+        let offer=hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
+        let payload=server.pairing_payload(offer["secret"].as_str().unwrap(),offer["expiresAtMs"].as_u64().unwrap()).unwrap();
+        start_pairing(&client,payload);
+        let pending=wait_for_status(&client,Duration::from_secs(3),|status|status.phase=="awaiting-approval");
+        let began=Instant::now();
+        if action=="listener-stop" {server.stop();}
+        else {hub.command(&json!({"command":action,"requestId":pending.request_id})).unwrap();}
+        let ended=wait_for_status(&client,Duration::from_secs(1),|status|!status.busy);
+        assert!(began.elapsed()<Duration::from_secs(1),"{action}");
+        assert_ne!(ended.phase,"paired");
+        assert_eq!(storage.writes.load(Ordering::SeqCst),0);
+        server.stop();
+        assert_eq!(server.status().active_connections,0);
+    }
+}
