@@ -22,7 +22,7 @@ def main():
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     profiles = Path(tempfile.mkdtemp(prefix='profiles-', dir=output))
-    env = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'), RUSTFLAGS='-C instrument-coverage',
+    env = dict(os.environ, CARGO_TARGET_DIR=os.environ.get('CARGO_TARGET_DIR', str(output / 'target')), RUSTFLAGS='-C instrument-coverage',
                LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
     artifacts = run(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                      '--manifest-path', root / 'crates/mapping/Cargo.toml'], root, env)
@@ -31,7 +31,12 @@ def main():
                 and entry.get('executable') and entry.get('profile', {}).get('test')]
     if len(binaries) != 1:
         raise RuntimeError('Expected one mapping library test executable.')
-    (output / 'tests.log').write_text(run([binaries[0]], root, env), encoding='utf-8')
+    tests = subprocess.run([binaries[0]], cwd=root, env=env, text=True, encoding='utf-8',
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    (output / 'tests.log').write_text(tests.stdout, encoding='utf-8')
+    if tests.returncode:
+        print(tests.stdout, flush=True)
+        tests.check_returncode()
     sysroot = Path(run(['rustc', '--print', 'sysroot'], root).strip())
     host = re.search(r'^host: (.+)$', run(['rustc', '-vV'], root), re.M).group(1)
     suffix = '.exe' if os.name == 'nt' else ''
@@ -41,7 +46,7 @@ def main():
     sources = [root / f'crates/mapping/src/{module}.rs' for module in ['script', 'script_engine', 'rules', 'rules/seed', 'profile', 'engine', 'runtime', 'store', 'trace', 'documents', 'signal', 'program', 'program_validation', 'typed_engine', 'typed_engine/deadlines', 'typed_engine/evaluate', 'desktop']]
     native_modules = ['mod', 'ledger', 'validate', 'admission', 'budget', 'fences',
                       'proof', 'recovery', 'retained_bytes', 'revocations', 'graph', 'liveness', 'desktop',
-                      'scripts', 'output_work', 'publish', 'direct_apply', 'direct_batch']
+                      'scripts', 'output_work', 'publish', 'direct_apply', 'direct_batch', 'presentation']
     sources.extend(root / f'crates/mapping/src/typed_engine/native/{name}.rs'
                    for name in native_modules)
     summary = {}

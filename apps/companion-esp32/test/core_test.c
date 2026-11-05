@@ -149,6 +149,21 @@ static void feedback(void) {
     osg_render(r, 1050); osg_connected(r, false); assert(!r->samples[4].available && !r->armed);
     s.log[0] = 0; osg_render(r, 1050); assert(strstr(s.log, "DISCONNECTED"));
 }
+static void per_channel_freshness_test(void){
+    spy s;osg_runtime *r=setup(&s,800,480);osg_connected(r,true);
+    osg_sample speed={.available=true,.kind=OSG_NUMBER,.provenance=OSG_GAME_CONFIRMED,.number=125.5};
+    osg_sample caution={.available=true,.kind=OSG_BOOL,.provenance=OSG_GAME_CONFIRMED,.boolean=true};
+    assert(osg_feedback(r,"speed-channel",&speed,100));
+    assert(osg_feedback(r,"caution-channel",&caution,100));
+    /* A later speed-only delta must not make untouched caution feedback new. */
+    speed.number=200;assert(osg_feedback(r,"speed-channel",&speed,500));
+    assert(r->samples[3].received_ms==500&&r->samples[1].received_ms==100&&r->samples[1].source_age_ms==0);
+    osg_runtime drawn=*r;
+    osg_damage damage=osg_render_damage(r,&drawn,1099,500);
+    assert(!damage.full&&!damage.widgets); /* caution is 999 ms old; both stay fresh. */
+    damage=osg_render_damage(r,&drawn,1100,500);
+    assert(!damage.full&&damage.widgets==(UINT32_C(1)<<1)); /* only caution expires. */
+}
 static uint16_t *pixels;
 static int screen_width, screen_height;
 static bool fail_write;
@@ -280,7 +295,7 @@ int main(int argc, char **argv) {
         assert(!strstr(status.log,"LIVE INPUT")&&!strstr(status.log,"RECORDING ONLY"));
     }
     image_test();partial_render_test();
-    validation(); input(); feedback(); bridge_test();
+    validation(); input(); feedback(); per_channel_freshness_test(); bridge_test();
     extern void component_tests(void); component_tests();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
     preview(argc > 1 ? argv[1] : NULL, 800, 480,OSG_SCREEN_PANEL); preview(NULL, 320, 240,OSG_SCREEN_PANEL); preview(NULL, 480, 800,OSG_SCREEN_PANEL);

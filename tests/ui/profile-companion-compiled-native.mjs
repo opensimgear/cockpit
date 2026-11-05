@@ -9,6 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 test('compiled browser input reaches the profile and returns host feedback', {timeout:90000}, async(t)=>{
   const qualifyHostWake=process.env.OSG_COMPANION_HOST_WAKE_NATIVE==='1';
+  const qualifyFeedback=process.env.OSG_COMPANION_FEEDBACK_NATIVE==='1';
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
   const request=async(command,params={})=>{
@@ -54,6 +55,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    const page=await browser.newPage();
    await page.addInitScript(()=>{
     window.__feedbackProbe=[];
+    window.__feedbackTrace=[];
     const Original=window.SharedWorker;
     window.SharedWorker=class extends Original {
      constructor(...args){
@@ -63,6 +65,8 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
        if(frame){
         window.__feedbackProbe.push(frame);
         if(window.__feedbackProbe.length>64)window.__feedbackProbe.shift();
+        window.__feedbackTrace.push({frame,receivedAt:performance.now()});
+        if(window.__feedbackTrace.length>64)window.__feedbackTrace.shift();
        }
       });
      }
@@ -101,12 +105,48 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    assert.equal(applied.profiles.profileSession.state,'running');
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    const owner=applied.profiles.profileSession.owner;
-   if(qualifyHostWake){
-    await assertHostWake('applied');
+   if(qualifyHostWake)await assertHostWake('applied');
+   let quietStart;
+   if(qualifyFeedback){
+    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
+     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'))),Boolean,7000);
+    quietStart=await page.evaluate(()=>({frame:window.__feedbackProbe.at(-1),at:performance.now()}));
+    assert.match(quietStart.frame.sequence,/^\d+$/,'Feedback must expose its publisher sequence');
+    for(const key of ['clientId','sessionId','generation','controllerInstanceId','publicationHash','bindingGeneration']){
+     assert.ok(quietStart.frame[key]!=null,`Quiet feedback must pin ${key}`);
+    }
+   }
+   if(qualifyHostWake||qualifyFeedback){
     // Browser heartbeats continue; no gateway reads or authored input during
     // this interval, which spans several desktop output lease periods.
     await delay(1100);
-    await assertHostWake('quiet-1100ms');
+    if(qualifyFeedback){
+     const quiet=await page.evaluate(start=>{
+      const latest=window.__feedbackTrace.findLast(item=>item.frame.values.some(value=>
+       value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'));
+      return {frames:window.__feedbackTrace.filter(item=>item.receivedAt>=start),at:performance.now(),
+       current:latest&&{sample:latest.frame.values.find(value=>value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'),receivedAt:latest.receivedAt}};
+     },quietStart.at);
+     assert.ok(quiet.frames.length>=1,'Quiet measurement must receive feedback through live browser heartbeats');
+     const pinned=quietStart.frame;
+     for(const {frame} of quiet.frames){
+      for(const key of ['clientId','sessionId','generation','controllerInstanceId','publicationHash','bindingGeneration']){
+       assert.equal(frame[key],pinned[key],`Quiet feedback changed its pinned ${key}`);
+      }
+     }
+     const after=quiet.frames.at(-1).frame.sequence;
+     const difference=BigInt(after)-BigInt(pinned.sequence);
+     const quietMs=Math.round(quiet.at-quietStart.at);
+     t.diagnostic(JSON.stringify({qualification:'companion-feedback',before:pinned.sequence,after,
+      difference:difference.toString(),eligibleFrames:quiet.frames.length,quietMs,
+      appHash:process.env.OSG_COMPANION_FEEDBACK_APP_HASH??process.env.OSG_COMPANION_HOST_WAKE_APP_HASH??null}));
+     assert.ok(difference>=0n&&difference<=12n,
+      `Quiet publisher sequence advanced ${difference} times in ${quietMs}ms; expected at most 12`);
+     assert.equal(quiet.current?.sample.status,'fresh','A quiet connection must retain current widget feedback');
+     assert.ok(quiet.current.sample.sourceAgeMs+quiet.at-quiet.current.receivedAt<1000,
+      'A low publication count must not hide an expired widget');
+    }
+    if(qualifyHostWake)await assertHostWake('quiet-1100ms');
    }
    await page.getByRole('button',{name:'probe: press',exact:true}).click();
    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
@@ -131,7 +171,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    assert.equal(stopped.profiles.profileSession.owner,null);
   } finally {
    const cleanupErrors=[];
-   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake)cleanupErrors.push(error);}};
+   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake||qualifyFeedback)cleanupErrors.push(error);}};
    let stopped=false;
    if(profile||desktopPreferences)await cleanup(async()=>{
     const result=await request('profile_stop');
@@ -147,7 +187,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    if(peer)await cleanup(()=>companion('companion_unassign',{instanceId:id}));
    if(peer)await cleanup(()=>companion('companion_revoke',{companionId:peer.companionId}));
    try{await browser?.close();}finally{cockpit.close();}
-   if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'Companion host wake qualification cleanup failed');
+   if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'Companion native qualification cleanup failed');
   }
 
 });

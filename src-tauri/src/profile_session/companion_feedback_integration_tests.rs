@@ -1,4 +1,6 @@
 use super::*;
+#[path = "companion_feedback_projection_tests.rs"]
+mod projection;
 use std::{
     sync::mpsc,
     time::{Duration, Instant},

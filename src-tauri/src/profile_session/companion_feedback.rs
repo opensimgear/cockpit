@@ -5,6 +5,9 @@ use std::{
     sync::{atomic::{AtomicBool, Ordering}, mpsc},
     time::{Duration, Instant},
 };
+#[path = "companion_feedback/delivery.rs"]
+mod delivery;
+pub(super) use delivery::Delivery;
 
 const MAX_AGE: Duration = Duration::from_millis(250);
 pub(super) const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(34);
@@ -67,8 +70,7 @@ struct Job {
     run: RunToken,
     receipt: AssignmentReceipt,
     tokens: Vec<ResourceToken>,
-    samples: Vec<FeedbackSample>,
-    captured: Instant,
+    publication: delivery::Publication,
     cancelled: Arc<AtomicBool>,
 }
 pub(super) struct Completion {
@@ -77,11 +79,14 @@ pub(super) struct Completion {
     run: RunToken,
     cancelled: Arc<AtomicBool>,
     result: Result<bool, String>,
+    receipt: delivery::Receipt,
+    published_at: Instant,
 }
 impl Job {
     fn execute(self, hub: &Hub, validate: &impl Fn(&ResourceToken) -> Result<(), String>, worker: &AtomicBool) -> Completion {
+        let mut published_at = Instant::now();
         let current = || !worker.load(Ordering::Acquire) && !self.cancelled.load(Ordering::Acquire)
-            && self.captured.elapsed() < MAX_AGE;
+            && self.publication.captured.elapsed() < MAX_AGE;
         let result = (|| {
             if !current() { return Ok(false); }
             // Capture the session/binding token before potentially slow native
@@ -100,11 +105,12 @@ impl Job {
                 validate(resource)?;
                 if !current() { return Ok(false); }
             }
-            Ok(hub.try_publish_profile_feedback(&self.receipt, &token, &self.samples,
-                FeedbackMode::Snapshot, self.captured, MAX_AGE, current)?.is_some())
+            published_at = Instant::now();
+            Ok(hub.try_publish_profile_feedback(&self.receipt, &token, &self.publication.samples,
+                self.publication.mode, self.publication.captured, MAX_AGE, current)?.is_some())
         })();
         Completion { logical: self.logical, generation: self.generation, run: self.run,
-            cancelled: self.cancelled, result }
+            cancelled: self.cancelled, result, receipt: self.publication.receipt, published_at }
     }
 }
 
@@ -112,6 +118,7 @@ impl Instance {
     pub(super) fn revoke_feedback(&mut self) {
         self.feedback_cancel.store(true, Ordering::Release);
         self.feedback_cancel = revocation();
+        self.feedback_delivery.reset();
     }
 }
 
@@ -140,7 +147,10 @@ impl CompanionSources {
                         // retrying them would churn workers on every heartbeat.
                         instance.feedback_at = Some(Instant::now());
                         match completion.result {
-                            Ok(published) => { if published { instance.feedback_live = true; } }
+                            Ok(published) => { if published {
+                                instance.feedback_live = true;
+                                instance.feedback_delivery.confirm(completion.receipt, completion.published_at);
+                            } }
                             Err(error) => {
                                 // Never clear here: a failed worker may belong
                                 // to an obsolete peer or feedback generation.
@@ -158,25 +168,30 @@ impl CompanionSources {
             diagnostics.push("The companion feedback reducer run is not armed by this native owner.".into());
             return diagnostics;
         }
+        // Replace one bounded pending projection even while the independent
+        // worker is busy. A completion never clears newer captured state.
+        for instance in &mut self.instances {
+            if !instance.ready || instance.feedback_clear_pending || instance.outputs.is_empty() { continue; }
+            match projection(instance, phase, now_us) {
+                Ok(projection) => if let Err(error) = instance.feedback_delivery.update(projection) { diagnostics.push(error); },
+                Err(error) => diagnostics.push(format!("{} feedback: {error}", instance.logical)),
+            }
+        }
         if self.feedback_worker.busy() { return diagnostics; }
         let mut jobs = vec![];
         for instance in &mut self.instances {
             if !instance.ready || instance.feedback_clear_pending || instance.outputs.is_empty()
-                || instance.feedback_at.is_some_and(|last| last.elapsed() < MIN_PUBLISH_INTERVAL) { continue; }
+                { continue; }
+            let Some(publication) = instance.feedback_delivery.prepare(Instant::now(), instance.feedback_at) else { continue; };
             let result = (|| {
                 let receipt = instance.receipt.clone().ok_or("The companion feedback owner is missing.")?;
-                let tokens = instance.outputs.iter().map(|output| output.token.clone()
+                let tokens = instance.outputs.iter().filter(|output| publication.samples.iter().any(|sample|
+                    sample.channel_id == output.binding.channel_id && sample.output_id == output.binding.output_id))
+                    .map(|output| output.token.clone()
                     .ok_or_else(|| "Bind current companion feedback delivery tokens first.".to_string()))
                     .collect::<Result<Vec<_>, _>>()?;
-                let captured = Instant::now();
-                let samples = instance.outputs.iter().map(|output| {
-                    let observed = phase.inspected_sample(&output.from);
-                    let sample = feedback_sample(output, observed.map(|(sample, _)| sample))?;
-                    Ok(sample.aged(observed.and_then(|(_, at)| at)
-                        .map_or(0, |at| now_us.saturating_sub(at.0) / 1000)))
-                }).collect::<Result<Vec<_>, String>>()?;
                 Ok::<_, String>(Job { logical: instance.logical.clone(), generation: instance.generation,
-                    run: phase.run_token(), receipt, tokens, samples, captured, cancelled: instance.feedback_cancel.clone() })
+                    run: phase.run_token(), receipt, tokens, publication, cancelled: instance.feedback_cancel.clone() })
             })();
             instance.feedback_at = Some(Instant::now());
             match result {
@@ -191,6 +206,26 @@ impl CompanionSources {
         }
         diagnostics
     }
+}
+
+fn projection(instance: &Instance, phase: &Phase, now_us: u64) -> Result<delivery::Projection, String> {
+    let captured = Instant::now();
+    let entries = instance.outputs.iter().map(|output| {
+        let observed = phase.inspected_observation(&output.from);
+        let timeless = observed.as_ref().is_some_and(|value| value.timeless);
+        let age_us = if timeless { 0 } else { observed.as_ref().and_then(|value| value.observed_at)
+            .map_or(0, |at| now_us.saturating_sub(at.0)) };
+        let sample = feedback_sample(output, observed.as_ref().map(|value| value.sample))?.aged(age_us / 1000);
+        let mut signature = sample.clone();
+        signature.source_age_ms = 0;
+        let stamp = delivery::Stamp { sample: signature,
+            captured_us: (!timeless).then(|| observed.as_ref().and_then(|value| value.captured_at).map(|at| at.0)).flatten(),
+            captured_sequence: if timeless { 0 } else { observed.as_ref().map_or(0, |value| value.captured_sequence.0) } };
+        let age_due = (sample.status == FeedbackStatus::Fresh && !timeless).then(||
+            captured + Duration::from_micros((osg_companion_service::FEEDBACK_STALE_MS * 1000).saturating_sub(age_us)));
+        Ok(delivery::Entry { stamp, sample, age_due })
+    }).collect::<Result<Vec<_>, String>>()?;
+    Ok(delivery::Projection { entries, captured })
 }
 
 #[cfg(test)]

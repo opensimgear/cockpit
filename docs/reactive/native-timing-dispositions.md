@@ -16,6 +16,12 @@ and a direct cancellation Waker. Native client read polls are also retired;
 native pending pairing also uses one terminal approval subscription. See [client verification](../verification/2026-11-05-native-client-event-io.md).
 See [verification](../verification/2026-11-05-companion-peer-io.md).
 
+2026-11-05 feedback update: the active profile publisher's 34 ms maximum rate
+is no longer an unconditional full-snapshot cadence. Channel changes, independent
+freshness renewals and exact quality boundaries select bounded delta delivery.
+This site is not a separate row in the historical inventory. See
+[feedback verification](../verification/2026-11-05-feedback-publication.md).
+
 | Ledger site | Owner and trigger | Disposition and verification |
 | --- | --- | --- |
 | `src-tauri/src/activity/mod.rs:107` | Activity writer flush, explicit request waits for its own acknowledgment | Keep the bounded flush deadline. Committed-only Activity reads skip the flush. Activity writer and read-model tests cover journal publication. |

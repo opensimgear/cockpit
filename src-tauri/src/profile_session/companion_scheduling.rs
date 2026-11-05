@@ -39,7 +39,6 @@ impl CompanionSources {
         if !self.acquired || self.stopped || self.feedback_worker.busy() { return None; }
         self.instances.iter().filter(|instance|
             instance.ready && !instance.feedback_clear_pending && !instance.outputs.is_empty())
-            .map(|instance| instance.feedback_at.map_or_else(Instant::now,
-                |last| last + feedback::MIN_PUBLISH_INTERVAL)).min()
+            .filter_map(|instance| instance.feedback_delivery.deadline(instance.feedback_at)).min()
     }
 }

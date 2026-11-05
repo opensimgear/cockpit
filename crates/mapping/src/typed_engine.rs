@@ -102,6 +102,7 @@ pub struct ScriptTransaction {
 }
 #[derive(Clone)]
 struct PortState {
+    timeless: bool,
     sample: SignalSample,
     epoch: u64,
     observed: u64,
@@ -243,14 +244,19 @@ impl Phase {
             .iter()
             .map(|port| (port.endpoint.node_id.clone(), SourceState::default()))
             .collect();
+        let timeless_nodes = compiled.program.nodes.iter().filter(|node|
+            matches!(node.operation, Operation::Constant { .. })).map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
         let values = compiled
             .contracts
             .keys()
             .cloned()
             .map(|endpoint| {
+                let timeless = timeless_nodes.contains(endpoint.node_id.as_str());
                 (
                     endpoint,
                     PortState {
+                        timeless,
                         sample: SignalSample::Unknown,
                         epoch: 1,
                         observed: 0,
@@ -261,6 +267,7 @@ impl Phase {
                 )
             })
             .collect();
+        drop(timeless_nodes);
         let states = compiled
             .program
             .nodes
@@ -375,3 +382,4 @@ mod evaluate;
 
 #[path = "typed_engine/native/mod.rs"]
 pub mod native;
+pub use native::SampleObservation;

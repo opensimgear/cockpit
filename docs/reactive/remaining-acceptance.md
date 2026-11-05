@@ -29,6 +29,12 @@ and #198 are In progress because implementation/qualification is underway.
 | #197 | Complete manual/MCP state/error/cancel/recovery parity, sustained socket backpressure and schema/documentation/negotiation inventory. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
 
+The active companion feedback publisher now emits an initial snapshot and
+per-channel changes/independent freshness renewals rather than full snapshots
+every 34 ms. One latest pending projection and exact acknowledgements bound
+slow delivery. [Qualification and limits](../verification/2026-11-05-feedback-publication.md)
+record the remaining complete transport and physical acceptance matrices.
+
 The CAN publication/ownership disposition is also unresolved. Existing source
 cadence, true lease/freshness deadlines, bounded retries and authored behavior
 are distinct from periodic acquisition or state-refresh polling.

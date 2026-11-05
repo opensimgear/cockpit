@@ -151,7 +151,7 @@ static void ack_tests(void){
     v=json("{\"ok\":true,\"type\":\"ack\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"sequence\":\"1\",\"ackStage\":\"source-accepted\",\"submitted\":false,\"feedbackSequence\":null,\"feedback\":null}");assert(osg_ack(v,&session,"1",&r,500));cJSON_Delete(v);
 }
 static cJSON *modern_ack(void){
-    cJSON *v=json("{\"ok\":true,\"type\":\"ack\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"sequence\":\"1\",\"ackStage\":\"source-accepted\",\"submitted\":false,\"feedback\":{\"version\":1,\"type\":\"feedback\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"controllerInstanceId\":\"instance\",\"sequence\":\"1\",\"bindingGeneration\":\"1\",\"mode\":\"snapshot\",\"bindings\":[{\"channelId\":\"speed-channel\",\"outputId\":\"speed\"}],\"values\":[{\"channelId\":\"speed-channel\",\"outputId\":\"speed\",\"status\":\"fresh\",\"value\":125.5,\"provenance\":\"game-confirmed\",\"sourceKind\":\"simulator\",\"sourceAgeMs\":0,\"unit\":\"kt\",\"range\":{\"min\":0,\"max\":600}}]}}" );
+    cJSON *v=json("{\"ok\":true,\"type\":\"ack\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"sequence\":\"1\",\"ackStage\":\"source-accepted\",\"submitted\":false,\"feedback\":{\"version\":1,\"type\":\"feedback\",\"clientId\":\"client\",\"sessionId\":\"session\",\"generation\":\"1\",\"controllerInstanceId\":\"instance\",\"sequence\":\"1\",\"bindingGeneration\":\"1\",\"mode\":\"snapshot\",\"bindings\":[{\"channelId\":\"speed-channel\",\"outputId\":\"speed\"},{\"channelId\":\"caution-channel\",\"outputId\":\"caution\"}],\"values\":[{\"channelId\":\"speed-channel\",\"outputId\":\"speed\",\"status\":\"fresh\",\"value\":125.5,\"provenance\":\"game-confirmed\",\"sourceKind\":\"simulator\",\"sourceAgeMs\":0,\"unit\":\"kt\",\"range\":{\"min\":0,\"max\":600}},{\"channelId\":\"caution-channel\",\"outputId\":\"caution\",\"status\":\"fresh\",\"value\":true,\"provenance\":\"game-confirmed\",\"sourceKind\":\"simulator\",\"sourceAgeMs\":0,\"unit\":\"ratio\"}]}}" );
     cJSON_AddStringToObject(v,"publicationHash",osg_demo_panel.publication_hash);
     cJSON_AddStringToObject(cJSON_GetObjectItemCaseSensitive(v,"feedback"),"publicationHash",osg_demo_panel.publication_hash);
     return v;
@@ -180,6 +180,8 @@ static void modern_feedback_tests(void){
     string(event_frame,"sessionId","session");
     assert(osg_feedback_event(event,&session,&r,750)&&session.feedback_stream);
     assert(r.samples[3].received_ms==100);
+    const uint64_t caution_time=r.samples[1].received_ms;
+    assert(caution_time==100);
     cJSON *payload_free=cJSON_Duplicate(base,true);
     cJSON_DeleteItemFromObjectCaseSensitive(payload_free,"feedback");
     assert(osg_ack(payload_free,&session,"1",&r,760));
@@ -230,8 +232,12 @@ static void modern_feedback_tests(void){
     }
     cJSON *delta=cJSON_Duplicate(base,true),*frame=cJSON_GetObjectItemCaseSensitive(delta,"feedback"),*sample=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);
     string(frame,"mode","delta");string(frame,"sequence","2");cJSON_DeleteItemFromObjectCaseSensitive(frame,"bindings");num(sample,"value",128);
+    cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"values"),1);
     assert(osg_ack(delta,&session,"1",&r,200));assert(r.samples[3].number==128&&r.samples[3].received_ms==200);
-    string(frame,"sequence","3");cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);assert(osg_ack(delta,&session,"1",&r,500));assert(r.samples[3].received_ms==200);
+    assert(r.samples[1].boolean&&r.samples[1].received_ms==caution_time);
+    num(sample,"value",300);assert(osg_ack(delta,&session,"1",&r,300));assert(r.samples[3].number==128&&r.samples[3].received_ms==200);
+    string(frame,"sequence","1");assert(!osg_ack(delta,&session,"1",&r,350));assert(r.samples[3].number==128&&r.samples[1].received_ms==caution_time);
+    string(frame,"sequence","3");cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);assert(osg_ack(delta,&session,"1",&r,500));assert(r.samples[3].received_ms==200&&r.samples[1].received_ms==caution_time);
     string(frame,"sequence","2");assert(!osg_ack(delta,&session,"1",&r,600));cJSON_Delete(delta);
     for(int status=0;status<4;status++){
         cJSON *v=cJSON_Duplicate(base,true);frame=cJSON_GetObjectItemCaseSensitive(v,"feedback");sample=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);
@@ -242,10 +248,11 @@ static void modern_feedback_tests(void){
         cJSON_Delete(v);
     }
     cJSON *empty=cJSON_Duplicate(base,true);frame=cJSON_GetObjectItemCaseSensitive(empty,"feedback");string(frame,"bindingGeneration","6");
-    cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"bindings"),0);
+    cJSON_ReplaceItemInObjectCaseSensitive(frame,"values",cJSON_CreateArray());cJSON_ReplaceItemInObjectCaseSensitive(frame,"bindings",cJSON_CreateArray());
     assert(osg_ack(empty,&session,"1",&r,800));assert(!r.samples[3].available);cJSON_Delete(empty);
     for(int kind=0;kind<2;kind++){
         cJSON *v=cJSON_Duplicate(base,true);frame=cJSON_GetObjectItemCaseSensitive(v,"feedback");string(frame,"bindingGeneration",kind?"8":"7");
+        cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"values"),1);cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(frame,"bindings"),1);
         sample=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(frame,"values"),0);cJSON *binding=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(frame,"bindings"),0);
         string(binding,"channelId",kind?"radio-channel":"caution-channel");string(binding,"outputId",kind?"radio":"caution");
         string(sample,"channelId",kind?"radio-channel":"caution-channel");string(sample,"outputId",kind?"radio":"caution");string(sample,"unit","state");

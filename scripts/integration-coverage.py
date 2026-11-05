@@ -62,6 +62,7 @@ def main():
     module_names.extend(['activity/metadata.rs', 'activity/sources.rs', 'system_inventory.rs',
                          'gateways/serial_topology.rs', 'gateways/workspace/publisher.rs', 'companion/host/mod.rs'])
     module_names.extend(['profile_session/companion_scheduling.rs', 'profile_session/companion_feedback.rs',
+                         'profile_session/companion_feedback/delivery.rs',
                          'profile_session/companion_pending.rs', 'profile_session/companion_rebind.rs',
                          'profile_session_companions.rs', 'profile_session_companion_host.rs'])
     module_names.extend(['dcs_physics.rs', 'dcs_physics/parser.rs', 'dcs_physics/session.rs', 'dcs_physics/source.rs', 'dcs_physics/retained.rs'])

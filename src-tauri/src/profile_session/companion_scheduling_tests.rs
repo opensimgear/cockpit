@@ -88,10 +88,16 @@ fn feedback_rate_deadline_is_anchored_and_absent_without_eligible_outputs() {
     assert_eq!(adapter.feedback_deadline(), None);
     fixture.acquire(&mut adapter, &[]);
     fixture.connect();
-    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
-    adapter.baseline(&fixture.hub, |_| Ok(()), 100).unwrap().unwrap();
+    let plan = fixture.delivery();
+    adapter.bind_delivery_plan(&plan).unwrap();
+    let frames = adapter.baseline(&fixture.hub, |_| Ok(()), 100).unwrap().unwrap();
+    assert_eq!(adapter.feedback_deadline(), None, "Readiness alone cannot start periodic feedback capture");
+    let mut phase = Phase::new(plan.program, Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
+    for frame in frames { crate::profile_admission_test_clock::frame(&mut phase, frame).unwrap(); }
+    adapter.arm(phase.run_token()).unwrap();
     let at = Instant::now();
     adapter.instances[0].feedback_at = Some(at);
+    assert!(adapter.publish_feedback_background(&fixture.hub, &phase, |_| Ok(()), 100).is_empty());
     assert_eq!(adapter.feedback_deadline(), Some(at + std::time::Duration::from_millis(34)));
     adapter.instances[0].feedback_clear_pending = true;
     assert_eq!(adapter.feedback_deadline(), None);

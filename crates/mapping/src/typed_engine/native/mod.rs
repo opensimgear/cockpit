@@ -143,7 +143,10 @@ mod graph;
 mod liveness;
 mod output_work;
 mod publish;
+mod presentation;
 mod scripts;
+
+pub use presentation::SampleObservation;
 
 #[cfg(test)]
 mod sample_revision_tests;
