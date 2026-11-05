@@ -96,7 +96,11 @@ within a monotonic domain or with measured clock correlation and uncertainty.
 
 R0 remains open until the acquisition inventory is complete, conformance fixtures
 are exercised, and real Cockpit baseline traces confirm/revise these budgets.
-No sampling exception is approved by this document. Shared-memory sources and
-device request/response journals remain unaccepted until their producer bridge or
-an explicit feature-level scope decision exists. R1 may be developed against this
-contract, but cannot qualify downstream adapters by moving polling into a worker.
+One native sampler per active Assetto game is approved for the four Assetto
+shared-memory adapters. Preserve packet identities, mapping generations, capture
+timestamps and freshness. Publish detected changes to the shared stream for
+profiles, inspector and MCP consumers. Controller input is outside the exception.
+
+Other sampled acquisition requires a producer bridge or an explicit
+feature-level decision. The shared channel contract applies to each adapter.
+[Assetto decision](https://github.com/opensimgear/cockpit/issues/188#issuecomment-6646558859)

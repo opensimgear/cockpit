@@ -109,9 +109,17 @@ limits. The exception applies to acquisition only. Live qualification remains
 separate for each simulator.
 
 The reader targets a 2 ms sample period. A page overwritten between reads
-cannot be recovered. The separate 250 ms competing-process enumeration still
-needs event-backed replacement to keep the shared mapping namespace exclusive.
+cannot be recovered. A Windows process-event lease now fences the selected
+mapping family and ends the reader on loss of exclusivity or notification
+continuity. Manual setup retains a single preflight process inventory. The
+global process observer and live simulator qualification remain open.
 Physical controller acquisition is outside this exception.
+
+| Assetto timing owner | Disposition | Verification |
+| --- | --- | --- |
+| Shared capture worker, 2 ms sampling and 50 ms read-error retry | Approved native mapping acquisition and bounded recovery. A failed process lease retires the worker. | Ordered and latest-reader fixtures, mapping generation tests and failed-lease replacement regression |
+| Manual setup verification, 100 ms wait between journal reads | Replace with a wake on journal publication, setup cancellation or the existing verification deadline. | Authored setup fixture must still distinguish waiting, lease loss and qualification |
+| Global game activation observer, 500 ms catalogue process scan | Replace with a process-event owner for registered executable identities and initial inventory. | Verify launch, competing processes, process replacement, missed notifications and idle behavior |
 
 [Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6640472899)
 
