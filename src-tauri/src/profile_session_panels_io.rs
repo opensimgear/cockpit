@@ -79,6 +79,17 @@ impl ProfilePanelIo {
             .ok_or("Connect the bound gateway first.")?;
         Ok(adapter.cached_state())
     }
+    pub(crate) fn watch_publication_inventory(
+        &self,
+        gateways: &std::collections::BTreeSet<&str>,
+        wake: &Arc<osg_streams::NativeWake>,
+    ) {
+        for (id, adapter) in self.adapters() {
+            if gateways.contains(id.as_str()) {
+                adapter.watch_resource_inventory(wake);
+            }
+        }
+    }
     /// Read-only current native publisher inventory; no serial request or scan.
     pub(crate) fn publication_snapshots(&self) -> Result<Vec<(String, Value)>, String> {
         if self.closed.load(Ordering::Acquire) { return Err("Cockpit gateway manager has closed.".into()); }

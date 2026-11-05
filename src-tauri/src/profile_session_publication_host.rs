@@ -3,6 +3,9 @@
 use super::*;
 use crate::profile_session_overrides::{Overrides, VerifiedPublication, KIND};
 use std::time::Duration;
+
+const WAITING_CAPABILITY: &str =
+    "Waiting for the exact post-publication native capability and input baseline.";
 pub(super) fn active(state: &NativeRun) -> Result<(), String> {
     if !state.publication.is_empty() {
         let status = state.publication.poll();
@@ -150,10 +153,7 @@ impl NativeProfileHost {
             report.readiness,
             PlanReadiness::Invalid | PlanReadiness::Blocked
         ) {
-            return Err(
-                "Waiting for the exact post-publication native capability and input baseline."
-                    .into(),
-            );
+            return Err(WAITING_CAPABILITY.into());
         }
         self.resources
             .validate_publication_rebind(&before, after, proof)?;
@@ -195,12 +195,28 @@ impl NativeProfileHost {
         };
         if let Some(proof) = proof {
             let deadline = Instant::now() + Duration::from_secs(3);
+            let wake = Arc::new(osg_streams::NativeWake::default());
+            wake.bind_thread(std::thread::current())
+                .map_err(|_| "Cannot bind the native publication inventory waiter.")?;
+            let gateways = proof.targets().iter().map(|target| target.gateway.as_str()).collect();
+            self.panels.watch_publication_inventory(&gateways, &wake);
             let report = loop {
-                match self.publication_plan(&run.owner,prepared,&proof){
-                Ok(report)=>break report,
-                Err(error) if error=="Waiting for the exact post-publication native capability and input baseline."&&Instant::now()<deadline=>{self.check_transition(&run.owner)?;std::thread::sleep(Duration::from_millis(5));},
-                Err(error)=>return Err(error),
-            }
+                let revision = wake.observed();
+                match self.publication_plan(&run.owner, prepared, &proof) {
+                    Ok(report) => break report,
+                    Err(error) if error == WAITING_CAPABILITY && Instant::now() < deadline => {}
+                    Err(error) => return Err(error),
+                }
+                // Stop can revoke the epoch without a gateway update. Recheck
+                // it at the existing cadence without rebuilding the plan.
+                while wake.observed() == revision {
+                    self.check_transition(&run.owner)?;
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    wake.wait(revision, remaining.min(Duration::from_millis(5)));
+                }
             };
             prepared.plan = report
                 .plan

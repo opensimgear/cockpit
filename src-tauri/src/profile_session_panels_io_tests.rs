@@ -8,8 +8,12 @@ struct Fake {
     calls: Mutex<Vec<Value>>,
     publications: Mutex<Vec<crate::stm32::PublicationRequest>>,
     claims: Mutex<Vec<crate::module_configuration_routes::WriterPin>>,
+    inventory_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
 }
 impl Adapter for Fake {
+    fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.inventory_wake.lock().unwrap() = Arc::downgrade(wake);
+    }
     fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{
         self.publications.lock().unwrap().push(request);
         Ok(crate::stm32::PublicationReply{state:self.cached_state(),owned:None})
@@ -65,6 +69,22 @@ fn fixture() -> (Arc<ProfilePanelIo>, Arc<Fake>, String, UsbRouteToken) {
 fn request(command: &str) -> Value {
     json!({"command":command,"gatewayId":GATEWAY,"moduleId":MODULE,"clientId":"profile-test","boot":10})
 }
+#[test]
+fn publication_inventory_wait_observes_only_its_gateway_and_releases_the_watch() {
+    let (io, adapter, _, _) = fixture();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    io.watch_publication_inventory(&["other-gateway"].into(), &wake);
+    assert!(adapter.inventory_wake.lock().unwrap().upgrade().is_none());
+
+    io.watch_publication_inventory(&[GATEWAY].into(), &wake);
+    adapter.inventory_wake.lock().unwrap().upgrade().unwrap().notify();
+    assert_eq!(wake.observed(), 1);
+    assert!(adapter.calls.lock().unwrap().is_empty());
+
+    drop(wake);
+    assert!(adapter.inventory_wake.lock().unwrap().upgrade().is_none());
+}
+
 #[test]
 fn native_dispatch_cannot_open_save_reset_forget_or_mutate_a_restarted_module() {
     let (io, adapter, key, route) = fixture();
