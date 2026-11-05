@@ -1,8 +1,13 @@
 # Native timing dispositions
 
-This inventory uses the timing ledger pinned to Cockpit `56b6d1ec`.
+This inventory uses the timing ledger pinned to Cockpit `56b6d1ec`,
+device-gateway `da8ab4b`, device-template `c545788`, and firmware-common
+`64025cc`.
 Each row records the timing owner, its trigger, and the remaining evidence.
 Changes after that revision are identified by their delivery commit.
+Run `node scripts/reactive/audit.mjs --check-dispositions` to verify that the
+native and frontend tables together account for every entry in the pinned
+ledger exactly once.
 
 | Ledger site | Owner and trigger | Disposition and verification |
 | --- | --- | --- |
@@ -101,3 +106,14 @@ Changes after that revision are identified by their delivery commit.
 | `src-tauri/src/profile_system_notification.rs:326` | Windows notification worker, await dismissal callback after a missing update | Use the dismissal event with the existing 50 ms bound. Verify activation notification dismissal and late callbacks. |
 | `src-tauri/src/window_persistence.rs:12` | Window state writer, debounce user resize or move | Keep the cancellable one-shot save. Tests cover coalescing and shutdown. |
 | `src-tauri/src/window_persistence.rs:50,54,57,65` | Test-only window save acknowledgments and quiet windows | Keep fixture bounds. Tests cover resize bursts and idle shutdown. |
+
+## Timing after the pinned inventory
+
+| Boundary | Clock and owner |
+| --- | --- |
+| Physical controller, USB and CAN input | The device or firmware collector owns report cadence and capture time. Native blocking readers and bounded journals deliver those reports to routing, UI and MCP. CAN firmware without panel streaming exposes output capabilities only. |
+| Simulator input | DCS and X-Plane publishers own report cadence. Native receiver leases expire from original captures. The authorized Assetto shared-memory reader owns the host sampling cadence and read-error backoff. Downstream consumers wake on committed capture. |
+| Game process discovery | The Windows inventory worker owns process-event continuity. Where event access is denied it still owns the 500 ms discovery fallback. The process fallback remains an open acquisition disposition. |
+| Profile reconciliation | The selector owns vehicle and peripheral backoff. It parks between source changes, registry release after contention, and the next retry deadline. The returning-game reader waits for the native capture or its admission deadline where the source offers a wake. |
+| Output safety and authored behavior | The profile runtime schedules reducer and script deadlines and virtual-output renewals separately. Companion connection owners hold the panel lease and watchdog. Freshness expiry and timed actions can wake their owner while input is quiet. |
+| Presentation | Widget playback schedules dirty frames while active. The panel controller owns the next action or feedback-expiry deadline. Dialog countdowns, edit debounces and notifications stay local to presentation. |

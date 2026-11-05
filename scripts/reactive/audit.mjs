@@ -30,6 +30,31 @@ if (process.argv.includes('--check-ui-timers')) {
 }
 
 const output = resolve(root, 'docs/reactive/refresh-sites.json');
+if (process.argv.includes('--check-dispositions')) {
+  const sites = JSON.parse(readFileSync(output, 'utf8'));
+  const pending = new Set(sites.map(site => `${site.file}:${site.line}`));
+  if (pending.size !== sites.length) throw new Error('Duplicate sites in the pinned timing inventory.');
+  const classified = new Set();
+  for (const document of ['native-timing-dispositions.md', 'ui-refresh-classification.md']) {
+    const lines = readFileSync(resolve(root, 'docs/reactive', document), 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.startsWith('| `')) continue;
+      const column = line.split('|')[1];
+      for (const [, path, numbers] of column.matchAll(/`([^:`]+):([\d,]+)`/g)) {
+        for (const number of numbers.split(',')) {
+          const exact = `${path}:${number}`;
+          const site = pending.has(exact) || classified.has(exact) ? exact : `src/lib/${exact}`;
+          if (classified.has(site)) throw new Error(`Duplicate timing disposition for ${site}`);
+          if (!pending.delete(site)) throw new Error(`Timing disposition does not match the pinned inventory: ${exact}`);
+          classified.add(site);
+        }
+      }
+    }
+  }
+  if (pending.size) throw new Error(`Missing timing dispositions:\n${[...pending].join('\n')}`);
+  console.log(`All ${sites.length} pinned timing sites have exactly one disposition.`);
+  process.exit(0);
+}
 const trees = ['src/', 'src-tauri/src/', 'crates/', 'apps/', 'packages/', 'scripts/native-gateway-bridge.mjs'];
 const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simulation)(?:\/|$)|(?:[._-](?:tests?|fixtures)\.|\/tests?\.rs$)/;
 const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
