@@ -32,9 +32,14 @@ impl Readiness {
     }
 }
 
-struct PeerFinished { active: Arc<AtomicUsize>, wake: Arc<Waker> }
+struct PeerFinished {
+    active: Arc<AtomicUsize>, wake: Arc<Waker>,
+    connections: Arc<connections::Connections>, hub: Hub, id: String,
+}
 impl Drop for PeerFinished {
     fn drop(&mut self) {
+        self.connections.remove(&self.id);
+        self.hub.disconnect_connection(&self.id, self.hub.now_ms());
         self.active.fetch_sub(1, Ordering::SeqCst);
         let _ = self.wake.wake();
     }
@@ -45,6 +50,7 @@ pub(super) fn run(
     stop: Arc<AtomicBool>, active: Arc<AtomicUsize>, attempts: Arc<Mutex<Attempts>>,
     browser_origin: String, browser_assets: &'static [crate::browser::BrowserAsset],
     failure: Arc<Mutex<Option<String>>>,
+    connections: Arc<connections::Connections>,
 ) {
     let mut workers: Vec<JoinHandle<()>> = Vec::new();
     let mut ready = true;
@@ -68,11 +74,15 @@ pub(super) fn run(
                         Err(error) => return Err(error),
                     };
                     if active.load(Ordering::SeqCst) >= 16 { continue; }
-                    // Accepted sockets inherit nonblocking mode on some OSes;
-                    // bounded TLS/WebSocket I/O belongs to the peer worker.
-                    if stream.set_nonblocking(false).is_err() { continue; }
+                    let (stream, cancel) = DeadlineTcp::event(stream)?;
+                    let id = uuid::Uuid::new_v4().to_string();
+                    if let Err(error) = connections.register(&id, cancel) {
+                        if stop.load(Ordering::SeqCst) { break; }
+                        return Err(error);
+                    }
                     active.fetch_add(1, Ordering::SeqCst);
-                    let finished = PeerFinished { active: active.clone(), wake: readiness.wake() };
+                    let finished = PeerFinished { active: active.clone(), wake: readiness.wake(),
+                        connections: connections.clone(), hub: hub.clone(), id: id.clone() };
                     let hub = hub.clone();
                     let tls = tls.clone();
                     let stop = stop.clone();
@@ -80,11 +90,9 @@ pub(super) fn run(
                     let origin = browser_origin.clone();
                     let worker = thread::Builder::new().name("companion-peer".into()).spawn(move || {
                         let _finished = finished;
-                        let id = uuid::Uuid::new_v4().to_string();
                         let _result = serve_connection(stream, tls, &hub, &id, &stop, &attempts, &origin, browser_assets);
                         #[cfg(test)]
                         if let Err(error) = _result { eprintln!("companion peer ended: {error}"); }
-                        hub.disconnect_connection(&id, hub.now_ms());
                     })?;
                     workers.push(worker);
                 }
@@ -106,6 +114,7 @@ pub(super) fn run(
     // A failed listener cannot leave peer authority or parked feedback readers
     // alive. Disconnect wakes those readers before their workers are joined.
     stop.store(true, Ordering::SeqCst);
+    connections.close();
     hub.disconnect_all();
     for worker in workers { let _ = worker.join(); }
     hub.tick(hub.now_ms());

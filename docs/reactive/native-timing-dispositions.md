@@ -9,6 +9,12 @@ Run `node scripts/reactive/audit.mjs --check-dispositions` to verify that the
 native and frontend tables together account for every entry in the pinned
 ledger exactly once.
 
+2026-11-05 peer I/O update: the companion server's 100 ms socket read poll
+(not a separate site in this historical sleep/channel-wait ledger) is retired.
+Each peer owns nonblocking Mio I/O, actual handshake/idle/probe/write deadlines
+and a direct cancellation Waker. Native client read/status loops remain open.
+See [verification](../verification/2026-11-05-companion-peer-io.md).
+
 | Ledger site | Owner and trigger | Disposition and verification |
 | --- | --- | --- |
 | `src-tauri/src/activity/mod.rs:107` | Activity writer flush, explicit request waits for its own acknowledgment | Keep the bounded flush deadline. Committed-only Activity reads skip the flush. Activity writer and read-model tests cover journal publication. |

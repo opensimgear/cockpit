@@ -20,7 +20,8 @@ fn browser_control_pongs_keep_the_socket_open_without_application_traffic() {
     let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
     let (server, peer) = listener.accept().unwrap();
-    server.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+    let mut server = DeadlineTcp::event(server).unwrap().0;
+    server.upgraded();
     let worker_hub = hub.clone();
     let (done, closed) = std::sync::mpsc::channel();
     let worker = thread::spawn(move || {
@@ -47,4 +48,34 @@ fn browser_control_pongs_keep_the_socket_open_without_application_traffic() {
     closed.recv_timeout(Duration::from_secs(7)).unwrap().unwrap();
     worker.join().unwrap();
     assert!(!hub.connection_authenticated("browser"));
+}
+
+#[test]
+fn partial_websocket_bytes_cannot_renew_the_idle_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (stream, address) = listener.accept().unwrap();
+    let mut stream = DeadlineTcp::event(stream).unwrap().0; stream.upgraded();
+    let (done, closed) = std::sync::mpsc::channel();
+    let worker = thread::spawn(move || {
+        let socket = WebSocket::from_raw_socket(stream, Role::Server, Some(websocket_config()));
+        done.send(serve_messages(socket, &Hub::new("partial-peer".into(), Arc::new(crate::NullSourceSink)),
+            "partial", &AtomicBool::new(false), &Mutex::new(Attempts::new()), address.ip(), false)).unwrap();
+    });
+    // Masked text frame declaring 1024 bytes, never completed. Each partial
+    // read succeeds before a relative five-second socket timeout could expire.
+    peer.write_all(&[0x81,0xfe,0x04,0x00,0,0,0,0]).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let stopped = cancelled.clone();
+    let sender = thread::spawn(move || {
+        while !stopped.load(Ordering::Acquire) {
+            if peer.write_all(&[b'x']).is_err() { break; }
+            thread::sleep(Duration::from_millis(80));
+        }
+    });
+    let result = closed.recv_timeout(Duration::from_millis(6500));
+    cancelled.store(true, Ordering::Release);
+    sender.join().unwrap();
+    result.unwrap().unwrap();
+    worker.join().unwrap();
 }

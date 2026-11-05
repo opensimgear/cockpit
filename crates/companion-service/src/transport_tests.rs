@@ -403,7 +403,7 @@ fn occupied_port_is_reported_and_stalled_handshake_has_an_absolute_shutdown_boun
     wait(|| server.status().active_connections == 1);
     let start = Instant::now();
     server.stop();
-    assert!(start.elapsed() < Duration::from_secs(6));
+    assert!(start.elapsed() < Duration::from_secs(1), "Stop must interrupt the stalled TLS read directly");
     assert_eq!(server.status().active_connections, 0);
 }
 

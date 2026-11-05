@@ -41,54 +41,15 @@ pub fn timed_out(error: &tungstenite::Error) -> bool {
     matches!(error, tungstenite::Error::Io(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
 }
 
-/// Absolute deadline wraps raw TCP, so slow TLS handshakes cannot hide inside rustls I/O loops.
-pub struct DeadlineTcp {
-    pub inner: TcpStream,
-    deadline: Option<Instant>,
-}
-impl DeadlineTcp {
-    pub fn new(inner: TcpStream) -> Self {
-        Self {
-            inner,
-            deadline: Some(Instant::now() + Duration::from_secs(3)),
-        }
-    }
-    pub fn upgraded(&mut self) {
-        self.deadline = None;
-    }
-    pub fn set_read_timeout(&self, value: Option<Duration>) -> std::io::Result<()> {
-        self.inner.set_read_timeout(value)
-    }
-    fn check(&self) -> std::io::Result<()> {
-        if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() > deadline)
-        {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "TLS/HTTP handshake deadline exceeded",
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
-impl Read for DeadlineTcp {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.check()?;
-        self.inner.read(buffer)
-    }
-}
-impl Write for DeadlineTcp {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.check()?;
-        self.inner.write(bytes)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.check()?;
-        self.inner.flush()
-    }
-}
+#[path = "server/deadline_io.rs"]
+mod deadline_io;
+pub use deadline_io::DeadlineTcp;
+use deadline_io::ReadDeadline;
+#[path = "server/connections.rs"]
+mod connections;
+#[path = "server/socket_io.rs"]
+mod socket_io;
+
 pub(crate) struct Attempts {
     since: Instant,
     total: usize,
@@ -308,6 +269,7 @@ pub struct PairingPayload {
 struct Running {
     stop: Arc<AtomicBool>,
     wake: Arc<mio::Waker>,
+    connections: Arc<connections::Connections>,
     failure: Arc<Mutex<Option<String>>>,
     handle: JoinHandle<()>,
     discovery: Option<mdns_sd::ServiceDaemon>,
@@ -382,6 +344,8 @@ impl ServerRuntime {
         let wake = readiness.wake();
         let failure = Arc::new(Mutex::new(None));
         let listener_failure = failure.clone();
+        let connections = Arc::new(connections::Connections::default());
+        let peer_connections = connections.clone();
         let endpoint = if host.contains(':') {
             format!("wss://[{host}]:{}/companion", address.port())
         } else {
@@ -411,7 +375,7 @@ impl ServerRuntime {
         let handle = thread::Builder::new()
             .name("companion-listener".into())
             .spawn(move || listener::run(readiness, hub, tls, stopped, active, attempts,
-                browser_origin, browser_assets, listener_failure))
+                browser_origin, browser_assets, listener_failure, peer_connections))
             .map_err(|error| error.to_string())?;
         inner.status = ServerStatus {
             enabled: true,
@@ -424,6 +388,7 @@ impl ServerRuntime {
         inner.running = Some(Running {
             stop,
             wake,
+            connections,
             failure,
             handle,
             discovery,
@@ -442,6 +407,7 @@ impl ServerRuntime {
         };
         if let Some(running) = running {
             running.stop.store(true, Ordering::SeqCst);
+            running.connections.close();
             let _ = running.wake.wake();
             self.hub.disconnect_all();
             if let Some(discovery) = running.discovery {
@@ -512,31 +478,15 @@ impl Drop for ServerRuntime {
     }
 }
 fn serve_connection(
-    stream: TcpStream,
-    tls: Arc<rustls::ServerConfig>,
-    hub: &Hub,
-    id: &str,
-    stop: &AtomicBool,
-    attempts: &Mutex<Attempts>,
-    browser_origin: &str,
+    stream: DeadlineTcp,
+    tls: Arc<rustls::ServerConfig>, hub: &Hub, id: &str, stop: &AtomicBool,
+    attempts: &Mutex<Attempts>, browser_origin: &str,
     browser_assets: &'static [crate::browser::BrowserAsset],
 ) -> Result<(), String> {
     let peer = stream.peer_addr().map_err(|error| error.to_string())?.ip();
-    stream
-        .set_nonblocking(false)
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_millis(500)))
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_nodelay(true)
-        .map_err(|error| error.to_string())?;
     let mut connection = ServerConnection::new(tls).map_err(|error| error.to_string())?;
     connection.set_buffer_limit(Some(65536));
-    let mut stream = BudgetIo::new(StreamOwned::new(connection, DeadlineTcp::new(stream)));
+    let mut stream = BudgetIo::new(StreamOwned::new(connection, stream));
     let (http_request, header) = crate::browser::read_header(&mut stream)?;
     if http_request.uri().path() != "/companion" && http_request.uri().path() != "/socket" {
         return crate::browser::serve_http(&mut stream, &http_request, browser_origin, browser_assets);
@@ -571,17 +521,10 @@ fn serve_connection(
             .map_err(|error| error.to_string())?;
     socket.get_mut().stream.upgraded();
     socket.get_mut().stream.inner.sock.upgraded();
-    socket
-        .get_mut()
-        .stream
-        .inner
-        .sock
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .map_err(|error| error.to_string())?;
     serve_messages(socket, hub, id, stop, attempts, peer, browser_socket)
 }
 
-pub(crate) fn serve_messages<S: Read + Write>(
+pub(crate) fn serve_messages<S: Read + Write + ReadDeadline>(
     mut socket: WebSocket<S>, hub: &Hub, id: &str, stop: &AtomicBool,
     attempts: &Mutex<Attempts>, peer: IpAddr, browser_socket: bool,
 ) -> Result<(), String> {
@@ -592,21 +535,33 @@ pub(crate) fn serve_messages<S: Read + Write>(
     let mut authenticated_browser = false;
     let mut probe = None;
     while !stop.load(Ordering::SeqCst) {
-        if last_frame.elapsed() > Duration::from_secs(5) {
-            break;
-        }
+        let idle_deadline = last_frame + Duration::from_secs(5);
+        if Instant::now() >= idle_deadline { break; }
         if authenticated_browser && probe.is_none() && last_frame.elapsed() >= Duration::from_secs(2) {
             if !hub.connection_authenticated(id) { break; }
+            match socket.get_mut().set_read_deadline(Some(idle_deadline)) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
+                Err(error) => return Err(error.to_string()),
+            }
             let nonce = uuid::Uuid::new_v4();
             socket.send(Message::Ping(nonce.as_bytes().to_vec().into())).map_err(|error| error.to_string())?;
             probe = Some(nonce);
+        }
+        let read_deadline = if authenticated_browser && probe.is_none() {
+            (last_frame + Duration::from_secs(2)).min(idle_deadline)
+        } else { idle_deadline };
+        match socket.get_mut().set_read_deadline(Some(read_deadline)) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(error) => return Err(error.to_string()),
         }
         let message = match socket.read() {
             Ok(message) => message,
             Err(error) if timed_out(&error) => continue,
             Err(error) => return Err(error.to_string()),
         };
-        if stop.load(Ordering::SeqCst) {
+        if stop.load(Ordering::SeqCst) || Instant::now() >= idle_deadline {
             break;
         }
         if window.elapsed() >= Duration::from_secs(1) {
@@ -638,10 +593,12 @@ pub(crate) fn serve_messages<S: Read + Write>(
                     return Err("Pre-authentication attempt budget exceeded".into());
                 }
                 if frame["type"] == "assignments-subscribe" {
+                    socket.get_mut().set_read_deadline(None).map_err(|error| error.to_string())?;
                     return feedback_socket::serve_assignments(socket, hub, id, stop, attempts, peer, &frame);
                 }
                 let embedded_feedback = !browser_socket && frame["type"] == "esp32-feedback-subscribe";
                 if frame["type"] == "feedback-subscribe" || embedded_feedback {
+                    socket.get_mut().set_read_deadline(None).map_err(|error| error.to_string())?;
                     return feedback_socket::serve(socket, hub, id, stop, attempts, peer, &frame, !browser_socket, embedded_feedback);
                 }
                 let is_auth = frame["type"] == "auth";

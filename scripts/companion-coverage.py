@@ -9,6 +9,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_coverage_sources import measure_module
+
 
 def run(arguments, root, environment=None):
     result = subprocess.run([str(item) for item in arguments], cwd=root, env=environment,
@@ -48,6 +51,7 @@ def main():
     targets[0][3].append(root / "crates/companion-service/src/profile/feedback.rs")
     targets[0][3].append(root / "crates/companion-service/src/profile/confirmed.rs")
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["server/listener", "hub_deadlines"])
+    targets[0][3].extend(root / f"crates/companion-service/src/server/{name}.rs" for name in ["connections", "deadline_io", "socket_io"])
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client_cache/mod", "client/cache_validation", "host_content/mod", "host_content/selection", "persistence/sqlite_host"])
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"
                          for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source", "widget_design", "widget_design/helpers"])
@@ -85,24 +89,15 @@ def main():
         merged = output / f"{name}.profdata"
         run([llvm / f"llvm-profdata{suffix}", "merge", "-sparse", *raw_profiles, "-o", merged], root)
         for source in sources:
-            annotation = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={merged}", "-show-line-counts-or-regions", source], root)
+            result, annotation = measure_module(source, lambda path: run([
+                llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={merged}",
+                "-show-line-counts-or-regions", path], root), root)
             relative = source.relative_to(root).as_posix()
             annotation_name = relative.replace("/", "-")
             (output / f"{name}-{annotation_name}-lines.txt").write_text(annotation, encoding="utf-8")
-            lines = source.read_text(encoding="utf-8").splitlines()
-            # lib.rs declares test modules but has production exports/functions afterward.
-            end = len(lines) + 1 if source.name == "lib.rs" else next((index + 1 for index, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
-            # LLVM abbreviates hot counts (for example 1.28k). Include those
-            # production lines in both numerator and denominator as well.
-            counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotation.splitlines()
-                      if (match := re.match(r"^\s*(\d+)\|\s*([\d.]+[kMGT]?)\|", line)) and int(match[1]) < end}
-            if not counts:
-                raise RuntimeError(f"No instrumented production lines for {source}.")
-            covered = sum(counts.values())
-            percent = 100 * covered / len(counts)
             key = f"{name}/{relative}"
-            summary[key] = {"covered": covered, "lines": len(counts), "percent": round(percent, 2)}
-            print(f"{key}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
+            summary[key] = result
+            print(f"{key}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if any(item["percent"] < 71 for item in summary.values()):
         raise SystemExit("Each companion production module must meet 71% line coverage.")
