@@ -3,6 +3,7 @@
 Initial source audit, 2026-11-02. R0 is in progress. `refresh-sites.json` is the
 machine-readable list of timer sites produced by the audit script; it is an
 inventory, not an allowlist or proof that every timer is an acquisition loop.
+See [native timing dispositions](native-timing-dispositions.md) for the classified native sites.
 
 Direct USB update, 2026-11-04: input acquisition and committed configuration
 metadata now use native CDC streams. The historical `module_usb.rs` two-second
