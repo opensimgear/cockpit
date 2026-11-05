@@ -355,8 +355,15 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     await page.native({ command: 'profile_rename', id: prepared.profileId, expectedRevision: saved.document.revision, name: `${name} UI edit` });
     const staleSave = await call(writer, 'profile_save_prepared', mutation({ draftId: stale.draftId })); assert.equal(staleSave.ok, false); assert.equal(staleSave.error.code, 'revision_conflict');
     const edited = await ok(writer, 'profile_get', { id: prepared.profileId });
+    const beforeApplyCredential = await ok(writer, 'mcp_settings_get');
+    const applyCredential = await ok(writer, 'mcp_credential_create', mutation({
+      name: 'Activation reconnect fixture', scope: 'write', expectedSettingsRevision: beforeApplyCredential.settingsRevision,
+    }));
+    credentials.push(applyCredential.credential.id);
+    const applyingClient = await connect(endpoint, applyCredential.token);
+    clients.push(applyingClient);
     const applyArgs = mutation({ id: prepared.profileId, expectedRevision: edited.document.revision, expectedActiveOwner: null });
-    await ok(writer, 'profile_apply', applyArgs);
+    await ok(applyingClient, 'profile_apply', applyArgs);
     const running = await until(async () => { const state = await ok(writer, 'profile_status'); return state.profileSession.owner?.profileId === prepared.profileId && state; }, 'Profile failed to apply', 45000);
     evidence.appliedOwner = running.profileSession.owner;
     assert.deepEqual((await page.native({ command: 'profile_status' })).profiles.profileSession.owner, running.profileSession.owner);
@@ -364,8 +371,25 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const activeDraft = await ok(writer, 'profile_prepare_changes', { profileId: prepared.profileId, expectedRevision: edited.document.revision, edits: [{ kind: 'set_name', name: `${name} saved only` }] });
     await ok(writer, 'profile_save_prepared', mutation({ draftId: activeDraft.draftId }));
     assert.deepEqual((await ok(writer, 'profile_status')).profileSession.owner, running.profileSession.owner, 'Saving an active profile must not replace its applied revision');
-    await ok(writer, 'activation_status', { activationId: applyArgs.operationId });
-    await ok(writer, 'profile_stop', mutation({})); assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null);
+    await ok(applyingClient, 'activation_status', { activationId: applyArgs.operationId });
+    const rotatedApply = await ok(writer, 'mcp_credential_rotate', mutation({
+      id: applyCredential.credential.id, expectedSettingsRevision: applyCredential.status.settingsRevision,
+    }));
+    credentials.splice(credentials.indexOf(applyCredential.credential.id), 1, rotatedApply.credential.id);
+    await assert.rejects(() => applyingClient.listTools());
+    await assert.rejects(() => connect(endpoint, applyCredential.token));
+    const replacement = await connect(endpoint, rotatedApply.token);
+    clients.push(replacement);
+    assert.deepEqual((await ok(replacement, 'profile_status')).profileSession.owner, running.profileSession.owner);
+    await ok(replacement, 'profile_stop', mutation({}));
+    const latest = await ok(writer, 'profile_get', { id: prepared.profileId });
+    const rejectedOwner = await call(replacement, 'profile_apply', mutation({
+      id: prepared.profileId, expectedRevision: latest.document.revision, expectedActiveOwner: running.profileSession.owner,
+    }));
+    assert.equal(rejectedOwner.ok, false);
+    assert.match(rejectedOwner.error.message, /active profile changed/i);
+    assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null);
+    evidence.activationReconnect = { oldCredentialRejected: true, retainedCommittedOwner: true, retiredOwnerRejected: true };
     const local = await ok(writer, 'local_settings_get', { scope: 'selection-mode' });
     const nextMode = local.settings.mode === 'manual' ? 'automatic' : 'manual';
     const localArgs = mutation({ scope: 'selection-mode', expectedSettingsRevision: local.revision, expectedActiveOwner: null, settings: { mode: nextMode } });
