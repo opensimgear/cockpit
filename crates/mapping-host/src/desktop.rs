@@ -1,6 +1,7 @@
 //! Desktop scheduler/coordinator bridge shared by native profile sessions.
 //! This layer owns no profile storage, frontend events or application selector.
 use osg_desktop_output::{Coordinator, Scope};
+use output::Output;
 use osg_mapping::{
     desktop::Scheduler,
     engine::{typed::{native::Admission, Effect, Frame, Observation, Phase, Token}, Counter, RunToken},
@@ -28,11 +29,10 @@ fn eligible(scope: &Scope) -> Result<bool, String> {
     }
 }
 pub struct Desktop {
-    output: Coordinator,
+    output: Output,
     scheduler: Scheduler,
     run: RunToken,
     scope: Option<Scope>,
-    armed: BTreeMap<String, Token>,
     focused: bool,
     started: bool,
     registered: bool,
@@ -55,6 +55,7 @@ impl Desktop {
         qualified: bool,
         journal: std::path::PathBuf,
         scope: Option<Scope>,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Self, String> {
         let scheduler = Scheduler::from_program(run.clone(), program)?;
         let output = Coordinator::spawn_with_owned_journal(
@@ -65,11 +66,10 @@ impl Desktop {
             scope.clone(),
         )?;
         Ok(Self {
-            output,
+            output: Output::threaded(output, wake)?,
             scheduler,
             run,
             scope,
-            armed: BTreeMap::new(),
             focused: false,
             started: false,
             registered: false,
@@ -112,76 +112,14 @@ impl Desktop {
         Some(id)
     }
     fn audit_drop(&self, delivery: &osg_mapping::desktop::Delivery, reason: u64) {
+        self.audit_drop_for(delivery, reason, self.audit_shadow);
+    }
+    fn audit_drop_for(&self, delivery: &osg_mapping::desktop::Delivery, reason: u64, shadow: u64) {
         use osg_desktop_output::audit::{self, AliasKind, Kind};
         if !audit::enabled() { return; }
         if let Some(run) = audit::alias(AliasKind::Run, delivery.producer.run.session.as_bytes()) {
-            audit::record(Kind::DeliveryDropped, &[self.audit_shadow, run, delivery.producer.run.generation.0, delivery.operation_id.0, reason]);
+            audit::record(Kind::DeliveryDropped, &[shadow, run, delivery.producer.run.generation.0, delivery.operation_id.0, reason]);
         }
-    }
-    pub fn bind_scope_before_start(&mut self, scope: Scope) -> Result<(), String> {
-        if self.started || self.registered {
-            return Err(
-                "A running desktop scope is immutable; reactivate the profile to change it.".into(),
-            );
-        }
-        self.output.bind_scope_before_activate(&self.run,&scope)?;
-        self.scope = Some(scope);
-        Ok(())
-    }
-    fn flush(&mut self, now: u64) -> Result<(), String> {
-        self.flush_dispatch(now)
-    }
-    fn baseline(&mut self, reducer: &Phase) -> Result<(), String> {
-        let definitions = reducer
-            .program()
-            .sinks
-            .iter()
-            .filter(|sink| matches!(sink.kind, SinkKind::Desktop { .. }))
-            .cloned()
-            .collect::<Vec<_>>();
-        for sink in definitions {
-            let Some(sample) = reducer.sample(&sink.from).cloned() else {
-                continue;
-            };
-            let producer = reducer.endpoint_token(&sink.from)?;
-            self.scheduler
-                .accept(&sink.id, producer, sample, reducer.at_us(), true)?;
-        }
-        Ok(())
-    }
-    pub fn start(&mut self, reducer: &Phase, scope: Option<Scope>) -> Result<(), String> {
-        if self.scope.is_none() {
-            self.scope = Some(
-                scope.ok_or("Choose an exact application scope before starting desktop output.")?,
-            );
-        }
-        let focused = eligible(self.scope.as_ref().unwrap())?;
-        self.start_focused(reducer, focused)
-    }
-    /// A replacement process never inherits actions held before it existed.
-    /// Register its verified scope without replaying the current baseline;
-    /// the usual focus-return path then requires fresh neutral observations.
-    pub fn start_waiting_for_neutral(&mut self) -> Result<(), String> {
-        let scope = self.scope.clone().ok_or("A verified desktop scope is required before rearming.")?;
-        self.output.activate(self.run.clone(), scope)?;
-        self.registered = true;
-        self.started = true;
-        self.focused = false;
-        self.shadow = None;
-        Ok(())
-    }
-    fn start_focused(&mut self, reducer: &Phase, focused: bool) -> Result<(), String> {
-        let shadow = reducer.fork_desktop()?;
-        self.output
-            .activate(self.run.clone(), self.scope.clone().unwrap())?;
-        self.registered = true;
-        self.started = true;
-        self.focused = focused;
-        self.baseline(&shadow)?;
-        self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
-        self.shadow = Some(shadow);
-        self.flush(reducer.at_us().0)?;
-        Ok(())
     }
     pub fn poll(&mut self, admissions: &[Admission], reducer: &Phase) -> Result<Vec<String>, String> {
         let eligibility = self.scope.as_ref().map_or(Ok(false), eligible);
@@ -242,7 +180,6 @@ impl Desktop {
                     .pause("Application focus lost; pending actions and motion cancelled.");
                 self.flush(reducer.at_us().0)?;
                 self.output.pause(self.run.clone())?;
-                self.armed.clear();
             }
             self.shadow = None;
             self.focused = false;
@@ -296,6 +233,7 @@ impl Desktop {
             .filter(|sink| matches!(sink.kind, SinkKind::Desktop { .. }))
             .map(|sink| Ok((sink.id.clone(), reducer.endpoint_token(&sink.from)?)))
             .collect::<Result<BTreeMap<_, _>, String>>()?;
+        self.output.reconcile(&tokens);
         for (id, producer) in &tokens {
             self.scheduler.reconcile_producer(id, producer.clone())?;
             if self.focus_boundary.is_some()
@@ -420,10 +358,11 @@ impl Desktop {
     pub fn stop(&mut self) -> Result<(), String> {
         self.scheduler.stop();
         for delivery in self.scheduler.drain() { self.audit_drop(&delivery, 3); }
-        self.armed.clear();
         self.shadow = None;
         self.started = false;
         let result = self.output.stop_all();
+        let completion = self.collect_completion();
+        let result = result.and(completion);
         self.last_error = result.as_ref().err().cloned();
         result
     }
@@ -447,6 +386,7 @@ impl Desktop {
         let error = self.last_error.clone().or_else(|| backend.error.clone());
         json!({"state":state,
             "scope":self.scope,"backend":backend,"scheduler":self.scheduler.decisions(),"error":error,
+            "dispatchPending":self.output.pending(),
             "outcomes":self.outcomes,"droppedOutcomes":self.dropped_outcomes,
             "scopeError":self.scope_error,"waitingNeutral":self.waiting_neutral,"focusBoundaryUs":self.focus_boundary,
             "nativeSubmission":"SendInput count is recorded separately from application observations."})
@@ -477,12 +417,6 @@ fn after_neutral(observations: &[Observation], baseline: &[Observation]) -> bool
             })
         })
 }
-impl Drop for Desktop {
-    fn drop(&mut self) {
-        let _ = self.stop();
-    }
-}
-
 #[path = "desktop/dispatch.rs"]
 mod dispatch;
 #[path = "desktop/deadlines.rs"]
@@ -496,3 +430,8 @@ mod tests;
 #[cfg(test)]
 #[path = "desktop/focus_health_tests.rs"]
 mod focus_health_tests;
+
+#[path = "desktop/output.rs"]
+mod output;
+#[path = "desktop/lifecycle.rs"]
+mod lifecycle;

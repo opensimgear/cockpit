@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from native_coverage_sources import measure_module
 
 
 def run(args, root, env=None):
@@ -68,23 +69,20 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
-    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources', 'desktop', 'desktop/dispatch']]
+    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in [
+        'learn', 'router', 'service', 'settings', 'panels', 'game', 'companions',
+        'companion_native', 'companion_runs', 'typed_sources', 'desktop',
+        'desktop/dispatch', 'desktop/deadlines', 'desktop/lifecycle',
+        'desktop/output', 'desktop/output/worker', 'desktop/output/execute']]
     summary = {}
     for source in sources:
-        annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
-                         '-show-line-counts-or-regions', source], root)
+        result, annotated = measure_module(source, lambda path: run([
+            llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
+            '-show-line-counts-or-regions', path], root), root)
         module = source.relative_to(root / 'crates/mapping-host/src').with_suffix('').as_posix()
         (output / f'{module.replace("/", "-")}-lines.txt').write_text(annotated, encoding='utf-8')
-        lines = source.read_text(encoding='utf-8').splitlines()
-        end = next((i + 1 for i, line in enumerate(lines) if line == '#[cfg(test)]'), len(lines) + 1)
-        counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
-                  if (match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|', line)) and int(match[1]) < end}
-        if not counts:
-            raise RuntimeError(f'No instrumented production lines for {source.name}.')
-        covered = sum(counts.values())
-        percent = 100 * covered / len(counts)
-        summary[source.relative_to(root / 'crates/mapping-host/src').as_posix()] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
+        summary[source.relative_to(root / 'crates/mapping-host/src').as_posix()] = result
+        print(f'{module}: {result["covered"]}/{result["lines"]} production lines ({result["percent"]:.2f}%)', flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):
         raise SystemExit('Each mapping host module must meet 71% production line coverage.')

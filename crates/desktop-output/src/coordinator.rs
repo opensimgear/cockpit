@@ -9,6 +9,7 @@ use osg_mapping::{
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
 };
 pub const MAX_JOURNAL_BYTES: usize = 131_072;
 #[path="coordinator/journal.rs"]
@@ -66,6 +67,8 @@ pub struct Coordinator {
     journal: Option<PathBuf>,
     journal_store: std::cell::RefCell<Option<journal::Store>>,
     terminal_stopped: bool,
+    stop_committed: bool,
+    dispatch_gate: Option<Arc<dyn Fn(&Request) -> bool + Send + Sync>>,
     #[cfg(test)]
     persist_attempts: std::cell::Cell<usize>,
     #[cfg(test)]
@@ -117,6 +120,8 @@ impl Coordinator {
             journal: None,
             journal_store: Default::default(),
             terminal_stopped: false,
+            stop_committed: false,
+            dispatch_gate: None,
             #[cfg(test)]
             persist_attempts: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -140,6 +145,12 @@ impl Coordinator {
     }
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
+    }
+    /// Recheck delivery authority after durable preparation and before IPC.
+    /// A denied delivery still reaches the worker as expired work, preserving
+    /// operation fences and releasing its previous held contribution normally.
+    pub fn set_dispatch_gate(&mut self, gate: Arc<dyn Fn(&Request) -> bool + Send + Sync>) {
+        self.dispatch_gate = Some(gate);
     }
     pub fn bind_scope_before_activate(&mut self,owner:&RunToken,scope:&Scope)->Result<(),String>{
         if self.terminal_stopped||!self.snapshot.runs.is_empty()||!self.snapshot.owners.is_empty()||self.snapshot.in_flight.is_some(){return Err("Desktop application scope can be bound only before activation.".into())}
@@ -208,7 +219,7 @@ impl Coordinator {
         // resulting owners. No control can be acquired on this path.
         let release_only_arm = matches!(&command, Command::Arm { .. });
         let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
-        let request = Request {
+        let mut request = Request {
             sequence: Counter(self.sequence),
             deadline_us,
             command,
@@ -244,6 +255,17 @@ impl Coordinator {
                 self.audit_outcome(&request, None, 1);
                 return Err(error);
             }
+        }
+        let revocable = match &request.command {
+            Command::Deliver { delivery } => !matches!(&delivery.intent, Intent::Cleanup)
+                && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),
+            Command::DeliverPointerBatch { .. } => true,
+            _ => false,
+        };
+        if revocable && self.dispatch_gate.as_ref().is_some_and(|gate| !gate(&request)) {
+            // The journal deliberately retains the conservative original request;
+            // recovery releases possible holds and never replays its deadline.
+            request.deadline_us = Some(Counter(0));
         }
         let result = self.channel.request(&request).and_then(|ack| {
             if ack.sequence != request.sequence {
@@ -409,14 +431,28 @@ impl Coordinator {
     }
     pub fn stop_all(&mut self) -> Result<(), String> {
         if self.terminal_stopped {
-            return Ok(());
+            return if self.stop_committed { Ok(()) } else {
+                Err("Desktop terminal Stop journal commit failed; preserve recovery evidence.".into())
+            };
         }
         self.send(Command::Stop, None, vec![])?;
         self.terminal_stopped = true;
         self.reducer.stop();
         self.snapshot.phase = "stopped".into();
         self.snapshot.runs.clear();
-        self.sync_owners()
+        self.sync_owners()?;
+        self.stop_committed = true;
+        Ok(())
+    }
+    /// Release exact journal ownership only after the terminal Stop was proved.
+    /// An asynchronous channel destructor must not delay scope replacement.
+    pub fn retire_stopped_journal(&mut self) -> Result<(), String> {
+        if !self.stop_committed || !self.snapshot.cleanup_complete || self.snapshot.in_flight.is_some() {
+            return Err("Desktop journal ownership requires a completed terminal Stop.".into());
+        }
+        self.journal_store.borrow_mut().take();
+        self.journal = None;
+        Ok(())
     }
     /// Requires explicit user recovery. Only the recorded possible holds release.
     pub fn recover(&mut self, controls: Vec<Control>) -> Result<(), String> {
@@ -440,3 +476,6 @@ impl Coordinator {
 #[cfg(test)]
 #[path = "coordinator_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "coordinator/dispatch_gate_tests.rs"]
+mod dispatch_gate_tests;

@@ -120,12 +120,11 @@ fn flush_preserves_pointer_and_key_barriers_then_batches_adjacent_motion() {
     );
     let run_token = phase.run_token();
     let mut desktop = Desktop {
-        output,
+        output: Output::inline(output),
         scheduler: osg_mapping::desktop::Scheduler::from_program(run_token.clone(), &program)
             .unwrap(),
         run: run_token,
         scope: Some(Scope::DesktopWide),
-        armed: BTreeMap::new(),
         focused: false,
         started: false,
         registered: false,
@@ -322,12 +321,11 @@ fn large_valid_tokens_split_before_transport_limit_without_losing_motion() {
         );
         output.activate(run.clone(), Scope::DesktopWide).unwrap();
         let mut desktop = Desktop {
-            output,
+            output: Output::inline(output),
             scheduler: Scheduler::new(run.clone(), definitions).unwrap(),
             run,
             scope: Some(Scope::DesktopWide),
-            armed: BTreeMap::new(),
-            focused: true,
+                focused: true,
             started: true,
             registered: true,
             last_error: None,

@@ -4,7 +4,7 @@ use crate::{profile_desktop_settings as settings, profile_session::RunOwner};
 use osg_desktop_output::{ProcessIdentity, Scope};
 use osg_mapping::{engine::{typed::{native::Admission,Phase},Counter,RunToken},program::Program};
 use serde_json::Value;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 static RECENT_APPLICATION: OnceLock<Mutex<Option<ProcessIdentity>>> = OnceLock::new();
 pub(crate) fn observe_foreground() {
@@ -81,19 +81,22 @@ pub(crate) struct Desktop {
     program: Program,
     scope: Option<Scope>,
     started: bool,
+    wake: Option<Arc<osg_streams::NativeWake>>,
 }
 impl Desktop {
     pub(crate) fn next_deadline_us(&self) -> Option<Counter> {
         if !self.started || self.scope.is_none() { return None; }
         self.inner.as_ref().and_then(|inner| inner.next_deadline_us())
     }
-    pub(crate) fn acquire(owner:&RunOwner,program:&Program,scope:Option<Scope>)->Result<Self,String>{
+    pub(crate) fn acquire(owner:&RunOwner,program:&Program,scope:Option<Scope>,wake:Option<Arc<osg_streams::NativeWake>>)->Result<Self,String>{
         let preferences=settings::Settings::native();
         if let Some(error)=preferences.error{return Err(error);}
         let run=RunToken{session:owner.session.clone(),generation:Counter(owner.generation)};
+        let notification = wake.clone();
         let inner=osg_mapping_host::desktop::Desktop::acquire(run,program,preferences.value.enabled,settings::qualified(),
-            crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope.clone())?;
-        Ok(Self { inner:Some(inner), owner:owner.clone(), program:program.clone(), scope, started:false })
+            crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope.clone(),
+            Arc::new(move || { if let Some(wake) = &notification { wake.notify(); } }))?;
+        Ok(Self { inner:Some(inner), owner:owner.clone(), program:program.clone(), scope, started:false, wake })
     }
     pub(crate) fn start(&mut self,reducer:&Phase,_game:Option<&crate::games::PreparedGame>,captured:Option<Scope>)->Result<(),String>{
         if let Some(captured)=captured { self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.bind_scope_before_start(captured.clone())?;self.scope=Some(captured); }
@@ -108,7 +111,7 @@ impl Desktop {
         self.inner=None;
         // Inspect the clean journal using its immutable run identity. Its old
         // process scope is retired, then the replacement is durably bound.
-        let mut replacement=Self::acquire(&self.owner,&self.program,None)?;
+        let mut replacement=Self::acquire(&self.owner,&self.program,None,self.wake.clone())?;
         if let Some(scope)=scope.as_ref(){replacement.inner.as_mut().unwrap().bind_scope_before_start(scope.clone())?;}
         if self.started&&scope.is_some(){replacement.inner.as_mut().unwrap().start_waiting_for_neutral()?;}
         self.inner=replacement.inner.take();self.scope=scope;
@@ -137,7 +140,7 @@ mod tests{
         let owner=RunOwner{session:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf12".into(),generation:1,
             profile_id:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf13".into(),profile_revision:1,game_id:Some("dcs".into())};
         let reducer=Phase::new(program.clone(),Counter(1),owner.session.clone()).unwrap();
-        let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true};
+        let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true,wake:None};
         assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
         assert!(desktop.next_deadline_us().is_none());
         assert_eq!(desktop.status()["state"],"waiting");

@@ -1,116 +1,32 @@
 use super::{Desktop, Outcome, OUTCOME_LIMIT};
-use osg_desktop_output::protocol::{Command, Request, FRAME_LIMIT, MAX_BATCH};
 use osg_mapping::desktop::{Delivery, Intent};
-use osg_mapping::engine::Counter;
-use std::{collections::BTreeSet, time::Instant};
+use std::collections::BTreeSet;
 
 impl Desktop {
     pub(super) fn flush_dispatch(&mut self, now: u64) -> Result<(), String> {
-        let started = Instant::now();
+        loop {
+            // Applying a completion can cancel queued taps. Never admit the next
+            // ordered batch until those ACK-dependent decisions have run.
+            self.collect_completion()?;
+            if self.output.busy() { return Ok(()); }
+            let pending = self.scheduler.drain();
+            if pending.is_empty() { return Ok(()); }
+            self.output.dispatch(pending, now, self.audit_shadow)?;
+            // Recording completes inline; the native owner completes by wake.
+            if self.output.asynchronous() { return Ok(()); }
+        }
+    }
+
+    pub(super) fn collect_completion(&mut self) -> Result<(), String> {
+        let Some(completion) = self.output.take_completion() else { return Ok(()); };
+        for (delivery, reason) in completion.dropped { self.audit_drop_for(&delivery, reason, completion.audit_shadow); }
         let mut cancelled = BTreeSet::new();
-        let mut pending = self
-            .scheduler
-            .drain()
-            .into_iter()
-            .collect::<std::collections::VecDeque<_>>();
-
-        while let Some(delivery) = pending.pop_front() {
-            if self.drop_reason(&delivery, &cancelled).is_some() {
-                self.drop_delivery(delivery, &cancelled);
-                continue;
-            }
-
-            if matches!(delivery.intent, Intent::Pointer { .. }) {
-                // Reserve the largest possible sequence/deadline envelope.
-                // Oversized candidates remain queued for the next request.
-                let mut encoded_size = pointer_batch_envelope_size()?
-                    + serde_json::to_vec(&delivery)
-                        .map_err(|error| error.to_string())?
-                        .len();
-                let mut group = vec![delivery];
-                while group.len() < MAX_BATCH {
-                    let Some(next) = pending.front() else { break };
-                    if !same_pointer_batch(&group[0], next)
-                        || self.drop_reason(next, &cancelled).is_some()
-                    {
-                        break;
-                    }
-                    let next_size = encoded_size.saturating_add(1).saturating_add(
-                        serde_json::to_vec(next)
-                            .map_err(|error| error.to_string())?
-                            .len(),
-                    );
-                    if next_size > FRAME_LIMIT {
-                        break;
-                    }
-                    encoded_size = next_size;
-                    group.push(pending.pop_front().expect("front was present"));
-                }
-
-                if group.len() > 1 {
-                    // Every action must own its reducer slot before the worker sees motion.
-                    for delivery in &group {
-                        self.arm_if_needed(delivery)?;
-                    }
-                    let acknowledgements = self
-                        .output
-                        .submit_pointer_batch(group.clone(), effective_source_now(now, started))?;
-                    if acknowledgements.len() != group.len() {
-                        return Err(
-                            "Desktop pointer batch returned an incomplete acknowledgement list."
-                                .into(),
-                        );
-                    }
-                    for (delivery, acknowledgement) in group.into_iter().zip(acknowledgements) {
-                        self.record_outcome(delivery, acknowledgement, &mut cancelled)?;
-                    }
-                    continue;
-                }
-                let delivery = group.pop().expect("single pointer group");
-                self.arm_if_needed(&delivery)?;
-                let acknowledgement = self
-                    .output
-                    .submit(delivery.clone(), effective_source_now(now, started))?;
-                self.record_outcome(delivery, acknowledgement, &mut cancelled)?;
-                continue;
-            }
-
-            self.arm_if_needed(&delivery)?;
-            let acknowledgement = self
-                .output
-                .submit(delivery.clone(), effective_source_now(now, started))?;
+        for (delivery, acknowledgement) in completion.outcomes {
             self.record_outcome(delivery, acknowledgement, &mut cancelled)?;
         }
-
-        if !cancelled.is_empty() {
-            self.flush_dispatch(effective_source_now(now, started))?;
-        }
-        Ok(())
-    }
-
-    fn drop_reason(&self, delivery: &Delivery, cancelled: &BTreeSet<String>) -> Option<u64> {
-        let cleanup = is_cleanup(delivery);
-        if cleanup && self.armed.get(&delivery.action_id) != Some(&delivery.producer) {
-            Some(1)
-        } else if !cleanup && cancelled.contains(&delivery.action_id) {
-            Some(2)
-        } else {
-            None
-        }
-    }
-
-    fn drop_delivery(&self, delivery: Delivery, cancelled: &BTreeSet<String>) {
-        let reason = self.drop_reason(&delivery, cancelled).unwrap_or(2);
-        self.audit_drop(&delivery, reason);
-    }
-
-    fn arm_if_needed(&mut self, delivery: &Delivery) -> Result<(), String> {
-        if !is_cleanup(delivery) && self.armed.get(&delivery.action_id) != Some(&delivery.producer)
-        {
-            self.output
-                .arm(delivery.producer.clone(), delivery.action_id.clone())?;
-            self.armed
-                .insert(delivery.action_id.clone(), delivery.producer.clone());
+        if let Some(error) = completion.error {
+            self.last_error = Some(error.clone());
+            return Err(error);
         }
         Ok(())
     }
@@ -132,6 +48,8 @@ impl Desktop {
             });
         }
         if acknowledgement.skipped
+            && self.scheduler.active()
+            && self.output.current(&delivery)
             && matches!(&delivery.intent, Intent::Held { controls } if !controls.is_empty())
         {
             self.scheduler.cancel_action(
@@ -152,34 +70,10 @@ impl Desktop {
     }
 }
 
-fn pointer_batch_envelope_size() -> Result<usize, String> {
-    serde_json::to_vec(&Request {
-        sequence: Counter(u64::MAX),
-        deadline_us: Some(Counter(u64::MAX)),
-        command: Command::DeliverPointerBatch {
-            deliveries: Vec::new(),
-        },
-    })
-    .map(|bytes| bytes.len())
-    .map_err(|error| error.to_string())
-}
-
-fn is_cleanup(delivery: &Delivery) -> bool {
-    matches!(&delivery.intent, Intent::Cleanup)
-        || matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty())
-}
-
-fn same_pointer_batch(first: &Delivery, next: &Delivery) -> bool {
-    matches!(first.intent, Intent::Pointer { .. })
-        && matches!(next.intent, Intent::Pointer { .. })
-        && first.at_us == next.at_us
-        && first.producer.run == next.producer.run
-}
-
-fn effective_source_now(source_now_us: u64, started: Instant) -> u64 {
-    source_now_us.saturating_add(started.elapsed().as_micros().min(u64::MAX as u128) as u64)
-}
-
+#[cfg(test)]
+use super::output::{same_pointer_batch, effective_source_now};
+#[cfg(test)]
+use std::time::Instant;
 #[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod tests;

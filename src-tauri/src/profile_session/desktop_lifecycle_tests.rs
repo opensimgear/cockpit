@@ -26,6 +26,7 @@ fn empty_wrapper(scope: Option<Scope>, started: bool) -> Desktop {
         program: empty_program(),
         scope,
         started,
+        wake: None,
     }
 }
 

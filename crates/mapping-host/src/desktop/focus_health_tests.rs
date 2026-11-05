@@ -36,11 +36,10 @@ fn fixture() -> (Desktop, Phase) {
     phase.drain();
     let run = phase.run_token();
     let mut desktop = Desktop {
-        output: Coordinator::with_channel(Box::new(TestChannel(Worker::new(NoInput))), || 10),
+        output: Output::inline(Coordinator::with_channel(Box::new(TestChannel(Worker::new(NoInput))), || 10)),
         scheduler: Scheduler::from_program(run.clone(), &program).unwrap(),
         run,
         scope: Some(Scope::DesktopWide),
-        armed: BTreeMap::new(),
         focused: false,
         started: false,
         registered: false,

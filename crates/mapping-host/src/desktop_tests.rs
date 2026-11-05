@@ -18,6 +18,9 @@ use std::sync::{
     Arc, Mutex,
 };
 
+#[path = "desktop/async_integration_tests.rs"]
+mod async_integration_tests;
+
 struct Recording {
     focused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<NativeEvent>>>,
@@ -169,11 +172,10 @@ fn prepared_program_fixture(
         clock,
     );
     let desktop = Desktop {
-        output,
+        output: Output::inline(output),
         scheduler: Scheduler::from_program(phase.run_token(), &program).unwrap(),
         run: phase.run_token(),
         scope: Some(Scope::DesktopWide),
-        armed: BTreeMap::new(),
         focused: false,
         started: false,
         registered: false,
@@ -342,7 +344,7 @@ fn failed_cleanup_remains_faulted_in_inspection_after_the_run_stops() {
         }
     }
     let (mut desktop, _, _, _) = prepared_fixture(Action::KeyHold { key: Key(4) }, false);
-    desktop.output = Coordinator::with_channel(Box::new(Failed), clock);
+    desktop.output = Output::inline(Coordinator::with_channel(Box::new(Failed), clock));
     assert!(desktop.stop().is_err());
     assert!(!desktop.started);
     let status = desktop.status();

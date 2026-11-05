@@ -17,6 +17,8 @@ node_modules/
 .svelte-kit/
 dist/
 output/
+!crates/mapping-host/src/desktop/output/
+!crates/mapping-host/src/desktop/output/*.rs
 .playwright-cli/
 target/
 *.profraw

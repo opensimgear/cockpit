@@ -857,15 +857,16 @@ fn stalled_route_report_does_not_block_other_companion_or_ordinary_mapping_clock
         assert!(Instant::now()<deadline,"Ordinary mapping failed to publish its input: {status}");
         std::thread::sleep(Duration::from_millis(2));
     }
-    let healthy = f.request("healthy", "inspect", json!({})).unwrap();
+    // A busy observation deliberately reports running:false without reading
+    // the worker. Wait for readability, never for the success being asserted.
+    let healthy = f.wait("healthy", |view| view["session"]["busy"] == false);
     assert_eq!(healthy["session"]["running"], true,
         "Healthy companion lost service while another route was stalled: {healthy}");
     f.release_gate();
     f.wait("slow", |v| v["session"]["cleanupComplete"] == true);
-    assert_eq!(
-        f.request("healthy", "inspect", json!({})).unwrap()["session"]["running"],
-        true
-    );
+    let healthy = f.wait("healthy", |view| view["session"]["busy"] == false);
+    assert_eq!(healthy["session"]["running"], true,
+        "Healthy companion stopped after independent cleanup: {healthy}");
 }
 #[test]
 fn eight_independent_recording_routes_share_budgets_and_slotless_preview() {
