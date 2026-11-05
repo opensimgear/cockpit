@@ -459,7 +459,9 @@ fn failure_status(error: &str) -> &'static str {
     let text = error.to_ascii_lowercase();
     if text.contains("another assetto process") {
         "conflicting-producer"
-    } else if text.contains("os error 5") || text.contains("access is denied") {
+    } else if text.contains("os error 5") || text.contains("access is denied")
+        || text.contains("80041003") || text.contains("permission denied")
+        || text.contains("windows denied process-event access") {
         "access-denied"
     } else if text.contains("exited")
         || text.contains("no longer running")
@@ -515,6 +517,7 @@ fn probe_acquired(
     }
     let mut attached = match acquire(&process) {
         Ok(source) => source,
+        Err(_) if check() => return Err("Assetto integration verification was cancelled.".into()),
         Err(error) => return Ok(result(fingerprint, failure_status(&error), vec![error])),
     };
     // Close the same acquisition on every success/error/cancel path.
@@ -646,6 +649,10 @@ pub(crate) fn probe(
         &progress,
         |process| {
             // This is the sole acquisition boundary allowed to establish native evidence.
+            let _monitor = crate::xplane::permissions::acquire_until(
+                telemetry_game.id(), process, wake.clone(),
+                Instant::now() + Duration::from_millis(PROBE_MS), &check,
+            )?;
             let source = crate::acr_windows::SharedSource::open_latest(process, telemetry_game)?;
             publication_watch = source.watch(wake.clone())?;
             let image = Some(process.path.clone());

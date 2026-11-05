@@ -1,4 +1,6 @@
 use super::*;
+#[path = "acr_setup/acquisition_tests.rs"]
+mod acquisition_tests;
 use std::{collections::BTreeMap, path::PathBuf};
 struct Scratch(PathBuf);
 impl Scratch {

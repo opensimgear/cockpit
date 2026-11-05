@@ -36,6 +36,7 @@ impl ChangeWatchers {
         }
     }
     fn notify(&self) {
+        acquisition::notify();
         let signals = {
             let mut watchers = self.0.lock().unwrap_or_else(PoisonError::into_inner);
             let signals = watchers
@@ -85,6 +86,7 @@ pub(crate) fn acquire(game: &str, expected: &ProcessIdentity) -> Result<Arc<Moni
             return Err(match entry.state {
                 "checking" | "starting" => "Preparing native process monitoring.",
                 "disabled" => "Process monitoring was stopped. Choose Allow to enable it again.",
+                "failed" => entry.error.as_deref().unwrap_or("Native process monitoring failed. Choose Allow to try again."),
                 _ => {
                     "Windows process notification permission is needed. Choose Allow for this game."
                 }
@@ -95,6 +97,9 @@ pub(crate) fn acquire(game: &str, expected: &ProcessIdentity) -> Result<Arc<Moni
     begin(game, expected.clone(), false)?;
     Err("Preparing native process monitoring.".into())
 }
+
+mod acquisition;
+pub(crate) use acquisition::acquire_until;
 
 pub(crate) fn enable(game: &str, expected: ProcessIdentity) -> Result<(), String> {
     if !supports(game) {
