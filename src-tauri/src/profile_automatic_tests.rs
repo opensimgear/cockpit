@@ -1,4 +1,21 @@
 use super::*;
+
+#[test]
+fn automatic_control_wakes_reconciliation_after_the_last_guard_exits() {
+    let policy = Runtime::new(None);
+    let before = policy.wake.observed();
+    let first = policy.begin_control("profile_selection_mode").unwrap();
+    let second = policy.begin_control("profile_apply").unwrap();
+    drop(first);
+    assert!(policy.pending());
+    assert_eq!(policy.wake.observed(), before);
+    drop(second);
+    assert!(!policy.pending());
+    let finished = policy.wake.observed();
+    assert_ne!(finished, before);
+    policy.retry_event();
+    assert_ne!(policy.wake.observed(), finished);
+}
 use crate::game_discovery::{Platform, ProcessIdentity};
 use std::{
     collections::BTreeMap,

@@ -75,11 +75,14 @@ pub(super) struct Runtime {
     emergency: crate::profile_read_models::Emergency,
     observer: OnceLock<crate::profile_read_models::AutomaticObserver>,
     pending_controls: AtomicUsize,
+    pub(super) wake: Arc<osg_streams::NativeWake>,
 }
-pub(super) struct ControlRequest<'a>(&'a AtomicUsize);
+pub(super) struct ControlRequest<'a>(&'a Runtime);
 impl Drop for ControlRequest<'_> {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        if self.0.pending_controls.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.wake.notify();
+        }
     }
 }
 impl Runtime {
@@ -112,6 +115,7 @@ impl Runtime {
             emergency: crate::profile_read_models::Emergency::new(false),
             observer: OnceLock::new(),
             pending_controls: AtomicUsize::new(0),
+            wake: Arc::new(Default::default()),
         }
     }
     pub(crate) fn observe_read_model(&self, observer: crate::profile_read_models::AutomaticObserver) {
@@ -207,7 +211,7 @@ impl Runtime {
             return None;
         }
         self.pending_controls.fetch_add(1, Ordering::AcqRel);
-        Some(ControlRequest(&self.pending_controls))
+        Some(ControlRequest(self))
     }
     pub(super) fn pending(&self) -> bool {
         self.pending_controls.load(Ordering::Acquire) != 0
@@ -224,6 +228,8 @@ impl Runtime {
             state.message = "Automatic profile control epoch exhausted.".into();
         }
         self.notify_state(&mut state);
+        drop(state);
+        self.wake.notify();
     }
     fn note(&self, epoch: u64, decision: &Decision) -> Option<Target> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -823,7 +829,7 @@ impl GatewayManager {
         }
         let weak = Arc::downgrade(self);
         let closed = self.profile_closed.clone();
-        let wake = self.profile_automatic_wake.clone();
+        let wake = self.profile_automatic.wake.clone();
         self.games.read_model_signal().watch_automatic(&wake);
         self.profile_resources.watch_reconnect_catalogue(&wake);
         *worker = std::thread::Builder::new()
