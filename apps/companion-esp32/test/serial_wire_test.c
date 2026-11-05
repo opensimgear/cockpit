@@ -174,6 +174,15 @@ int main(void){
     incoming="{\"command\":\"arm\",\"armEpoch\":\"1\"}\n";
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
     osg_serial_close(&socket);assert(!osg_serial_take_command());
+    const unsigned terminal_before=feedback_events;
+    const char *approval="{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"ok\":true,\"type\":\"paired\",\"requestId\":\"request\"}}";
+    cJSON *terminal=osg_json_parse(approval,strlen(approval));assert(terminal);
+    osg_serial_receive_feedback(&socket,terminal);assert(feedback_events==terminal_before+1);
+    cJSON_ReplaceItemInObjectCaseSensitive(terminal,"linkId",cJSON_CreateString("old-link"));
+    osg_serial_receive_feedback(&socket,terminal);assert(feedback_events==terminal_before+1);cJSON_Delete(terminal);
+    const char *rejected="{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"ok\":false,\"error\":\"Pairing expired\"}}";
+    terminal=osg_json_parse(rejected,strlen(rejected));assert(terminal);
+    osg_serial_receive_feedback(&socket,terminal);assert(feedback_events==terminal_before+2);cJSON_Delete(terminal);
     assert(!osg_json_allocated());
     puts("Serial status probes remain responsive; fragmented records survive idle/request handoffs and timeouts");
 }

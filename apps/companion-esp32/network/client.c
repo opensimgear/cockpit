@@ -20,7 +20,7 @@
 #include <time.h>
 #include <stdlib.h>
 
-typedef enum { OFF, PAIR_BEGIN, PAIR_POLL, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT, PANEL_ERROR, PREPARING } phase;
+typedef enum { OFF, PAIR_BEGIN, PAIR_WAIT, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT, PANEL_ERROR, PREPARING } phase;
 static osg_network_ui ui;
 static osg_settings settings;
 static osg_socket connection;
@@ -137,7 +137,7 @@ static const char *request_operation(const char *type){
     if(!strcmp(type,"heartbeat"))return "Heartbeat";
     if(!strcmp(type,"baseline"))return "Activate inputs";
     if(!strcmp(type,"input"))return "Send input";
-    if(!strcmp(type,"pair-status"))return "Pairing approval";
+    if(!strcmp(type,"pair-subscribe"))return "Pairing approval";
     if(!strcmp(type,"pair"))return "Pairing";
     return "Close panel";
 }
@@ -165,6 +165,8 @@ static bool identity(const cJSON *reply,const char *type){
     if(!equal(osg_string(reply,"companionId"),settings.companion))return request_problem("Reply belongs to another companion");
     return true;
 }
+static bool open_socket(void);
+#include "client_pairing.inc"
 static cJSON *session_message(const char *type,const char *sequence){
     cJSON *v=message(type);
     cJSON_AddNumberToObject(v,"version",1);cJSON_AddStringToObject(v,"clientId",session.client);
@@ -337,6 +339,7 @@ static void apply_feedback(const cJSON *frame){
 void osg_network_serial_feedback(const cJSON *record){
     if(!connection.direct||!equal(osg_string(record,"linkId"),connection.link))return;
     const cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
+    if(state==PAIR_WAIT){pairing_accept(frame);return;}
     if(state==LIVE)apply_feedback(frame);
     if((state==LIVE||(state==WAIT_ASSIGNMENT&&serial_assignments))&&equal(osg_string(frame,"type"),"assignments-event")&&
         cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(frame,"ok"))){
@@ -367,6 +370,13 @@ static void usb_assignments(void){
     cJSON_Delete(event);
 }
 static void wifi_feedback(void){
+    if(state==PAIR_WAIT&&!connection.direct){
+        request_label="Pairing approval";
+        cJSON *reply=osg_wifi_feedback_take();
+        if(reply){pairing_accept(reply);cJSON_Delete(reply);}
+        else if(!osg_wifi_feedback_running()){request_problem("Pairing notification transport ended");fail_request();}
+        return;
+    }
     const bool waiting=state==WAIT_ASSIGNMENT&&primary_connection[0];
     if((state!=LIVE&&!waiting)||connection.direct||!connection.ws){
         if(osg_wifi_feedback_running())osg_wifi_feedback_stop();
@@ -559,21 +569,10 @@ static void advance(void){
     if(millis()<next_request&&!send_input)return;
     cJSON *reply=NULL,*v=NULL;bool ok=false;
     if(state==PAIR_BEGIN){
-        if(millis()>=pair_deadline){fail("pairing-offer-expired");return;}
-        if(!open_socket()){fail("host-tls-or-connection-failed");return;}
-        v=message("pair");cJSON_AddStringToObject(v,"secret",settings.secret);cJSON_AddStringToObject(v,"companionId",settings.companion);cJSON_AddStringToObject(v,"name",settings.name);
-        ok=request(v,&reply,3000)&&equal(osg_string(reply,"type"),"pair-pending")&&osg_stable_id(osg_string(reply,"requestId"))&&osg_copy(pending,sizeof(pending),osg_string(reply,"requestId"));
-        if(ok){state=PAIR_POLL;next_request=millis()+400;report("approve-pairing-in-cockpit");}
-    }else if(state==PAIR_POLL){
+        pairing_begin();return;
+    }else if(state==PAIR_WAIT){
         if(millis()>=pair_deadline){fail("pairing-approval-expired");return;}
-        v=message("pair-status");cJSON_AddStringToObject(v,"requestId",pending);cJSON_AddStringToObject(v,"secret",settings.secret);
-        ok=request(v,&reply,3000);
-        if(ok&&equal(osg_string(reply,"type"),"paired")){
-            ok=identity(reply,"paired")&&osg_secret(osg_string(reply,"token"))&&osg_copy(settings.token,sizeof(settings.token),osg_string(reply,"token"));
-            if(ok){mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));
-                if(settings.persist&&!osg_store_save(&settings)){cJSON_Delete(reply);fail("setup-save-failed-repair-required");return;}
-                installation_saved=settings.persist;state=AUTH;report("paired");}
-        }else if(ok){ok=equal(osg_string(reply,"type"),"pair-pending")&&equal(osg_string(reply,"requestId"),pending);next_request=millis()+400;}
+        return;
     }else if(state==WAIT_ASSIGNMENT&&(serial_assignments||primary_connection[0])){
         ok=request(message("ping"),&reply,700)&&equal(osg_string(reply,"type"),"pong");
         if(ok)next_request=millis()+2000;
@@ -773,10 +772,10 @@ static void serial_byte(int c){
 }
 static void update_screen(void){
     osg_screen_state screen=state==FAULT ? OSG_SCREEN_ERROR :
-        state==PAIR_BEGIN||state==PAIR_POLL ? OSG_SCREEN_CONNECTING :
+        state==PAIR_BEGIN||state==PAIR_WAIT ? OSG_SCREEN_CONNECTING :
         !settings.token[0] ? OSG_SCREEN_UNPAIRED : state==OPEN||state==PREPARING ? OSG_SCREEN_LOADING : state==AUTH ? OSG_SCREEN_CONNECTING :
         state==LIVE ? OSG_SCREEN_PANEL : state==PANEL_ERROR ? OSG_SCREEN_PANEL_ERROR : state==WAIT_ASSIGNMENT ? OSG_SCREEN_NO_PANEL : OSG_SCREEN_DISCONNECTED;
-    const char *message=state==PAIR_BEGIN||state==PAIR_POLL ? "Approve pairing in Cockpit" : (state==FAULT||state==PANEL_ERROR||state==OPEN||state==PREPARING) ? detail : NULL;
+    const char *message=state==PAIR_BEGIN||state==PAIR_WAIT ? "Approve pairing in Cockpit" : (state==FAULT||state==PANEL_ERROR||state==OPEN||state==PREPARING) ? detail : NULL;
     if(banks.active_valid&&settings.token[0]&&(state==PANEL_ERROR||state==OPEN||state==PREPARING))screen=OSG_SCREEN_PANEL;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(!message)message="";

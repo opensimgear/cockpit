@@ -22,6 +22,13 @@ freshness renewals and exact quality boundaries select bounded delta delivery.
 This site is not a separate row in the historical inventory. See
 [feedback verification](../verification/2026-11-05-feedback-publication.md).
 
+2026-11-05 ESP32 pairing update: firmware's repeated 400 ms `pair-status`
+requests are removed for Wi-Fi and direct USB. One terminal subscription owns
+approval/error delivery; original expiry and link cancellation remain separate.
+This firmware request cadence was not a row in the pinned native wait inventory.
+Physical touch sampling, session heartbeats and render deadlines are unchanged.
+See [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
+
 | Ledger site | Owner and trigger | Disposition and verification |
 | --- | --- | --- |
 | `src-tauri/src/activity/mod.rs:107` | Activity writer flush, explicit request waits for its own acknowledgment | Keep the bounded flush deadline. Committed-only Activity reads skip the flush. Activity writer and read-model tests cover journal publication. |

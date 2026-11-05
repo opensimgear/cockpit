@@ -39,6 +39,13 @@ The CAN publication/ownership disposition is also unresolved. Existing source
 cadence, true lease/freshness deadlines, bounded retries and authored behavior
 are distinct from periodic acquisition or state-refresh polling.
 
+ESP32 Wi-Fi and direct USB pairing now use terminal approval subscriptions
+instead of 400 ms status requests. The software receiver/bridge tests and actual
+Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
+Board compilation and physical transports remain unqualified; the recorded
+ESP-IDF toolchain is unavailable locally. CAN ownership push and the game's
+100 ms process/telemetry maintenance remain original software work.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig

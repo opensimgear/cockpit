@@ -1659,4 +1659,4 @@ mod feedback_subscription;
 pub use feedback_subscription::{AssignmentSubscription, FeedbackSubscription};
 #[path = "pairing_subscription.rs"]
 mod pairing_subscription;
-pub(crate) use pairing_subscription::PairingSubscription;
+pub use pairing_subscription::PairingSubscription;

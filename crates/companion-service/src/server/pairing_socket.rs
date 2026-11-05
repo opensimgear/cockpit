@@ -14,8 +14,7 @@ pub(super) fn serve<S: Read + Write>(
     let _ = wake.bind_thread(thread::current());
     while !stop.load(Ordering::Acquire) {
         let observed = wake.observed();
-        let now = hub.now_ms();
-        match reader.take(now) {
+        match reader.take_current() {
             Ok(reply) if reply["type"] == "paired" => {
                 send_json(&mut socket, &reply)?;
                 let _ = socket.close(None);
@@ -28,7 +27,7 @@ pub(super) fn serve<S: Read + Write>(
             }
         }
         // This is the original offer's expiry, never a refresh cadence.
-        let remaining = reader.expires_at_ms().saturating_sub(hub.now_ms());
+        let remaining = reader.remaining_ms();
         wake.wait_scheduled(observed, Some(Duration::from_millis(remaining)));
     }
     let _ = socket.close(None);

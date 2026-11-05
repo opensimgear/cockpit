@@ -6,6 +6,7 @@ static const char *frames[8];
 static const char payload[]="{\"ok\":true,\"type\":\"feedback-event\"}";
 static const char hash[]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static bool task_failure,idle_once,open_failure,write_failure,read_failure;
+static bool cancel_during_read,cancel_before_take;
 static size_t index;
 static cJSON *delivered;
 static void (*worker)(void *);
@@ -24,6 +25,7 @@ const osg_crypto osg_platform_crypto={sha,decode};
 SemaphoreHandle_t xSemaphoreCreateBinary(void){return &index;}
 int xSemaphoreTake(SemaphoreHandle_t semaphore,unsigned timeout){
     (void)timeout;assert(semaphore==&index);
+    if(cancel_before_take){osg_wifi_feedback_stop();return 1;}
     cJSON *message=osg_wifi_feedback_take();
     if(message){assert(!delivered);delivered=message;}
     return 1;
@@ -49,14 +51,16 @@ int esp_transport_poll_read(esp_transport_handle_t handle,int timeout){
     return frames[index]?1:-1;
 }
 bool osg_socket_write_text(osg_socket *socket,const char *data,size_t size,unsigned timeout){
-    assert(socket->ws&&timeout==500&&size==strlen(data)&&strstr(data,assignments_only?"assignments-subscribe":"esp32-feedback-subscribe"));
+    assert(socket->ws&&timeout==500&&size==strlen(data)&&strstr(data,pairing_only?"pair-subscribe":assignments_only?"assignments-subscribe":"esp32-feedback-subscribe"));
     return !write_failure;
 }
 bool osg_socket_read_text(osg_socket *socket,char *out,size_t capacity,size_t *size,int64_t deadline){
     assert(socket->ws&&deadline>0);
     if(read_failure)return false;
     *size=strlen(frames[index]);assert(*size<=capacity);
-    memcpy(out,frames[index++],*size+1);return true;
+    memcpy(out,frames[index++],*size+1);
+    if(cancel_during_read)osg_wifi_feedback_stop();
+    return true;
 }
 
 int main(void){
@@ -120,6 +124,26 @@ int main(void){
     worker(NULL);
     assert(!osg_wifi_feedback_running()&&!delivered);
     assert(!osg_wifi_feedback_start(&(osg_settings){0},NULL,"wifi-primary"));
+    osg_settings pairing=settings;strcpy(pairing.secret,"abcdefghijklmnopqrstuvwxyz0123456789abcdefg");
+    assert(!osg_wifi_pairing_start(&pairing,"invalid request"));
+    for(unsigned terminal=0;terminal<2;terminal++){
+        index=0;memset(frames,0,sizeof(frames));idle_once=true;
+        frames[0]=terminal?"{\"ok\":false,\"error\":\"Pairing expired\"}":"{\"ok\":true,\"type\":\"paired\",\"requestId\":\"request\",\"token\":\"secret-token\"}";
+        assert(osg_wifi_pairing_start(&pairing,"request"));
+        assert(!osg_wifi_pairing_start(&pairing,"request"));
+        worker(NULL);assert(delivered&&!osg_wifi_feedback_running()&&index==1);
+        for(size_t i=0;i<length;i++)assert(buffer[i]==0);
+        cJSON_Delete(delivered);delivered=NULL;
+    }
+    assert(!osg_wifi_pairing_start(&(osg_settings){0},"request"));
+    for(unsigned cancellation=0;cancellation<2;cancellation++){
+        index=0;cancel_during_read=cancellation==0;cancel_before_take=cancellation==1;
+        frames[0]="{\"ok\":true,\"type\":\"paired\",\"token\":\"cancelled-secret-token\"}";
+        assert(osg_wifi_pairing_start(&pairing,"request"));worker(NULL);
+        assert(!delivered&&!osg_wifi_feedback_running()&&!osg_wifi_feedback_take());
+        for(size_t i=0;i<OSG_FRAME_BYTES+1;i++)assert(buffer[i]==0);
+    }
+    cancel_during_read=cancel_before_take=false;
     free(buffer);buffer=NULL;
     assert(osg_json_allocated()==0);
 }

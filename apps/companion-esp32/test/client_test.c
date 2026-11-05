@@ -14,20 +14,9 @@ static int fake_getchar(void);
 #include <stdlib.h>
 #include <openssl/sha.h>
 
-static cJSON *mock_pending_command;
-cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_command=NULL;return v;}
-cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
-bool osg_serial_start(void){return true;}
-bool osg_wifi_feedback_start(const osg_settings *s,const osg_live_session *l,const char *id){(void)s;(void)l;(void)id;return false;}
-void osg_wifi_feedback_stop(void){}
-unsigned ulTaskNotifyTake(int clear,unsigned wait){(void)clear;vTaskDelay(wait);return 0;}
-bool osg_wifi_feedback_running(void){return false;}
-static cJSON *mock_wifi_message;
-static bool mock_serial_assignments;
-cJSON *osg_wifi_feedback_take(void){cJSON *message=mock_wifi_message;mock_wifi_message=NULL;return message;}
-void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;osg_network_serial_feedback(record);}
+#include "client_transport_mocks.inc"
 static uint64_t fake_ms;
-static bool network_ok=true,store_ok=true,storage_available,assigned_now=true,approved_now=true;
+static bool network_ok=true,store_ok=true,storage_available,assigned_now=true;
 static bool request_ok=true,wrong_identity,wrong_session;
 static const char *host_rejection,*transport_error;
 static bool clock_ok=true,load_ok,obsolete_session;
@@ -61,7 +50,7 @@ static bool base64_unused(const char *s,unsigned char *p,size_t cap,size_t *out)
 }
 const osg_crypto osg_platform_crypto={sha,base64_unused};
 bool osg_trusted_ca(const osg_settings *s,unsigned char *p,size_t n,size_t *out){(void)s;(void)p;(void)n;(void)out;return true;}
-bool osg_socket_open(osg_socket *s,const osg_settings *value){(void)value;socket_opens++;if(network_ok)s->ws=s;return network_ok;}
+bool osg_socket_open(osg_socket *s,const osg_settings *value){socket_opens++;if(network_ok){s->direct=value->direct;if(s->direct)strcpy(s->link,"current-link");else s->ws=s;}return network_ok;}
 void osg_socket_close(osg_socket *s){socket_closes++;if(s->ws&&mock_host_armed)loss_requests++;mock_host_armed=false;mock_button=false;memset(s,0,sizeof(*s));}
 bool osg_wifi_clock(void){return clock_ok;}
 bool osg_wifi_start(const osg_settings *s){(void)s;return network_ok;}
@@ -103,18 +92,20 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     if(transport_error){s->request_error=transport_error;cJSON_Delete(*out);*out=NULL;cJSON_Delete(v);return false;}
     if(host_rejection){cJSON_AddBoolToObject(*out,"ok",false);cJSON_AddStringToObject(*out,"type","error");cJSON_AddStringToObject(*out,"error",host_rejection);cJSON_Delete(v);return false;}
     cJSON_AddBoolToObject(*out,"ok",true);
-    if(!strcmp(type,"pair")||(!strcmp(type,"pair-status")&&!approved_now)){
+    assert(strcmp(type,"pair-status"));
+    if(!strcmp(type,"pair")){
         cJSON_AddStringToObject(*out,"type","pair-pending");cJSON_AddStringToObject(*out,"requestId","request");
-    }else if(!strcmp(type,"pair-status")||!strcmp(type,"auth")){
+    }else if(!strcmp(type,"pair-subscribe")){
+        cJSON_AddStringToObject(*out,"type","pair-subscribed");
+    }else if(!strcmp(type,"auth")){
         if(!strcmp(type,"auth")){
             const cJSON *profile=cJSON_GetObjectItemCaseSensitive(v,"renderProfile");assert(profile&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(profile,"engineVersion"))==1);
             assert(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(profile,"limits"),"sceneBytes"))==osg_render_profile_limits()->scene_bytes);
         }
-        cJSON_AddStringToObject(*out,"type",!strcmp(type,"auth")?"authenticated":"paired");
+        cJSON_AddStringToObject(*out,"type","authenticated");
         if(!strcmp(type,"auth")&&!settings.direct)cJSON_AddStringToObject(*out,"connectionId","wifi-primary");
         if(!strcmp(type,"auth")&&mock_serial_assignments)cJSON_AddBoolToObject(*out,"assignmentsPush",true);
         cJSON_AddStringToObject(*out,"hostId",wrong_identity?"wrong-host":"host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
-        if(!strcmp(type,"pair-status"))cJSON_AddStringToObject(*out,"token","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         cJSON *list=cJSON_AddArrayToObject(*out,"assignments");
         if(assigned_now){cJSON *a=cJSON_CreateObject();cJSON_AddStringToObject(a,"instanceId","instance");cJSON_AddStringToObject(a,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddItemToArray(list,a);}
     }else if(!strcmp(type,"ping")){
@@ -157,7 +148,7 @@ static void setup(void){
     stop();memset(&settings,0,sizeof(settings));osg_copy(settings.host,sizeof(settings.host),"host");osg_copy(settings.companion,sizeof(settings.companion),"screen");
     osg_copy(settings.name,sizeof(settings.name),"Screen");osg_copy(settings.secret,sizeof(settings.secret),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");settings.expires_ms=60000;pair_deadline=fake_ms+60000;
     host_rejection=transport_error=NULL;
-    network_ok=request_ok=store_ok=assigned_now=approved_now=true;wrong_identity=wrong_session=false;storage_available=true;next_request=fake_ms;state=PAIR_BEGIN;
+    network_ok=request_ok=store_ok=assigned_now=true;wrong_identity=wrong_session=false;storage_available=true;next_request=fake_ms;state=PAIR_BEGIN;mock_pairing_failure=false;
 }
 static void live_ready(void){
     setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -171,6 +162,7 @@ static void arm_text(char out[1024]){
 }
 static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED&&!strcmp(operation.phase,"ready"));advance();}
 #include "client_feedback_delta.inc"
+#include "client_pairing_tests.inc"
 static void live_input_tests(void){
     permit_inputs=true;live_ready();int baselines=baseline_requests;cmd("{\"command\":\"arm\"}");assert(baseline_requests==baselines);
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
@@ -345,8 +337,9 @@ int main(int argc,char **argv){
     assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
     serial_feedback_tests();
-    setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
-    advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
+    pairing_notification_tests();
+    setup();advance();assert(state==PAIR_WAIT);fake_ms+=800;const int quiet_requests=requests;advance();assert(state==PAIR_WAIT&&requests==quiet_requests);
+    mock_wifi_message=pairing_reply();wifi_feedback();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);
     cmd("{\"command\":\"connect\",\"instanceId\":\"instance\"}");wrong_session=false;advance();advance();assert(state==LIVE);
     cmd("{\"command\":\"page\",\"page\":1}");assert(test_runtime.page==1);cmd("{\"command\":\"page\",\"page\":9}");
@@ -354,9 +347,9 @@ int main(int argc,char **argv){
     setup();network_ok=false;advance();assert(state==FAULT);
     setup();pair_deadline=0;advance();assert(state==FAULT);
     setup();advance();fake_ms+=400;pair_deadline=0;advance();assert(state==FAULT);
-    setup();advance();fake_ms+=400;wrong_identity=true;advance();assert(state==FAULT);
-    setup();installation_saved=false;settings.persist=true;store_ok=false;advance();fake_ms+=400;advance();assert(state==FAULT&&!installation_saved);
-    setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
+    setup();advance();mock_wifi_message=pairing_reply();cJSON_ReplaceItemInObjectCaseSensitive(mock_wifi_message,"hostId",cJSON_CreateString("wrong-host"));wifi_feedback();assert(state==FAULT);
+    setup();installation_saved=false;settings.persist=true;store_ok=false;advance();mock_wifi_message=pairing_reply();wifi_feedback();assert(state==FAULT&&!installation_saved);
+    setup();settings.persist=true;advance();mock_wifi_message=pairing_reply();wifi_feedback();assert(state==AUTH&&installation_saved);
     assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;push_wifi_assignment();
     assert(state==OPEN);test_drawing=&banks.slots[1-banks.active].scene->panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
     /* A bad panel does not close a healthy transport or enable live input. */
@@ -382,7 +375,7 @@ int main(int argc,char **argv){
     command(reuse);assert(!strcmp(settings.ssid,"wifi")&&!strcmp(settings.password,"saved-test-password"));
     cJSON_Delete(reuse);
     network_ok=true;wrong_identity=wrong_session=false;request_ok=true;cmd(provisioning);assert(state==PAIR_BEGIN&&osg_stable_id(settings.companion));
-    advance();fake_ms+=400;advance();advance();advance();assert(state==LIVE);saved_settings=settings;
+    advance();mock_wifi_message=pairing_reply();wifi_feedback();advance();advance();assert(state==LIVE);saved_settings=settings;
     cmd("{\"command\":\"connect\",\"instanceId\":\"bad id\"}");assert(state==LIVE);
     cmd("{\"command\":\"connect\"}");advance();advance();assert(state==LIVE);
     cmd("{\"command\":\"page\",\"page\":\"bad\"}");
@@ -393,7 +386,7 @@ int main(int argc,char **argv){
     network_ok=false;cmd(provisioning);assert(state==FAULT);network_ok=true;
     cJSON *persisted=osg_json_parse(provisioning,strlen(provisioning));assert(persisted);cJSON_AddBoolToObject(persisted,"persist",true);char persisted_text[4096];assert(cJSON_PrintPreallocated(persisted,persisted_text,sizeof(persisted_text),false));cJSON_Delete(persisted);
     storage_available=false;before=requests;cmd(persisted_text);assert(requests==before);
-    storage_available=true;cmd(persisted_text);assert(state==PAIR_BEGIN);advance();fake_ms+=400;advance();assert(state==AUTH);
+    storage_available=true;cmd(persisted_text);assert(state==PAIR_BEGIN);advance();approve_pairing();assert(state==AUTH);
     store_ok=false;cmd("{\"command\":\"forget\"}");store_ok=true;
     const char *serial="{\"command\":\"status\"}\r\nnot-json\n";for(size_t i=0;serial[i];i++)serial_byte(serial[i]);for(size_t i=0;i<OSG_PROVISION_BYTES+20;i++)serial_byte('a');serial_byte('\n');
     /* A completed oversized record must leave the common decoder ready for
@@ -418,7 +411,7 @@ int main(int argc,char **argv){
     cmd(persisted_text);assert(state==FAULT&&forgets==erased+2&&requests==before&&!settings.token[0]);
     store_ok=true;cmd(direct);assert(forgets==erased+3);
     assert(state==PAIR_BEGIN&&settings.direct&&settings.persist&&settings.schema==2&&!settings.ssid[0]);
-    advance();fake_ms+=400;advance();assert(state==AUTH);advance();advance();assert(state==LIVE);
+    advance();approve_pairing();assert(state==AUTH);advance();advance();assert(state==LIVE);
     cmd("{\"command\":\"connect\",\"unixMs\":0}");assert(state==FAULT);
     cmd(direct);
     cJSON *named=osg_json_parse(provisioning,strlen(provisioning));assert(named);

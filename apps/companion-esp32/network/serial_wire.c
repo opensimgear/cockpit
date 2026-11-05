@@ -20,6 +20,10 @@ void osg_serial_receive_feedback(const osg_socket *s,cJSON *record){
     if(!s->direct||!link||strcmp(link,s->link))return;
     cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
     const char *type=osg_string(frame,"type");
+    if((type&&!strcmp(type,"paired"))||
+        (cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(frame,"ok"))&&cJSON_IsString(cJSON_GetObjectItemCaseSensitive(frame,"error")))){
+        clear_feedback_transfer();osg_network_serial_feedback(record);return;
+    }
     if(!type)return;
     if(!strcmp(type,"feedback-event")||!strcmp(type,"assignments-event")){
         clear_feedback_transfer();

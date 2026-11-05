@@ -27,11 +27,11 @@ fn approval_is_observed_before_or_after_subscription_without_authentication() {
         let mut reader = hub.subscribe_pairing(&frame, "reader", wake.clone()).unwrap();
         let observed = reader.observed();
         if !approve_first {
-            assert_eq!(reader.take(hub.now_ms()).unwrap()["type"], "pair-pending");
+            assert_eq!(reader.take_current().unwrap()["type"], "pair-pending");
             approve(&hub, &frame);
             assert_ne!(reader.observed(), observed);
         }
-        let paired = reader.take(hub.now_ms()).unwrap();
+        let paired = reader.take_current().unwrap();
         assert_eq!(paired["type"], "paired");
         assert_eq!(paired["companionId"], "native");
         assert!(!paired["token"].as_str().unwrap().is_empty());
@@ -66,13 +66,14 @@ fn rejection_cancellation_and_exact_expiry_wake_with_terminal_errors() {
         let mut reader = hub.subscribe_pairing(&frame, "reader", wake.clone()).unwrap();
         let observed = reader.observed();
         if command == "expiry" {
-            assert_eq!(reader.take(reader.expires_at_ms() - 1).unwrap()["type"], "pair-pending");
+            let before_expiry = reader.expires_at_ms() - 1;
+            assert_eq!(reader.take_with_clock(|_| before_expiry).unwrap()["type"], "pair-pending");
             hub.tick(reader.expires_at_ms());
         } else {
             hub.command(&json!({"command":command,"requestId":frame["requestId"]})).unwrap();
         }
         assert_ne!(reader.observed(), observed);
-        assert!(reader.take(hub.now_ms()).unwrap_err().contains(message));
+        assert!(reader.take_current().unwrap_err().contains(message));
         assert!(hub.inner.lock().unwrap().pending.is_empty());
     }
 }
@@ -91,7 +92,7 @@ fn revoke_and_credential_rotation_cannot_resurrect_an_approval() {
             hub.command(&json!({"command":"companion_revoke","companionId":"native"})).unwrap();
         }
         assert_ne!(reader.observed(), observed);
-        assert!(reader.take(hub.now_ms()).unwrap_err().contains("revoked"));
+        assert!(reader.take_current().unwrap_err().contains("revoked"));
     }
 }
 
@@ -103,10 +104,10 @@ fn disconnect_and_stop_retire_unauthenticated_readers_with_exact_raii_cleanup() 
         let observed = old.observed();
         if disconnect_all { hub.disconnect_all(); } else { hub.disconnect_connection("reader", hub.now_ms()); }
         assert_ne!(old.observed(), observed);
-        assert!(old.take(hub.now_ms()).unwrap_err().contains("ended"));
+        assert!(old.take_current().unwrap_err().contains("ended"));
         let mut replacement = hub.subscribe_pairing(&frame, "reader", Arc::new(NativeWake::default())).unwrap();
         drop(old);
-        assert_eq!(replacement.take(hub.now_ms()).unwrap()["type"], "pair-pending");
+        assert_eq!(replacement.take_current().unwrap()["type"], "pair-pending");
         drop(replacement);
         assert!(hub.inner.lock().unwrap().pairing_readers.is_empty());
     }
@@ -126,4 +127,46 @@ fn reader_budget_is_bounded_and_raii_releases_capacity() {
     assert!(hub.subscribe_pairing(&frame, "last-reader", Arc::new(NativeWake::default())).err().unwrap().contains("budget"));
     readers.pop();
     assert!(hub.subscribe_pairing(&frame, "last-reader", Arc::new(NativeWake::default())).is_ok());
+}
+
+#[test]
+fn reused_worker_wake_does_not_bind_replacement_to_obsolete_reader() {
+    let (hub, frame) = fixture();
+    let wake = Arc::new(NativeWake::default());
+    let mut old = hub.subscribe_pairing(&frame, "reader", wake.clone()).unwrap();
+    hub.disconnect_connection("reader", hub.now_ms());
+    let mut replacement = hub.subscribe_pairing(&frame, "reader", wake).unwrap();
+    assert!(old.take_current().unwrap_err().contains("ended"));
+    drop(old);
+    assert_eq!(replacement.take_current().unwrap()["type"], "pair-pending");
+    approve(&hub, &frame);
+    assert_eq!(replacement.take_current().unwrap()["type"], "paired");
+}
+
+#[test]
+fn pairing_samples_expiry_under_the_hub_lock_before_releasing_approval() {
+    let (hub, frame) = fixture();
+    let mut reader = hub.subscribe_pairing(&frame, "reader", Arc::default()).unwrap();
+    approve(&hub, &frame);
+    let expires = reader.expires_at_ms();
+    let result = reader.take_with_clock(|hub| {
+        assert!(matches!(hub.inner.try_lock(), Err(std::sync::TryLockError::WouldBlock)));
+        expires
+    });
+    assert!(result.unwrap_err().contains("expired"));
+    assert!(hub.inner.lock().unwrap().pending.is_empty());
+}
+
+#[test]
+fn public_pairing_subscription_preserves_protocol_and_connection_budgets() {
+    let (hub, frame) = fixture();
+    let subscribe = |frame: &Value, connection: &str| hub.subscribe_pairing(frame, connection, Arc::default());
+    let mut invalid = frame.clone();
+    invalid["version"] = json!(2);
+    assert!(subscribe(&invalid, "reader").is_err());
+    assert!(subscribe(&frame, "").is_err());
+    invalid = frame;
+    invalid["secret"] = json!("x".repeat(FRAME_BYTES + 1));
+    assert!(subscribe(&invalid, "reader").is_err());
+    assert!(hub.inner.lock().unwrap().pairing_readers.is_empty());
 }

@@ -26,9 +26,10 @@ subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels
 subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT, env=environment)
 subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "serial-wire-test-serial_json.gcno", "wifi-feedback-test-wifi_feedback_test.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
-for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("wifi_feedback", "wifi-feedback-test-wifi_feedback_test"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
+for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("client_pairing", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("wifi_feedback", "wifi-feedback-test-wifi_feedback_test"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):
     data = json.loads(gzip.decompress((OUT / (artifact + ".gcov.json.gz")).read_bytes()))
-    source = next(f for f in data["files"] if f["file"].replace("/../", "/").endswith("/network/" + module + ".c"))
+    filename = "client_pairing.inc" if module == "client_pairing" else module + ".c"
+    source = next(f for f in data["files"] if f["file"].replace("/../", "/").endswith("/network/" + filename))
     lines, functions = source["lines"], source["functions"]
     branches = [b for line in lines for b in line.get("branches", [])]
     metrics = {"lines": 100 * sum(l["count"] > 0 for l in lines) / len(lines), "branches": 100 * sum(b["count"] > 0 for b in branches) / len(branches), "functions": 100 * sum(f["execution_count"] > 0 for f in functions) / len(functions)}

@@ -1,5 +1,17 @@
 # Native and browser observations
 
+## Companion pairing delivery
+
+ESP32 Wi-Fi pairing sends one `pair-subscribe` with its pending request ID and
+offer secret; the host sends one terminal approval/error on that socket.
+Direct USB uses the same request, acknowledges `pair-subscribed`, and delivers
+the terminal reply through the link-bound `serial-feedback` envelope. These
+passive readers never authenticate or arm input. Original expiry, cancellation,
+exact request/host/companion identity and subsequent authentication/baseline
+remain required. See [ESP32 verification](../verification/2026-11-05-esp32-pairing-events.md).
+
+## Application observations
+
 The R1 implementation exposes the bounded channel through native Tauri channels
 and the local development browser bridge. Commands remain request/reply operations.
 Observation delivery has its own subscription, cancellation and receipt controls;

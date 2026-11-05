@@ -15,7 +15,7 @@ static char outbound[512];
 static char *buffer;
 static size_t length;
 static osg_transfer transfer;
-static bool subscribed, assignments_only;
+static bool subscribed, assignments_only, pairing_only;
 
 static void receive_feedback(void *unused){
     (void)unused;
@@ -35,6 +35,7 @@ static void receive_feedback(void *unused){
         }
     }
     osg_socket_close(&socket);
+    if(pairing_only&&buffer)mbedtls_platform_zeroize(buffer,OSG_FRAME_BYTES+1);
     atomic_store(&running,false);
     vTaskDelete(NULL);
 }
@@ -50,23 +51,12 @@ void osg_wifi_feedback_stop(void){
 
 bool osg_wifi_feedback_running(void){return atomic_load(&running);}
 
-bool osg_wifi_feedback_start(const osg_settings *settings,const osg_live_session *session,const char *connection_id){
-    if(atomic_load(&running))return false;
+static bool start_request(const osg_settings *settings,cJSON *request){
+    if(atomic_load(&running)){cJSON_Delete(request);return false;}
     osg_wifi_feedback_stop();
     if(!consumed)consumed=xSemaphoreCreateBinary();
     if(!buffer)buffer=osg_workspace_allocate(OSG_FRAME_BYTES+1);
-    if(!consumed||!buffer)return false;
-    assignments_only=session==NULL;
-    cJSON *request=NULL;
-    if(session)request=osg_feedback_subscription(session,settings->token);
-    else if(osg_stable_id(connection_id)&&osg_secret(settings->token)){
-        request=cJSON_CreateObject();
-        if(!cJSON_AddStringToObject(request,"type","assignments-subscribe")||
-            !cJSON_AddStringToObject(request,"connectionId",connection_id)||
-            !cJSON_AddStringToObject(request,"token",settings->token)){
-            cJSON_Delete(request);request=NULL;
-        }
-    }
+    if(!consumed||!buffer){cJSON_Delete(request);return false;}
     bool encoded=request&&cJSON_PrintPreallocated(request,outbound,sizeof(outbound),false);
     cJSON_Delete(request);
     if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
@@ -82,9 +72,43 @@ bool osg_wifi_feedback_start(const osg_settings *settings,const osg_live_session
     return false;
 }
 
+bool osg_wifi_feedback_start(const osg_settings *settings,const osg_live_session *session,const char *connection_id){
+    if(atomic_load(&running))return false;
+    assignments_only=session==NULL;pairing_only=false;
+    cJSON *request=NULL;
+    if(session)request=osg_feedback_subscription(session,settings->token);
+    else if(osg_stable_id(connection_id)&&osg_secret(settings->token)){
+        request=cJSON_CreateObject();
+        if(!cJSON_AddStringToObject(request,"type","assignments-subscribe")||
+            !cJSON_AddStringToObject(request,"connectionId",connection_id)||
+            !cJSON_AddStringToObject(request,"token",settings->token)){
+            cJSON_Delete(request);request=NULL;
+        }
+    }
+    return start_request(settings,request);
+}
+
+bool osg_wifi_pairing_start(const osg_settings *settings,const char *request_id){
+    if(atomic_load(&running)||!osg_stable_id(request_id)||!osg_secret(settings->secret))return false;
+    cJSON *request=cJSON_CreateObject();
+    if(!request||!cJSON_AddStringToObject(request,"type","pair-subscribe")||
+        !cJSON_AddStringToObject(request,"requestId",request_id)||
+        !cJSON_AddStringToObject(request,"secret",settings->secret)){
+        cJSON_Delete(request);return false;
+    }
+    assignments_only=false;pairing_only=true;
+    return start_request(settings,request);
+}
+
 cJSON *osg_wifi_feedback_take(void){
     if(atomic_load(&stopping)||!atomic_load(&pending))return NULL;
     cJSON *frame=osg_json_parse(buffer,length);
+    if(pairing_only){
+        // The host sends exactly one terminal reply, without a pending ack.
+        // Consume its raw bytes before allowing another worker handoff.
+        mbedtls_platform_zeroize(buffer,length);
+        osg_wifi_feedback_stop();return frame;
+    }
     const char *type=osg_string(frame,"type");
     if(type&&!strcmp(type,"transfer-start")&&!transfer.active){
         const double bytes=cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(frame,"bytes"));

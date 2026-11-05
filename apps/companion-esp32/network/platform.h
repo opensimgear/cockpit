@@ -25,6 +25,7 @@ bool osg_serial_request(osg_socket *,cJSON *,cJSON **,unsigned);
 cJSON *osg_serial_take_command(void);
 void osg_serial_receive_feedback(const osg_socket *, cJSON *record);
 bool osg_wifi_feedback_start(const osg_settings *,const osg_live_session *,const char *connection_id);
+bool osg_wifi_pairing_start(const osg_settings *,const char *request_id);
 void osg_wifi_feedback_stop(void);
 bool osg_wifi_feedback_running(void);
 cJSON *osg_wifi_feedback_take(void);
