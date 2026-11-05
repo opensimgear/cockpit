@@ -221,6 +221,7 @@ fn prepare(targets: Vec<Target>, io: Arc<FakeIo>) -> Overrides {
 fn wait(actor: &Overrides, predicate: impl Fn(&Status) -> bool) -> Status {
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
+        let revision = actor.status_revision();
         let status = actor.poll();
         if predicate(&status) {
             return status;
@@ -233,7 +234,7 @@ fn wait(actor: &Overrides, predicate: impl Fn(&Status) -> bool) -> Status {
             status.cleanup_complete,
             status.error
         );
-        thread::sleep(Duration::from_millis(5));
+        actor.wait_for_status_change(revision, deadline.saturating_duration_since(Instant::now()));
     }
 }
 fn stop(actor: &mut Overrides) {
@@ -257,8 +258,11 @@ fn batches_exact_targets_and_seals_receipts_before_any_mutation() {
     assert!(!serde_json::to_string(receipt)
         .unwrap()
         .contains(&decoded.secret));
+    let revision = actor.status_revision();
+    assert!(!actor.wait_for_status_change(revision, Duration::ZERO));
     actor.acquire().unwrap();
     wait(&actor, |s| s.active);
+    assert!(actor.wait_for_status_change(revision, Duration::from_secs(1)));
     assert_eq!(io.count("claim"), 1);
     assert_eq!(io.0.lock().unwrap().masks, vec![(3, 2)]);
     let verified = actor.verified(false).unwrap();
@@ -530,6 +534,7 @@ fn crash_recovery_inspects_and_releases_only_the_exact_existing_private_receipt(
         }],
         io: io.clone(),
         recovery: true,
+        changes: Default::default(),
     };
     stop(&mut recovered);
     assert_eq!(io.count("claim"), 0);
@@ -700,6 +705,7 @@ fn expiry_between_state_and_private_inspect_confirms_exact_restoration_without_r
         }],
         io,
         recovery: true,
+        changes: Default::default(),
     };
     stop(&mut recovered);
     let status = recovered.poll();

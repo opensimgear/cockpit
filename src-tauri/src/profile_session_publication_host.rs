@@ -24,6 +24,7 @@ fn wait(
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         guard()?;
+        let revision = actor.status_revision();
         let status = if restoring {
             actor.stop()?
         } else {
@@ -39,10 +40,21 @@ fn wait(
             let _ = actor.stop();
             return Err(status.error.unwrap());
         }
-        if Instant::now() >= deadline {
-            return Err(if restoring{"Publication restoration remains pending; its sealed recovery receipt was retained."}else{"Publication did not establish exact settled ownership and a fresh native input baseline before activation."}.into());
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(if restoring {
+                    "Publication restoration remains pending; its sealed recovery receipt was retained."
+                } else {
+                    "Publication did not establish exact settled ownership and a fresh native input baseline before activation."
+                }.into());
+            }
+            let budget = if restoring { remaining } else { remaining.min(Duration::from_millis(5)) };
+            if actor.wait_for_status_change(revision, budget) {
+                break;
+            }
+            guard()?;
         }
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
 impl NativeProfileHost {

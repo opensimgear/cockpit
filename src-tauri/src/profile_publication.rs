@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -406,7 +406,7 @@ impl Io for NativeIo {
         self.panels.publication(g, r)
     }
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Status {
     pub active: bool,
     pub stopped: bool,
@@ -441,6 +441,7 @@ pub(crate) struct Overrides {
     slots: Vec<Slot>,
     io: Arc<dyn Io>,
     recovery: bool,
+    changes: Arc<(Mutex<u64>, Condvar)>,
 }
 impl Overrides {
     pub(crate) fn prepare(
@@ -502,6 +503,7 @@ impl Overrides {
             slots,
             io,
             recovery: false,
+            changes: Default::default(),
         })
     }
     pub(crate) fn is_empty(&self) -> bool {
@@ -572,6 +574,7 @@ impl Overrides {
                 control_epoch: None,
             }),
             recovery: true,
+            changes: Default::default(),
         })
     }
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -599,6 +602,7 @@ impl Overrides {
             let io = self.io.clone();
             let value = slot.value.clone();
             let shared = slot.shared.clone();
+            let changes = self.changes.clone();
             let recovery = self.recovery;
             slot.spawned = true;
             thread::spawn(move || {
@@ -608,8 +612,12 @@ impl Overrides {
                         WORKERS.fetch_sub(1, Ordering::AcqRel);
                     }
                 }
-                let _permit = Permit;
-                drive(io, value, shared, recovery);
+                let permit = Permit;
+                let update = |status| publish_status(&shared, &changes, status);
+                let terminal = drive(io, value, &shared, recovery, &update);
+                // Terminal state can admit a recovery worker immediately.
+                drop(permit);
+                update(terminal);
             });
         }
         Ok(())
@@ -656,6 +664,16 @@ impl Overrides {
             }
         }
         result
+    }
+    pub(crate) fn status_revision(&self) -> u64 {
+        *self.changes.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    pub(crate) fn wait_for_status_change(&self, revision: u64, budget: Duration) -> bool {
+        let (current, changed) = &*self.changes;
+        let current = current.lock().unwrap_or_else(|p| p.into_inner());
+        let (current, _) = changed.wait_timeout_while(current, budget, |value| *value == revision)
+            .unwrap_or_else(|p| p.into_inner());
+        *current != revision
     }
     /// Withdraw productive authority immediately without releasing the gateway
     /// overlay before the Host has restored physical action owners beneath it.
@@ -845,8 +863,23 @@ fn confirmed_restored(value: &Cleanup, state: &Value) -> bool {
                     .is_some_and(|m| m["published"] == t.configured_enabled)
         })
 }
-fn drive(io: Arc<dyn Io>, value: Cleanup, shared: Arc<Shared>, recovery: bool) {
-    let update = |status: Status| *shared.status.lock().unwrap_or_else(|p| p.into_inner()) = status;
+fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), status: Status) {
+    let mut current = shared.status.lock().unwrap_or_else(|p| p.into_inner());
+    if *current != status {
+        *current = status;
+        drop(current);
+        let mut revision = changes.0.lock().unwrap_or_else(|p| p.into_inner());
+        *revision = revision.wrapping_add(1);
+        changes.1.notify_all();
+    }
+}
+fn drive(
+    io: Arc<dyn Io>,
+    value: Cleanup,
+    shared: &Shared,
+    recovery: bool,
+    update: impl Fn(Status),
+) -> Status {
     while !shared.start.load(Ordering::Acquire) && !shared.stop.load(Ordering::Acquire) {
         thread::sleep(Duration::from_millis(5));
     }
@@ -914,15 +947,14 @@ fn drive(io: Arc<dyn Io>, value: Cleanup, shared: Arc<Shared>, recovery: bool) {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .take();
-                update(Status {
+                return Status {
                     active: false,
                     stopped: true,
                     cleanup_complete: true,
                     error: Some(
                         "An independently owned publication was verified and preserved.".into(),
                     ),
-                });
-                return;
+                };
             }
             Err(e) => {
                 if error.is_none() {
@@ -975,13 +1007,12 @@ fn drive(io: Arc<dyn Io>, value: Cleanup, shared: Arc<Shared>, recovery: bool) {
                     && value.targets.iter().all(|t| matches_target(t, &state));
                 if state["publication"]["outcome"] == "preserved" {
                     error=Some("An independently changed publication was preserved; its original layout was not restored.".into());
-                    update(Status {
+                    return Status {
                         active: false,
                         stopped: true,
                         cleanup_complete: true,
                         error,
-                    });
-                    return;
+                    };
                 }
                 if confirmed_restored(&value, &state) || pristine {
                     // Acquisition failure remains visible until the original
@@ -994,21 +1025,24 @@ fn drive(io: Arc<dyn Io>, value: Cleanup, shared: Arc<Shared>, recovery: bool) {
                         *shared.verified.lock().unwrap_or_else(|p| p.into_inner()) =
                             Some((Instant::now(), state.clone()));
                     }
-                    update(Status {
+                    return Status {
                         active: false,
                         stopped: true,
                         cleanup_complete: true,
                         error,
-                    });
-                    return;
+                    };
                 }
                 if error.is_none() {
                     error=Some("Publication restoration has no exact settled readback of the sealed original targets; recovery remains pending.".into());
                 }
             }
             if since.elapsed() > Duration::from_secs(8) {
-                update(Status{active:false,stopped:true,cleanup_complete:false,error:Some(error.unwrap_or("Publication restoration remains unverified; retain its sealed recovery receipt.".into()))});
-                return;
+                return Status {
+                    active: false,
+                    stopped: true,
+                    cleanup_complete: false,
+                    error: Some(error.unwrap_or("Publication restoration remains unverified; retain its sealed recovery receipt.".into())),
+                };
             }
         } else if lease.is_some() && settled(&value, &state) {
             let leases = value
