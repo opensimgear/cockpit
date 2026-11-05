@@ -52,3 +52,52 @@ Changes after that revision are identified by their delivery commit.
 | `crates/companion-serial/src/lib.rs:1267,1269`, `crates/logic/src/replay.rs:27`, `crates/persistence/src/observation.rs:253`, `crates/virtual-controller/src/inspection.rs:234` | Test-only completion bounds and deadline fault injection | Keep bounded fixture timing. These sites have no production caller. |
 | `crates/controller-input/examples/inspect.rs:10`, `crates/desktop-output/examples/native_receiver.rs:361` | Example readers, pace demonstration output | Keep example behavior. These are outside the application. |
 | `crates/persistence/src/path/journal.rs:7` | SQLite rollback journal path verifier, retry transient Windows metadata access denial | Keep the bounded 1, 2 and 4 ms metadata retry and revalidate the database path before each attempt. Journal path tests cover rejection and disappearance. |
+
+## Gateway, USB and observation timing sites
+
+| Ledger site | Owner and trigger | Disposition and verification |
+| --- | --- | --- |
+| `src-tauri/src/gateways.rs:1788,1789,1791,1808,1811,1817,1821,1824,1857,1862,1865,1887,1905` | Test-only profile-wake barriers and quiet windows | Keep fixture bounds. Tests cover notification order, expiry and shutdown. |
+| `src-tauri/src/gateways.rs:2018,2141,2145,2187,2192,2205,2234,2241,3018` | Test-only delayed requests and preparation barriers | Keep fixture bounds. Tests cover Stop, late completion and superseding ownership. |
+| `src-tauri/src/gateways.rs:2489,2499,2956,2967,3060,3080` | Test-only CAN and slow gateway fixtures | Keep fixture bounds. Tests cover route loss, lock isolation and interruption. |
+| `src-tauri/src/gateways/workspace/worker.rs:85` | Workspace owner, wait until the next lifecycle deadline | Keep notification and deadline wakes. Workspace tests cover reconnect and retired claims. |
+| `src-tauri/src/observations/commands.rs:114`, `src-tauri/src/observations/service_output.rs:128,135,148,162` | Test-only delivery and blocked writer barriers | Keep fixture bounds. Tests cover acknowledgments, overflow and isolation. |
+| `src-tauri/src/profile_resources/host_observation.rs:115,116,119,120,122,143,145,149` | Test-only resource publication and quiet windows | Keep fixture bounds. Tests cover independent USB, controller and aggregate wakes. |
+| `src-tauri/src/module_usb.rs:519` | USB configuration worker, bounded settle wait during reconciliation | Keep the hardware deadline and make shutdown wake it directly. Physical USB qualification remains open. |
+| `src-tauri/src/module_usb/test_io.rs:22` | Test helper, wait for a recorded command | Keep the condition-variable deadline. USB fixtures verify exact command counts. |
+| `src-tauri/src/pico.rs:373` | Pico service, wait for command or heartbeat | Preserve lease maintenance and separate periodic snapshot acquisition. Verify physical gateway behavior. |
+| `src-tauri/src/pico.rs:829,835,867,897` | Pico reconnect, initial delay and bounded retry | Keep retry deadlines and make cancellation interrupt the wait. Reconnect tests cover shutdown. |
+| `src-tauri/src/pico.rs:1218,1791,1865,1875` | Test-only serial stalls, shutdown and queue checks | Keep fixture bounds. Tests cover delayed replies and trusted ownership. |
+| `src-tauri/src/pico/workspace.rs:37`, `src-tauri/src/stm32/workspace.rs:112` | Gateway workspace claims, wait for an explicit renewal reply | Keep the request deadline and verify the exact claim survives renewal. |
+| `src-tauri/src/stm32_panel_observations.rs:356`, `src-tauri/src/stm32_panel_serial.rs:244` | Test-only panel observation and serial delivery waits | Keep fixture bounds. Tests cover native events and metadata. |
+| `src-tauri/src/stm32_panel_serial.rs:91` | Serial command owner, wait for an exact reply | Keep the channel deadline. Serial tests cover parallel events and replies. |
+| `src-tauri/src/stm32.rs:1034,1040,1083,1123,1161,1206,1726,1764` | STM32 configuration owner, settle, apply, recover and read layout | Preserve hardware deadlines. Replace readiness checks with configuration and reconnect events. Physical recovery remains open. |
+| `src-tauri/src/stm32.rs:1337` | Action discovery, retry a failed route metadata or state request | Replace the 50 ms wait with a route-change wake. Keep the exact route fence and retry deadline. |
+| `src-tauri/src/stm32.rs:2357` | STM32 service, receive commands until heartbeat | Keep lease deadlines and separate periodic state acquisition. Verify physical gateway behavior. |
+| `src-tauri/src/stm32.rs:2932,2935` | Test-only serial stalls | Keep fixture delays. Tests cover cancellation and partial replies. |
+| `src-tauri/src/system_inventory.rs:248,254,279,287` | Test-only publication and pinned-page barriers | Keep fixture bounds. Tests cover passive reads and isolation from blocked capture. |
+
+## Activation, persistence and desktop timing sites
+
+| Ledger site | Owner and trigger | Disposition and verification |
+| --- | --- | --- |
+| `src-tauri/src/desktop/progress/geometry.rs:101`, `src-tauri/src/desktop/progress/mod.rs:245` | Activation progress window, wait for the UI thread to apply geometry or show the window | Keep command acknowledgments with deadlines. Progress window tests cover placement and ownership. |
+| `src-tauri/src/firmware_releases.rs:414,417` | Test-only pending firmware operation and concurrent status read | Keep fixture bounds. The test verifies independent metadata reads. |
+| `src-tauri/src/hid_names.rs:116` | HID naming worker, retry after CDC re-enumeration | Use device arrival notifications with a bounded retry deadline. Verify unplug and replacement on hardware. |
+| `src-tauri/src/module_console/actor.rs:177` | Console actor, wait for requested replies or deadline | Keep the condition-variable wait. Console tests cover reply isolation. |
+| `src-tauri/src/persistence/backup/startup.rs:96` | Explicit restore restart, defer the restart callback | Keep the one-shot handoff and verify the restored application opens. |
+| `src-tauri/src/persistence/backup/startup.rs:143` | Test-only wait for isolated boot callback | Keep the fixture bound. The test verifies restart dispatch. |
+| `src-tauri/src/persistence/ui/window_writer.rs:27,41` | Window persistence writer, retry busy storage and wait for flush | Keep bounded retry and acknowledgment. Tests cover flush, coalescing and ownership conflicts. |
+| `src-tauri/src/persistence/ui/window_writer.rs:62,63` | Test-only window-writer commit barriers | Keep fixture bounds. The test verifies pending geometry is fenced by a competing commit. |
+| `src-tauri/src/profile_automatic.rs:841` | Automatic activation worker, check vehicle, peripheral and process context | Wake on committed context changes and real reconciliation deadlines. Verify external start, route replacement and Stop. |
+| `src-tauri/src/profile_game_launch.rs:320` | Explicit profile launch, wait for its exact process | Use the native process observer and retain the launch deadline. Tests cover cancellation and exact identity. |
+| `src-tauri/src/profile_publication.rs:884` | Temporary CAN publication actor, wait for Start or Stop | Replace the 5 ms wait with a command wake. Verify late Start cannot rearm a stopped actor. |
+| `src-tauri/src/profile_publication.rs:1116` | Temporary CAN publication actor, check native owner and restoration progress | Wake on owner and publication transitions, retaining lease deadlines. Verify exact restoration and real CAN recovery. |
+| `src-tauri/src/profile_samples/registration.rs:59` | Profile preview subscription, wait for initial readiness | Keep the condition-variable deadline. Registration tests cover capture and cancellation. |
+| `src-tauri/src/profile_session_companion_host.rs:404`, `src-tauri/src/profile_session_launch_host.rs:302`, `src-tauri/src/profile_session_panels_inputs.rs:242` | Profile activation or launch worker, wait for native source baseline | Replace repeated baseline checks with producer publication and cancellation wakes. Keep admission deadlines and verify source identity, recovery and Stop. |
+| `src-tauri/src/profile_session_panels_inputs/can.rs:41,45` | CAN reader, wait for retry or bounded read capacity | Wait until retry is due or a permit is released. Verify source loss and admission under contention. |
+| `src-tauri/src/profile_session_panels_inputs/test_support.rs:68,355` | Test-only CAN or USB barrier and eventual assertion | Keep fixture bounds. Tests cover source publication and cancellation. |
+| `src-tauri/src/profile_session/activation_heartbeat.rs:28` | Activation lease worker, wait for Stop or check next renewal deadline | Preserve renewal and Stop. Replace the 10 ms slices with the next actual deadline when cancellation is fully signaled. |
+| `src-tauri/src/profile_system_notification.rs:326` | Windows notification worker, await dismissal callback after a missing update | Use the dismissal event with the existing 50 ms bound. Verify activation notification dismissal and late callbacks. |
+| `src-tauri/src/window_persistence.rs:12` | Window state writer, debounce user resize or move | Keep the cancellable one-shot save. Tests cover coalescing and shutdown. |
+| `src-tauri/src/window_persistence.rs:50,54,57,65` | Test-only window save acknowledgments and quiet windows | Keep fixture bounds. Tests cover resize bursts and idle shutdown. |
