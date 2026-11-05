@@ -51,6 +51,7 @@ async function appView(view='games',selectedGameId=''){
     if(name.endsWith('/GamesPanel.svelte'))return{default:(payload,current)=>{props=current;return GamesPanel(payload,current);}};
     if(name.endsWith('/DebugPanel.svelte'))return{default:(_payload,current)=>{debugPanels.push(current);}};
     if(name.endsWith('.svelte'))return{default:()=>{}};
+    if(name.endsWith('/can-input-observations'))return{canInputTopic:noRequest,observeCanPanel:noRequest};
     const key=name.replace('./lib/','./');if(modules.has(key))return modules.get(key);
     if(name.endsWith('/gateway'))return{gatewayRequest:noRequest,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};
     if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{constructor(){noRequest();}}};

@@ -241,6 +241,7 @@ async function appHarness() {
     if(name.endsWith('/Icon.svelte'))return{default:Icon};
     if(name.endsWith('/ProfilesPanel.svelte'))return{default:()=>{throw new Error('Profiles mounted before its section was opened.');}};
     if(name.endsWith('.svelte'))return{default:()=>{}};
+    if(name.endsWith('/can-input-observations'))return{canInputTopic:noRequest,observeCanPanel:noRequest};
     const key=name.replace('./lib/','./');if(helpers.has(key))return helpers.get(key);
     if(name.endsWith('/gateway'))return{gatewayRequest:noRequest,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};
     if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{constructor(){noRequest();}}};
