@@ -403,12 +403,16 @@ fn vehicle_switch_failure_is_visible_and_retries_after_backoff_without_replaying
     assert!(failed["error"].as_str().unwrap().contains("Injected temporary"));
     manager.profile_prepare=prepare;
     manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()),"The immediate poll must honor retry backoff");
+    let attempted_at = manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_ref().unwrap().2;
+    let just_before_retry = attempted_at + VEHICLE_RETRY_DELAY - Duration::from_millis(40);
+    assert_eq!(manager.automatic_reconciliation_wait(just_before_retry), Some(Duration::from_millis(40)));
     manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_mut().unwrap().2=Instant::now()-Duration::from_secs(6);
     manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();
     assert!(owner(manager).unwrap().generation>base.generation);
     let retried=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
     assert_eq!(retried["phase"],"succeeded");assert_ne!(retried["activationId"],failed["activationId"]);
     ok(manager,"profile_stop",json!({}));
+    assert_eq!(manager.automatic_reconciliation_wait(Instant::now()), None);
 }
 
 #[test]

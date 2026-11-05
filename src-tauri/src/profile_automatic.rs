@@ -12,6 +12,7 @@ use std::{path::PathBuf, sync::OnceLock};
 
 const PERIPHERAL_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(5);
 const PERIPHERAL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(30);
+const VEHICLE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone)]
 struct PeripheralAttempt {
@@ -367,7 +368,7 @@ impl GatewayManager {
         let Some((owner,selection))=changed else {return;};
         {
             let state=self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner());
-            if state.last_vehicle_attempt.as_ref().is_some_and(|(previous,vehicle,at)|previous==&owner&&vehicle==&selection&&at.elapsed()<std::time::Duration::from_secs(5)) {return;}
+            if state.last_vehicle_attempt.as_ref().is_some_and(|(previous,vehicle,at)|previous==&owner&&vehicle==&selection&&at.elapsed()<VEHICLE_RETRY_DELAY) {return;}
         }
         let previous=self.profile_pending.fetch_add(1,Ordering::AcqRel);
         let _pending=PendingProfileApply(&self.profile_pending);
@@ -846,14 +847,34 @@ impl GatewayManager {
                     manager.poll_vehicle_profile();
                     manager.poll_peripheral_profile();
                     manager.poll_automatic();
+                    let wait = manager.automatic_reconciliation_wait(std::time::Instant::now());
                     drop(manager);
-                    // Reconciliation still needs the fallback for retries.
                     if !closed.load(Ordering::Acquire) {
-                        wake.wait(observed, std::time::Duration::from_millis(500));
+                        wake.wait_scheduled(observed, wait);
                     }
                 }
             })
             .ok();
+    }
+
+    fn automatic_reconciliation_wait(&self, now: std::time::Instant) -> Option<std::time::Duration> {
+        let owner = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status().owner.clone();
+        let state = self.profile_automatic.state.lock().unwrap_or_else(|p| p.into_inner());
+        if owner.is_none() && state.settings.mode == SelectionMode::Manual {
+            return None;
+        }
+        let vehicle = state.last_vehicle_attempt.as_ref()
+            .filter(|(previous, _, _)| Some(previous) == owner.as_ref())
+            .and_then(|(_, _, at)| at.checked_add(VEHICLE_RETRY_DELAY));
+        let peripheral = state.last_peripheral_attempt.as_ref()
+            .filter(|attempt| Some(&attempt.owner) == owner.as_ref())
+            .and_then(|attempt| attempt.at.checked_add(peripheral_retry_delay(attempt.failures)));
+        // An active run can still encounter transient admission or inventory
+        // contention. Keep its recovery fallback while those paths are wired.
+        Some([vehicle, peripheral].into_iter().flatten()
+            .filter(|deadline| *deadline > now)
+            .map(|deadline| deadline.duration_since(now))
+            .fold(std::time::Duration::from_millis(500), std::time::Duration::min))
     }
 }
 
