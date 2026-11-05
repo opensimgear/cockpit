@@ -50,9 +50,12 @@ fn unread_http_observation_streams_leave_profile_publication_and_stop_available(
         .unwrap();
     let endpoint = format!("http://127.0.0.1:{port}/mcp");
     let capacity = server.subscriptions.available_permits();
-    assert!(capacity > 0);
+    assert!(capacity > 1);
+    let mut fast = listen_observations(&endpoint, writer, &[URI]);
+    assert_eq!(fast.next().unwrap()["method"], "notifications/subscriptions/acknowledged");
+    assert_eq!(fast.next().unwrap()["params"]["uri"], URI);
     let mut streams = Vec::new();
-    for _ in 0..capacity {
+    for _ in 1..capacity {
         let mut stream = listen_observations(&endpoint, reader, &[URI]);
         assert_eq!(
             stream.next().unwrap()["method"],
@@ -100,6 +103,10 @@ fn unread_http_observation_streams_leave_profile_publication_and_stop_available(
         },
         "A desktop reader did not receive the committed profile update.",
     );
+    let update = fast.next().expect("An established MCP reader must still receive updates");
+    assert_eq!(update["params"]["uri"], URI);
+    assert!(update["params"]["_meta"]["opensimgear.com/observation"]["payload"]
+        .to_string().contains(name), "{update}");
     let stopped = call(
         &endpoint,
         writer,
@@ -114,6 +121,7 @@ fn unread_http_observation_streams_leave_profile_publication_and_stop_available(
     );
 
     drop(streams);
+    drop(fast);
     wait_until(
         || server.subscriptions.available_permits() == capacity,
         "Closed HTTP observation bodies did not release their subscription permits.",
