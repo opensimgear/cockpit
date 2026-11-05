@@ -28,8 +28,9 @@ The wider R0 inventory still requires confirming the remaining native and
 firmware timer owners and purposes.
 
 Run `node scripts/reactive/audit.mjs --check-ui-timers` to check direct
-`setInterval` and `setTimeout` calls in Cockpit, the companion apps and shared
-frontend packages. This includes direct self-scheduling timeouts. The guard
+`setInterval`, `setTimeout` and `requestAnimationFrame` calls in Cockpit, the
+companion apps and shared frontend packages. This includes direct
+self-scheduling timeouts and frame callbacks. The guard
 requires review when a timer's callback or delay changes and rejects production
 references to the two dormant timer components. The reviewed timeouts cover
 connection retries and protocol deadlines, local QR detection, authored actions,
@@ -41,7 +42,9 @@ loops and acquisition below the frontend.
 `CompiledWidget.svelte` schedules frames only during active playback. Authored
 actions and feedback expiry share one timeout for the earliest pending deadline.
 The native widget preview test measures these scheduler calls directly because
-the idle network trace cannot detect a local render loop.
+the idle network trace cannot detect a local render loop. ProfileCanvas
+coalesces frames during pointer gestures, and its camera stops scheduling
+when navigation finishes or is cancelled.
 
 ## Cockpit disposition through `5cc98117`
 

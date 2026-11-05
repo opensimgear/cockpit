@@ -44,3 +44,18 @@ test('dormant timers cannot silently gain a production caller', () => {
     '<script>import Desktop from "./lib/ProfileDesktopControls.svelte";</script>']]),
   /dormant ProfileDesktopControls has a production reference/);
 });
+
+test('a frame loop requires a reviewed rendering owner', () => {
+  for (const callee of ['requestAnimationFrame', 'window.requestAnimationFrame', 'window["requestAnimationFrame"]']) {
+    assert.throws(() => checkUiTimers([['src/Repeat.ts',
+      `function refresh(){ fetch('/status'); ${callee}(refresh); }`]]),
+    /unclassified requestAnimationFrame/);
+  }
+  const file = 'packages/companion-ui/src/CompiledWidget.svelte';
+  const script = '<script>requestAnimationFrame(() => { raf = undefined; tickClock(); });</script>';
+  const timedScript = script.replace('</script>',
+    'setTimeout(() => { deadline = timeout = undefined; tickClock(); }, Math.max(0, Math.ceil(next - performance.now())));</script>');
+  assert.doesNotThrow(() => checkUiTimers([[file, timedScript]]));
+  assert.throws(() => checkUiTimers([[file, timedScript.replace('tickClock()', 'refresh()')]]),
+    /unclassified requestAnimationFrame/);
+});

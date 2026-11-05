@@ -54,6 +54,14 @@ const timeouts = new Map([
   ['src/lib/ProfileLibraryTools.svelte', ['()=>URL.revokeObjectURL(url),0']],
 ]);
 
+const frames = new Map([
+  ['packages/companion-ui/src/CompiledWidget.svelte', ['()=>{raf=undefined;tickClock();}']],
+  ['src/lib/ProfileCanvas.svelte', [
+    'callback',
+    '()=>{moveFrame=0;const latest=pendingMove;pendingMove=null;if(latest)move(latest);}',
+  ]],
+]);
+
 function fingerprint(source) {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, undefined, source);
   const tokens = [];
@@ -79,6 +87,7 @@ export function checkUiTimers(sources) {
     const expected = new Map([
       ['setInterval', (intervals.get(file) ?? []).map(fingerprint)],
       ['setTimeout', (timeouts.get(file) ?? []).map(fingerprint)],
+      ['requestAnimationFrame', (frames.get(file) ?? []).map(fingerprint)],
     ]);
     for (const script of scripts(file, source)) {
       const ast = ts.createSourceFile(file, script, ts.ScriptTarget.Latest, true,
