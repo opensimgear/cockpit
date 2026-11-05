@@ -857,10 +857,9 @@ fn stalled_route_report_does_not_block_other_companion_or_ordinary_mapping_clock
         assert!(Instant::now()<deadline,"Ordinary mapping failed to publish its input: {status}");
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(
-        f.request("healthy", "inspect", json!({})).unwrap()["session"]["running"],
-        true
-    );
+    let healthy = f.request("healthy", "inspect", json!({})).unwrap();
+    assert_eq!(healthy["session"]["running"], true,
+        "Healthy companion lost service while another route was stalled: {healthy}");
     f.release_gate();
     f.wait("slow", |v| v["session"]["cleanupComplete"] == true);
     assert_eq!(

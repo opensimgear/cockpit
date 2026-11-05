@@ -174,6 +174,17 @@ impl Coordinator {
         deadline_us: Option<Counter>,
         possible: Vec<Control>,
     ) -> Result<Ack, String> {
+        self.send_with_commit(command, deadline_us, possible, |_, _| Ok(false))
+    }
+    /// Apply a validated delivery's owner projection inside its ACK commit.
+    /// The callback is memory-only and runs after successful native validation.
+    fn send_with_commit(
+        &mut self,
+        command: Command,
+        deadline_us: Option<Counter>,
+        possible: Vec<Control>,
+        commit: impl FnOnce(&mut Self, &Ack) -> Result<bool, String>,
+    ) -> Result<Ack, String> {
         if self.terminal_stopped {
             return Err("Desktop worker is stopped; acquire a fresh coordinator before activation or recovery.".into());
         }
@@ -281,10 +292,24 @@ impl Coordinator {
                 self.snapshot.in_flight = None;
                 if ack.ok {
                     self.snapshot.possible_held = ack.held.clone();
-                    if changes_ledger {
+                    let metadata_changed = match commit(self, &ack) {
+                        Ok(changed) => changed,
+                        Err(error) => {
+                            self.snapshot.uncertain = true;
+                            self.snapshot.cleanup_complete = false;
+                            self.snapshot.phase = "faulted".into();
+                            self.snapshot.error = Some(error.clone());
+                            let _ = self.persist();
+                            self.audit_outcome(&request, Some(&ack), 3);
+                            return Err(error);
+                        }
+                    };
+                    if changes_ledger || metadata_changed {
                         if let Err(error) = self.persist() {
                             self.snapshot.uncertain = true;
                             self.snapshot.cleanup_complete = false;
+                            self.snapshot.phase = "faulted".into();
+                            self.snapshot.error = Some(error.clone());
                             self.audit_outcome(&request, Some(&ack), 3);
                             return Err(error);
                         }
@@ -352,27 +377,23 @@ impl Coordinator {
             .map(|d| Counter((self.clock)().saturating_add(d.0.saturating_sub(source_now_us))));
         let mut next = self.reducer.clone();
         next.delivery(&delivery, expired)?;
-        let ack = self.send(
+        self.send_with_commit(
             Command::Deliver {
                 delivery: delivery.clone(),
             },
             deadline_us,
             next.held(),
-        )?;
-        // Worker-clock expiry may occur during durable dispatch/IPC. Mirror the
-        // cancellation rather than retaining a hold that was never submitted.
-        if ack.skipped && matches!(delivery.intent, Intent::Held { .. }) {
-            next = self.reducer.clone();
-            next.delivery(&delivery, true)?;
-        }
-        self.reducer = next;
-        // Hold-changing send() calls durably committed the validated ACK;
-        // pointer motion preserved that ledger. Owner operation counters are
-        // intentionally absent from the journal format.
-        if self.update_owners() {
-            self.persist()?;
-        }
-        Ok(ack)
+            |coordinator, ack| {
+                // Worker-clock expiry can happen during durable dispatch/IPC.
+                // Resolve cancellation before committing the final owner view.
+                if ack.skipped && matches!(delivery.intent, Intent::Held { .. }) {
+                    next = coordinator.reducer.clone();
+                    next.delivery(&delivery, true)?;
+                }
+                coordinator.reducer = next;
+                Ok(coordinator.update_owners())
+            },
+        )
     }
     pub fn renew(&mut self, run: RunToken) -> Result<(), String> {
         self.send(Command::Renew { run }, None, self.reducer.held())?;

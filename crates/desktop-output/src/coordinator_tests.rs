@@ -252,7 +252,7 @@ fn journal_write_failure_never_dispatches() {
 }
 
 #[test]
-fn submit_keeps_both_dispatch_writes_and_elides_only_unchanged_owner_projection() {
+fn delivery_commits_owner_projection_with_validated_ack_in_two_writes() {
     let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
     let path = dir.path().join("journal.json");
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -268,9 +268,18 @@ fn submit_keeps_both_dispatch_writes_and_elides_only_unchanged_owner_projection(
 
     let before = c.persist_attempts.get();
     c.submit(delivery(), 0).unwrap();
-    assert_eq!(c.persist_attempts.get() - before, 3);
+    assert_eq!(c.persist_attempts.get() - before, 2);
     let owners = vec![OwnerSnapshot { producer: token(), action_id: "action".into(), controls: vec![key()] }];
-    assert_eq!(Coordinator::inspect_journal(&path).unwrap().owners, owners);
+    let held = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(held.owners, owners);
+    assert_eq!(held.held, vec![key()]);
+    assert_eq!(held.possible_held, held.held);
+    assert!(held.in_flight.is_none());
+    assert_eq!(sql_read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
+    let dispatched = seen.lock().unwrap().last().unwrap().clone();
+    assert!(dispatched.in_flight.is_some());
+    assert!(dispatched.held.is_empty());
+    assert_eq!(dispatched.possible_held, vec![key()]);
 
     for (operation, intent) in [
         (3, Intent::Repeat { key: Key(4) }),
@@ -305,9 +314,14 @@ fn submit_keeps_both_dispatch_writes_and_elides_only_unchanged_owner_projection(
     release.intent = Intent::Held { controls: vec![] };
     let before = c.persist_attempts.get();
     c.submit(release, 0).unwrap();
-    assert_eq!(c.persist_attempts.get() - before, 3);
+    assert_eq!(c.persist_attempts.get() - before, 2);
+    let dispatched = seen.lock().unwrap().last().unwrap().clone();
+    assert!(dispatched.in_flight.is_some());
+    assert_eq!(dispatched.held, vec![key()]);
+    assert_eq!(dispatched.possible_held, vec![key()]);
     let persisted = Coordinator::inspect_journal(&path).unwrap();
     assert!(persisted.held.is_empty() && persisted.owners[0].controls.is_empty());
+    assert!(persisted.possible_held.is_empty());
     assert!(persisted.in_flight.is_none());
     assert_eq!(sql_read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
 }
@@ -329,11 +343,15 @@ fn shared_native_hold_changes_still_persist_each_full_owner_and_collision_count(
     let before = c.persist_attempts.get();
     let ack = c.submit(value, 0).unwrap();
     assert_eq!(ack.attempted, 0, "The second owner must not duplicate the native key edge");
-    assert_eq!(c.persist_attempts.get() - before, 3);
+    assert_eq!(c.persist_attempts.get() - before, 2);
     let shared = Coordinator::inspect_journal(&path).unwrap();
     assert_eq!(shared.held, vec![key()]);
     assert_eq!(shared.shared_controls, 1);
     assert!(shared.owners.contains(&OwnerSnapshot { producer: other, action_id: "other-action".into(), controls: vec![key()] }));
+    assert_eq!(shared.owners.len(), 2);
+    assert_eq!(shared.possible_held, shared.held);
+    assert!(shared.in_flight.is_none());
+    assert_eq!(sql_read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
 
     let mut release = delivery();
     release.operation_id = Counter(2);
@@ -341,11 +359,13 @@ fn shared_native_hold_changes_still_persist_each_full_owner_and_collision_count(
     release.intent = Intent::Held { controls: vec![] };
     let before = c.persist_attempts.get();
     assert_eq!(c.submit(release, 0).unwrap().attempted, 0);
-    assert_eq!(c.persist_attempts.get() - before, 3);
+    assert_eq!(c.persist_attempts.get() - before, 2);
     let remaining = Coordinator::inspect_journal(&path).unwrap();
     assert_eq!(remaining.held, vec![key()]);
     assert_eq!(remaining.shared_controls, 0);
     assert!(remaining.owners.contains(&OwnerSnapshot { producer: token(), action_id: "action".into(), controls: vec![] }));
+    assert_eq!(remaining.possible_held, remaining.held);
+    assert!(remaining.in_flight.is_none());
     assert_eq!(sql_read(&path).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
 }
 
@@ -398,3 +418,5 @@ fn stale_evidence_and_exclusive_lifetime_owner_prevent_helper_dispatch(){
 mod lifecycle;
 #[path="coordinator/arm_journal_tests.rs"]
 mod arm_journal;
+#[path="coordinator/delivery_commit_tests.rs"]
+mod delivery_commit;

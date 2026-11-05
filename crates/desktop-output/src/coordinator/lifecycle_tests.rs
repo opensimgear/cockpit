@@ -246,10 +246,12 @@ fn post_valid_ack_write_failure_preserves_pre_dispatch_journal_and_requires_reco
         assert!(c.submit(value.clone(), 0).unwrap_err().contains("Injected"));
         assert_eq!(c.persist_attempts.get() - before, 2);
         assert!(c.snapshot().uncertain && !c.snapshot().cleanup_complete);
+        assert_eq!(c.snapshot().owners[0].controls, vec![key()], "validated metadata is updated before the failed ACK commit");
         let recorded = Coordinator::inspect_journal(&path).unwrap();
         let pending = recorded.in_flight.as_ref().unwrap();
         assert!(matches!(&pending.command, Command::Deliver { delivery } if delivery == &value));
         assert!(recorded.held.is_empty());
+        assert!(recorded.owners[0].controls.is_empty(), "the pre-dispatch record remains the recovery source");
         let controls = if matches!(value.intent, Intent::Held { .. }) { vec![key()] } else { vec![] };
         assert_eq!(recorded.possible_held, controls);
         let durable = sql_read(&path).unwrap();
