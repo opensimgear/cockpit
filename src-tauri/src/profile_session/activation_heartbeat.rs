@@ -150,29 +150,51 @@ impl NativeProfileHost {
             let resources = host.resources.clone();
             let controllers = host.controllers.clone();
             let deadline = Instant::now() + Duration::from_secs(3);
-            let mut first = true;
-            loop {
-                host.check_transition(owner)?;
-                let state = host.run(owner)?;
-                let clock = || controllers.stream_page("", 0).captured_us;
-                let sample = if first { state.game.baseline(&games, clock) } else { state.game.poll_baseline(&games, clock) };
-                first = false;
-                let batch = state.game.delivery_batch();
-                host.check_transition(owner)?;
-                let published = batch.is_some();
-                if let Some(batch) = batch { resources.publish_profile_game_delivery(batch)?; }
-                if sample.context_lost {
-                    return Err(format!("The verified game context changed during baseline acquisition. {}", sample.diagnostics.join(" ")));
+            let wake = Arc::new(osg_streams::NativeWake::default());
+            wake.bind_thread(std::thread::current())
+                .map_err(|_| "Cannot bind the native game baseline waiter.")?;
+            let game = &mut host.run(owner)?.game;
+            let previous_wake = game.notification_wake();
+            game.set_wake(Some(wake.clone()));
+            let result = (|| {
+                let mut first = true;
+                loop {
+                    host.check_transition(owner)?;
+                    let revision = wake.observed();
+                    let state = host.run(owner)?;
+                    let clock = || controllers.stream_page("", 0).captured_us;
+                    let sample = if first { state.game.baseline(&games, clock) } else { state.game.poll_baseline(&games, clock) };
+                    first = false;
+                    let batch = state.game.delivery_batch();
+                    let wait_until = state.game.baseline_wait_until(deadline);
+                    host.check_transition(owner)?;
+                    let published = batch.is_some();
+                    if let Some(batch) = batch { resources.publish_profile_game_delivery(batch)?; }
+                    if sample.context_lost {
+                        return Err(format!("The verified game context changed during baseline acquisition. {}", sample.diagnostics.join(" ")));
+                    }
+                    if Instant::now() >= deadline {
+                        return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
+                    }
+                    if sample.fresh && !published { return Ok(sample.frames); }
+                    // Publication may outlast telemetry freshness. Reacquire the
+                    // complete baseline without redating previously decoded bytes.
+                    if published {
+                        first = true;
+                        continue;
+                    }
+                    while wake.observed() == revision {
+                        host.check_transition(owner)?;
+                        let remaining = wait_until.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            break;
+                        }
+                        wake.wait(revision, remaining.min(Duration::from_millis(5)));
+                    }
                 }
-                if Instant::now() >= deadline {
-                    return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
-                }
-                if sample.fresh && !published { return Ok(sample.frames); }
-                // Publication may outlast telemetry freshness. Reacquire the
-                // complete baseline without redating previously decoded bytes.
-                if published { first = true; }
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            })();
+            host.run(owner)?.game.set_wake(previous_wake);
+            result
         })
     }
 }

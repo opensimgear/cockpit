@@ -784,6 +784,9 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
             })
             .unwrap();
         assert_eq!(calls, vec![(42, "acr.exe".to_owned())]);
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        assert!(reader.baseline_wait_until(deadline) < deadline,
+            "the authored transport has no notification watch and must still be serviced");
         assert_eq!(
             reader.game.as_ref().unwrap().proof.process.path,
             full_path,

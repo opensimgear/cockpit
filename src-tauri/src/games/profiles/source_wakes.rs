@@ -39,6 +39,25 @@ impl GameSources {
     pub(crate) fn notification_wake(&self) -> Option<Arc<NativeWake>> {
         self.notifications.signal.clone()
     }
+    pub(crate) fn baseline_wait_until(&self, deadline: Instant) -> Instant {
+        let watched = match self.reader.as_ref() {
+            Some(Reader::Dcs { transport, physics_outputs, .. }) => {
+                (self.notifications.bios.as_ref().is_some_and(|watch| !watch.is_closed())
+                    || transport.is_none() && self.bios_retry_at.is_some())
+                    && (physics_outputs.is_empty()
+                        || self.notifications.physics.as_ref().is_some_and(|watch| !watch.is_closed()))
+            }
+            Some(Reader::Xplane { .. }) => self.notifications.xplane.as_ref().is_some_and(|watch| !watch.is_closed()),
+            Some(Reader::Acr { .. }) => self.notifications.assetto.as_ref().is_some_and(|watch| !watch.is_closed()),
+            None => false,
+        };
+        if watched {
+            self.bios_retry_at.map_or(deadline, |retry| retry.min(deadline))
+        } else {
+            // An unavailable producer watch cannot promise a future wake.
+            deadline.min(Instant::now() + std::time::Duration::from_millis(5))
+        }
+    }
     pub(super) fn refresh_source_wakes(&mut self, games: &GamesRuntime) -> Result<(), String> {
         if !self.acquired || self.lost {
             self.notifications.clear();
