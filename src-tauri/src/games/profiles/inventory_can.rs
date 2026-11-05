@@ -74,10 +74,6 @@ impl Sources {
             let events_current = events["ok"] == true
                 && events["route"] == expected_route
                 && events["configurationGeneration"] == module["configurationGeneration"];
-            let events_known = native_inputs || events_current
-                || (events["status"] == "unsupported"
-                    && events["route"] == expected_route
-                    && events["configurationGeneration"] == module["configurationGeneration"]);
             let actions_current = actions["status"] == "ready"
                 && actions["route"] == expected_route
                 && actions["configurationGeneration"] == module["configurationGeneration"];
@@ -94,7 +90,7 @@ impl Sources {
             if actions_current {
                 descriptors.extend(ports::actions(actions)?);
             }
-            item.ports = (events_known && actions_known)
+            item.ports = actions_known
                 .then(|| PortUpdate::complete(descriptors))
                 .transpose()?;
             if item.ports.is_none() && state["connected"] == true && module["online"] == true {
@@ -156,7 +152,7 @@ impl Sources {
         }
         Ok(observed)
     }
-    fn missing_can_capabilities(state: &Value) -> impl Iterator<Item = (&Value, Vec<&'static str>)> {
+    fn missing_can_capabilities(state: &Value) -> impl Iterator<Item = &Value> {
         state["modules"]
             .as_array()
             .into_iter()
@@ -174,26 +170,16 @@ impl Sources {
                     cache["route"] == expected
                         && cache["configurationGeneration"] == module["configurationGeneration"]
                 };
-                let events = &state["moduleEvents"][id];
                 let actions = &state["moduleActions"][id];
-                let events_known = state["panelStreamSupported"] == true
-                    || current(events) && (events["ok"] == true || events["status"] == "unsupported");
                 let actions_known = current(actions)
                     && matches!(actions["status"].as_str(), Some("ready" | "unsupported"));
-                let commands = [
-                    ("events_state", events_known),
-                    ("action_describe", actions_known),
-                ]
-                .into_iter()
-                .filter_map(|(command, known)| (!known).then_some(command))
-                .collect::<Vec<_>>();
-                (!commands.is_empty()).then_some((module, commands))
+                (!actions_known).then_some(module)
             })
     }
     fn refresh_can_capabilities(&self, id: &str, state: &Value) {
         if !self.native { return; }
         let modules = Self::missing_can_capabilities(state).take(32)
-            .map(|(module, commands)| (module.clone(), commands)).collect::<Vec<_>>();
+            .cloned().collect::<Vec<_>>();
         if modules.is_empty()
             || !self
                 .refreshing
@@ -207,12 +193,10 @@ impl Sources {
         let pending = self.refreshing.clone();
         let gateway = id.to_owned();
         thread::spawn(move || {
-            for (module, commands) in modules {
-                for command in commands {
-                    let _ = panel(
-                        json!({"command":command,"gatewayId":gateway,"moduleId":module["id"],"boot":module["boot"],"clientId":"profile-resource-discovery"}),
-                    );
-                }
+            for module in modules {
+                let _ = panel(
+                    json!({"command":"action_describe","gatewayId":gateway,"moduleId":module["id"],"boot":module["boot"],"clientId":"profile-resource-discovery"}),
+                );
             }
             pending
                 .lock()

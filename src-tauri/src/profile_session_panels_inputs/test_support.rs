@@ -145,7 +145,7 @@ impl Fake {
         let mut events = events;
         events["route"] = json!([values[0], node, values[2], values[1]]);
         events["configurationGeneration"] = values[3].clone();
-        json!({"connected":true,"epoch":values[0],"modules":[{"id":"module","online":true,"node":node,"lease":values[2],"boot":values[1],"axisCount":1,"configurationGeneration":values[3]}],"moduleEvents":{"module":events}})
+        json!({"connected":true,"epoch":values[0],"panelStreamSupported":self.stream_test.load(Ordering::Acquire),"modules":[{"id":"module","online":true,"node":node,"lease":values[2],"boot":values[1],"axisCount":1,"configurationGeneration":values[3]}],"moduleEvents":{"module":events}})
     }
     fn before(&self, key: &str) {
         self.calls.fetch_add(1, Ordering::AcqRel);

@@ -67,6 +67,7 @@ trait Io: Send + Sync {
     fn can_capture(&self, _gateway: &str, _module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
         Err("This gateway has no native panel stream.".into())
     }
+    #[cfg(test)]
     fn can(&self, request: Value) -> Value;
     fn can_cached(&self, gateway: &str) -> Result<Value, String>;
     fn usb(&self, key: &str, request: UsbRequest) -> Result<UsbSnapshot, String>;
@@ -79,6 +80,7 @@ impl Io for ProfilePanelIo {
     fn can_capture(&self, gateway: &str, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
         ProfilePanelIo::can_capture(self, gateway, module)
     }
+    #[cfg(test)]
     fn can(&self, r: Value) -> Value {
         self.can(r)
     }

@@ -198,13 +198,13 @@ fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_
         thread::yield_now();
     }
     let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 1);
     assert_eq!(
         calls
             .iter()
             .map(|v| v["command"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["events_state", "action_describe"]
+        vec!["action_describe"]
     );
     assert!(calls
         .iter()
@@ -266,11 +266,11 @@ fn can_action_only_capabilities_publish_without_inventing_an_event_baseline() {
     assert!(registry.token(&id, "action:led", Access::Invoke).is_ok());
     assert!(registry.token(&id, "button:0", Access::Read).is_err());
     state["moduleEvents"][MODULE]["configurationGeneration"] = json!(0);
-    assert!(sources
+    assert_eq!(sources
         .can_observations("gateway", &state, &BTreeMap::new())
         .unwrap()[0]
         .ports
-        .is_none());
+        .as_ref().unwrap().ports.len(), 1);
 }
 #[test]
 fn known_negative_can_components_are_not_reprobed_until_their_route_or_configuration_changes() {
@@ -287,7 +287,7 @@ fn known_negative_can_components_are_not_reprobed_until_their_route_or_configura
         captured.lock().unwrap().push(request);
         json!({})
     });
-    state["moduleEvents"][MODULE]["configurationGeneration"] = json!(0);
+    state["moduleActions"][MODULE]["configurationGeneration"] = json!(0);
     sources.refresh_can_capabilities("gateway", &state);
     let deadline = Instant::now() + Duration::from_secs(2);
     while sources.refreshing.lock().unwrap().contains("gateway") && Instant::now() < deadline {
@@ -295,5 +295,5 @@ fn known_negative_can_components_are_not_reprobed_until_their_route_or_configura
     }
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0]["command"], "events_state");
+    assert_eq!(calls[0]["command"], "action_describe");
 }

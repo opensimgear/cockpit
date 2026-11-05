@@ -118,6 +118,7 @@ impl Source {
             }
         }
     }
+    #[cfg(test)]
     pub(super) fn baseline(&mut self, io: &dyn Io, at: u64) -> Result<Frame, String> {
         let events = self.spec.target.events(io, None)?;
         self.verify(&events)?;
@@ -135,6 +136,7 @@ impl Source {
         ));
         self.frame(at, Reason::Baseline, changes)
     }
+    #[cfg(test)]
     pub(super) fn page(&mut self, io: &dyn Io, at: u64) -> Result<Vec<Frame>, String> {
         let cursor = self
             .cursor

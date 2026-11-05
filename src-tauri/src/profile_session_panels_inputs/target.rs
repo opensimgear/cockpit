@@ -71,7 +71,15 @@ impl Target {
                     configuration: values[3].clone(),
                     stream: values[4].clone(),
                 };
-                target.check_can(&io.can_cached(&gateway)?)?;
+                let state = io.can_cached(&gateway)?;
+                #[cfg(test)]
+                let fixture = io.uses_polled_test_fixture();
+                #[cfg(not(test))]
+                let fixture = false;
+                if state["panelStreamSupported"] != true && !fixture {
+                    return Err("The gateway firmware does not provide native CAN panel input streaming.".into());
+                }
+                target.check_can(&state)?;
                 Ok(target)
             }
             _ => Err("Only native USB/CAN panel routes belong to this reader.".into()),
@@ -121,6 +129,7 @@ impl Target {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(super) fn events(&self, io: &dyn Io, cursor: Option<(u32, u32)>) -> Result<Value, String> {
         let events = match self {
             Self::Usb { .. } => return Err("USB panel inputs require native Capture subscriptions.".into()),
