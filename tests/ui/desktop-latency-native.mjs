@@ -150,12 +150,6 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
   const profileBefore = (await invoke(page, {command: 'profile_status'})).state.profiles;
   assert.equal(profileBefore.session.selectionMode, 'manual');
   const listenerBefore = (await invoke(page, {command: 'companion_status'})).state.companions.listener?.enabled ?? false;
-  const settingsFile = process.env.OSG_DESKTOP_SETTINGS_FILE ?? resolve(process.env.APPDATA, 'OpenSimGear/Cockpit/desktop-input-v1.json');
-  const snapshots = [];
-  for (const path of [settingsFile, resolve(process.env.APPDATA, 'OpenSimGear/Cockpit/profiles-activation-v1.json')]) {
-   try { snapshots.push({path, data: await readFile(path)}); }
-   catch (error) { if (error.code !== 'ENOENT') throw error; snapshots.push({path, data: undefined}); }
-  }
   await profilesUi(page);
   const token = randomUUID(), commands = [], profiles = new Map(), paired = new Set(), assigned = new Set(), receivers = [];
   let server, pythonChild, target;
@@ -195,7 +189,7 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
    pythonChild = spawn(process.env.OSG_PYTHON ?? 'python', ['scripts/desktop-latency-native.py', '--inject',
     '--bridge', `http://127.0.0.1:${server.address().port}/native`, '--output', resolve(artifacts, 'evidence.json'),
-    '--desktop-settings-file', settingsFile, '--app-sha256', appHash, '--audit-directory', resolve(auditDirectory), '--audit-run', auditRun], {
+    '--app-sha256', appHash, '--audit-directory', resolve(auditDirectory), '--audit-run', auditRun], {
      cwd: root, windowsHide: true, timeout: 180_000, env: {...process.env, OSG_NATIVE_BRIDGE_TOKEN: token}, stdio: ['ignore', 'pipe', 'pipe']});
    let output = '';
    pythonChild.stdout.on('data', bytes => { output += bytes; }); pythonChild.stderr.on('data', bytes => { output += bytes; });
@@ -241,19 +235,12 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
       assert.equal(item.revision, profiles.get(item.id)); const result = await invoke(page, {command: 'profile_delete', id: item.id, expectedRevision: item.revision}); assert.equal(result.ok, true);
      }
     });
-    for (const {path, data} of snapshots) await attempt('Restore exact saved preference bytes', async () => {
-     if (data === undefined) await rm(path, {force: true}); else await writeFile(path, data);
-    });
     await attempt('Verify restored native state', async () => {
      cleanup.final = await stopped(page, commands.some(item => item.command === 'profile_apply'));
      assert.equal(cleanup.final.desktop.enabled, preferences.enabled); assert.deepEqual(cleanup.final.desktop.scope, preferences.scope);
      assert.deepEqual(cleanup.final.desktop.application, preferences.application);
      const current = (await invoke(page, {command: 'profile_status'})).state.profiles;
      assert.equal(current.session.selectedProfileId, profileBefore.session.selectedProfileId); assert.equal(current.session.selectionMode, 'manual');
-     for (const {path, data} of snapshots) {
-      if (data !== undefined) assert.deepEqual(await readFile(path), data);
-      else await assert.rejects(readFile(path), error => error.code === 'ENOENT');
-     }
     });
     for (const receiver of receivers) await attempt('Close receive-only helper', () => closeReceiver(receiver));
     await attempt('Save the final externally acknowledged parent audit checkpoint', async () => {

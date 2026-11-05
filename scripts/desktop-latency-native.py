@@ -25,6 +25,46 @@ native, companion, mapping = ownership.native, ownership.companion, ownership.ma
 BUTTON, AXIS = "flight-input-0", "flight-input-2"
 RATE, SECONDS = 80, 6
 KEYS = [(4, 30), (5, 48)]  # HID usage and Windows physical scan code.
+AXIS_FACTOR, AXIS_OFFSET, AXIS_NEUTRAL = 1 / 16384, -1, 0.5
+
+
+def compiled_publication():
+    publication = json.loads((ROOT / "scripts/fixtures/compiled-flight-publication.json").read_text())
+    document = json.loads(publication["canonicalDocument"])
+    assert document["schemaVersion"] == 4 and document["presentation"]["format"] == "compiled-raster-v1"
+    controls = {control["id"]: control for control in document["ui"]["controls"]}
+    assert controls[BUTTON]["kind"] == "button"
+    assert controls[AXIS]["kind"] == "axis" and controls[AXIS]["axisMode"] == "unipolar"
+    bindings = [binding for widget in document["presentation"]["widgets"] for binding in widget["inputBindings"]]
+    assert dict(controlId=BUTTON, portId="button") in bindings
+    assert dict(controlId=AXIS, portId="axis") in bindings
+    return publication
+
+
+def axis_wire(signed):
+    assert -1 <= signed <= 1
+    return (signed + 1) / 2
+
+
+def receiver_injection_observed(paths):
+    return any(event.get("injectedMarker") is True for path in paths
+        for event in native.receiver(path).get("observations", []))
+
+
+def capture_profile_scope(service, saved, assignments, identity):
+    captured = mapping.state(service, "profile_desktop_capture_application", "desktop")
+    assert captured["recentApplication"] == identity, captured
+    reference = captured["capturedApplicationReference"]
+    assert isinstance(reference, str) and reference, captured
+    document = json.loads(json.dumps(saved))
+    for output in document["desktopOutputs"]:
+        output["scope"] = dict(kind="application", applicationReference=reference)
+    updated = mapping.save(service, document, assignments, expected=saved["revision"])
+    assert updated["id"] == saved["id"] and updated["revision"] != saved["revision"], updated
+    compilation = mapping.state(service, "profile_compile", "profileCompilation", document=updated, assignments=assignments)
+    assert compilation["readiness"] != "invalid" and compilation["requirements"] == dict(desktopInput=True, virtualDevices=False, visibility=False), compilation
+    assert compilation["budgets"]["virtualTargets"] == 0
+    return updated, captured, compilation
 
 
 def decimal(value):
@@ -65,10 +105,11 @@ def send(peer, changes):
 
 def axis_boundary(contract):
     schema = contract["schema"]
-    assert schema["type"] == "integer" and schema["min"] == -32768 and schema["max"] == 32767, contract
-    return dict(physicalControl=AXIS, wireRange=[-1, 1], wireAmplitude=0.65,
-        nativeRange=[schema["min"], schema["max"]], explicitScaleFactor=1 / 32768,
-        conversion="The real WSS provider quantizes normalized decimals to signed integer native axis counts before the graph Scale node.")
+    assert schema["type"] == "integer" and schema["min"] == 0 and schema["max"] == 32767, contract
+    return dict(physicalControl=AXIS, signedWorkloadRange=[-1, 1], signedWorkloadAmplitude=0.65,
+        wireRange=[0, 1], wireEncoding="(signed + 1) / 2", wireNeutral=AXIS_NEUTRAL,
+        nativeRange=[schema["min"], schema["max"]], explicitScaleFactor=AXIS_FACTOR, explicitScaleOffset=AXIS_OFFSET,
+        conversion="The supported compiled unipolar WSS axis quantizes round(wire * 32767). The graph computes raw / 16384 - 1, centering neutral 0.5 exactly; the signed waveform has bounded quantization error.")
 
 
 def profile_for(service, instances, publication):
@@ -91,7 +132,7 @@ def profile_for(service, instances, publication):
             observedPortId=port["descriptor"]["id"], expectedContractHash=port["contractHash"]) for name, port in observed.items()]))
         normalizer = "normalize-" + logical
         document["processingNodes"].append(dict(id=normalizer, name="Explicit raw axis normalization " + logical,
-            operation=dict(kind="scale", factor=1 / 32768, offset=0),
+            operation=dict(kind="scale", factor=AXIS_FACTOR, offset=AXIS_OFFSET),
             inputs=[mapping.port("in", observed["axis"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", number, "output")]))
         for action, contract in (("key-" + logical, boolean), ("pointer-" + logical, number)):
             outputs.append(mapping.port(action, contract, "input"))
@@ -120,10 +161,10 @@ def workload(peer, index, gate, abort, results, errors, seconds=SECONDS):
             abort.wait(max(0, due - time.perf_counter()))
             if abort.is_set() or time.perf_counter() - started >= seconds:
                 break
-            # WSS decimals are normalized; the actual provider quantizes them
-            # to -32768..32767 before the explicit profile Scale operation.
+            # Encode the original signed waveform into the supported compiled
+            # unipolar wire domain; the graph restores signed pointer load.
             axis = round(0.65 * math.sin((tick + 1) * math.pi / 40), 6)
-            changes = [dict(controlId=AXIS, value=axis)]
+            changes = [dict(controlId=AXIS, value=axis_wire(axis))]
             desired = (tick // 4) % 2 == 0
             if desired != pressed:
                 changes.append(dict(controlId=BUTTON, value=desired))
@@ -185,7 +226,11 @@ def settle_keys(service, receiver_path, results, receiver_prefix=None, pointer_b
         state = status["runtime"]["backend"]
         assert not state["uncertain"] and state["error"] is None, state
         assert status["runtime"]["error"] is None and status["runtime"]["scopeError"] is None, status
-        assert status["runtime"]["state"] == "active" and status["runtime"]["waitingNeutral"] == [], "The workload lost its armed application scope"
+        assert status["runtime"]["state"] == "active" and status["runtime"]["waitingNeutral"] == [], json.dumps({
+            "message":"The workload lost its armed application scope", "state":status["runtime"]["state"],
+            "waitingNeutral":status["runtime"]["waitingNeutral"], "scopeNotifications":status["runtime"].get("scopeNotifications"),
+            "helperScope":status["runtime"].get("helperScope"), "recentApplication":status.get("recentApplication"), "backendPhase":state.get("phase"),
+            "runs":state.get("runs"), "held":state.get("held")})
         if state["inFlight"] is not None:
             return None
         assert state["possibleHeld"] == state["held"]
@@ -254,8 +299,8 @@ def coherent_sources(service, configurations, peers):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for field in ("bridge", "output", "desktop-settings-file", "app-sha256", "audit-directory", "audit-run"):
-        parser.add_argument("--" + field, required=True, type=Path if field in ("output", "desktop-settings-file", "audit-directory") else str)
+    for field in ("bridge", "output", "app-sha256", "audit-directory", "audit-run"):
+        parser.add_argument("--" + field, required=True, type=Path if field in ("output", "audit-directory") else str)
     parser.add_argument("--inject", action="store_true")
     args = parser.parse_args()
     assert args.inject and os.environ.get("OSG_DESKTOP_LATENCY_NATIVE") == os.environ.get("OSG_DESKTOP_NATIVE_INJECT") == "1", "Two explicit native latency opt-ins are required"
@@ -267,10 +312,11 @@ def main():
     preferences = native.desktop_status(service)
     assert preferences["qualified"] and native.native_input_workers() == []
     listener_before = companion.operator(service, "companion_status").get("listener", {}).get("enabled", False)
-    publication = json.loads((ROOT / "crates/companion-service/tests/fixtures/c1-flight-publication.json").read_text())
+    publication = compiled_publication()
     instances = ["desktop-latency-" + label + "-" + uuid.uuid4().hex[:10] for label in ("a", "b")]
     configurations = [(instance, publication) for instance in instances]
     peers, assigned, saved = [], set(), None
+    receiver_paths = []
     apply_attempted = False
     evidence = dict(schemaVersion=1, actualNativeCockpit=True, actualWssPeers=2, injected=False, productionQualified=False,
         nativeExecutableSha256=args.app_sha256, auditDirectory=str(args.audit_directory), auditRun=args.audit_run,
@@ -296,6 +342,8 @@ def main():
         assert compilation["readiness"] != "invalid" and compilation["requirements"] == dict(desktopInput=True, virtualDevices=False, visibility=False), compilation
         assert compilation["budgets"]["virtualTargets"] == 0
         evidence.update(profile=saved, assignments=assignments, compilation=compilation,
+            publication=dict(publicationHash=publication["publicationHash"], fixture="scripts/fixtures/compiled-flight-publication.json",
+                schemaVersion=4, format="compiled-raster-v1"),
             axisBoundaries={resource["id"]: axis_boundary(next(port["contract"] for port in resource["ports"] if port["id"] == "axis"))
                 for resource in saved["resources"]})
         for index, phase_name in enumerate(("idle", "ui-load")):
@@ -303,20 +351,30 @@ def main():
             evidence["phases"].append(phase)
             target = control(service, "latency_receiver_begin", phase=phase_name)
             receiver_path, identity = Path(target["file"]), target["identity"]
+            receiver_paths.append(receiver_path)
             phase["receiverIdentity"] = identity
             phase["positioning"] = ownership.position_receiver(service, receiver_path, identity)
-            mapping.state(service, "profile_desktop_capture_application", "desktop")
-            captured = json.loads(args.desktop_settings_file.read_text())["application"]
-            assert captured["pid"] == identity["pid"] and int(captured["epoch"]) == int(identity["created"])
+            mapping.wait_for(lambda: native.desktop_status(service).get("recentApplication") == identity,
+                "Native foreground observer did not capture the exact receiver process")
+            saved, captured, compilation = capture_profile_scope(service, saved, assignments, identity)
             phase["exactCapturedApplication"] = captured
+            phase.update(profile=saved, compilation=compilation)
+            evidence.update(profile=saved, compilation=compilation)
             mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
             service.profiles("profile_stop")
+            # The publication's source fallback is raw zero. Establish the
+            # signed neutral before Apply, then repeat it after its focus gate.
+            for peer in peers:
+                send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
             apply_attempted = True
             owner = mapping.apply(service, saved)
             phase["owner"] = owner
             phase["afterApplyPositioning"] = ownership.position_receiver(service, receiver_path, identity)
+            journal_scope = native.desktop_status(service)["runtime"]["backend"]["journalScope"]
+            assert journal_scope == dict(kind="application", identity=identity), journal_scope
+            phase["exactAppliedApplicationScope"] = journal_scope
             for peer in peers:
-                send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=0)])
+                send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
             mapping.wait_for(lambda: not native.desktop_status(service)["runtime"]["waitingNeutral"], "Fresh controls did not arm every desktop route")
             phase["warmup"] = warmup_keys(service, receiver_path, peers)
             phase["nativeSources"] = coherent_sources(service, configurations, peers)
@@ -346,7 +404,7 @@ def main():
                 assert ui["targetProfileVisible"] and ui["profileName"] == saved["name"], ui
                 assert ui["refreshEvents"] >= 20 and ui["refreshEventsDelivered"] == ui["refreshEvents"], ui
             # Cleanup input is deliberately outside the phase marker interval.
-            for peer in peers: send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=0)])
+            for peer in peers: send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
             mapping.wait_for(lambda: native.desktop_status(service)["runtime"]["backend"]["held"] == [], "Neutral cleanup retained native keys")
             service.profiles("profile_stop")
             phase["stopProof"] = native.stopped_ownership(service, True)
@@ -364,6 +422,8 @@ def main():
         evidence["failure"] = str(error)
         raise
     finally:
+        evidence["nativeInputAttempted"] = apply_attempted
+        evidence["injected"] |= receiver_injection_observed(receiver_paths)
         errors = []
         def attempt(label, action):
             try: return action()

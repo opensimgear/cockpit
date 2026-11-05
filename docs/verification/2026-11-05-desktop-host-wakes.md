@@ -78,8 +78,9 @@ are free. These checks qualify software lifecycle and quiet renewal, not
 physical end-to-end input timing.
 
 The controlled two-window focus test and report-dependent preview/Raw Input
-checks remain unresolved from the preceding milestone. First-dispatch/burst
-timing and mixed fault/load matrices remain in #193/#198. User-operated physical
+checks subsequently pass after Windows is unlocked; see [updated evidence](2026-11-05-unlocked-native-checks.md).
+Sustained latency qualification is interrupted by WSL foreground takeover.
+First-dispatch/burst timing and mixed fault/load matrices remain in #193/#198. User-operated physical
 preview/raw-to-virtual and simulator effect qualification remain in #199, first
 in Progress. This milestone alone closes no broad original acceptance criterion.
 
