@@ -169,12 +169,12 @@ impl Drop for Owner {
         // The registry mutex is not held here. A wake callback may retire its
         // own last lease, so joining the current native owner is forbidden.
         let current = unsafe { GetCurrentThreadId() };
-        if unsafe { PostMessageW(self.hwnd as HWND, WM_CLOSE, 0, 0) } == 0 {
-            unsafe {
-                PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
+        let posted = self.shared.lifetime.with_live_resources(|| {
+            if unsafe { PostMessageW(self.hwnd as HWND, WM_CLOSE, 0, 0) } == 0 {
+                unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0); }
             }
-        }
-        if current == self.thread_id {
+        });
+        if !posted || current == self.thread_id {
             return;
         }
         if self
@@ -198,7 +198,8 @@ impl Drop for Owner {
     }
 }
 
-struct Resources {
+struct Resources<'a> {
+    lifetime: Option<&'a super::lifetime::Lifetime>,
     class: Vec<u16>,
     registered: bool,
     instance: windows_sys::Win32::Foundation::HINSTANCE,
@@ -207,8 +208,8 @@ struct Resources {
     desktop: HWINEVENTHOOK,
     wts: bool,
 }
-impl Resources {
-    fn open() -> Result<Self, String> {
+impl<'a> Resources<'a> {
+    fn open(lifetime: Option<&'a super::lifetime::Lifetime>) -> Result<Self, String> {
         let class = format!("OpenSimGear.ScopeEvents.{}", unsafe {
             GetCurrentThreadId()
         })
@@ -217,6 +218,7 @@ impl Resources {
         .collect::<Vec<_>>();
         let instance = unsafe { GetModuleHandleW(ptr::null()) };
         let mut resources = Self {
+            lifetime,
             class,
             registered: false,
             instance,
@@ -291,6 +293,9 @@ impl Resources {
         Ok(resources)
     }
     fn cleanup(&mut self) -> Result<(), String> {
+        // Fence owner stop posts before any native identifier can be reused,
+        // including partial initialization and unwinding through Drop.
+        if let Some(lifetime) = self.lifetime { lifetime.begin_teardown(); }
         let mut error = None;
         if self.wts {
             if unsafe { WTSUnRegisterSessionNotification(self.hwnd) } == 0 {
@@ -322,7 +327,7 @@ impl Resources {
         error.map_or(Ok(()), Err)
     }
 }
-impl Drop for Resources {
+impl Drop for Resources<'_> {
     fn drop(&mut self) {
         let _ = self.cleanup();
     }
@@ -430,7 +435,7 @@ fn run(
     shared: &Shared,
     ready: &mpsc::SyncSender<Result<(usize, u32), String>>,
 ) -> Result<(), String> {
-    let mut resources = Resources::open()?;
+    let mut resources = Resources::open(Some(&shared.lifetime))?;
     // All three registrations precede the first snapshot. Old queued callback
     // records remain intact; none can be discarded by this current observation.
     let mut active = false;

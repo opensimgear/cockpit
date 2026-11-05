@@ -318,6 +318,9 @@ impl<H: Host> Coordinator<H> {
     }
     pub(crate) fn desktop_status(&self) -> Value {
         let mut status=self.host.desktop_status();
+        if status.is_object() {
+            status["serviceIntervalMs"] = serde_json::json!(self.service_interval().map(|interval| interval.as_millis()));
+        }
         let desktop_pending=self.manifest.active.iter().chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
             .any(|run|run.receipts.iter().any(|receipt|receipt.kind=="desktop-output"));
         if desktop_pending && matches!(self.status.state,State::RecoveryNeeded|State::Faulted) {

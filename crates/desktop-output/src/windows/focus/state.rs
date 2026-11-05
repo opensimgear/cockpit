@@ -1,4 +1,4 @@
-use super::{ScopeSnapshot, Wake};
+use super::{foreground::ForegroundSubscriber, ScopeSnapshot, Wake};
 use crate::{ProcessIdentity, Scope};
 use std::{
     collections::BTreeMap,
@@ -60,6 +60,7 @@ impl Subscriber {
 }
 struct State {
     subscribers: BTreeMap<u64, Weak<Subscriber>>,
+    foreground_subscribers: BTreeMap<u64, Weak<ForegroundSubscriber>>,
     last: Option<Observation>,
     terminal: Option<String>,
     closing: bool,
@@ -70,12 +71,16 @@ pub(super) struct Shared {
 }
 impl Shared {
     pub(super) fn new() -> Self {
-        Self { state: Mutex::new(State {
-            subscribers: BTreeMap::new(),
-            last: None,
-            terminal: None,
-            closing: false,
-        }), lifetime: super::lifetime::Lifetime::new() }
+        Self {
+            state: Mutex::new(State {
+                subscribers: BTreeMap::new(),
+                foreground_subscribers: BTreeMap::new(),
+                last: None,
+                terminal: None,
+                closing: false,
+            }),
+            lifetime: super::lifetime::Lifetime::new(),
+        }
     }
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|error| error.into_inner())
@@ -96,7 +101,10 @@ impl Shared {
         state
             .subscribers
             .retain(|_, subscriber| subscriber.strong_count() > 0);
-        if state.subscribers.len() >= WATCH_LIMIT {
+        state
+            .foreground_subscribers
+            .retain(|_, subscriber| subscriber.strong_count() > 0);
+        if state.subscribers.len() + state.foreground_subscribers.len() >= WATCH_LIMIT {
             return Err("Desktop scope watch limit exceeded.".into());
         }
         let last = state
@@ -123,10 +131,46 @@ impl Shared {
         state.subscribers.insert(id, Arc::downgrade(&subscriber));
         Ok(subscriber)
     }
+    pub(super) fn subscribe_foreground(
+        &self,
+        id: u64,
+        wake: super::foreground::Wake,
+    ) -> Result<Arc<ForegroundSubscriber>, String> {
+        let mut state = self.lock();
+        if let Some(error) = &state.terminal {
+            return Err(error.clone());
+        }
+        if state.closing {
+            return Err("Desktop scope observer is stopping.".into());
+        }
+        state
+            .subscribers
+            .retain(|_, subscriber| subscriber.strong_count() > 0);
+        state
+            .foreground_subscribers
+            .retain(|_, subscriber| subscriber.strong_count() > 0);
+        if state.subscribers.len() + state.foreground_subscribers.len() >= WATCH_LIMIT {
+            return Err("Desktop scope watch limit exceeded.".into());
+        }
+        let last = state
+            .last
+            .as_ref()
+            .ok_or("Desktop scope observer is not initialized.")?;
+        let subscriber = Arc::new(ForegroundSubscriber::new(id, last, wake));
+        state
+            .foreground_subscribers
+            .insert(id, Arc::downgrade(&subscriber));
+        Ok(subscriber)
+    }
     pub(super) fn unsubscribe(&self, subscriber: &Subscriber) {
         let mut state = self.lock();
         subscriber.lock().closed = true;
         state.subscribers.remove(&subscriber.id);
+    }
+    pub(super) fn unsubscribe_foreground(&self, subscriber: &ForegroundSubscriber) {
+        let mut state = self.lock();
+        subscriber.close();
+        state.foreground_subscribers.remove(&subscriber.id);
     }
     pub(super) fn close(&self) {
         self.lock().closing = true;
@@ -139,6 +183,7 @@ impl Shared {
     }
     pub(super) fn observe(&self, observation: Observation, forced_loss: bool) {
         let mut callbacks = Vec::new();
+        let mut foreground_callbacks = Vec::new();
         let mut exhausted = false;
         {
             let mut state = self.lock();
@@ -146,6 +191,23 @@ impl Shared {
                 return;
             }
             state.last = Some(observation.clone());
+            state.foreground_subscribers.retain(|_, weak| {
+                let Some(subscriber) = weak.upgrade() else {
+                    return false;
+                };
+                match subscriber.observe(&observation) {
+                    Ok(Some(snapshot)) => foreground_callbacks.push((subscriber, snapshot)),
+                    Ok(None) => {}
+                    Err(()) => {
+                        if let Some(snapshot) =
+                            subscriber.fail("Foreground watch sequence exhausted.".into())
+                        {
+                            foreground_callbacks.push((subscriber, snapshot));
+                        }
+                    }
+                }
+                true
+            });
             state.subscribers.retain(|_, weak| {
                 let Some(subscriber) = weak.upgrade() else {
                     return false;
@@ -191,6 +253,7 @@ impl Shared {
             return;
         }
         self.dispatch(callbacks);
+        self.dispatch_foreground(foreground_callbacks);
     }
     fn dispatch(&self, callbacks: Vec<(Arc<Subscriber>, ScopeSnapshot)>) {
         for (subscriber, snapshot) in callbacks {
@@ -207,14 +270,29 @@ impl Shared {
             }
         }
     }
+    fn dispatch_foreground(
+        &self,
+        callbacks: Vec<(
+            Arc<ForegroundSubscriber>,
+            super::foreground::ForegroundSnapshot,
+        )>,
+    ) {
+        for (subscriber, snapshot) in callbacks {
+            if !subscriber.closed() {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    (subscriber.wake)(snapshot)
+                }));
+            }
+        }
+    }
     pub(super) fn fail(&self, error: String) {
-        let callbacks = {
+        let (callbacks, foreground_callbacks) = {
             let mut state = self.lock();
             if state.terminal.is_some() || state.closing {
                 return;
             }
             state.terminal = Some(error.clone());
-            state
+            let callbacks = state
                 .subscribers
                 .values()
                 .filter_map(Weak::upgrade)
@@ -231,7 +309,18 @@ impl Shared {
                     sub.snapshot.loss_epoch = sub.snapshot.loss_epoch.saturating_add(1);
                     Some((subscriber.clone(), sub.snapshot.clone()))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let foreground_callbacks = state
+                .foreground_subscribers
+                .values()
+                .filter_map(Weak::upgrade)
+                .filter_map(|subscriber| {
+                    subscriber
+                        .fail(error.clone())
+                        .map(|snapshot| (subscriber, snapshot))
+                })
+                .collect::<Vec<_>>();
+            (callbacks, foreground_callbacks)
         };
         // A broken callback must not recursively redispatch the terminal fault.
         for (subscriber, snapshot) in callbacks {
@@ -241,6 +330,7 @@ impl Shared {
                 }));
             }
         }
+        self.dispatch_foreground(foreground_callbacks);
     }
 }
 

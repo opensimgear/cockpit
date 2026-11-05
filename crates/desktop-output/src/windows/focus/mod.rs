@@ -6,10 +6,12 @@ use std::sync::{
     Arc, Mutex, OnceLock, Weak,
 };
 
-mod native;
-mod state;
+mod foreground;
 mod lifetime;
+mod native;
 mod registry;
+mod state;
+pub use foreground::{ForegroundSnapshot, ForegroundWatch};
 use state::{Shared, Subscriber};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,20 +39,8 @@ pub struct ScopeWatch {
 }
 impl ScopeWatch {
     pub fn open(scope: Scope, wake: Wake) -> Result<Self, String> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let id = NEXT_ID
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-            .map_err(|_| "Desktop scope watch identity exhausted.")?;
-        let registry = OWNER.get_or_init(|| Mutex::new(Registry::default()));
-        let owner = registry::with_available(registry, deadline, |slot, owner| {
-            if let Some(owner) = owner { Ok(owner) } else {
-                let shared = Arc::new(Shared::new());
-                slot.shared = Arc::downgrade(&shared);
-                let owner = native::Owner::open(shared, deadline)?;
-                slot.owner = Arc::downgrade(&owner);
-                Ok(owner)
-            }
-        })?;
+        let owner = acquire_owner()?;
+        let id = next_id("Desktop scope watch identity exhausted.")?;
         let subscriber = owner.shared.subscribe(id, scope, wake)?;
         Ok(Self { subscriber, owner })
     }
@@ -60,6 +50,28 @@ impl ScopeWatch {
     pub fn id(&self) -> u64 {
         self.subscriber.id
     }
+}
+
+pub(super) fn next_id(error: &'static str) -> Result<u64, String> {
+    NEXT_ID
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+        .map_err(|_| error.into())
+}
+
+pub(super) fn acquire_owner() -> Result<Arc<native::Owner>, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let registry = OWNER.get_or_init(|| Mutex::new(Registry::default()));
+    registry::with_available(registry, deadline, |slot, owner| {
+        if let Some(owner) = owner {
+            Ok(owner)
+        } else {
+            let shared = Arc::new(Shared::new());
+            slot.shared = Arc::downgrade(&shared);
+            let owner = native::Owner::open(shared, deadline)?;
+            slot.owner = Arc::downgrade(&owner);
+            Ok(owner)
+        }
+    })
 }
 impl Drop for ScopeWatch {
     fn drop(&mut self) {

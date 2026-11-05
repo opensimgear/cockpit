@@ -1,4 +1,4 @@
-use super::{Completion, Job, Reply, Setup, Shared, execute};
+use super::{Completion, Job, Reply, Setup, Shared, State, child, execute, focus};
 use osg_desktop_output::{Coordinator, protocol::ScopeAdmission};
 use osg_mapping::engine::{Counter, RunToken, typed::Token};
 use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
@@ -14,13 +14,14 @@ pub(super) struct Owner {
     pub(super) last_renew: Option<Instant>,
     last_authorization: u64,
     failure_stopped: bool,
+    renewal_requested: bool,
 }
 enum Work {
-    Stop(Reply), Pause(RunToken), Setup(Setup), Data(Job), Renew(RunToken, u64), Fault,
+    Stop(Reply), Pause(RunToken), Setup(Setup), Data(Job), Renew(RunToken, u64), Authorize, Fault,
 }
 impl Owner {
     pub(super) fn new(output: Coordinator, shared: Arc<Shared>, tap_durations: BTreeMap<String, Counter>) -> Self {
-        Self { output, shared, armed: BTreeMap::new(), armed_admission: None, tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false }
+        Self { output, shared, armed: BTreeMap::new(), armed_admission: None, tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false, renewal_requested: false }
     }
     pub(super) fn fail(&mut self, error: String) {
         let mut state = self.shared.lock();
@@ -61,16 +62,32 @@ impl Owner {
             state.executing_admission = job.admission;
             return Some(Work::Data(job));
         }
+        if !self.renewal_enabled(&state) { return None; }
         if let Some((run, admitted, id)) = state.authorization.clone() {
             if admitted.elapsed() > AUTHORIZATION_FRESHNESS || id == self.last_authorization {
                 state.authorization = None;
+                // Each expired response permits one replacement request. Its
+                // removal prevents repeated wakes for a stalled parent.
+                if id != self.last_authorization { self.renewal_requested = false; }
             } else if self.last_renew.is_none_or(|last| last.elapsed() >= RENEW_INTERVAL) {
                 state.authorization = None;
                 state.control_active = true;
                 return Some(Work::Renew(run, id));
             }
         }
+        if !self.renewal_requested && self.last_renew.is_some_and(|last| last.elapsed() >= RENEW_INTERVAL) {
+            self.renewal_requested = true;
+            return Some(Work::Authorize);
+        }
         None
+    }
+    fn renewal_enabled(&self, state: &State) -> bool {
+        self.last_renew.is_some() && !state.closed && !state.shutdown && state.fault.is_none()
+            && focus::renewable(state) && child::renewable(state)
+    }
+    fn renewal_wait(&self, state: &State) -> Option<Duration> {
+        (self.renewal_enabled(state) && !self.renewal_requested)
+            .then(|| RENEW_INTERVAL.saturating_sub(self.last_renew.unwrap().elapsed()))
     }
     pub(super) fn step(&mut self) -> bool {
         let Some(work) = self.next() else { return false };
@@ -89,6 +106,8 @@ impl Owner {
                 if let Some(error) = error { self.fail(error); }
             }
             Work::Stop(reply) => {
+                self.last_renew = None;
+                self.renewal_requested = false;
                 // Complete an accepted but unstarted data ticket without replay.
                 let mut state = self.shared.lock();
                 if let Some(job) = state.job.take() {
@@ -116,6 +135,7 @@ impl Owner {
                         let result = self.output.activate(run.clone(), scope);
                         if result.is_ok() {
                             self.last_renew = Some(Instant::now());
+                            self.renewal_requested = false;
                             self.shared.lock().activation_scope = self.output.scope_receipt(&run);
                         }
                         (result, reply)
@@ -128,15 +148,24 @@ impl Owner {
             }
             Work::Renew(run, authorization) => {
                 self.last_authorization = authorization;
+                self.renewal_requested = false;
                 let result = self.output.renew(run);
                 self.last_renew = Some(Instant::now());
                 if let Err(error) = result { self.fail(error); }
             }
             Work::Fault => {
+                self.last_renew = None;
+                self.renewal_requested = false;
                 // No replay. Try only the explicit release barrier; retain the
                 // original fault and the coordinator's durable uncertainty.
                 let _ = self.output.stop_all();
                 self.armed.clear();
+            }
+            Work::Authorize => {
+                // A due lease needs a newly evaluated parent decision. Retain
+                // one wake, then wait for its response without renewing alone.
+                self.shared.notify();
+                return true;
             }
         }
         self.shared.publish(self.output.snapshot());
@@ -153,10 +182,11 @@ impl Owner {
             // control/job notification can be lost between step and sleep.
             if state.stop.is_some() || state.pause.is_some() || state.setup.is_some()
                 || state.job.is_some() || (state.fault.is_some() && !self.failure_stopped) { continue; }
-            let deadline = state.authorization.as_ref().and_then(|(_, admitted, id)| {
-                if *id == self.last_authorization || admitted.elapsed() > AUTHORIZATION_FRESHNESS { return None; }
-                Some(self.last_renew.map_or(Duration::ZERO, |last| RENEW_INTERVAL.saturating_sub(last.elapsed())))
-            });
+            // A fresh response can arrive after next() but before this lock.
+            // Its notification must not be lost while a request is outstanding.
+            if self.renewal_enabled(&state) && state.authorization.is_some()
+                && self.last_renew.is_some_and(|last| last.elapsed() >= RENEW_INTERVAL) { continue; }
+            let deadline = self.renewal_wait(&state);
             if let Some(duration) = deadline {
                 drop(self.shared.changed.wait_timeout(state, duration).unwrap_or_else(|error| error.into_inner()));
             } else {
@@ -167,3 +197,7 @@ impl Owner {
         let _ = self.output.stop_all();
     }
 }
+
+#[cfg(test)]
+#[path = "renewal_tests.rs"]
+mod renewal_tests;

@@ -50,6 +50,15 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     host.native = true; // No native adapter is opened by this scheduling-policy test.
     let supported = || capture_driven(&host, &host.prepared[&key(&owner)], &run);
     assert_eq!(supported(), cfg!(windows));
+    let state = host.run(&owner).unwrap();
+    state.document.desktop_outputs = serde_json::from_value(serde_json::json!([{
+        "id":"keyboard","name":"Keyboard","required":true,"scope":{"kind":"desktop-wide"},
+        "ports":[],"actions":[]
+    }])).unwrap();
+    assert!(document_supported(&state.document), "Desktop documents can qualify with retained native scope wakes");
+    assert!(!desktop_notifications(state), "A declared desktop adapter without a live subscription cannot opt out of service");
+    assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
+    host.run(&owner).unwrap().document.desktop_outputs.clear();
     host.input_wake.take();
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     let state = host.run(&owner).unwrap();

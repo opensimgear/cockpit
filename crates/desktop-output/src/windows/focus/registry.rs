@@ -14,6 +14,21 @@ pub(super) fn with_available<T>(
             return Err("Desktop scope observer initialization deadline expired.".into());
         }
         let owner = slot.owner.upgrade();
+        if let Some(retired) = owner.as_ref().filter(|owner|
+            owner.shared.terminal().is_some() || owner.shared.lifetime.exited())
+        {
+            let shared = retired.shared.clone();
+            if shared.lifetime.exited() {
+                // A diagnostic subscriber may still retain the completed owner.
+                // Only native teardown, not its last Arc, permits replacement.
+                slot.owner = Default::default();
+                slot.shared = Default::default();
+            }
+            drop(slot);
+            drop(owner);
+            shared.lifetime.wait(deadline)?;
+            continue;
+        }
         if owner.is_none() {
             if let Some(shared) = slot.shared.upgrade().filter(|shared| !shared.lifetime.exited()) {
                 drop(slot);

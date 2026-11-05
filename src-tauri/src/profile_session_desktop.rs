@@ -4,18 +4,24 @@ use crate::{profile_desktop_settings as settings, profile_session::RunOwner};
 use osg_desktop_output::{ProcessIdentity, Scope};
 use osg_mapping::{engine::{typed::{native::Admission,Phase},Counter,RunToken},program::Program};
 use serde_json::Value;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
-static RECENT_APPLICATION: OnceLock<Mutex<Option<ProcessIdentity>>> = OnceLock::new();
-pub(crate) fn observe_foreground() {
-    if let Ok(identity) = foreground() {
-        if std::env::current_exe().ok().is_some_and(|path| path.to_string_lossy().eq_ignore_ascii_case(&identity.executable)) { return; }
-        *RECENT_APPLICATION.get_or_init(|| Mutex::new(None)).lock().unwrap_or_else(|p|p.into_inner()) = Some(identity);
-    }
+#[cfg(windows)]
+#[path = "profile_session/desktop_foreground.rs"]
+mod foreground_observer;
+#[cfg(windows)]
+pub(crate) fn start_foreground_observer(wake: Arc<osg_streams::NativeWake>) -> Option<osg_desktop_output::windows::focus::ForegroundWatch> {
+    foreground_observer::start(wake)
 }
+#[cfg(not(windows))]
+pub(crate) fn start_foreground_observer(_wake: Arc<osg_streams::NativeWake>) {}
+#[cfg(windows)]
 pub(crate) fn recent_application() -> Result<ProcessIdentity, String> {
-    RECENT_APPLICATION.get_or_init(|| Mutex::new(None)).lock().unwrap_or_else(|p|p.into_inner()).clone()
-        .ok_or_else(|| "Focus the application you want to control, then return to Cockpit and choose it.".into())
+    foreground_observer::recent_application()
+}
+#[cfg(not(windows))]
+pub(crate) fn recent_application() -> Result<ProcessIdentity, String> {
+    Err("Native keyboard and mouse output is currently supported on Windows only.".into())
 }
 
 pub(crate) fn capabilities(backend: &mut osg_profiles::compiler_models::BackendCapabilities, native: bool) {
@@ -84,6 +90,10 @@ pub(crate) struct Desktop {
     wake: Option<Arc<osg_streams::NativeWake>>,
 }
 impl Desktop {
+    pub(crate) fn notification_driven(&self) -> bool {
+        self.started && self.scope.is_some()
+            && self.inner.as_ref().is_some_and(|inner| inner.notification_driven())
+    }
     pub(crate) fn next_deadline_us(&self) -> Option<Counter> {
         if !self.started || self.scope.is_none() { return None; }
         self.inner.as_ref().and_then(|inner| inner.next_deadline_us())

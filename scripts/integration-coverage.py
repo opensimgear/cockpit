@@ -73,6 +73,7 @@ def main():
                          'games/profiles/session_read.rs', 'games/profiles/native_admission.rs',
                          'games/profiles/native_tables.rs', 'profile_session_host.rs',
                          'profile_session_launch_host.rs', 'profile_session_desktop.rs',
+                         'profile_session/host_scheduling.rs',
                          'profile_session/activation_heartbeat.rs'])
     module_names.extend(['profile_session/source_admission.rs', 'games/profiles/session_delivery.rs', 'games/vehicles/sources.rs'])
     module_names.extend(['games/profiles/source_wakes.rs', 'games/vehicles/views.rs', 'game_telemetry_api.rs', 'gateways.rs'])
@@ -101,6 +102,7 @@ def main():
                          'games/vehicles/observation.rs', 'games/review/mod.rs',
                          'games/review/completion.rs', 'game_activation.rs', 'game_context.rs'])
     if os.name == 'nt':
+        module_names.append('profile_session/desktop_foreground.rs')
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',
                              'xplane/process_events/bridge.rs', 'xplane/process_events/bridge/protocol.rs',

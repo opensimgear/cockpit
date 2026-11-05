@@ -445,9 +445,15 @@ impl GatewayManager {
             let wake = profile_wake.clone();
             let activity_session = activity_session.clone();
             let worker = std::thread::spawn(move || {
+                #[cfg(windows)]
+                let mut foreground_watch = crate::profile_session_desktop::start_foreground_observer(wake.clone());
                 while !closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
-                    crate::profile_session_desktop::observe_foreground();
+                    #[cfg(windows)]
+                    if foreground_watch.as_ref().is_some_and(|watch| watch.terminal()) {
+                        drop(foreground_watch.take());
+                        foreground_watch = crate::profile_session_desktop::start_foreground_observer(wake.clone());
+                    }
                     let (service, deadline) = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();

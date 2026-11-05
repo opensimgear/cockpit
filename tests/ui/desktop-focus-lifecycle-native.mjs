@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
 test('native scope subscriptions retire across profile replacement and Stop without input',{
@@ -37,7 +38,15 @@ test('native scope subscriptions retire across profile replacement and Stop with
     assert.equal(firstState.runtime.helperScope.live,true);
     assert.ok(BigInt(firstState.runtime.helperScope.admission.registration)>0n);
     assert.equal(firstState.runtime.helperScope.admission.epoch,'1');
+    assert.equal(firstState.runtime.serviceIntervalMs,null,'Qualified desktop routing uses retained wakes and deadlines');
     assert.deepEqual(firstState.runtime.backend.held,[]);
+    // No gateway reads or authored input during four worker lease periods.
+    await delay(1100);
+    const quiet=await desktop();
+    assert.equal(quiet.runtime.serviceIntervalMs,null);
+    assert.equal(quiet.runtime.helperScope.live,true,'Fresh parent authorization must renew while input is quiet');
+    assert.deepEqual(quiet.runtime.helperScope.admission,firstState.runtime.helperScope.admission);
+    assert.equal(quiet.runtime.backend.uncertain,false);
     const second=(await apply(first.owner)).profiles.profileSession;
     assert.equal(second.state,'running',JSON.stringify(second));
     assert.notDeepEqual(second.owner,first.owner);
@@ -57,7 +66,8 @@ test('native scope subscriptions retire across profile replacement and Stop with
     const directory=`.research/reactive/desktop-focus-lifecycle-native/${Date.now()}`;
     await mkdir(directory,{recursive:true});
     await writeFile(directory+'/evidence.json',JSON.stringify({actualNativeCockpit:true,
-      authoredNonNeutralInput:false,physicalLatencyQualified:false,first:firstState.runtime,second:secondState.runtime,final},null,2));
+      authoredNonNeutralInput:false,physicalLatencyQualified:false,quietWithoutGatewayReadsMs:1100,
+      first:firstState.runtime,quiet:quiet.runtime,second:secondState.runtime,final},null,2));
   }finally{
     try{
       if(saved){
