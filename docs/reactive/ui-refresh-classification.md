@@ -150,3 +150,35 @@ The companion app and firmware rows are tracked separately.
 | `ProfileCanvas.svelte:59,398` | Canvas camera animation and active pointer gesture | Keep dirty frame scheduling. Camera and canvas tests cover animation completion and gesture updates. |
 | `ProfileCanvas.svelte:69,248` | Connection gesture, distinguish a single click from a double click | Keep the one-time selection delay. Canvas tests cover connection selection. |
 | `ProfileDesktopControls.svelte:11` | Dormant desktop component, status interval | No production import. The timer guard prevents a caller from restoring the interval. |
+
+## Companion application and shared widget timing sites
+
+These locations use the same pinned ledger.
+
+| Ledger site | Owner and trigger | Disposition and verification |
+| --- | --- | --- |
+| `apps/browser-companion/src/App.svelte:40,94` | Browser connection owner, retry deadline after failure | Keep bounded reconnect backoff. Reconnect and focus lifecycle still need live browser qualification. |
+| `apps/browser-companion/src/App.svelte:41,267` | Direct browser connection, next lease or unassigned ping | Keep only while the direct connection is active. Transport tests cover the deadlines. |
+| `apps/browser-companion/src/App.svelte:44,150` | Preparing panel owner, renew until the initial baseline or cancellation | Keep the preparation lease deadline. Qualify its minimum margin on actual clients. |
+| `apps/browser-companion/src/connection-worker.ts:8,19` | Shared worker, next maintenance deadline for its connection | Keep one deadline per worker. `connection-worker.test.mjs` covers scheduling and cancellation. |
+| `apps/browser-companion/src/connection-worker.ts:41` | Shared worker startup, retry after a failed connection | Keep failure backoff. The worker test covers transport failure. |
+| `apps/browser-companion/src/socket-transport.ts:31,41,65` | Socket owner, connection and outstanding reply deadlines | Keep protocol timeouts and close on failure. Transport tests cover cleanup. |
+| `apps/browser-companion/src/transport.ts:32,63` | Transport bootstrap, stalled SharedWorker startup | Keep the one-time direct fallback. `worker-transport.test.mjs` covers fallback. |
+| `apps/companion/src-tauri/src/status_events.rs:32,35,37,40` | Test-only receive bounds for status observation | No production timer. The fixture verifies one outstanding notification and acknowledgment. |
+| `apps/companion/src/lib/lease-heartbeat.ts:10,12` | Native companion owner, renew an armed session | Keep the deadline with ownership and Stop. `lease-heartbeat.test.mjs` covers renewal and cleanup. |
+| `apps/companion/src/lib/PairingForm.svelte:10,46` | User-opened QR scanner, read the next camera image | Keep the bounded local camera scan while explicitly open. Verify cancellation and hidden-page cleanup on actual clients. |
+| `packages/companion-ui/src/CompiledWidget.svelte:22,60,69` | Shared widget renderer, active playback and next authored or freshness deadline | Keep dirty animation frames and a single deadline. The native preview fixture checks that idle rendering stays quiet. |
+| `packages/companion-ui/src/PanelCanvas.svelte:59,66` | Panel controller, next action deadline and feedback expiry | Keep deadline wakes. Verify both return the affected widget to its safe state without further input. |
+| `packages/widget-compiler/src/compiler.ts:87` | Active compiler, yield after a rasterized frame | Keep the cooperative yield and cancellation check. `compiler.test.mjs` covers compilation and bounds. |
+| `apps/companion-esp32/boards/sunton-3248s035r/board.c:71,81`, `apps/companion-esp32/boards/waveshare-lcd7/board.c:160,162,164,166` | Board initialization, reset and display or touch readiness | Keep the one-time hardware settling delays. Physical display bring-up remains in #199. |
+| `apps/companion-esp32/main/app_main.c:27` | Touch worker, read the board every 20 ms | Identify the board interrupt or driver-event bridge for each supported controller. Physical touch cadence and release qualification remain open. |
+| `apps/companion-esp32/main/app_main.c:88` | Display worker, check candidate, dirty render and damage every 20 ms | Replace the unconditional wake with candidate and dirty notifications plus the next animation, expiry or failed-render retry deadline. Verify display damage, feedback expiry and recovery on hardware. |
+| `apps/companion-esp32/network/serial_wire.c:82` | Serial worker, retry after an empty stdin read | Use a blocking receive or native serial wake with explicit Stop. `serial_wire_test.c` covers framing. Idle and reconnect qualification remain open. |
+
+At the pinned sibling revisions, the scanner found no direct timing calls in
+`device-gateway`, `device-template`, or `firmware-common`. The gateway main
+loop still passes the board clock to protocol and CAN deadline handlers.
+`device-gateway/firmware/tests/gateway_test.c` and
+`device-gateway/firmware/shared-cyphal/tests/transport_test.c` cover protocol
+expiry and wraparound. Physical CAN retry and recovery timing and MCU
+scheduling latency remain open in #199.
