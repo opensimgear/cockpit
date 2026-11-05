@@ -16,6 +16,12 @@ fn capture(state: &live_validation::StateMutex) -> Value {
 }
 
 impl Runtime {
+    /// The live coordinator has its own slot; activation and reconnect waiters
+    /// must never replace committed-token invalidations for a parked run.
+    pub(crate) fn watch_routing_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.state.routing_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+
     // The serialized profile transition owns the only activation waiter.
     pub(crate) fn watch_activation_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.state.activation_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);

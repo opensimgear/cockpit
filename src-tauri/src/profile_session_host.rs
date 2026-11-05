@@ -14,6 +14,8 @@ mod publication;
 mod dcs_hid;
 #[path = "profile_session/health_policy.rs"]
 mod health_policy;
+#[path = "profile_session/host_scheduling.rs"]
+mod host_scheduling;
 #[path = "profile_session/admission_diagnostics.rs"]
 mod admission_diagnostics;
 #[path = "profile_session/activation_heartbeat.rs"]
@@ -214,6 +216,7 @@ impl NativeProfileHost {
         self
     }
     pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
+        self.resources.watch_routing_catalogue(&wake);
         self.native_wake = Some(wake);
         self
     }
@@ -1190,7 +1193,9 @@ impl Host for NativeProfileHost {
                 && state.actions.is_empty() && state.publication.is_empty()
                 && state.visibility.is_empty() && state.companions.is_empty()
         });
-        (!internal).then_some(std::time::Duration::from_millis(5))
+        let captured = self.prepared.get(&key(&run.owner))
+            .is_some_and(|state| host_scheduling::capture_driven(self, state, run));
+        (!(internal || captured)).then_some(std::time::Duration::from_millis(5))
     }
     fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner))?;
@@ -1200,7 +1205,8 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
-        [routing, state.scripts.next_deadline(), state.output.as_ref().and_then(|output| output.renewal_deadline())]
+        [routing, state.scripts.next_deadline(), state.output.as_ref().and_then(|output|
+            host_scheduling::output_deadline(output.cursor(), state.recording.cursor(), output.renewal_deadline()))]
             .into_iter().flatten().min()
     }
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {

@@ -135,10 +135,23 @@ fn contended_reconnect_wakes_on_read_unlock_without_a_catalogue_commit() {
 }
 
 #[test]
-fn changed_provider_generation_revokes_the_exact_old_token_at_commit() {
+fn generation_commit_wakes_routing_with_the_exact_old_token_already_revoked() {
     let (runtime, token) = delivery();
-    let mut route = runtime.validate_delivery(&token).unwrap();
-    route.provider_generation = "2".into();
+    let route = runtime.validate_delivery(&token).unwrap();
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    routing.bind_thread(thread::current()).unwrap();
+    runtime.watch_routing_catalogue(&routing);
+    // Transient preparation/learning and the automatic reconnect owner must
+    // retain independent slots from the live coordinator's invalidations.
+    let activation = Arc::new(osg_streams::NativeWake::default());
+    let learning = Arc::new(osg_streams::NativeWake::default());
+    let reconnect = Arc::new(osg_streams::NativeWake::default());
+    runtime.watch_activation_catalogue(&activation);
+    runtime.watch_learning_catalogue(&learning);
+    runtime.watch_reconnect_catalogue(&reconnect);
+    let before = routing.observed();
+    let mut replacement = route.clone();
+    replacement.provider_generation = "2".into();
     let mut writer = runtime.state.lock().unwrap();
     let selected = PortExpectation { profile_port_id: "pressed".into(), observed_port_id: token.port_id.clone(),
         expected_contract_hash: token.contract_hash.clone() };
@@ -147,12 +160,33 @@ fn changed_provider_generation_revokes_the_exact_old_token_at_commit() {
         session: "health-fixture".into(), revision: 2, complete: true,
         observations: vec![Observation { key: "controller".into(), name: "Controller".into(),
             resource_type: ResourceType::HostController, evidence: vec![], attributes: BTreeMap::new(),
-            diagnostics: vec![], route: Some(route), ports: Some(PortUpdate::complete(vec![port]).unwrap()),
+            diagnostics: vec![], route: Some(replacement), ports: Some(PortUpdate::complete(vec![port]).unwrap()),
         }],
     }).unwrap();
+    assert_eq!(routing.observed(), before, "Uncommitted changes cannot wake routing");
+    assert_eq!(runtime.try_validate_live_delivery(&token).unwrap(), Some(route));
     drop(writer);
+    assert_ne!(routing.observed(), before, "Routing must observe the committed generation change");
+    assert!(!routing.wait(before, Duration::from_secs(2)), "A pre-park commit must request another drain immediately");
     let _writer = runtime.state.lock().unwrap();
-    assert!(runtime.try_validate_live_delivery(&token).is_err());
+    assert!(runtime.try_validate_live_delivery(&token).is_err(), "The wake must expose committed revocation even with inventory locked again");
+    assert!(activation.observed() > 0);
+    assert!(learning.observed() > 0);
+}
+
+#[test]
+fn read_only_delivery_validation_does_not_wake_routing() {
+    let (runtime, token) = delivery();
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    runtime.watch_routing_catalogue(&routing);
+    let before = routing.observed();
+    let route = runtime.validate_delivery(&token).unwrap();
+    assert_eq!(runtime.validate_live_delivery(&token).unwrap(), route);
+    {
+        let _reader = runtime.state.lock().unwrap();
+        assert_eq!(runtime.try_validate_live_delivery(&token).unwrap(), Some(route));
+    }
+    assert_eq!(routing.observed(), before, "Read-only checks and confirmed-cache reads must leave parked routing quiet");
 }
 
 #[test]

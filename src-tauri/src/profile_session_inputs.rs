@@ -59,6 +59,9 @@ pub(crate) struct HidInputs {
     watch: Option<stream::ReportWatch>,
 }
 impl HidInputs {
+    pub(crate) fn notification_driven(&self) -> bool {
+        self.sources.is_empty() || self.watch.is_some()
+    }
     pub(crate) fn capture(
         plan: &ExecutionPlan,
         controllers: &impl HidCapture,

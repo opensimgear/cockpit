@@ -57,8 +57,11 @@ test('physical input reader activates, survives same-profile replacement and sto
   const axis=output(initial);
   assert.equal(axis.contract.schema.type,'integer');assert.ok(Number.isInteger(axis.sample.value.value));
   assert.ok(axis.sample.value.value>=axis.contract.schema.min&&axis.sample.value.value<=axis.contract.schema.max);
-  await new Promise(resolve=>setTimeout(resolve,200));
+  const quietMs=axis.contract.freshnessMs+250;
+  assert.ok(Number.isSafeInteger(quietMs)&&quietMs>250&&quietMs<=10000,'Bounded native freshness window required');
+  await new Promise(resolve=>setTimeout(resolve,quietMs));
   const held=await inspect();
+  assert.equal(output(held)?.sample.status,'known','Quiet native liveness must survive its scheduled freshness deadline');
   assert.equal((await request({command:'profile_status'})).profiles.profileSession.state,'running');
   const previous=owner;
   const replacement=await apply(previous);
@@ -70,7 +73,7 @@ test('physical input reader activates, survives same-profile replacement and sto
   const late=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({command:'profile_runtime_inspect',clientId:'source-watch-native-acceptance',owner,nodeId:fixture.nodeId,offset:0,limit:64})}})`);
   assert.equal(late.ok,false);
   await writeFile(`${directory}/evidence.json`,JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,
-   profile:profile.id,sourceId:fixture.sourceId,active,initial,held,replacement,replaced,stopped,lateOwnerRejected:true,
+   profile:profile.id,sourceId:fixture.sourceId,active,initial,quietMs,held,replacement,replaced,stopped,lateOwnerRejected:true,
    noExternalOutputs:true,noPreviewSubscription:true,rawInputLatencyQualified:false,virtualLatencyQualified:false},null,2)+'\n');
  }finally{
   try{

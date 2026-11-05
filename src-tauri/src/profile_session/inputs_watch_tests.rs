@@ -70,6 +70,7 @@ fn reader_owns_exact_source_wake_and_replacement_overlap_has_no_gap() {
 fn registration_before_baseline_cannot_lose_an_interleaved_native_report() {
     let (plan, capture, count, wake) = native(); capture.race.set(true);
     let (mut reader, baseline) = HidInputs::capture(&plan, &capture, Some(wake), |_| Ok(())).unwrap();
+    assert!(reader.notification_driven());
     assert_eq!(count.load(Ordering::SeqCst), 1);
     assert_eq!(baseline.len(), 1); assert_eq!(baseline[0].reason, Reason::Baseline);
     assert_eq!(baseline[0].changes[0].sample, SignalSample::scalar(osg_profiles::PortValue::Number(2.0)));
@@ -103,4 +104,12 @@ fn failed_baseline_releases_watch_and_empty_plan_never_registers() {
     plan.sources.clear();
     let (reader, frames) = HidInputs::capture(&plan, &capture, Some(wake), |_| Ok(())).unwrap();
     assert!(reader.watch.is_none()); assert!(frames.is_empty());
+    assert!(reader.notification_driven());
+}
+
+#[test]
+fn a_live_hid_source_without_a_report_watch_requires_service() {
+    let (plan, capture, _, _) = native();
+    let (reader, _) = HidInputs::capture(&plan, &capture, None, |_| Ok(())).unwrap();
+    assert!(!reader.notification_driven());
 }

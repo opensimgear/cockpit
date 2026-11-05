@@ -35,6 +35,13 @@ Gateway catalogue and temporary publication checks have a separate scope.
 The remaining CAN publication fallback discovers firmware ownership and layout
 changes. It does not read panel values or feed the input journal.
 
+Qualified Windows controller/internal profiles now service routing from retained
+HID report watches, committed resource-token changes and actual deadlines.
+Optional virtual output keeps its independent renewal deadline; pending ordered
+reports request an immediate drain. The 5 ms adapter fallback remains for games,
+desktop output, panels, companions, visibility, publication and physical actions,
+and for hosts without the required native watches.
+
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. Changes in the serial topology cache,
 including enumeration failure and recovery, wake the aggregate resource worker.
