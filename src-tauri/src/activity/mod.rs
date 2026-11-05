@@ -17,6 +17,10 @@ mod scopes;
 mod tests;
 #[cfg(test)]
 mod once_tests;
+#[cfg(test)]
+mod wake_tests;
+#[cfg(test)]
+mod writer_wake_tests;
 pub(crate) use capture::Snapshot;
 use osg_persistence::{Database, NewActivityEvent};
 use serde_json::{json, Value};
@@ -24,21 +28,27 @@ use std::{path::Path, sync::{mpsc, Arc, Mutex}, thread::JoinHandle, time::{Durat
 
 type Observe = Box<dyn Fn() -> Snapshot + Send>;
 enum Message { Event(NewActivityEvent), Observe(Observe), Flush(mpsc::Sender<Result<(),String>>), Stop }
+struct MainSender { sender: mpsc::SyncSender<Message>, wake: Arc<osg_streams::NativeWake> }
+impl MainSender {
+    fn send(&self,message:Message)->Result<(),mpsc::SendError<Message>> {let result=self.sender.send(message);if result.is_ok(){self.wake.notify();}result}
+}
 pub(crate) struct Action {
     key:String,
     registry:Arc<Mutex<reconcile::Reconciler>>,
     identity:Option<(String,String)>,
+    wake:Arc<osg_streams::NativeWake>,
 }
-impl Drop for Action {fn drop(&mut self){self.registry.lock().unwrap_or_else(|p|p.into_inner()).abandon(&self.key);}}
+impl Drop for Action {fn drop(&mut self){self.registry.lock().unwrap_or_else(|p|p.into_inner()).abandon(&self.key);self.wake.notify();}}
 pub(crate) struct Runtime {
     database: Result<Database, String>,
-    sender: mpsc::SyncSender<Message>,
+    sender: MainSender,
     worker: Mutex<Option<JoinHandle<()>>>,
     lifecycle: Arc<Mutex<session::Observer>>,
     started: std::sync::atomic::AtomicBool,
     metadata: Mutex<()>,
     registry:Arc<Mutex<reconcile::Reconciler>>,
     revision: Arc<revision::Revision>,
+    wake: Arc<osg_streams::NativeWake>,
 }
 pub(crate) fn event(category: &str, kind: &str, level: &str, message: String, id: Option<String>, name: Option<String>) -> NewActivityEvent {
     NewActivityEvent { event_key:uuid::Uuid::new_v4().to_string(),occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64,
@@ -53,12 +63,14 @@ impl Runtime {
         // coordinator is locked. This channel receives changes only, never ticks.
         let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();
         let registry=Arc::new(Mutex::new(reconcile::Reconciler::default()));
-        let lifecycle=Arc::new(Mutex::new(session::Observer::new(lifecycle_sender,registry.clone())));
+        let wake=Arc::new(osg_streams::NativeWake::default());
+        let lifecycle=Arc::new(Mutex::new(session::Observer::new(lifecycle_sender,registry.clone(),wake.clone())));
         let writer_registry=registry.clone();
         let revision = Arc::new(revision::Revision::default());
         let writer_revision = revision.clone();
-        let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry,&writer_revision)).expect("start native activity worker");
-        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision }
+        let writer_wake=wake.clone();
+        let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry,&writer_revision,writer_wake)).expect("start native activity worker");
+        Self { database, sender:MainSender{sender,wake:wake.clone()}, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision,wake }
     }
     pub(crate) fn observe_revision(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
         self.database.as_ref().map_err(Clone::clone)?;
@@ -81,7 +93,7 @@ impl Runtime {
         let key=uuid::Uuid::new_v4().to_string();
         self.registry.lock().unwrap_or_else(|p|p.into_inner()).begin(key.clone(),scopes::Scope::request(request));
         let identity=self.lifecycle.try_lock().ok().and_then(|observer|observer.identity());
-        Some(Action{key,registry:self.registry.clone(),identity})
+        Some(Action{key,registry:self.registry.clone(),identity,wake:self.wake.clone()})
     }
     pub(crate) fn audit_action(&self,request:&Value,response:&Value,context:Option<&context::Context>,action:Option<&Action>)->bool {
         if let Some(mut event)=audit::mutation_with_context(request,response,context) {

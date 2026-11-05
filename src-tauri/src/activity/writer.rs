@@ -10,19 +10,28 @@ pub(super) fn persist(storage: &Result<Database,String>, pending: &mut VecDeque<
     }
     Ok(())
 }
-pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Message>, lifecycle: mpsc::Receiver<observations::Batch>, registry:Arc<Mutex<reconcile::Reconciler>>, revision: &revision::Revision) {
+pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Message>, lifecycle: mpsc::Receiver<observations::Batch>, registry:Arc<Mutex<reconcile::Reconciler>>, revision: &revision::Revision, wake: Arc<osg_streams::NativeWake>) {
+    let _ = wake.bind_thread(std::thread::current());
     let mut observe: Option<Observe> = None;
     let mut previous = None;
     let mut pending = VecDeque::new();
     let mut last_prune = std::time::Instant::now();
     let mut last_observation = std::time::Instant::now();
     loop {
-        let received = receiver.recv_timeout(Duration::from_millis(750));
-        let disconnected = matches!(received,Err(mpsc::RecvTimeoutError::Disconnected));
+        // Observe the epoch before draining both queues. A producer racing the
+        // drain advances it, so wait_scheduled refuses to sleep past that work.
+        let observed = wake.observed();
         let mut acknowledgements = vec![];
-        let mut stop = disconnected;
+        let mut stop = false;
         let mut changed = false;
-        for message in received.ok().into_iter().chain(receiver.try_iter().take(255)) {
+        let mut drained = 0;
+        while drained < 256 {
+            let message = match receiver.try_recv() {
+                Ok(message) => message,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => { stop = true; break; }
+            };
+            drained += 1;
             match message {
                 Message::Event(event) => {
                     changed=true;
@@ -60,6 +69,14 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
         if stop {
             if let Err(error) = outcome { eprintln!("Activity writer stopped with {} unsaved events: {error}",pending.len()); }
             break;
+        }
+        // Do not park when the bounded main-channel drain may have left work.
+        if drained < 256 {
+            let now=std::time::Instant::now();
+            let observation_due=last_observation+Duration::from_millis(750);
+            let prune_due=last_prune+Duration::from_secs(3600);
+            let deadline=observation_due.min(prune_due);
+            wake.wait_scheduled(observed,Some(deadline.saturating_duration_since(now)));
         }
     }
 }

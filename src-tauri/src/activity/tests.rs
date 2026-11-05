@@ -37,7 +37,7 @@ fn controller_input_sequences_do_not_log_but_presence_changes_do() {
 }
 #[test]
 fn profile_native_lifecycle_observer_keeps_brief_transitions_and_deduplicates_ticks() {
-    let (sender,receiver)=mpsc::channel();let mut observer=session::Observer::new(sender,Arc::new(Mutex::new(reconcile::Reconciler::default())));
+    let (sender,receiver)=mpsc::channel();let mut observer=session::Observer::new(sender,Arc::new(Mutex::new(reconcile::Reconciler::default())),Arc::new(osg_streams::NativeWake::default()));
     let document=osg_profiles::default_document();let id=document.id.clone();observer.names(&[document]);
     let mut status=Status{state:State::Stopped,owner:None,applied_snapshot:None,degradation:vec![],fault:None};
     observer.observe(&status);
@@ -144,5 +144,5 @@ fn background_review_setup_reason_vehicle_and_system_events_are_useful_without_u
     current.lock().unwrap().discovery(&json!({"scanId":"scan-2","status":"failed","diagnostics":["Scan failed because the library is inaccessible."]}));assert_eq!(query("discovery_failed")["events"][0]["level"],"error");
     assert_eq!(query("discovery_failed")["total"],1);runtime.shutdown();
     // Receiver disconnection exits cleanly rather than spinning while idle.
-    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver,Arc::new(Mutex::new(reconcile::Reconciler::default())),&revision::Revision::default());
+    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver,Arc::new(Mutex::new(reconcile::Reconciler::default())),&revision::Revision::default(),Arc::new(osg_streams::NativeWake::default()));
 }

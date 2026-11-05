@@ -4,7 +4,7 @@ import test from 'node:test';
 import { nativePage, until } from '../../scripts/reactive/cdp.mjs';
 
 test('Activity reads committed changes and stays idle between them', {
-  skip: process.env.OSG_ACTIVITY_OBSERVATION_NATIVE !== '1', timeout: 60000,
+  skip: process.env.OSG_ACTIVITY_OBSERVATION_NATIVE !== '1', timeout: 120000,
 }, async () => {
   const page = await nativePage();
   let profile, breakpoint;
@@ -45,6 +45,10 @@ test('Activity reads committed changes and stays idle between them', {
     return opens.at(-1);
   }
   try {
+    // Startup discovery commits real background Activity events. An idle
+    // assertion is meaningful only once that producer has finished.
+    await until(() => native({command:'game_get_state'}),
+      state => !['scanning','cancelling'].includes(state.games.discovery.status), 90000);
     await navigate('Overview');
     await until(() => page.evaluate(`!${section}`));
     await page.call('Network.enable', {maxPostDataSize:65536});
