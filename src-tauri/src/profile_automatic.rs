@@ -867,8 +867,14 @@ impl GatewayManager {
     }
 
     fn automatic_reconciliation_wait(&self, now: std::time::Instant) -> Option<std::time::Duration> {
-        let owner = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status().owner.clone();
-        let owner = owner?;
+        let (owner, needs_fallback) = {
+            let session = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+            let owner = session.status().owner.as_ref()?;
+            (owner.clone(), session.needs_reconciliation_fallback(owner))
+        };
+        if !needs_fallback {
+            return None;
+        }
         let state = self.profile_automatic.state.lock().unwrap_or_else(|p| p.into_inner());
         let vehicle = state.last_vehicle_attempt.as_ref()
             .filter(|(previous, _, _)| previous == &owner)
@@ -876,8 +882,8 @@ impl GatewayManager {
         let peripheral = state.last_peripheral_attempt.as_ref()
             .filter(|attempt| attempt.owner == owner)
             .and_then(|attempt| attempt.at.checked_add(peripheral_retry_delay(attempt.failures)));
-        // An active run can still encounter transient admission or inventory
-        // contention. Keep its recovery fallback while those paths are wired.
+        // Keep the fallback scoped to runs that can need vehicle or peripheral
+        // restaging under transient admission or inventory contention.
         Some([vehicle, peripheral].into_iter().flatten()
             .filter(|deadline| *deadline > now)
             .map(|deadline| deadline.duration_since(now))

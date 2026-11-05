@@ -522,6 +522,7 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
     let first = owner(manager).unwrap_or_else(|| panic!("{}",manager.profile_automatic.view()));
     assert_eq!(first.profile_id, id);
     assert_eq!(first.game_id.as_deref(), Some("dcs"));
+    assert_eq!(manager.automatic_reconciliation_wait(Instant::now()), None);
     for _ in 0..4 {
         manager.poll_automatic();
     }
