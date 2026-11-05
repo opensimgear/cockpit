@@ -5,12 +5,13 @@ import {spawn} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 const probeExecutable=process.env.OSG_VJOY_RAW_PROBE;
 test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
   skip:process.platform!=='win32'||!probeExecutable,timeout:60000,
 },async()=>{
   const page=await nativePage();
-  let saved, probe;
+  let saved, probe, observation;
   const request=async value=>{
     const reply=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'vjoy-raw-output-native'})}})`);
     assert.equal(reply.ok,true,`${value.command}: ${reply.error}`);
@@ -45,6 +46,7 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     assert.ok(['running','degraded'].includes(started.state),JSON.stringify(started));
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy');
     await new Promise(resolve=>setTimeout(resolve,600));
+    if(process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
     probe=spawn(probeExecutable,['--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const trace=[];
@@ -56,6 +58,7 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     const streamId=randomUUID();
     for(const [index,value] of [true,false,true,false].entries()){
       await request({command:'profile_debug_controller_input',owner:started.owner,nodeId:'debug',streamId,sequence:String(index+1),changes:[{portId:'button-1',value}]});
+      await observation?.sample(value);
       await new Promise(resolve=>setTimeout(resolve,250));
     }
     assert.equal(await exited,0);
@@ -66,7 +69,8 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     assert.ok(events.every(event=>event.status===0x00110000),'HID button decoding must succeed');
     assert.equal(new Set(events.map(event=>event.device)).size,1,'The exact slot must appear on one Raw Input device');
     assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false]);
-    await request({command:'profile_stop'});
+    if(observation)await observation.stop();
+    else await request({command:'profile_stop'});
     assert.equal((await status()).owner,null);
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free');
   } finally {
@@ -76,6 +80,9 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
         const current=(await request({command:'profile_assignments_get',id:saved.id})).profiles.document;
         await request({command:'profile_delete',id:current.id,expectedRevision:current.revision});
       }
-    } finally {probe?.kill();page.close();}
+    } finally {
+      try { await observation?.close(); }
+      finally {probe?.kill();page.close();}
+    }
   }
 });
