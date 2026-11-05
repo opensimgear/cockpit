@@ -112,6 +112,29 @@ test('137-control reports preserve every unchanged row and descriptor without in
   assert.equal(first.controls[68].value.native, 0);
 });
 
+test('latest absolute snapshots skip unread revisions and reuse unchanged rows', () => {
+  const { states, send } = setup();
+  const controls = Array.from({ length: 137 }, (_, index) => control({ id: String(index), dataIndex: index }));
+  send(snapshot({ source: controller({ controlCount: 137 }), controls, total: 137 }));
+  const first = states.at(-1).detail;
+  send(snapshot({ source: controller({ controlCount: 137, sequence: '100' }), controls, total: 137, cursor: '100', capturedUs: '1000' }),
+    { kind: 'snapshot', revision: '100' });
+  const unchanged = states.at(-1).detail;
+  assert.equal(unchanged.controls, first.controls);
+  assert.equal(unchanged.cursor, '100');
+  const changed = controls.map((input, index) => index === 68 ? { ...input, value: { native: 100, normalized: 32767 } } : input);
+  send(snapshot({ source: controller({ controlCount: 137, sequence: '200' }), controls: changed, total: 137, cursor: '200', capturedUs: '2000' }),
+    { kind: 'snapshot', revision: '200' });
+  const latest = states.at(-1).detail;
+  assert.equal(states.at(-1).status, 'ready');
+  assert.equal(latest.controls[68].value.native, 100);
+  for (let index = 0; index < 137; index++) {
+    assert.equal(latest.controls[index].capability, first.controls[index].capability);
+    if (index !== 68) assert.equal(latest.controls[index], first.controls[index]);
+  }
+  assert.equal(first.controls[68].value.native, 0);
+});
+
 test('same-generation recovery shares descriptors while replacement generation installs fresh descriptors', () => {
   const { states, send } = setup();
   send();

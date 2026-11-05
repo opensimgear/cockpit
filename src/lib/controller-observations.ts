@@ -118,6 +118,7 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBas
     const reusable = descriptorBaseline?.session === payload.session && descriptorBaseline.source!.generation === payload.source.generation
       ? descriptorBaseline : undefined;
     const oldDescriptors = reusable ? descriptorIndexes.get(reusable) : undefined;
+    const oldRows = reusable ? new Map(reusable.controls!.map(control => [control.capability.id, control])) : undefined;
     requireValid(!reusable || reusable.total === payload.total);
     const controls = payload.controls.map(raw => {
       requireValid(record(raw));
@@ -131,11 +132,12 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBas
       const existing = oldDescriptors?.get(descriptor.id);
       if (oldDescriptors) requireValid(existing && Object.keys(existing).length === Object.keys(descriptor).length
         && Object.entries(existing).every(([key, value]) => descriptor[key as keyof typeof descriptor] === value));
-      return row(existing ?? frozenCopy(descriptor), raw.value as ControllerControl['value']);
+      return row(existing ?? frozenCopy(descriptor), raw.value as ControllerControl['value'], oldRows?.get(descriptor.id));
     });
     requireValid(unavailable || controls.some(control => control.capability.kind !== 'diagnostic'));
     const result: Snapshot = Object.freeze({ session: payload.session, source: frozenCopy(payload.source), identity: frozenCopy(payload.identity),
-      diagnostics: Object.freeze([...payload.diagnostics]), controls: Object.freeze(controls), offset: 0, total: payload.total, limit: 256,
+      diagnostics: Object.freeze([...payload.diagnostics]), controls: reusable && controls.every((control, index) => control === reusable.controls![index])
+        ? reusable.controls : Object.freeze(controls), offset: 0, total: payload.total, limit: 256,
       cursor: payload.cursor, capturedUs: payload.capturedUs }) as Snapshot;
     descriptorIndexes.set(result, oldDescriptors ?? new Map(controls.map(control => [control.capability.id, control.capability])));
     return result;

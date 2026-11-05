@@ -117,6 +117,14 @@ fn process(
             .publisher
             .resynchronize(generation, snapshot, source.captured_us, &clock)
             .map_err(|e| e.to_string())?;
+    } else if work.update.reason == "change" && source.ready() {
+        // This UI preview topic carries the complete absolute controller state.
+        // Coalesce unread preview samples so a slow renderer catches up to the
+        // current level; ordered capture reports remain in the routing journal.
+        binding
+            .publisher
+            .publish_latest_state(generation, snapshot, source.captured_us, &clock)
+            .map_err(|e| e.to_string())?;
     } else {
         let values = if source.ready() {
             source.values.clone()

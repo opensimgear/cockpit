@@ -19,7 +19,7 @@ fn closed_preview_defers_encoding_and_reopens_with_current_atomic_baseline() {
     assert_eq!(payload["controls"][1]["value"]["native"],49);
     assert_eq!(payload["capturedUs"],registry.sources[&id].captured_us.to_string());
     registry.report(&id,1,&BTreeMap::from([(1,50)])).unwrap();
-    assert_eq!(reopened.recv().unwrap().kind,"change");
+    assert_eq!(reopened.recv().unwrap().kind,"snapshot");
 }
 
 #[test]
@@ -123,13 +123,13 @@ fn exact_domains_partial_baseline_atomic_report_and_capture() {
         .report(&id, 1, &BTreeMap::from([(1, 123)]))
         .unwrap();
     let change = reader.recv().unwrap();
-    assert_eq!(change.payload.as_ref().unwrap()["reason"], "change");
+    assert_eq!(change.kind, "snapshot");
     assert_eq!(
-        change.payload.as_ref().unwrap()["values"]["hid:0009:0001:1:0:0"]["native"],
+        change.payload.as_ref().unwrap()["controls"][0]["value"]["native"],
         0
     );
     assert_eq!(
-        change.payload.as_ref().unwrap()["values"]["hid:0001:0030:1:0:1"]["native"],
+        change.payload.as_ref().unwrap()["controls"][1]["value"]["native"],
         123
     );
 }
@@ -338,13 +338,18 @@ fn concurrent_subscription_has_no_report_boundary_hole() {
         .parse::<u64>()
         .unwrap();
     while let Some(frame) = reader.try_recv().unwrap() {
-        sequence += 1;
-        assert_eq!(
-            frame.payload.unwrap()["source"]["sequence"],
-            sequence.to_string()
-        );
+        let next = frame.payload.unwrap()["source"]["sequence"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert!(next > sequence, "Preview snapshots remain monotonic.");
+        sequence = next;
     }
     assert_eq!(sequence, 66);
+    let registry = registry.lock().unwrap();
+    let page = registry.stream_page(&registry.session, 0);
+    assert_eq!(page.events.len(), 65, "The baseline and every captured report remain in the routing journal.");
 }
 
 #[test]
@@ -443,3 +448,6 @@ fn reassignment_generation_exhaustion_withdraws_samples_and_reports_failure() {
         assert_eq!(payload["source"]["baselineReady"], false);
     }
 }
+
+#[path = "observation/latest_state_tests.rs"]
+mod latest_state_tests;
