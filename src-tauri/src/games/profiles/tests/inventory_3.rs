@@ -248,8 +248,7 @@ fn retained_collector_preserves_provider_sessions_across_read_only_refreshes() {
 fn can_action_only_capabilities_publish_without_inventing_an_event_baseline() {
     let (sources, _temporary) = sources();
     let mut state = can_state();
-    state["moduleEvents"][MODULE] =
-        json!({"status":"unsupported","route":[1,1,2,100],"configurationGeneration":1});
+    state["panelStreamSupported"] = json!(false);
     state["moduleActions"][MODULE] = json!({"status":"ready","route":[1,1,2,100],"configurationGeneration":1,"actions":[setter()]});
     let item = sources
         .can_observations("gateway", &state, &BTreeMap::new())

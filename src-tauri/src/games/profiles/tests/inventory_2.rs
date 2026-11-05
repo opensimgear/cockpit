@@ -183,7 +183,7 @@ fn connected_gateway_inventory_or_capability_errors_remain_unavailable() {
         let mut state = can_state();
         match fault {
             "inventory" => state["modules"] = Value::Null,
-            "capability" => state["moduleEvents"][MODULE]["buttonCount"] = json!("invalid"),
+            "capability" => state["modules"][0]["buttonCount"] = json!("invalid"),
             _ => {
                 state.as_object_mut().unwrap().remove("connected");
             }

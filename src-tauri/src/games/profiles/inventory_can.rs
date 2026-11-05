@@ -62,7 +62,6 @@ impl Sources {
                     publication.to_string(),
                 );
             }
-            let events = &state["moduleEvents"][id];
             let actions = &state["moduleActions"][id];
             let native_inputs = state["panelStreamSupported"] == true;
             let expected_route = json!([
@@ -71,9 +70,6 @@ impl Sources {
                 module["lease"],
                 module["boot"]
             ]);
-            let events_current = events["ok"] == true
-                && events["route"] == expected_route
-                && events["configurationGeneration"] == module["configurationGeneration"];
             let actions_current = actions["status"] == "ready"
                 && actions["route"] == expected_route
                 && actions["configurationGeneration"] == module["configurationGeneration"];
@@ -84,8 +80,6 @@ impl Sources {
             let mut descriptors = vec![];
             if native_inputs {
                 descriptors.extend(ports::native_can_inputs(module)?);
-            } else if events_current {
-                descriptors.extend(ports::events(events)?);
             }
             if actions_current {
                 descriptors.extend(ports::actions(actions)?);
@@ -93,6 +87,9 @@ impl Sources {
             item.ports = actions_known
                 .then(|| PortUpdate::complete(descriptors))
                 .transpose()?;
+            if !native_inputs && state["connected"] == true && module["online"] == true {
+                item.diagnostics.push("Live CAN inputs require gateway firmware with panel streaming.".into());
+            }
             if item.ports.is_none() && state["connected"] == true && module["online"] == true {
                 item.diagnostics.push(
                     "Waiting for the complete current control and action capability snapshot."
@@ -133,7 +130,7 @@ impl Sources {
                     .to_string(),
                     attributes: route_attributes,
                     // Native capture supplies and validates the actual fresh baseline at activation.
-                    baseline_ready: native_inputs || events_current,
+                    baseline_ready: native_inputs && item.ports.is_some(),
                     writable: !identity_conflict
                         && module["canConfigure"] == true
                         && actions["status"] != "uncertain",

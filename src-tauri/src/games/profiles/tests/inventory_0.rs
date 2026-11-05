@@ -74,7 +74,7 @@ fn sources() -> (Sources, tempfile::TempDir) {
     )
 }
 fn can_state() -> Value {
-    json!({"connected":true,"epoch":1,"canProtocol":3,"modules":[{"id":MODULE,"name":"OSG module","online":true,"boot":100,"node":1,"lease":2,"configurationGeneration":1,"canConfigure":true}],
+    json!({"connected":true,"epoch":1,"canProtocol":3,"panelStreamSupported":true,"modules":[{"id":MODULE,"name":"OSG module","online":true,"boot":100,"node":1,"lease":2,"configurationGeneration":1,"canConfigure":true,"buttonCount":1,"axisCount":0,"neutral":[]}],
             "moduleEvents":{MODULE:{"ok":true,"schemaVersion":1,"stream":7,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"encoderButtons":[],"route":[1,1,2,100],"configurationGeneration":1}},
             "moduleActions":{MODULE:{"status":"unsupported","route":[1,1,2,100],"configurationGeneration":1}}})
 }
