@@ -126,6 +126,9 @@ impl Runtime {
             installed::unsupported()
         };
         if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
+        self.commit(value);
+    }
+    fn commit(&self, mut value: Value) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
         if let Some(previous) = snapshot.as_ref() {
             let captured_at = value["observedAt"].as_u64().unwrap_or(0);
@@ -233,10 +236,12 @@ mod tests {
         assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
         let (captured, commits) = mpsc::channel();
         let source = Arc::downgrade(&runtime);
-        let native = controllers.clone();
+        let next_time = std::sync::atomic::AtomicU64::new(1);
         runtime.start(move || {
             let Some(source) = source.upgrade() else { return false; };
-            source.refresh(&native, |_| vec![json!({"controllerId":"worker"})]);
+            let observed_at = next_time.fetch_add(1, Ordering::Relaxed);
+            source.commit(json!({"observedAt":observed_at,"hiddenDevices":[],
+                "controllerAssociations":[{"controllerId":"worker"}]}));
             captured.send(()).unwrap();
             true
         }).unwrap();
