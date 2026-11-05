@@ -125,3 +125,28 @@ Devices, Profiles, Games, Companions, Activity, Debug and Settings each
 recorded zero requests after startup. A second Overview sample confirmed
 the workspace observation baseline and recorded zero requests in 60,112 ms
 against the warmed gateway service.
+
+## Cockpit source and development bridge timing sites
+
+These locations use the ledger pinned to Cockpit `56b6d1ec`. A timer type
+annotation or injected scheduler declaration is listed with the call it supports.
+The companion app and firmware rows are tracked separately.
+
+| Ledger site | Owner and trigger | Disposition and verification |
+| --- | --- | --- |
+| `scripts/native-gateway-bridge.mjs:85` | Development bridge, one deadline per submitted request | Keep the bounded reply deadline. Bridge tests cover process failure and reply handling. |
+| `activation-progress-presenter.ts:64,69` | Activation presenter, confirmation deadline after a pending operation settles | Keep the cancellable presentation deadline. `activation-progress-presenter.test.mjs` covers confirmation and stale operations. |
+| `activity/ActivityPanel.svelte:28` | Activity search, user changes the filter | Keep the cancelled-on-change debounce. Activity UI tests cover query changes. |
+| `companion-settings.ts:61,87` | Companion settings writer, one pending edit deadline | Keep user-edit autosave and ordered writes. `companion-settings.test.mjs` covers save coalescing. |
+| `CompanionConnections.svelte:192` | Open pairing dialog, expiry countdown | Keep local countdown rendering. The browser and native idle traces verify no steady-state requests. |
+| `CompanionConnections.svelte:213` | User-started flash, wait for serial re-enumeration | Keep the one-time settle delay pending physical reconnect qualification in #199. |
+| `CompiledCompanionDesigner.svelte:164`, `GenericWidgetDesigner.svelte:194`, `ProfileLibraryTools.svelte:17` | Each export handler, after the user downloads a blob | Keep one-time object URL revocation. Export flow is covered separately from data observation. |
+| `Esp32Companions.svelte:28,103,121` | Dormant ESP32 component, request timeout, flash settle delay and status refresh | No production import. The timer guard fails if this component gains a caller. |
+| `game-read-models/test-fixture.mjs:37` | Test helper, wait for authored observation settlement | Test-only. Keep it out of production imports. |
+| `gateway-workspace.ts:65,66` | Workspace client, renew an existing editing claim | Keep the deadline while a claim exists. `gateway-workspace.test.mjs` covers renewal and retired claims. |
+| `notifications.ts:15,29` | Notification owner, dismissal for a visible notification | Keep the dismissal deadline. `notifications.test.mjs` covers pause and resume. |
+| `profile-elk-runtime.ts:41,46` | Layout worker, after a requested layout | Keep the layout timeout and worker disposal. `profile-elk-layout.test.mjs` covers the layout path. |
+| `profile-vehicle-conflicts.ts:14` | Profile conflict evaluator, debounce a changed editor draft | Keep the cancellable edit debounce. `profile-vehicle-conflicts.test.mjs` covers superseded compile results. |
+| `ProfileCanvas.svelte:59,398` | Canvas camera animation and active pointer gesture | Keep dirty frame scheduling. Camera and canvas tests cover animation completion and gesture updates. |
+| `ProfileCanvas.svelte:69,248` | Connection gesture, distinguish a single click from a double click | Keep the one-time selection delay. Canvas tests cover connection selection. |
+| `ProfileDesktopControls.svelte:11` | Dormant desktop component, status interval | No production import. The timer guard prevents a caller from restoring the interval. |
