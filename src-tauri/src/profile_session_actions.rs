@@ -780,9 +780,15 @@ fn worker(
                 driver.invoke(&owner, &pack.arguments)?;
             } else {
                 let state = shared.state.lock().unwrap_or_else(|p| p.into_inner());
+                let deadline = if bound { renew_at } else { claim_at + WAIT_FOR_BIND };
+                let remaining = deadline.saturating_duration_since(Instant::now());
                 let _ = shared
                     .wake
-                    .wait_timeout(state, Duration::from_millis(20))
+                    .wait_timeout_while(state, remaining, |state| {
+                        !stopped()
+                            && state.bind.is_none()
+                            && (!bound || !active.load(Ordering::Acquire) || state.queue.is_empty())
+                    })
                     .unwrap_or_else(|p| p.into_inner());
             }
         }
