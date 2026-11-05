@@ -24,7 +24,7 @@ and #198 are In progress because implementation/qualification is underway.
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
 | #193 | Desktop timing and focus/lease notification cutover; mixed-stream fault and affected-owner cleanup matrices; independent dispatch under stalled consumers. |
 | #194 | Complete producer/read-model and cancellation/lock matrices. Activity still samples the aggregate metadata snapshot every 750 ms even after direct lifecycle wakeups. The denied-process-event fallback remains explicit. |
-| #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts and server peer I/O now have readiness/deadline owners and direct cancellation. Native client pairing/status/read-timeout and legacy routing polls, plus physical companion firmware loops, remain unresolved software. |
+| #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts and server peer I/O now have readiness/deadline owners and direct cancellation. Native client reads now use scoped event I/O. Pairing/status and legacy routing polls, plus physical companion firmware loops, remain unresolved software. |
 | #196 | Nested navigation/query/editor lifetime and background/reopen matrices; consistent component review. |
 | #197 | Complete manual/MCP state/error/cancel/recovery parity, sustained socket backpressure and schema/documentation/negotiation inventory. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |

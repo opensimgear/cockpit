@@ -204,13 +204,13 @@ fn tls_rejects_wrong_authority_and_wss_frame_oversize_without_affecting_another_
     assert!(crate::client::connect(
         status.endpoint.as_ref().unwrap(),
         &other.ca_base64(),
-        &other.pin().unwrap()
+        &other.pin().unwrap(), &crate::client::IoScope::default()
     )
     .is_err());
     let mut valid = crate::client::connect(
         &payload.endpoint,
         &payload.ca_certificate,
-        &payload.ca_spki_sha256,
+        &payload.ca_spki_sha256, &crate::client::IoScope::default(),
     )
     .unwrap();
     send_json(
@@ -223,7 +223,7 @@ fn tls_rejects_wrong_authority_and_wss_frame_oversize_without_affecting_another_
     let mut oversized = crate::client::connect(
         &payload.endpoint,
         &payload.ca_certificate,
-        &payload.ca_spki_sha256,
+        &payload.ca_spki_sha256, &crate::client::IoScope::default(),
     )
     .unwrap();
     oversized

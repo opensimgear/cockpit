@@ -5,7 +5,7 @@ enum Transport { Blocking(TcpStream), Event(socket_io::SocketIo) }
 /// budgets. Read expiry never poisons event-only writes.
 pub struct DeadlineTcp {
     transport: Transport, deadline: Option<Instant>, read_deadline: Option<Instant>,
-    write_deadline: Option<Instant>,
+    write_deadline: Option<Instant>, operation_deadline: Option<Instant>,
 }
 pub(crate) trait ReadDeadline {
     fn set_read_deadline(&mut self, deadline: Option<Instant>) -> std::io::Result<()>;
@@ -13,15 +13,18 @@ pub(crate) trait ReadDeadline {
 impl DeadlineTcp {
     pub fn new(inner: TcpStream) -> Self {
         Self { transport:Transport::Blocking(inner), deadline:Some(Instant::now()+Duration::from_secs(3)),
-            read_deadline:None, write_deadline:None }
+            read_deadline:None, write_deadline:None, operation_deadline:None }
     }
-    pub(super) fn event(inner: TcpStream) -> std::io::Result<(Self, Arc<socket_io::Cancel>)> {
+    pub(crate) fn event(inner: TcpStream) -> std::io::Result<(Self, Arc<socket_io::Cancel>)> {
         let deadline = Some(Instant::now()+Duration::from_secs(3));
         let (io, cancel) = socket_io::SocketIo::new(inner)?;
-        Ok((Self { transport:Transport::Event(io), deadline, read_deadline:None, write_deadline:None }, cancel))
+        Ok((Self { transport:Transport::Event(io), deadline, read_deadline:None, write_deadline:None, operation_deadline:None }, cancel))
     }
     pub(super) fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         match &self.transport { Transport::Blocking(io)=>io.peer_addr(), Transport::Event(io)=>io.peer_addr() }
+    }
+    pub(crate) fn replace_operation_deadline(&mut self, deadline: Option<Instant>) -> Option<Instant> {
+        std::mem::replace(&mut self.operation_deadline, deadline)
     }
     pub fn upgraded(&mut self) { self.deadline = None; }
     pub fn set_read_timeout(&self, value: Option<Duration>) -> std::io::Result<()> {
@@ -31,19 +34,19 @@ impl DeadlineTcp {
         deadline.checked_duration_since(Instant::now()).filter(|remaining| !remaining.is_zero())
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut,"Companion I/O deadline exceeded"))
     }
-    fn check(&self) -> std::io::Result<()> { self.deadline.map(Self::remaining).transpose().map(|_|()) }
+    fn check(&self) -> std::io::Result<()> { self.deadline.into_iter().chain(self.operation_deadline).min().map(Self::remaining).transpose().map(|_|()) }
 }
 impl ReadDeadline for DeadlineTcp {
     fn set_read_deadline(&mut self, deadline: Option<Instant>) -> std::io::Result<()> {
         self.read_deadline = deadline;
-        let timeout = self.deadline.into_iter().chain(deadline).min().map(Self::remaining).transpose()?;
+        let timeout = self.deadline.into_iter().chain(deadline).chain(self.operation_deadline).min().map(Self::remaining).transpose()?;
         if let Transport::Blocking(io) = &self.transport { io.set_read_timeout(timeout)?; }
         Ok(())
     }
 }
 impl Read for DeadlineTcp {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let deadline = self.deadline.into_iter().chain(self.read_deadline).min();
+        let deadline = self.deadline.into_iter().chain(self.read_deadline).chain(self.operation_deadline).min();
         match &mut self.transport {
             Transport::Blocking(io)=>{
                 if let Some(deadline)=deadline { io.set_read_timeout(Some(Self::remaining(deadline)?))?; }
@@ -60,7 +63,7 @@ impl Write for DeadlineTcp {
             Transport::Blocking(io)=>io.write(bytes),
             Transport::Event(io)=>{
                 let deadline = *self.write_deadline.get_or_insert_with(||Instant::now()+Duration::from_millis(500));
-                io.write(bytes,Some(self.deadline.map_or(deadline,|handshake|handshake.min(deadline))))
+                io.write(bytes,Some(self.deadline.into_iter().chain(self.operation_deadline).fold(deadline,Instant::min)))
             },
         }
     }

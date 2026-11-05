@@ -2,7 +2,7 @@
 use crate::{
     persistence::{self, StateStorage},
     server::{
-        receive_json, send_json, websocket_config, BudgetIo, DeadlineTcp, PairingPayload,
+        send_json, websocket_config, BudgetIo, DeadlineTcp, PairingPayload,
         SERVICE_TYPE, SUBPROTOCOL,
     },
     tls,
@@ -24,9 +24,18 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tungstenite::{client::IntoClientRequest, WebSocket};
+use tungstenite::{client::IntoClientRequest};
 use zeroize::{Zeroize, Zeroizing};
-type Socket = WebSocket<BudgetIo<StreamOwned<ClientConnection, DeadlineTcp>>>;
+#[path = "client/io.rs"]
+mod io;
+use io::{Registry, Socket};
+pub(crate) use io::IoScope;
+#[cfg(test)]
+#[path = "client/lifecycle_tests.rs"]
+mod lifecycle_tests;
+#[cfg(test)]
+#[path = "client/transport_tests.rs"]
+mod transport_tests;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedCredential {
@@ -134,6 +143,7 @@ struct QueuedInput {
 }
 struct Shared {
     state: Mutex<State>,
+    io: Registry,
     status_wake: Arc<osg_streams::NativeWake>,
     presence_wake: Arc<osg_streams::NativeWake>,
     cancel: AtomicBool,
@@ -195,6 +205,7 @@ impl ClientRuntime {
                     feedback_reset_pending: false,
                     feedback_received_ms: 0,
                 }),
+                io: Registry::default(),
                 status_wake: Arc::new(osg_streams::NativeWake::default()),
                 presence_wake: Arc::new(osg_streams::NativeWake::default()),
                 cancel: AtomicBool::new(false),
@@ -241,20 +252,11 @@ impl ClientRuntime {
     }
     pub fn invalidate(&self, reason: &str) {
         self.shared.cancel.store(true, Ordering::SeqCst);
-        let epoch = self.shared.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Ok(mut state) = self.shared.state.lock() {
-            state.status.epoch = epoch;
-            state.status.phase = if state.credential.is_some() {
-                "disconnected"
-            } else {
-                "unpaired"
-            }
-            .into();
-            state.status.last_error = Some(reason.into());
-            clear_session_status(&mut state);
-            state.publication = None;
-            if let Some(input) = state.sender.take() { input.wake.notify(); }
-        }
+        let retired = self.shared.epoch.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+            |epoch| epoch.checked_add(1)).unwrap_or_else(|epoch| epoch);
+        let epoch = retired.saturating_add(1);
+        if retired == u64::MAX { self.shared.io.shutdown(); } else { self.shared.io.retire(retired); }
+        publish_invalidation(&self.shared, epoch, reason);
         self.shared.status_wake.notify();
         self.shared.presence_wake.notify();
     }
@@ -342,8 +344,9 @@ impl ClientRuntime {
                     .filter(|n| !n.trim().is_empty() && n.len() <= 80)
                     .ok_or("Choose a companion name.")?
                     .to_owned();
-                self.start_worker("pairing", move |shared, epoch| {
-                    let payload = resolve_pairing_code(&endpoint, &code)?;
+                self.start_worker("pairing", None, move |shared, epoch| {
+                    let io = io_scope(&shared, epoch)?;
+                    let payload = resolve_pairing_code(&endpoint, &code, &io)?;
                     pair_worker(shared, epoch, payload, name)
                 })?;
                 Ok(json!({"ok":true}))
@@ -371,21 +374,17 @@ impl ClientRuntime {
                     .filter(|name| !name.trim().is_empty() && name.len() <= 80)
                     .ok_or("Choose a companion display name")?
                     .to_string();
-                self.start_worker("pairing", move |shared, epoch| {
+                self.start_worker("pairing", None, move |shared, epoch| {
                     pair_worker(shared, epoch, payload, name)
                 })?;
                 Ok(json!({"ok":true}))
             }
             "refresh-assignments" => {
-                let credential = self
-                    .shared
-                    .state
-                    .lock()
-                    .map_err(|_| "Client state lock poisoned")?
-                    .credential
-                    .clone()
-                    .ok_or("Pair with a host first")?;
-                self.start_worker("checking-assignments", move |shared, epoch| {
+                let (credential, selected_epoch) = {
+                    let state = self.shared.state.lock().map_err(|_| "Client state lock poisoned")?;
+                    (state.credential.clone().ok_or("Pair with a host first")?, state.status.epoch)
+                };
+                self.start_worker("checking-assignments", Some(selected_epoch), move |shared, epoch| {
                     refresh_worker(shared, epoch, credential)
                 })?;
                 Ok(json!({"ok":true}))
@@ -400,15 +399,11 @@ impl ClientRuntime {
                     return Err("Takeover requires an explicit Cockpit host operator action".into());
                 }
                 let takeover = false;
-                let credential = self
-                    .shared
-                    .state
-                    .lock()
-                    .map_err(|_| "Client state lock poisoned")?
-                    .credential
-                    .clone()
-                    .ok_or("Pair with a host first")?;
-                self.start_worker("connecting", move |shared, epoch| {
+                let (credential, selected_epoch) = {
+                    let state = self.shared.state.lock().map_err(|_| "Client state lock poisoned")?;
+                    (state.credential.clone().ok_or("Pair with a host first")?, state.status.epoch)
+                };
+                self.start_worker("connecting", Some(selected_epoch), move |shared, epoch| {
                     session_worker(shared, epoch, credential, instance, takeover)
                 })?;
                 Ok(json!({"ok":true}))
@@ -523,6 +518,17 @@ impl ClientRuntime {
                     ..Default::default()
                 };
                 set_storage_status(&mut state.status, availability);
+                clear_session_status(&mut state);
+                state.publication = None;
+                if let Some(input) = state.sender.take() { input.wake.notify(); }
+                // Commit a new boundary with deletion. A presence selection or
+                // connection reservation made during the delete cannot survive.
+                self.shared.cancel.store(true, Ordering::SeqCst);
+                let retired = self.shared.epoch.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+                    |epoch| epoch.checked_add(1)).unwrap_or_else(|epoch| epoch);
+                state.status.epoch = retired.saturating_add(1);
+                drop(state);
+                if retired == u64::MAX { self.shared.io.shutdown(); } else { self.shared.io.retire(retired); }
                 self.shared.status_wake.notify();
                 self.shared.presence_wake.notify();
                 Ok(json!({"ok":true}))
@@ -539,6 +545,7 @@ impl ClientRuntime {
     fn start_worker(
         &self,
         phase: &str,
+        selected_epoch: Option<u64>,
         work: impl FnOnce(Arc<Shared>, u64) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
         if self
@@ -552,14 +559,32 @@ impl ClientRuntime {
                     .into(),
             );
         }
+        let reservation = match selected_epoch {
+            Some(epoch) => epoch.checked_add(1).ok_or(epoch).and_then(|next|
+                self.shared.epoch.compare_exchange(epoch, next, Ordering::SeqCst, Ordering::SeqCst)),
+            None => self.shared.epoch.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| epoch.checked_add(1)),
+        };
+        let retired = match reservation {
+            Ok(epoch) => epoch,
+            Err(epoch) => {
+                self.shared.running.store(false, Ordering::SeqCst);
+                return Err(if epoch == u64::MAX { "Native client epoch exhausted; restart the companion" }
+                    else { "Companion credential selection changed; choose the current host again" }.into());
+            }
+        };
+        let epoch = retired + 1;
         self.shared.cancel.store(false, Ordering::SeqCst);
-        let epoch = self.shared.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        self.shared.io.retire(retired);
         {
             let mut state = self
                 .shared
                 .state
                 .lock()
                 .map_err(|_| "Client state lock poisoned")?;
+            if self.shared.epoch.load(Ordering::SeqCst) != epoch {
+                self.shared.running.store(false, Ordering::SeqCst);
+                return Err("Native client operation was superseded".into());
+            }
             state.status.phase = phase.into();
             state.status.epoch = epoch;
             state.status.last_error = None;
@@ -580,6 +605,7 @@ impl ClientRuntime {
                     state.sender = None;
                 });
             }
+            shared.io.retire(epoch);
             shared.running.store(false, Ordering::SeqCst);
             shared.status_wake.notify();
             shared.presence_wake.notify();
@@ -590,8 +616,27 @@ impl ClientRuntime {
 impl Drop for ClientRuntime {
     fn drop(&mut self) {
         self.invalidate("Companion application exited");
+        self.shared.io.shutdown();
+        self.shared.presence_wake.notify();
     }
 }
+fn publish_invalidation(shared: &Shared, epoch: u64, reason: &str) {
+        if let Ok(mut state) = shared.state.lock() {
+            if shared.epoch.load(Ordering::SeqCst) != epoch { return; }
+            state.status.epoch = epoch;
+            state.status.phase = if state.credential.is_some() {
+                "disconnected"
+            } else {
+                "unpaired"
+            }
+            .into();
+            state.status.last_error = Some(reason.into());
+            clear_session_status(&mut state);
+            state.publication = None;
+            if let Some(input) = state.sender.take() { input.wake.notify(); }
+        }
+ }
+
 fn clear_session_status(state: &mut State) {
     state.status.session = None;
     state.status.publication_hash = None;
@@ -720,7 +765,7 @@ fn set_state(shared: &Shared, epoch: u64, apply: impl FnOnce(&mut State)) {
         return;
     }
     if let Ok(mut state) = shared.state.lock() {
-        if state.status.epoch == epoch {
+        if state.status.epoch == epoch && current(&shared, epoch) {
             apply(&mut state);
             shared.status_wake.notify();
         }
@@ -729,14 +774,23 @@ fn set_state(shared: &Shared, epoch: u64, apply: impl FnOnce(&mut State)) {
 fn current(shared: &Shared, epoch: u64) -> bool {
     !shared.cancel.load(Ordering::SeqCst) && shared.epoch.load(Ordering::SeqCst) == epoch
 }
-pub(crate) fn connect(endpoint: &str, ca: &str, pin: &str) -> Result<Socket, String> {
+fn io_scope(shared: &Shared, epoch: u64) -> Result<IoScope, String> {
+    shared.io.scope(epoch, || shared.epoch.load(Ordering::SeqCst))
+}
+fn receive_event(socket: &mut Socket, first: Option<tungstenite::Message>, budget: Duration) -> Result<Value, String> {
+    let deadline = Instant::now() + budget;
+    let mut operation = socket.operation(Some(deadline));
+    crate::server::receive_json_until(&mut operation, deadline, first)
+}
+pub(crate) fn connect(endpoint: &str, ca: &str, pin: &str, io: &IoScope) -> Result<Socket, String> {
     let config = tls::pinned_client_config(ca, pin)?; // A verified CA always precedes credential transmission.
-    connect_with_config(endpoint, config)
+    connect_with_config(endpoint, config, io)
 }
 fn connect_with_config(
     endpoint: &str,
-    config: Arc<rustls::ClientConfig>,
+    config: Arc<rustls::ClientConfig>, io: &IoScope,
 ) -> Result<Socket, String> {
+    if io.is_closed() { return Err("Native client I/O retired".into()); }
     if endpoint.len() > 512 {
         return Err("Endpoint exceeds budget".into());
     }
@@ -760,6 +814,7 @@ fn connect_with_config(
     let addresses = resolve_lan(&host, port)?;
     let mut connected = None;
     for address in &addresses {
+        if io.is_closed() { return Err("Native client I/O retired".into()); }
         if let Ok(stream) = TcpStream::connect_timeout(&address, Duration::from_secs(2)) {
             connected = Some(stream);
             break;
@@ -768,19 +823,12 @@ fn connect_with_config(
     let stream = connected.ok_or(
         "Cannot reach a LAN/loopback companion endpoint; check interface, port and firewall",
     )?;
-    stream
-        .set_nodelay(true)
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_millis(500)))
-        .map_err(|error| error.to_string())?;
+    let (stream, cancel) = DeadlineTcp::event(stream).map_err(|error| error.to_string())?;
+    let registration = io.register(cancel)?;
     let name = ServerName::try_from(host).map_err(|_| "Invalid TLS server name")?;
     let mut connection = ClientConnection::new(config, name).map_err(|error| error.to_string())?;
     connection.set_buffer_limit(Some(65536));
-    let stream = BudgetIo::new(StreamOwned::new(connection, DeadlineTcp::new(stream)));
+    let stream = BudgetIo::new(StreamOwned::new(connection, stream));
     let mut request = endpoint
         .into_client_request()
         .map_err(|error| error.to_string())?;
@@ -801,24 +849,15 @@ fn connect_with_config(
     }
     socket.get_mut().upgraded();
     socket.get_mut().inner.sock.upgraded();
-    socket
-        .get_mut()
-        .inner
-        .sock
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .map_err(|error| error.to_string())?;
-    Ok(socket)
+    Ok(Socket::new(socket, registration))
 }
 // This bootstrap socket carries only a SPAKE2 message. No identity, code, secret or
 // credential is sent until the authenticated offer has been decrypted and its CA pinned.
-fn resolve_pairing_code(endpoint: &str, code: &str) -> Result<PairingPayload, String> {
+fn resolve_pairing_code(endpoint: &str, code: &str, io: &IoScope) -> Result<PairingPayload, String> {
     let (state, message) = crate::pairing_code::start(code);
-    let mut socket = connect_with_config(endpoint, tls::pairing_bootstrap_config())?;
-    send_json(
-        &mut socket,
-        &json!({"type":"pair-code","message":STANDARD.encode(message)}),
-    )?;
-    let reply = receive_json(&mut socket, Duration::from_secs(3))?;
+    let mut socket = connect_with_config(endpoint, tls::pairing_bootstrap_config(), io)?;
+    let reply = request(&mut socket,
+        json!({"type":"pair-code","message":STANDARD.encode(message)}), Duration::from_secs(3))?;
     let _ = socket.close(None);
     let value = crate::pairing_code::finish(state, &reply)?;
     let payload: PairingPayload =
@@ -877,8 +916,10 @@ fn lan_address(ip: IpAddr) -> bool {
     }
 }
 fn request(socket: &mut Socket, value: Value, budget: Duration) -> Result<Value, String> {
-    send_json(socket, &value)?;
-    let reply = receive_json(socket, budget)?;
+    let deadline = Instant::now() + budget;
+    let mut operation = socket.operation(Some(deadline));
+    send_json(&mut operation, &value)?;
+    let reply = crate::server::receive_json_until(&mut operation, deadline, None)?;
     if reply["ok"] != true {
         return Err(reply["error"]
             .as_str()
@@ -892,10 +933,11 @@ fn refresh_worker(
     epoch: u64,
     mut credential: SavedCredential,
 ) -> Result<(), String> {
+    let io = io_scope(&shared, epoch)?;
     let mut socket = connect(
         &credential.endpoint,
         &credential.ca_certificate,
-        &credential.ca_spki_sha256,
+        &credential.ca_spki_sha256, &io,
     )?;
     if !current(&shared, epoch) {
         return Ok(());
@@ -914,7 +956,7 @@ fn refresh_worker(
             .state
             .lock()
             .map_err(|_| "Client state lock poisoned")?;
-        if state.status.epoch == epoch {
+        if state.status.epoch == epoch && current(&shared, epoch) {
             let plain =
                 Zeroizing::new(serde_json::to_vec(&credential).map_err(|error| error.to_string())?);
             shared.storage.write(&plain)?;
@@ -959,10 +1001,12 @@ fn pair_worker(
         .map_err(|_| "Client state lock poisoned")?
         .companion_id
         .clone();
+    let io = io_scope(&shared, epoch)?;
+    let _ = io.bind_thread();
     let mut socket = connect(
         &payload.endpoint,
         &payload.ca_certificate,
-        &payload.ca_spki_sha256,
+        &payload.ca_spki_sha256, &io,
     )?;
     if !current(&shared, epoch) {
         return Ok(());
@@ -1008,7 +1052,7 @@ fn pair_worker(
                 .state
                 .lock()
                 .map_err(|_| "Client state lock poisoned")?;
-            if state.status.epoch != epoch {
+            if state.status.epoch != epoch || !current(&shared, epoch) {
                 return Ok(());
             }
             shared.storage.write(&plain)?;
@@ -1026,7 +1070,7 @@ fn pair_worker(
             .ok_or("Host did not return a pairing request ID")?
             .to_string();
         if let Ok(mut state) = shared.state.lock() {
-            if state.status.epoch == epoch && state.status.request_id.as_ref() != Some(&id) {
+            if state.status.epoch == epoch && current(&shared, epoch) && state.status.request_id.as_ref() != Some(&id) {
                 state.status.phase = "awaiting-approval".into();
                 state.status.request_id = Some(id.clone());
                 shared.status_wake.notify();
@@ -1035,7 +1079,9 @@ fn pair_worker(
         if Instant::now() > deadline {
             return Err("Pairing approval expired; create a new offer".into());
         }
-        thread::sleep(Duration::from_millis(400));
+        let observed = io.observed();
+        if !current(&shared, epoch) { return Ok(()); }
+        io.wait(observed, Duration::from_millis(400));
         if !current(&shared, epoch) {
             return Ok(());
         }
@@ -1193,10 +1239,11 @@ fn session_worker(
     instance: String,
     takeover: bool,
 ) -> Result<(), String> {
+    let io = io_scope(&shared, epoch)?;
     let mut socket = connect(
         &credential.endpoint,
         &credential.ca_certificate,
-        &credential.ca_spki_sha256,
+        &credential.ca_spki_sha256, &io,
     )?;
     if !current(&shared, epoch) {
         return Ok(());
@@ -1231,7 +1278,8 @@ fn session_worker(
         return Ok(());
     }
     let ack = session_request(&mut socket, baseline, Duration::from_millis(700))?;
-    let visuals = streamed_feedback::connect_feedback(&credential, &base)?;
+    let feedback_io = io_scope(&shared, epoch)?;
+    let visuals = streamed_feedback::connect_feedback(&credential, &base, &feedback_io)?;
     let mut resync_seen = shared.feedback_resync.load(Ordering::SeqCst);
     let (tx, rx) = mpsc::sync_channel::<QueuedInput>(128);
     let wake = Arc::new(osg_streams::NativeWake::default());
@@ -1249,7 +1297,7 @@ fn session_worker(
         state.queued_transitions = queued_transitions;
     });
     apply_worker_ack(&shared, epoch, ack, false)?;
-    let _feedback = streamed_feedback::Reader::start(shared.clone(), epoch, credential, base.clone(), visuals);
+    let _feedback = streamed_feedback::Reader::start(shared.clone(), epoch, credential, base.clone(), visuals, feedback_io);
     let mut sequence = 0u64;
     let mut heartbeat = 0u64;
     const HEARTBEAT: Duration = Duration::from_millis(250);
@@ -1763,7 +1811,7 @@ mod tests {
         let error = match connect(
             "not-an-endpoint",
             &identity.ca_base64(),
-            &format!("sha256:{}", "0".repeat(64)),
+            &format!("sha256:{}", "0".repeat(64)), &IoScope::default(),
         ) {
             Ok(_) => panic!("unexpected connection"),
             Err(error) => error,
@@ -1772,13 +1820,13 @@ mod tests {
         assert!(connect(
             "http://127.0.0.1/companion",
             &identity.ca_base64(),
-            &identity.pin().unwrap()
+            &identity.pin().unwrap(), &IoScope::default()
         )
         .is_err());
         assert!(connect(
             "wss://127.0.0.1/gateway",
             &identity.ca_base64(),
-            &identity.pin().unwrap()
+            &identity.pin().unwrap(), &IoScope::default()
         )
         .is_err());
     }

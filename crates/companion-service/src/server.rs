@@ -48,7 +48,7 @@ use deadline_io::ReadDeadline;
 #[path = "server/connections.rs"]
 mod connections;
 #[path = "server/socket_io.rs"]
-mod socket_io;
+pub(crate) mod socket_io;
 
 pub(crate) struct Attempts {
     since: Instant,
@@ -155,9 +155,14 @@ pub fn receive_json<S: Read + Write>(
 }
 
 pub(crate) fn receive_json_from<S: Read + Write>(
-    socket: &mut WebSocket<S>, budget: Duration, mut first: Option<Message>,
+    socket: &mut WebSocket<S>, budget: Duration, first: Option<Message>,
 ) -> Result<Value, String> {
-    let deadline = Instant::now() + budget;
+    receive_json_until(socket, Instant::now() + budget, first)
+}
+
+pub(crate) fn receive_json_until<S: Read + Write>(
+    socket: &mut WebSocket<S>, deadline: Instant, mut first: Option<Message>,
+) -> Result<Value, String> {
     let mut transfer: Option<(String, usize, String, Vec<u8>, usize)> = None;
     loop {
         if Instant::now() > deadline {
@@ -168,6 +173,7 @@ pub(crate) fn receive_json_from<S: Read + Write>(
             Err(error) if timed_out(&error) => continue,
             Err(error) => return Err(error.to_string()),
         };
+        if Instant::now() >= deadline { return Err("Companion reply timed out".into()); }
         match message {
             Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => return Err("Companion connection closed".into()),
@@ -223,8 +229,9 @@ pub(crate) fn receive_json_from<S: Read + Write>(
                         {
                             return Err("Incomplete or inconsistent publication transfer".into());
                         }
-                        return serde_json::from_slice(&state.3)
-                            .map_err(|_| "Invalid transferred JSON".into());
+                        let value = serde_json::from_slice(&state.3).map_err(|_| "Invalid transferred JSON")?;
+                        if Instant::now() >= deadline { return Err("Companion reply timed out".into()); }
+                        return Ok(value);
                     }
                     _ => {
                         if transfer.is_some() {

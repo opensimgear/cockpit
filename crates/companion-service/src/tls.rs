@@ -203,7 +203,7 @@ mod tests {
         assert!(crate::client::connect(
             &format!("wss://127.0.0.1:{}/companion", address.port()),
             &ca,
-            &pin
+            &pin, &crate::client::IoScope::default()
         )
         .is_err());
         server.join().unwrap();

@@ -2811,6 +2811,7 @@ dependencies = [
  "image",
  "keyring",
  "mdns-sd",
+ "mio",
  "osg-persistence",
  "osg-streams",
  "qrcode",

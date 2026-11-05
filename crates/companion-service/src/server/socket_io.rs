@@ -4,9 +4,9 @@ use mio::{Events, Interest, Poll, Token, Waker};
 const SOCKET: Token = Token(0);
 const STOP: Token = Token(1);
 
-pub(super) struct Cancel { stopped: AtomicBool, wake: Waker }
+pub(crate) struct Cancel { stopped: AtomicBool, wake: Waker }
 impl Cancel {
-    pub(super) fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         self.stopped.store(true, Ordering::Release);
         let _ = self.wake.wake();
     }
