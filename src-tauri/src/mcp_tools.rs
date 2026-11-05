@@ -409,10 +409,24 @@ impl Tools {
             }
             "game_vehicles_list" => self.game_vehicles(args, client),
             "game_process_monitor_enable" | "game_process_monitor_cancel" => forward(name, &["gameId"], Some("games")),
-            "game_integration_check" | "game_integration_remove" => forward(name, &["gameId", "userFolder"], Some("games")),
-            "game_integration_setup" => forward(name, &["gameId", "userFolder", "connection"], Some("games")),
-            "game_integration_cancel" => forward(name, &["gameId", "jobId"], Some("games")),
-            "game_integration_recover" => forward(name, &["gameId"], Some("games")),
+            "game_integration_check" | "game_integration_remove" | "game_integration_setup"
+            | "game_integration_cancel" | "game_integration_recover" => {
+                let fields: &[&str] = match name {
+                    "game_integration_check" | "game_integration_remove" => &["gameId", "userFolder"],
+                    "game_integration_setup" => &["gameId", "userFolder", "connection"],
+                    "game_integration_cancel" => &["gameId", "jobId"],
+                    _ => &["gameId"],
+                };
+                let data = forward(name, fields, Some("games"))?;
+                let game_id = text(args, "gameId")?;
+                let game = data["catalogue"].as_array().into_iter().flatten()
+                    .find(|game| game["id"] == game_id);
+                let setup = game.and_then(|game| game.get("integrationSetup"))
+                    .map(|setup| select(setup, &["state", "message", "installed", "verified",
+                        "progress", "percent", "connection", "recoveryNeeded", "removable",
+                        "removalMessage"]));
+                Ok(json!({"gameId":game_id,"jobId":args.get("jobId"),"integrationSetup":setup}))
+            }
             "game_telemetry_inspect" => forward(
                 "game_telemetry_inspect",
                 &["gameId", "search", "group", "offset", "limit"],

@@ -9,7 +9,16 @@ struct MonitorBackend {
 impl Backend for MonitorBackend {
     fn request(&self, request: Value) -> Value {
         self.requests.lock().unwrap().push(request.clone());
-        json!({"ok":true,"state":{"games":{"monitor":{"gameId":request["gameId"],"command":request["command"]}}}})
+        json!({"ok":true,"state":{"games":{
+            "monitor":{"gameId":request["gameId"],"command":request["command"]},
+            "catalogue":[
+                {"id":"unrelated","background":"unrelated artwork"},
+                {"id":request["gameId"],"background":"selected artwork","integrationSetup":{
+                    "state":"ready","installed":true,"connection":{"freshnessMs":2000},
+                    "channels":{"discard":"large channel list"}
+                }}
+            ]
+        }}})
     }
 
     fn guarded(&self, request: Value, owner: Value) -> Value {
@@ -112,6 +121,8 @@ fn integration_workflow_tools_forward_the_same_bounded_actions_as_the_portal() {
         let response = tools.call(command, args.clone(), client);
         assert_eq!(response["ok"], true, "{response}");
         assert_eq!(tools.call(command, args, client), response);
+        assert_eq!(response["data"], json!({"gameId":"dcs","jobId":fields.get("jobId"),
+            "integrationSetup":{"state":"ready","installed":true,"connection":{"freshnessMs":2000}}}));
         let mut expected = fields;
         expected["gameId"] = json!("dcs");
         expected["command"] = json!(command);
