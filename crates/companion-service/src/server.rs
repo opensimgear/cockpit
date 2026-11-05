@@ -307,6 +307,8 @@ pub struct PairingPayload {
 }
 struct Running {
     stop: Arc<AtomicBool>,
+    wake: Arc<mio::Waker>,
+    failure: Arc<Mutex<Option<String>>>,
     handle: JoinHandle<()>,
     discovery: Option<mdns_sd::ServiceDaemon>,
 }
@@ -376,6 +378,10 @@ impl ServerRuntime {
             vec![host.into(), "localhost".into(), "127.0.0.1".into()],
         )?;
         let tls = inner.identity.server_config()?;
+        let readiness = listener::Readiness::new(listener, &self.hub)?;
+        let wake = readiness.wake();
+        let failure = Arc::new(Mutex::new(None));
+        let listener_failure = failure.clone();
         let endpoint = if host.contains(':') {
             format!("wss://[{host}]:{}/companion", address.port())
         } else {
@@ -404,54 +410,8 @@ impl ServerRuntime {
         let attempts = Arc::new(Mutex::new(Attempts::new()));
         let handle = thread::Builder::new()
             .name("companion-listener".into())
-            .spawn(move || {
-                let mut workers: Vec<JoinHandle<()>> = Vec::new();
-                while !stopped.load(Ordering::SeqCst) {
-                    hub.tick(hub.now_ms());
-                    match listener.accept() {
-                        Ok((stream, _)) => {
-                            if active.load(Ordering::SeqCst) >= 16 {
-                                drop(stream);
-                                continue;
-                            }
-                            active.fetch_add(1, Ordering::SeqCst);
-                            let hub = hub.clone();
-                            let browser_origin = browser_origin.clone();
-                            let tls = tls.clone();
-                            let active = active.clone();
-                            let stop = stopped.clone();
-                            let attempts = attempts.clone();
-                            workers.push(thread::spawn(move || {
-                                let id = uuid::Uuid::new_v4().to_string();
-                                let _result =
-                                    serve_connection(stream, tls, &hub, &id, &stop, &attempts, &browser_origin, browser_assets);
-                                #[cfg(test)]
-                                if let Err(error) = _result {
-                                    eprintln!("companion peer ended: {error}");
-                                }
-                                hub.disconnect_connection(&id, hub.now_ms());
-                                active.fetch_sub(1, Ordering::SeqCst);
-                            }));
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(20))
-                        }
-                        Err(_) => break,
-                    }
-                    let mut index = 0;
-                    while index < workers.len() {
-                        if workers[index].is_finished() {
-                            let _ = workers.swap_remove(index).join();
-                        } else {
-                            index += 1;
-                        }
-                    }
-                }
-                for worker in workers {
-                    let _ = worker.join();
-                }
-                hub.tick(hub.now_ms());
-            })
+            .spawn(move || listener::run(readiness, hub, tls, stopped, active, attempts,
+                browser_origin, browser_assets, listener_failure))
             .map_err(|error| error.to_string())?;
         inner.status = ServerStatus {
             enabled: true,
@@ -463,6 +423,8 @@ impl ServerRuntime {
         };
         inner.running = Some(Running {
             stop,
+            wake,
+            failure,
             handle,
             discovery,
         });
@@ -480,6 +442,7 @@ impl ServerRuntime {
         };
         if let Some(running) = running {
             running.stop.store(true, Ordering::SeqCst);
+            let _ = running.wake.wake();
             self.hub.disconnect_all();
             if let Some(discovery) = running.discovery {
                 let _ = discovery.shutdown();
@@ -495,6 +458,13 @@ impl ServerRuntime {
             };
         };
         let mut value = inner.status.clone();
+        if let Some(running) = &inner.running {
+            if let Some(error) = running.failure.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+                value.enabled = false;
+                value.endpoint = None;
+                value.last_error = Some(error);
+            }
+        }
         value.active_connections = self.active.load(Ordering::SeqCst);
         value
     }
@@ -880,3 +850,6 @@ mod tests {
 }
 #[path = "feedback_socket.rs"]
 mod feedback_socket;
+
+#[path = "server/listener.rs"]
+mod listener;

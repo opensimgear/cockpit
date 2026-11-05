@@ -1156,6 +1156,7 @@ dependencies = [
  "image",
  "keyring",
  "mdns-sd",
+ "mio",
  "osg-companion-service",
  "osg-persistence",
  "osg-streams",

@@ -18,6 +18,9 @@ use zeroize::{Zeroize, Zeroizing};
 #[path="hub_presence.rs"]
 mod presence;
 
+#[path="hub_deadlines.rs"]
+mod deadlines;
+
 #[path="host_content/mod.rs"]
 mod content;
 #[path="hub_display.rs"]
@@ -189,6 +192,7 @@ pub struct Hub {
     panel_operation_wakes: Arc<Mutex<Vec<std::sync::Weak<osg_streams::NativeWake>>>>,
     presence: presence::Signal,
     record_changes: presence::Signal,
+    deadline_wakes: Arc<Mutex<Vec<std::sync::Weak<mio::Waker>>>>,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -398,6 +402,7 @@ impl Hub {
             panel_operation_wakes: Arc::new(Mutex::new(Vec::new())),
             presence: presence::Signal::default(),
             record_changes: presence::Signal::default(),
+            deadline_wakes: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -728,7 +733,7 @@ impl Hub {
         } else {
             None
         };
-        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let mut inner = self.mutation();
         let now = self.now_ms().max(inner.last_now);
         self.expire(&mut inner, now)?;
         if let Some(expected)=request.get("expectedHostToken") {
@@ -1030,7 +1035,7 @@ impl Hub {
     /// assignment comparisons discard delayed reports from a previous switch.
     pub fn record_serial_panel_operation(&self, companion: &str, session_id: &str, generation: &str, operation: &Value) -> Result<(), String> {
         {
-            let mut inner = self.inner.lock().unwrap_or_else(|p|p.into_inner());
+            let mut inner = self.mutation();
             let session = inner.sessions.get(session_id).ok_or("Obsolete serial panel operation.")?;
             ensure(session.transport == SourceTransport::Usb && session.companion_id == companion
                 && session.token.generation.to_string() == generation
@@ -1071,7 +1076,7 @@ impl Hub {
         if let Some(version) = frame.get("version") {
             ensure(version == 1, "Unsupported protocol version.")?;
         }
-        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let mut inner = self.mutation();
         let now = now.max(inner.last_now).max(self.now_ms());
         self.expire(&mut inner, now)?;
         match field(frame, "type")? {

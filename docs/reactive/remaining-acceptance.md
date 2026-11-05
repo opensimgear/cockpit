@@ -12,6 +12,10 @@ criteria and 13 requiring user-operated rig/simulator acceptance. An unchecked c
 delivered software plus outstanding qualification; it is not necessarily missing
 implementation.
 
+#190 (R1, shared stream contracts) is completed and closed. The remaining
+milestones retain their open acceptance boundaries; project statuses for #197
+and #198 are In progress because implementation/qualification is underway.
+
 ## Software and software qualification remain in the original issues
 
 | Issue | Remaining boundary |
@@ -20,7 +24,7 @@ implementation.
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
 | #193 | Desktop timing and focus/lease notification cutover; mixed-stream fault and affected-owner cleanup matrices; independent dispatch under stalled consumers. |
 | #194 | Complete producer/read-model and cancellation/lock matrices. Activity still samples the aggregate metadata snapshot every 750 ms even after direct lifecycle wakeups. The denied-process-event fallback remains explicit. |
-| #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Native pairing/status, listener and legacy routing polls and physical companion firmware loops remain unresolved software. |
+| #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts/expiry now have a readiness/deadline owner. Native pairing/status, connection read-timeout and legacy routing polls, plus physical companion firmware loops, remain unresolved software. |
 | #196 | Nested navigation/query/editor lifetime and background/reopen matrices; consistent component review. |
 | #197 | Complete manual/MCP state/error/cancel/recovery parity, sustained socket backpressure and schema/documentation/negotiation inventory. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
