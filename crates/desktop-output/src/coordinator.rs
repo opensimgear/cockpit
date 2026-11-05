@@ -218,6 +218,12 @@ impl Coordinator {
         // durable holds remain a recovery superset until arm() commits the
         // resulting owners. No control can be acquired on this path.
         let release_only_arm = matches!(&command, Command::Arm { .. });
+        // The validated reducer projection cannot acquire a native hold when
+        // every resulting control was already held. Retained durable holds
+        // cover release uncertainty until the final ACK/owner commit below.
+        let release_only_delivery = matches!(&command, Command::Deliver { delivery }
+            if matches!(delivery.intent, Intent::Held { .. } | Intent::Cleanup))
+            && possible.iter().all(|control| self.snapshot.held.contains(control));
         let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
         let mut request = Request {
             sequence: Counter(self.sequence),
@@ -239,13 +245,13 @@ impl Coordinator {
             crate::audit::record(crate::audit::Kind::RequestIssued,
                 &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
         }
-        if pointer || release_only_arm {
+        if pointer || release_only_arm || release_only_delivery {
             if let Err(error) = self.verify_current_evidence() {
                 self.audit_outcome(&request, None, 1);
                 return Err(error);
             }
         }
-        if changes_ledger {
+        if changes_ledger && !release_only_delivery {
             if !self.snapshot.uncertain {
                 self.snapshot.possible_held = self.snapshot.held.clone();
             }
@@ -291,6 +297,9 @@ impl Coordinator {
             }
             if release_only_arm && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
                 return Err("Desktop arm acknowledgement acquired an unexpected held control.".into());
+            }
+            if release_only_delivery && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
+                return Err("Desktop release acknowledgement acquired an unexpected held control.".into());
             }
             if matches!(request.command, Command::Stop | Command::Recover { .. })
                 && (!ack.cleanup_complete || !ack.held.is_empty())

@@ -314,9 +314,9 @@ fn delivery_commits_owner_projection_with_validated_ack_in_two_writes() {
     release.intent = Intent::Held { controls: vec![] };
     let before = c.persist_attempts.get();
     c.submit(release, 0).unwrap();
-    assert_eq!(c.persist_attempts.get() - before, 2);
+    assert_eq!(c.persist_attempts.get() - before, 1);
     let dispatched = seen.lock().unwrap().last().unwrap().clone();
-    assert!(dispatched.in_flight.is_some());
+    assert!(dispatched.in_flight.is_none());
     assert_eq!(dispatched.held, vec![key()]);
     assert_eq!(dispatched.possible_held, vec![key()]);
     let persisted = Coordinator::inspect_journal(&path).unwrap();
@@ -343,7 +343,7 @@ fn shared_native_hold_changes_still_persist_each_full_owner_and_collision_count(
     let before = c.persist_attempts.get();
     let ack = c.submit(value, 0).unwrap();
     assert_eq!(ack.attempted, 0, "The second owner must not duplicate the native key edge");
-    assert_eq!(c.persist_attempts.get() - before, 2);
+    assert_eq!(c.persist_attempts.get() - before, 1);
     let shared = Coordinator::inspect_journal(&path).unwrap();
     assert_eq!(shared.held, vec![key()]);
     assert_eq!(shared.shared_controls, 1);
@@ -359,7 +359,7 @@ fn shared_native_hold_changes_still_persist_each_full_owner_and_collision_count(
     release.intent = Intent::Held { controls: vec![] };
     let before = c.persist_attempts.get();
     assert_eq!(c.submit(release, 0).unwrap().attempted, 0);
-    assert_eq!(c.persist_attempts.get() - before, 2);
+    assert_eq!(c.persist_attempts.get() - before, 1);
     let remaining = Coordinator::inspect_journal(&path).unwrap();
     assert_eq!(remaining.held, vec![key()]);
     assert_eq!(remaining.shared_controls, 0);
@@ -420,3 +420,6 @@ mod lifecycle;
 mod arm_journal;
 #[path="coordinator/delivery_commit_tests.rs"]
 mod delivery_commit;
+
+#[path="coordinator/release_journal_tests.rs"]
+mod release_journal;

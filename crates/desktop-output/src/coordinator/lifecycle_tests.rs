@@ -50,7 +50,7 @@ fn held_key_recovery_evidence_survives_pointer_updates() {
     assert!(recovered.held.is_empty() && recovered.possible_held.is_empty());
 }
 #[test]
-fn pointer_traffic_does_not_wait_on_a_locked_sqlite_writer_but_hold_changes_do() {
+fn pointer_traffic_and_native_release_precede_a_locked_final_commit() {
     let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
     let path = dir.path().join("journal.json");
     let events = Arc::new(Mutex::new(vec![]));
@@ -77,9 +77,12 @@ fn pointer_traffic_does_not_wait_on_a_locked_sqlite_writer_but_hold_changes_do()
     release.operation_id = Counter(129);
     release.intent = Intent::Held { controls: vec![] };
     let started = std::time::Instant::now();
-    assert!(c.submit(release, 0).is_err(), "hold changes still require a durable pre-dispatch ledger");
+    assert!(c.submit(release, 0).is_err(), "release still requires its final durable acknowledgement");
     assert!(started.elapsed() >= std::time::Duration::from_millis(200));
-    assert_eq!(events.lock().unwrap().len(), dispatched);
+    assert_eq!(events.lock().unwrap().len(), dispatched + 1);
+    assert_eq!(events.lock().unwrap().last(), Some(&NativeEvent::Key {
+        usage: 4, down: false, repeat: false,
+    }));
     drop(lock);
     let retained = Coordinator::inspect_journal(&path).unwrap();
     assert_eq!(retained.held, vec![key()]);
