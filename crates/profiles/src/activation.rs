@@ -102,6 +102,7 @@ impl Default for Target {
 pub enum Decision {
     Hold(String),
     Conflict(Vec<String>),
+    RetainActive(Target),
     Select(Target),
 }
 #[derive(Clone, Copy, Debug, Default)]

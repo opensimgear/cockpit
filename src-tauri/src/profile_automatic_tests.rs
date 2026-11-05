@@ -526,6 +526,7 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
         manager.poll_automatic();
     }
     assert_eq!(owner(manager), Some(first.clone()));
+    assert_eq!(manager.profile_automatic.view()["status"], "active");
     ok(
         manager,
         "profile_rename",

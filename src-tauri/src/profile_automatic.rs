@@ -254,6 +254,15 @@ impl Runtime {
                 state.conflicts = games.clone();
                 None
             }
+            Decision::RetainActive(target) => {
+                if state.status != "active" || state.target.as_ref() != Some(target) {
+                    state.message = "The matching profile is active; game routes follow the current verified process.".into();
+                }
+                state.status = "active";
+                state.target = Some(target.clone());
+                state.conflicts.clear();
+                None
+            }
             Decision::Select(target) => {
                 state.conflicts.clear();
                 let Some(next) = state.reconciler.next(decision, epoch) else {
@@ -681,7 +690,7 @@ impl GatewayManager {
                 && active_game_context == target.game_id
             {
                 return Ok((
-                    Decision::Hold("The matching profile is active; game routes follow the current verified process.".into()),
+                    Decision::RetainActive(target.clone()),
                     observed,
                     epoch,
                 ));
