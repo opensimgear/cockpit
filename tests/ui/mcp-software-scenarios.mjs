@@ -44,7 +44,7 @@ async function showGraph(page, name, expectedNodes, expectedEdges) {
   }, name);
   await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Profile canvas"]')), 'The real profile canvas did not load');
   const rendered = await page.evaluate(() => ({
-    heading: document.querySelector('.editor-title h1')?.textContent.trim(),
+    heading: document.querySelector('button[aria-label="Edit profile name"]')?.textContent.trim(),
     view: document.querySelector('.canvas-stage')?.getAttribute('data-view'),
     canvasVisible: document.querySelector('.canvas-stage')?.getBoundingClientRect().width > 0,
     errors: [...document.querySelectorAll('.workspace-error[role="alert"]')].map(item => item.textContent.trim()),
