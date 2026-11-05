@@ -220,6 +220,7 @@ impl PanelInputs {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) fn wait_baseline(
         &mut self,
         delivery: &ExecutionPlan,

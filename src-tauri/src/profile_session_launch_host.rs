@@ -285,7 +285,12 @@ impl NativeProfileHost {
         )?;
         game.acquire(games)?;
         let deadline = Instant::now() + Duration::from_secs(3);
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current())
+            .map_err(|_| "Cannot bind the launched game baseline waiter.")?;
+        game.set_wake(Some(wake.clone()));
         while game.requires_baseline() {
+            let observed = wake.observed();
             let sample = game.poll(games, || controllers.stream_page("", 0).captured_us);
             if sample.context_lost {
                 return Err(sample.diagnostics.join("; "));
@@ -299,8 +304,10 @@ impl NativeProfileHost {
                         .into(),
                 );
             }
-            std::thread::sleep(Duration::from_millis(5));
+            let wait = game.baseline_wait_until(deadline).saturating_duration_since(Instant::now());
+            wake.wait(observed, wait);
         }
+        game.set_wake(None);
         if let Some(proof) = &proof {
             games.validate_game_preparation(&proof.proof)?;
         }
