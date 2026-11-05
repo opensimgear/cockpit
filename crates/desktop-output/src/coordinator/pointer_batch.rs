@@ -29,6 +29,7 @@ impl Coordinator {
         deliveries: Vec<Delivery>,
         source_now_us: u64,
     ) -> Result<Vec<Ack>, String> {
+        let revision = self.projection_revision;
         crate::pointer_batch::describe(&deliveries)?;
         let source_deadline = deliveries
             .iter()
@@ -37,15 +38,21 @@ impl Coordinator {
         let expired = source_deadline.is_some_and(|d| source_now_us >= d.0);
         let deadline_us = source_deadline
             .map(|d| Counter((self.clock)().saturating_add(d.0.saturating_sub(source_now_us))));
-        let mut next = crate::pointer_batch::reduce(&self.reducer, &deliveries, expired)?;
+        let command = Command::DeliverPointerBatch { deliveries: deliveries.clone() };
+        let mut next = if self.admission_is_stale(&command) {
+            let mut probe = Reducer::default();
+            for delivery in &deliveries { probe.arm(delivery.producer.clone(), delivery.action_id.clone())?; }
+            crate::pointer_batch::reduce(&probe, &deliveries, true)?;
+            self.reducer.clone()
+        } else { crate::pointer_batch::reduce(&self.reducer, &deliveries, expired)? };
         let ack = self.send_with_commit(
-            Command::DeliverPointerBatch {
-                deliveries: deliveries.clone(),
-            },
+            command,
             deadline_us,
             next.held(),
             |coordinator, ack| {
-                if !ack.released_guards.is_empty() {
+                if ack.scope_rejected {
+                    next = coordinator.reducer.clone();
+                } else if revision != coordinator.projection_revision {
                     next = crate::pointer_batch::reduce(&coordinator.reducer,
                         &deliveries, expired || ack.skipped)?;
                 }

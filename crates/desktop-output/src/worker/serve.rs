@@ -4,7 +4,7 @@ use super::wait::NativeWait;
 use std::{io::Write, sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}, thread};
 
 pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>(
-    adapter: A,
+    mut adapter: A,
     mut input: R,
     mut output: W,
     clock: fn() -> u64,
@@ -70,13 +70,15 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
     responses
         .try_send(serde_json::json!({"protocol":PROTOCOL,"backend":"desktop-input","ok":true}))
         .map_err(|_| "Desktop hello failed.")?;
+    let scope_wake = waiter.waker();
+    adapter.set_scope_wake(Arc::new(move || scope_wake.notify()));
     let mut worker = Worker::new(adapter);
     let result = (|| loop {
         if failure.load(Ordering::Acquire) {
             return Err("Desktop worker transport failed.".into());
         }
         worker.tick(clock())?;
-        let incoming = waiter.receive(&recv, worker.guards.wait(clock()))?;
+        let incoming = waiter.receive(&recv, worker.wait_duration(clock()))?;
         if failure.load(Ordering::Acquire) { return Err("Desktop worker transport failed.".into()); }
         match incoming {
             Ok(Ok(Some(request))) => {

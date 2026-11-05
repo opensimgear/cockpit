@@ -18,26 +18,24 @@ mod experiment {
         thread,
         time::{Duration, Instant},
     };
+    mod receiver_focus {
+        include!("support/receiver_focus.rs");
+    }
+    mod receiver_cursor {
+        include!("support/receiver_cursor.rs");
+    }
+    pub(super) use self::receiver_focus::foreground;
     use windows_sys::Win32::{
         Foundation::*,
-        Graphics::Gdi::{ClientToScreen, ScreenToClient},
         System::{
             LibraryLoader::GetModuleHandleW,
-            Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId},
+            Threading::GetCurrentProcessId,
         },
         UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     };
     pub(super) static OBSERVATIONS: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
-    const RECEIVER_CLASS: &str = "OpenSimGearDesktopReceiver";
-    const ALLOW_RECEIVER_FOREGROUND: u32 = WM_APP + 97;
+    use self::receiver_focus::{FocusChange, RECEIVER_CLASS, ALLOW_RECEIVER_FOREGROUND};
     static RECEIVE_ONLY: AtomicBool = AtomicBool::new(false);
-    struct FocusChange {
-        method: &'static str,
-        before: usize,
-        after: usize,
-        capture_before: usize,
-        capture_after: usize,
-    }
     struct Probe {
         native: Native,
         possible: Vec<NativeEvent>,
@@ -107,198 +105,6 @@ mod experiment {
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
     }
-    /// Pre-hold fallback for launches from a background terminal. Do not use
-    /// this while the experiment holds input: AttachThreadInput resets key state.
-    /// Scope is still independently verified before native submission.
-    pub(super) unsafe fn foreground(window: HWND) {
-        let thread = GetCurrentThreadId();
-        let other = GetWindowThreadProcessId(GetForegroundWindow(), ptr::null_mut());
-        let attached = other != 0 && other != thread && AttachThreadInput(thread, other, 1) != 0;
-        ShowWindow(window, SW_RESTORE);
-        SetWindowPos(
-            window,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-        );
-        SetForegroundWindow(window);
-        SetActiveWindow(window);
-        SetFocus(window);
-        if attached {
-            AttachThreadInput(thread, other, 0);
-        }
-    }
-    unsafe fn receiver_identity(window: HWND) -> Result<ProcessIdentity, String> {
-        if window.is_null() || IsWindow(window) == 0 || GetAncestor(window, GA_ROOT) != window {
-            return Err("Cooperative focus requires an existing top-level receiver window.".into());
-        }
-        let mut class = [0u16; 64];
-        let length = GetClassNameW(window, class.as_mut_ptr(), class.len() as i32);
-        if length <= 0 || String::from_utf16_lossy(&class[..length as usize]) != RECEIVER_CLASS {
-            return Err("Cooperative focus requires the exact receiver window class.".into());
-        }
-        let mut pid = 0;
-        if GetWindowThreadProcessId(window, &mut pid) == 0 || pid == 0 {
-            return Err("Cannot identify the cooperative receiver process.".into());
-        }
-        let identity = process_identity(pid)?;
-        let mut current_pid = 0;
-        if !process_alive(&identity)?
-            || GetWindowThreadProcessId(window, &mut current_pid) == 0
-            || current_pid != pid
-        {
-            return Err("The cooperative receiver process changed or exited.".into());
-        }
-        Ok(identity)
-    }
-    unsafe fn allow_receiver_foreground(window: HWND, target: HWND, pid: u32) -> bool {
-        if !RECEIVE_ONLY.load(Ordering::Relaxed)
-            || GetForegroundWindow() != window
-            || target == window
-            || pid == 0
-            || pid == ASFW_ANY
-        {
-            return false;
-        }
-        let (Ok(source), Ok(target)) = (receiver_identity(window), receiver_identity(target))
-        else {
-            return false;
-        };
-        source.pid == GetCurrentProcessId()
-            && target.pid == pid
-            && source.pid != target.pid
-            && source.executable.eq_ignore_ascii_case(&target.executable)
-            && AllowSetForegroundWindow(target.pid) != 0
-    }
-    /// The foreground test receiver grants only this exact receiver process a
-    /// bounded cooperative handoff. No input queues are joined and no input is
-    /// generated; the observed foreground HWND must still match after activation.
-    unsafe fn receiver_foreground(window: HWND) -> Result<FocusChange, String> {
-        let before = GetForegroundWindow();
-        let capture_before = GetCapture() as usize;
-        let target = receiver_identity(window)?;
-        if target.pid != GetCurrentProcessId() {
-            return Err("The focus target must belong to this receiver process.".into());
-        }
-        let method = if before == window {
-            "already-foreground"
-        } else if let Ok(source) = receiver_identity(before) {
-            if source.pid == target.pid
-                || !source.executable.eq_ignore_ascii_case(&target.executable)
-            {
-                return Err(
-                    "Cooperative focus requires a separate receiver from the same executable."
-                        .into(),
-                );
-            }
-            let mut granted = 0usize;
-            if SendMessageTimeoutW(
-                before,
-                ALLOW_RECEIVER_FOREGROUND,
-                window as WPARAM,
-                target.pid as LPARAM,
-                SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
-                500,
-                &mut granted,
-            ) == 0
-                || granted != 1
-            {
-                return Err(
-                    "The foreground receiver did not grant the bounded focus handoff.".into(),
-                );
-            }
-            if GetForegroundWindow() != before
-                || receiver_identity(before)? != source
-                || receiver_identity(window)? != target
-            {
-                return Err(
-                    "Receiver identity or foreground changed during the focus handoff.".into(),
-                );
-            }
-            "cooperative-receiver"
-        } else {
-            // Startup may leave an unrelated application foreground. Request
-            // ordinary activation without joining its input queue; denial fails
-            // the experiment instead of changing held-input state.
-            "direct-no-attach"
-        };
-        if before != window {
-            SetForegroundWindow(window);
-        }
-        if GetForegroundWindow() != window {
-            return Err("The receiver did not acquire the actual foreground window.".into());
-        }
-        SetActiveWindow(window);
-        SetFocus(window);
-        let after = GetForegroundWindow();
-        if after != window {
-            return Err("The receiver lost foreground during activation.".into());
-        }
-        Ok(FocusChange {
-            method,
-            before: before as usize,
-            after: after as usize,
-            capture_before,
-            capture_after: GetCapture() as usize,
-        })
-    }
-    unsafe fn client_cursor(window: HWND) -> Result<serde_json::Value, String> {
-        let mut rect = RECT::default();
-        let mut point = POINT::default();
-        if GetClientRect(window, &mut rect) == 0
-            || GetCursorPos(&mut point) == 0
-            || ScreenToClient(window, &mut point) == 0
-        {
-            return Err("Cannot observe the receive-only client cursor.".into());
-        }
-        Ok(
-            serde_json::json!({"x":point.x,"y":point.y,"width":rect.right,"height":rect.bottom,
-            "inside":point.x>=0&&point.y>=0&&point.x<rect.right&&point.y<rect.bottom}),
-        )
-    }
-    /// A bounded observer of OS mouse state, not an input ownership inference or
-    /// proof that any application received a mouse message. Zero is ambiguous
-    /// outside our eligible foreground desktop, so expose no state there.
-    unsafe fn mouse_button_state(window: HWND, scope: &Scope, sequence: u64) -> serde_json::Value {
-        let swap_buttons = GetSystemMetrics(SM_SWAPBUTTON) != 0;
-        let eligible_before = eligible_scope(scope).unwrap_or(false);
-        let before = GetForegroundWindow();
-        let down = if eligible_before && before == window {
-            // Only the high bit is current state; the low transition bit is
-            // shared with other processes and must not be used as evidence.
-            Some(GetAsyncKeyState(VK_LBUTTON as i32) < 0)
-        } else {
-            None
-        };
-        let at_us = now_us();
-        let eligible_after = eligible_scope(scope).unwrap_or(false);
-        let after = GetForegroundWindow();
-        let available = down.is_some()
-            && eligible_after
-            && after == window
-            && (GetSystemMetrics(SM_SWAPBUTTON) != 0) == swap_buttons;
-        serde_json::json!({"sequence":sequence.to_string(),"atUs":at_us.to_string(),
-            "available":available,"leftButtonDown":if available {down} else {None},
-            "swapButtons":swap_buttons,"foregroundBefore":(before as usize).to_string(),
-            "foregroundAfter":(after as usize).to_string()})
-    }
-    unsafe fn center_cursor(window: HWND) -> Result<(), String> {
-        let mut rect = RECT::default();
-        if GetClientRect(window, &mut rect) == 0 || rect.right <= 0 || rect.bottom <= 0 {
-            return Err("The receive-only window has no client area.".into());
-        }
-        let mut point = POINT {
-            x: rect.right / 2,
-            y: rect.bottom / 2,
-        };
-        if ClientToScreen(window, &mut point) == 0 || SetCursorPos(point.x, point.y) == 0 {
-            return Err("Cannot center the cursor in the receive-only client area.".into());
-        }
-        Ok(())
-    }
     unsafe extern "system" fn receive(
         window: HWND,
         message: u32,
@@ -309,7 +115,7 @@ mod experiment {
             let Ok(pid) = u32::try_from(lparam) else {
                 return 0;
             };
-            return allow_receiver_foreground(window, wparam as HWND, pid) as LRESULT;
+            return receiver_focus::allow_receiver_foreground(window, wparam as HWND, pid) as LRESULT;
         }
         if matches!(
             message,
@@ -334,7 +140,7 @@ mod experiment {
         ) {
             let mut observations = OBSERVATIONS.lock().unwrap();
             if observations.len() < 4096 {
-                observations.push(serde_json::json!({"atUs":now_us().to_string(),"message":message,"wparam":wparam.to_string(),"lparam":lparam.to_string(),"scanCode":((lparam as u64)>>16)&255,"extended":((lparam as u64)>>24)&1,"injectedMarker":GetMessageExtraInfo() as usize==0x4f534744,"captureWindow":(GetCapture() as usize).to_string(),"foregroundWindow":(GetForegroundWindow() as usize).to_string(),"clientCursor":client_cursor(window).ok()}));
+                observations.push(serde_json::json!({"atUs":now_us().to_string(),"message":message,"wparam":wparam.to_string(),"lparam":lparam.to_string(),"scanCode":((lparam as u64)>>16)&255,"extended":((lparam as u64)>>24)&1,"injectedMarker":GetMessageExtraInfo() as usize==0x4f534744,"captureWindow":(GetCapture() as usize).to_string(),"foregroundWindow":(GetForegroundWindow() as usize).to_string(),"clientCursor":receiver_cursor::client_cursor(window).ok()}));
             }
             // Observe non-client routing without suppressing its normal Windows
             // behavior. Client input retains the receiver's existing handling.
@@ -380,18 +186,22 @@ mod experiment {
             return super::worker_probe::parent(&args);
         }
         let focus_target = args.first().map(String::as_str) == Some("--osg-desktop-focus-target");
+        let keyboard_receiver_only =
+            args.first().map(String::as_str) == Some("--keyboard-receiver-only");
+        let receiver_only = args.first().map(String::as_str) == Some("--receiver-only");
         if args.len() != 2
             || !matches!(
                 args[0].as_str(),
                 "--accept-native-input"
                     | "--accept-worker-input"
                     | "--receiver-only"
+                    | "--keyboard-receiver-only"
                     | "--osg-desktop-focus-target"
             )
         {
             return Err("Usage: native_receiver --accept-native-input <evidence.json> (opens a foreground receiver and submits bounded test input).".into());
         }
-        RECEIVE_ONLY.store(args[0] == "--receiver-only", Ordering::Relaxed);
+        RECEIVE_ONLY.store(receiver_only || keyboard_receiver_only, Ordering::Relaxed);
         let class = wide(RECEIVER_CLASS);
         let title = wide("OpenSimGear keyboard and mouse acceptance receiver");
         let startup_foreground = unsafe { GetForegroundWindow() as usize };
@@ -424,12 +234,18 @@ mod experiment {
             if window.is_null() {
                 return Err(std::io::Error::last_os_error().to_string());
             }
-            foreground(window);
-            center_cursor(window)?;
+            if keyboard_receiver_only {
+                // This mode isolates keyboard reception: use ordinary Windows
+                // activation only, with no input-queue attachment or pointer move.
+                SetForegroundWindow(window);
+            } else {
+                receiver_focus::foreground(window);
+                receiver_cursor::center_cursor(window)?;
+            }
             window
         };
         wait(Duration::from_millis(150));
-        if args[0] == "--receiver-only" {
+        if receiver_only || keyboard_receiver_only {
             use std::io::Write;
             let identity = process_identity(unsafe { GetCurrentProcessId() })?;
             let scope = Scope::Application {
@@ -467,13 +283,19 @@ mod experiment {
                     if request != "focus" && request != "focus-and-center" {
                         return Err("Unknown receive-only focus request.".into());
                     }
+                    if keyboard_receiver_only && request == "focus-and-center" {
+                        return Err(
+                            "Keyboard-only receiver does not accept focus-and-center requests."
+                                .into(),
+                        );
+                    }
                     unsafe {
-                        last_focus = receiver_foreground(window)?;
+                        last_focus = receiver_focus::receiver_foreground(window)?;
                         // Moving the pointer during a held-button focus switch
                         // changes OS mouse routing. Center only when the caller
                         // explicitly requests it after verifying no native holds.
                         if request == "focus-and-center" {
-                            center_cursor(window)?;
+                            receiver_cursor::center_cursor(window)?;
                         }
                     }
                     focus_requests += 1;
@@ -489,8 +311,8 @@ mod experiment {
                     "focusCaptureBefore":last_focus.capture_before.to_string(),"focusCaptureAfter":last_focus.capture_after.to_string(),
                     "foregroundWindow":unsafe {(GetForegroundWindow() as usize).to_string()},
                     "captureWindow":unsafe {(GetCapture() as usize).to_string()},
-                    "mouseButtonState":unsafe {mouse_button_state(window, &scope, mouse_state_sequence)},
-                    "clientCursor":unsafe {client_cursor(window)?}});
+                    "mouseButtonState":unsafe {receiver_cursor::mouse_button_state(window, &scope, mouse_state_sequence)},
+                    "clientCursor":unsafe {receiver_cursor::client_cursor(window)?}});
                 std::fs::write(
                     output,
                     serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?,

@@ -136,7 +136,7 @@ pub(super) fn frame(phase: &mut Phase, sequence: u64, at: u64, reason: Reason, v
     { let admitted_frame = frame.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     vec![frame]
 }
-fn prepared_fixture(
+pub(super) fn prepared_fixture(
     action: Action,
     edge: bool,
 ) -> (
@@ -187,7 +187,7 @@ fn prepared_program_fixture(
         focus_boundary: None,
         waiting_neutral: BTreeSet::new(),
         rearm_evidence: BTreeMap::new(),
-        shadow: None,
+        shadow: None, shadow_admission: None,
         audit_shadow: 0,
         focus_watch: Default::default(),
         authorization_deadline: None,

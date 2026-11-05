@@ -51,7 +51,7 @@ fn fixture() -> (Desktop, Phase) {
         focus_boundary: None,
         waiting_neutral: BTreeSet::new(),
         rearm_evidence: BTreeMap::new(),
-        shadow: None,
+        shadow: None, shadow_admission: None,
         audit_shadow: 0,
         focus_watch: Default::default(),
         authorization_deadline: None,

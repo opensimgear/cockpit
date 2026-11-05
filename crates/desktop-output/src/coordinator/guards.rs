@@ -40,18 +40,9 @@ impl Coordinator {
 
     pub(super) fn finish_guard_receipts(&mut self, request: &Request, ack: &Ack) {
         for id in &ack.released_guards { self.guard_deliveries.remove(&id.0); }
-        self.guard_deliveries.retain(|_, old| match &request.command {
-            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } =>
-                !same_owner(old, &delivery.producer, &delivery.action_id),
-            Command::DeliverPointerBatch { deliveries } => !deliveries.iter().any(|delivery|
-                same_owner(old, &delivery.producer, &delivery.action_id)),
-            Command::Arm { producer, action_id } => !same_owner(old, producer, action_id),
-            Command::Pause { run } => old.producer.run != *run,
-            Command::Stop | Command::Recover { .. } => false,
-            _ => true,
-        });
+        self.guard_deliveries.retain(|_, old| self.reducer.owns_exact(old));
         if let Command::DeliverGuarded { delivery, .. } = &request.command {
-            if !ack.skipped { self.guard_deliveries.insert(request.sequence.0, delivery.clone()); }
+            if ack.ok && !ack.skipped { self.guard_deliveries.insert(request.sequence.0, delivery.clone()); }
         }
     }
 }

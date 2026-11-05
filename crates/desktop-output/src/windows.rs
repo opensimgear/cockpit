@@ -33,6 +33,8 @@ mod clock;
 pub use clock::now_us;
 #[path = "windows/focus/mod.rs"]
 pub mod focus;
+#[path = "windows/worker_scope.rs"]
+mod worker_scope;
 fn open(pid: u32) -> Result<Handle, String> {
     let h = unsafe {
         OpenProcess(
@@ -238,6 +240,7 @@ impl SessionLock {
 unsafe impl Send for SessionLock {}
 pub struct Native {
     _exclusive: SessionLock,
+    scopes: worker_scope::Scopes,
 }
 impl Native {
     pub fn open() -> Result<Self, String> {
@@ -246,6 +249,7 @@ impl Native {
         }
         Ok(Self {
             _exclusive: SessionLock::acquire()?,
+            scopes: Default::default(),
         })
     }
 }
@@ -365,6 +369,15 @@ pub fn records(events: &[NativeEvent]) -> Result<Vec<INPUT>, String> {
     Ok(inputs)
 }
 impl Adapter for Native {
+    fn bind_scope(&mut self, registration: u64, scope: &Scope) -> Result<ScopeEvidence, String> {
+        self.scopes.bind(registration, scope)
+    }
+    fn scope_evidence(&mut self, registration: u64, _: &Scope) -> Result<ScopeEvidence, String> {
+        self.scopes.evidence(registration)
+    }
+    fn retire_scope(&mut self, registration: u64) { self.scopes.retire(registration); }
+    fn set_scope_wake(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) { self.scopes.set_wake(wake); }
+    fn notification_driven(&self) -> bool { true }
     fn eligible(&mut self, scope: &Scope) -> Result<bool, String> {
         eligible_scope(scope)
     }

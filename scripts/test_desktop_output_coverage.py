@@ -19,12 +19,13 @@ class CoverageParserTests(unittest.TestCase):
     def test_actual_coordinator_keeps_send_submit_and_persistence(self):
         root = Path(__file__).resolve().parents[1] / "crates/desktop-output/src"
         # The coordinator keeps test-only counters before later production
-        # methods; its delivery methods now live in a separately gated module.
+        # methods; delivery and transaction methods have separately gated modules.
         source = (root / "coordinator.rs").read_text(encoding="utf-8") + "\n" + (
-            root / "coordinator/delivery.rs").read_text(encoding="utf-8")
+            root / "coordinator/delivery.rs").read_text(encoding="utf-8") + "\n" + (
+            root / "coordinator/transaction.rs").read_text(encoding="utf-8")
         lines = source.splitlines()
         methods = [number for number, line in enumerate(lines, 1)
-            if re.match(r"\s*(?:pub )?fn (?:send|submit)\(", line)]
+            if re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?fn (?:send|submit)\(", line)]
         self.assertEqual(len(methods), 2)
         first_test = next(number for number, line in enumerate(lines, 1)
             if line.strip() == "#[cfg(test)]")

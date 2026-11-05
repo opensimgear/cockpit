@@ -39,9 +39,9 @@ impl ReleaseGuards {
     }
     pub(super) fn clear(&mut self) { self.active.clear(); }
     pub(super) fn take_released(&mut self) -> Vec<Counter> { std::mem::take(&mut self.released) }
-    pub(super) fn wait(&self, now: u64) -> Duration {
+    pub(super) fn wait(&self, now: u64) -> Option<Duration> {
         self.active.values().map(|guard| Duration::from_micros(guard.due.saturating_sub(now)))
-            .min().unwrap_or(Duration::from_millis(5)).min(Duration::from_millis(5))
+            .min()
     }
 }
 impl<A: Adapter> Worker<A> {

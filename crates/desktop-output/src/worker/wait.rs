@@ -61,11 +61,13 @@ mod native {
             Ok(Self { event, timer: Handle(timer) })
         }
         pub(crate) fn waker(&self) -> Wake { self.event.clone() }
-        pub(crate) fn receive<T>(&mut self, receiver: &Receiver<T>, duration: Duration)
+        pub(crate) fn receive<T>(&mut self, receiver: &Receiver<T>, duration: impl Into<Option<Duration>>)
             -> Result<Result<T, RecvTimeoutError>, String> {
             self.event.check()?;
-            if duration.is_zero() { return Ok(Err(RecvTimeoutError::Timeout)); }
-            let deadline = Instant::now().checked_add(duration).ok_or("Desktop native wait deadline overflow.")?;
+            let duration = duration.into();
+            if duration.is_some_and(|duration| duration.is_zero()) { return Ok(Err(RecvTimeoutError::Timeout)); }
+            let deadline = duration.map(|duration| Instant::now().checked_add(duration)
+                .ok_or("Desktop native wait deadline overflow.")).transpose()?;
             // Reset BEFORE checking the queue: a producer sends before SetEvent,
             // so a send racing this reset is either read now or wakes the wait.
             if unsafe { ResetEvent(self.event.0.handle.0) } == 0 { return Err(failure("ResetEvent")); }
@@ -78,15 +80,17 @@ mod native {
             self.event.check()?;
             // Preserve a failure-only notification that preceded ResetEvent.
             if notified { return Ok(Err(RecvTimeoutError::Timeout)); }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { return Ok(Err(RecvTimeoutError::Timeout)); }
-            let due = relative_due(remaining);
-            // Re-arming resets the timer's signal. No APC or global timer state.
-            if unsafe { SetWaitableTimerEx(self.timer.0, &due, 0, None, ptr::null(), ptr::null(), 0) } == 0 {
-                return Err(failure("SetWaitableTimerEx"));
+            if let Some(deadline) = deadline {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() { return Ok(Err(RecvTimeoutError::Timeout)); }
+                let due = relative_due(remaining);
+                if unsafe { SetWaitableTimerEx(self.timer.0, &due, 0, None, ptr::null(), ptr::null(), 0) } == 0 {
+                    return Err(failure("SetWaitableTimerEx"));
+                }
             }
             let handles = [self.event.0.handle.0, self.timer.0];
-            let result = unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE) };
+            let count = if deadline.is_some() { 2 } else { 1 };
+            let result = unsafe { WaitForMultipleObjects(count, handles.as_ptr(), 0, INFINITE) };
             self.event.check()?;
             if result != WAIT_OBJECT_0 && result != WAIT_OBJECT_0 + 1 {
                 return Err(if result == WAIT_FAILED { failure("WaitForMultipleObjects") }
@@ -112,15 +116,66 @@ mod native {
 #[cfg(not(windows))]
 mod native {
     use super::*;
-    #[derive(Clone)]
-    pub(crate) struct Wake;
-    impl Wake { pub(crate) fn notify(&self) {} }
-    pub(crate) struct NativeWait;
+    use std::sync::{Arc, Condvar, Mutex};
+    #[derive(Clone, Default)]
+    pub(crate) struct Wake(Arc<(Mutex<bool>, Condvar)>);
+    impl Wake {
+        pub(crate) fn notify(&self) {
+            let (pending, wake) = &*self.0;
+            *pending.lock().unwrap() = true;
+            wake.notify_one();
+        }
+    }
+    pub(crate) struct NativeWait { event: Wake }
     impl NativeWait {
-        pub(crate) fn new() -> Result<Self, String> { Ok(Self) }
-        pub(crate) fn waker(&self) -> Wake { Wake }
-        pub(crate) fn receive<T>(&mut self, receiver: &Receiver<T>, duration: Duration)
-            -> Result<Result<T, RecvTimeoutError>, String> { Ok(receiver.recv_timeout(duration)) }
+        pub(crate) fn new() -> Result<Self, String> { Ok(Self { event: Wake::default() }) }
+        pub(crate) fn waker(&self) -> Wake { self.event.clone() }
+        pub(crate) fn receive<T>(&mut self, receiver: &Receiver<T>, duration: impl Into<Option<Duration>>)
+            -> Result<Result<T, RecvTimeoutError>, String> {
+            let (pending, wake) = &*self.event.0;
+            let mut pending = pending.lock().map_err(|_| "Desktop notification lock poisoned.")?;
+            let result = match receiver.try_recv() {
+                Ok(value) => Some(Ok(value)),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(RecvTimeoutError::Disconnected)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result { *pending = false; return Ok(result); }
+            if !*pending {
+                pending = match duration.into() {
+                    Some(duration) => wake.wait_timeout(pending, duration).map_err(|_| "Desktop notification lock poisoned.")?.0,
+                    None => wake.wait(pending).map_err(|_| "Desktop notification lock poisoned.")?,
+                };
+            }
+            *pending = false;
+            Ok(match receiver.try_recv() {
+                Ok(value) => Ok(value),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                Err(std::sync::mpsc::TryRecvError::Empty) => Err(RecvTimeoutError::Timeout),
+            })
+        }
     }
 }
 pub(super) use native::NativeWait;
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+
+    #[test]
+    fn retained_event_without_frame_interrupts_an_indefinite_wait() {
+        let mut wait = NativeWait::new().unwrap();
+        let wake = wait.waker();
+        let (_send, receive) = std::sync::mpsc::channel::<u8>();
+        wake.notify();
+        let before = std::time::Instant::now();
+        assert!(matches!(wait.receive(&receive, None).unwrap(), Err(RecvTimeoutError::Timeout)));
+        assert!(before.elapsed() < Duration::from_millis(300));
+        let wake = wait.waker();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            wake.notify();
+        });
+        assert!(matches!(wait.receive(&receive, None).unwrap(), Err(RecvTimeoutError::Timeout)));
+        thread.join().unwrap();
+    }
+}

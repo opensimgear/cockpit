@@ -108,9 +108,13 @@ fn current_gate_rejects_guarded_delivery_before_ipc() {
     let delivery = held("tap", 1);
     let mut stale = delivery.producer.clone();
     stale.run.generation = Counter(2);
-    output.reconcile(&BTreeMap::from([("tap".into(), stale)]));
-    let request = Request { sequence: Counter(1), deadline_us: None,
+    let admission = output.child_scope().map(|receipt| receipt.admission);
+    output.shared.lock().executing_admission = admission;
+    output.reconcile(&BTreeMap::from([("tap".into(), delivery.producer.clone())]));
+    let request = Request { admission, sequence: Counter(1), deadline_us: None,
         command: Command::DeliverGuarded { delivery, release_after_us: Counter(12_000) } };
+    assert!(output.shared.permitted(&request));
+    output.reconcile(&BTreeMap::from([("tap".into(), stale)]));
     assert!(!output.shared.permitted(&request));
     assert!(!requests.lock().unwrap().iter().any(|request| matches!(request.command, Command::DeliverGuarded { .. })));
 }
@@ -125,7 +129,7 @@ fn mapped_held_tap_uses_guarded_command() {
     output.activate(run(), Scope::DesktopWide).unwrap();
     let delivery = held("tap", 1);
     reconcile(&output, std::slice::from_ref(&delivery));
-    output.dispatch(vec![delivery], 10, 0).unwrap();
+    output.dispatch(vec![delivery], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     assert!(requests.lock().unwrap().iter().any(|request| matches!(
         request.command,
         Command::DeliverGuarded { release_after_us: Counter(12_000), .. }
@@ -136,7 +140,7 @@ fn mapped_held_tap_uses_guarded_command() {
 fn inline_uses_ordered_executor_and_keeps_ticket_until_completion_taken() {
     let (output, requests, events) = inline();
     let deliveries = vec![pointer("x", 1), pointer("y", 2), held("key", 3), pointer("x", 4), pointer("y", 5)];
-    output.dispatch(deliveries, 10, 0).unwrap();
+    output.dispatch(deliveries, 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     assert!(output.busy());
     assert!(output.pending());
     let completion = output.take_completion().unwrap();
@@ -159,7 +163,7 @@ fn elapsed_queue_age_expires_held_and_suppresses_following_taps_but_allows_clean
         let mut state = output.shared.lock();
         state.busy = true;
         state.job = Some(Job { deliveries: vec![first, repeat, cleanup], source_now: 10,
-            admitted: Instant::now() - Duration::from_millis(2), epoch: state.epoch, audit_shadow: 0 });
+            admission: state.child_scope.map(|receipt| receipt.admission), admitted: Instant::now() - Duration::from_millis(2), epoch: state.epoch, audit_shadow: 0 });
     }
     output.drive();
     let completion = output.take_completion().unwrap();
@@ -174,14 +178,14 @@ fn elapsed_queue_age_expires_held_and_suppresses_following_taps_but_allows_clean
 #[test]
 fn cleanup_requires_the_exact_armed_producer_and_pause_clears_owner_slots() {
     let (output, _, _) = inline();
-    output.dispatch(vec![delivery("key", 1, Intent::Cleanup)], 10, 42).unwrap();
+    output.dispatch(vec![delivery("key", 1, Intent::Cleanup)], 10, 42, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     let completion = output.take_completion().unwrap();
     assert_eq!(completion.audit_shadow, 42, "Delayed drops retain their admission's isolated reducer identity");
     assert_eq!(completion.dropped[0].1, 1);
-    output.dispatch(vec![held("key", 2)], 10, 0).unwrap();
+    output.dispatch(vec![held("key", 2)], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     output.take_completion().unwrap();
     output.pause(run()).unwrap();
-    output.dispatch(vec![delivery("key", 3, Intent::Cleanup)], 10, 0).unwrap();
+    output.dispatch(vec![delivery("key", 3, Intent::Cleanup)], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     assert_eq!(output.take_completion().unwrap().dropped[0].1, 1);
 }
 
@@ -203,7 +207,7 @@ fn pointer_groups_split_at_max_batch_and_encoded_frame_limit() {
             }
             delivery
         }).collect();
-        output.dispatch(deliveries, 10, 0).unwrap();
+        output.dispatch(deliveries, 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
         let completion = output.take_completion().unwrap();
         assert!(completion.error.is_none(), "{:?}", completion.error);
         assert_eq!(completion.outcomes.len(), count as usize);
@@ -227,17 +231,19 @@ fn pointer_groups_split_at_max_batch_and_encoded_frame_limit() {
 #[test]
 fn bounds_and_second_outstanding_batch_fail_closed_explicitly() {
     let (output, _, _) = inline();
-    output.dispatch(vec![held("key", 1)], 10, 0).unwrap();
-    assert!(output.dispatch(vec![], 10, 0).unwrap_err().contains("outstanding"));
+    output.dispatch(vec![held("key", 1)], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
+    assert!(output.dispatch(vec![], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap_err().contains("outstanding"));
     assert!(output.snapshot().error.is_some());
     assert!(output.take_completion().is_some());
     let (output, _, _) = inline();
-    assert!(output.dispatch(vec![pointer("x", 1); 4097], 10, 0).unwrap_err().contains("4096"));
+    assert!(output.dispatch(vec![pointer("x", 1); 4097], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap_err().contains("4096"));
     let (output, _, _) = inline();
-    assert!(output.dispatch(vec![pointer(&"x".repeat(400), 1); 4096], 10, 0).unwrap_err().contains("1 MiB"));
+    assert!(output.dispatch(vec![pointer(&"x".repeat(400), 1); 4096], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap_err().contains("1 MiB"));
 }
 
 #[path = "threaded_tests.rs"]
 mod threaded_tests;
 #[path = "focus_tests.rs"]
 mod focus_tests;
+#[path = "child_tests.rs"]
+mod child_tests;

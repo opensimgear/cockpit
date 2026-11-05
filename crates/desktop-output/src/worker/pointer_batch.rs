@@ -11,14 +11,6 @@ impl<A: Adapter> Worker<A> {
     ) -> Result<Vec<NativeEvent>, String> {
         let batch = crate::pointer_batch::describe(&deliveries)?;
         ack.pointer_batch = Some(batch.clone());
-        let run = self
-            .runs
-            .iter()
-            .find(|r| r.token == deliveries[0].producer.run)
-            .ok_or("Unknown desktop run.")?;
-        if run.paused || !self.adapter.eligible(&run.scope).unwrap_or(false) {
-            return Err("Desktop output paused; fresh neutral baseline required.".into());
-        }
         let expired = deadline.is_some_and(|d| now >= d.0);
         let next = crate::pointer_batch::reduce(&self.reducer, &deliveries, expired)?;
         ack.skipped = expired;

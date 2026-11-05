@@ -136,7 +136,7 @@ fn flush_preserves_pointer_and_key_barriers_then_batches_adjacent_motion() {
         focus_boundary: None,
         waiting_neutral: BTreeSet::new(),
         rearm_evidence: BTreeMap::new(),
-        shadow: None,
+        shadow: None, shadow_admission: None,
         audit_shadow: 0,
             focus_watch: Default::default(),
             authorization_deadline: None,
@@ -314,14 +314,13 @@ fn large_valid_tokens_split_before_transport_limit_without_losing_motion() {
             .collect();
         let events = Arc::new(Mutex::new(vec![]));
         let groups = Arc::new(Mutex::new(vec![]));
-        let mut output = Coordinator::with_channel(
+        let output = Coordinator::with_channel(
             Box::new(BoundedRecordingChannel {
                 worker: Worker::new(RecordingAdapter(events.clone())),
                 groups: groups.clone(),
             }),
             clock,
         );
-        output.activate(run.clone(), Scope::DesktopWide).unwrap();
         let mut desktop = Desktop {
             output: Output::inline(output),
             scheduler: Scheduler::new(run.clone(), definitions).unwrap(),
@@ -338,11 +337,13 @@ fn large_valid_tokens_split_before_transport_limit_without_losing_motion() {
             focus_boundary: None,
             waiting_neutral: BTreeSet::new(),
             rearm_evidence: BTreeMap::new(),
-            shadow: None,
+            shadow: None, shadow_admission: None,
             audit_shadow: 0,
         focus_watch: Default::default(),
         authorization_deadline: None,
         };
+        desktop.output.activate(desktop.run.clone(), Scope::DesktopWide).unwrap();
+        desktop.shadow_admission = desktop.output.child_scope().map(|receipt| receipt.admission);
         for (index, token) in tokens.iter().enumerate() {
             desktop
                 .scheduler
@@ -370,6 +371,7 @@ fn large_valid_tokens_split_before_transport_limit_without_losing_motion() {
         }
         desktop.scheduler.advance(Counter(8_001)).unwrap();
         let unsplit = osg_desktop_output::protocol::Request {
+            admission: None,
             sequence: Counter(1),
             deadline_us: None,
             command: osg_desktop_output::protocol::Command::DeliverPointerBatch {

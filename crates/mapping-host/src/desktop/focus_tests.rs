@@ -58,6 +58,111 @@ fn scope_inspection_error_pauses_without_faulting_and_return_uses_a_new_baseline
     assert!(desktop.focus_boundary.is_some());
 }
 
+#[test]
+fn helper_loss_consumes_a_fresh_neutral_boundary_when_parent_notice_is_unchanged() {
+    let (mut desktop, mut phase, eligible, events) = fixture(Action::KeyHold { key: Key(4) }, false);
+    install(&desktop);
+    let press = frame(&mut phase, 2, 2, Reason::Change, true);
+    desktop.poll_focused(&press, &phase, true).unwrap();
+    let old = desktop.shadow_admission;
+    eligible.store(false, std::sync::atomic::Ordering::Release);
+    std::thread::sleep(std::time::Duration::from_millis(105));
+    desktop.keep_alive().unwrap(); // Actual Worker ACK reports helper-only loss.
+    eligible.store(true, std::sync::atomic::Ordering::Release);
+    assert_ne!(old, desktop.output.child_scope().map(|receipt| receipt.admission));
+    let held = frame(&mut phase, 3, 3, Reason::Change, true);
+    let admissions = held.into_iter().map(Into::into).collect::<Vec<Admission>>();
+    desktop.poll_scope_notice(&admissions, &phase, notice(1, 0, true)).unwrap();
+    assert_eq!(desktop.focus_watch.consumed_loss, 0, "Parent WinEvent boundary did not change");
+    assert_ne!(desktop.shadow_admission, old);
+    assert_eq!(desktop.status()["state"], "waiting");
+    assert!(desktop.output.snapshot().held.is_empty());
+    let submitted = events.lock().unwrap().len();
+    let held = frame(&mut phase, 4, 4, Reason::Change, true);
+    desktop.poll_focused(&held, &phase, true).unwrap();
+    assert_eq!(events.lock().unwrap().len(), submitted);
+    let neutral = frame(&mut phase, 5, 5, Reason::Change, false);
+    desktop.poll_focused(&neutral, &phase, true).unwrap();
+    let press = frame(&mut phase, 6, 6, Reason::Change, true);
+    desktop.poll_focused(&press, &phase, true).unwrap();
+    assert!(!desktop.output.snapshot().held.is_empty(), "Fresh Arm must check current foreground despite cached eligible=false");
+}
+
+#[test]
+fn flushing_scheduler_work_after_a_helper_callback_keeps_the_old_shadow_proof() {
+    let (mut desktop, phase, eligible, events) = fixture(Action::KeyHold { key: Key(4) }, false);
+    let producer = phase.endpoint_token(&osg_mapping::program::Endpoint {
+        node_id: "source".into(), port_id: "button".into(),
+    }).unwrap();
+    desktop.scheduler.accept("action", producer,
+        osg_mapping::program::SignalSample::scalar(osg_mapping::signal::PortValue::Boolean(true)),
+        Counter(2), false).unwrap();
+    assert!(desktop.scheduler.pending_deliveries().next().is_some());
+    let old = desktop.shadow_admission;
+    eligible.store(false, std::sync::atomic::Ordering::Release);
+    std::thread::sleep(std::time::Duration::from_millis(105));
+    desktop.keep_alive().unwrap();
+    eligible.store(true, std::sync::atomic::Ordering::Release);
+    assert_ne!(old, desktop.output.child_scope().map(|receipt| receipt.admission));
+    desktop.flush(2).unwrap();
+    assert_eq!(desktop.shadow_admission, old, "Flush cannot upgrade scheduler evidence to a fresh helper epoch");
+    assert!(events.lock().unwrap().is_empty());
+    desktop.poll_focused(&[], &phase, true).unwrap();
+    assert_ne!(desktop.shadow_admission, old);
+    assert_eq!(desktop.status()["state"], "waiting");
+}
+
+#[test]
+fn initially_ineligible_helper_requires_neutral_and_can_rearm_without_a_probe_renewal() {
+    let (mut desktop, mut phase, eligible, events) = crate::desktop::tests::prepared_fixture(Action::KeyHold { key: Key(4) }, false);
+    eligible.store(false, std::sync::atomic::Ordering::Release);
+    desktop.start_focused(&phase, true).unwrap();
+    assert!(!desktop.focused);
+    assert!(!desktop.output.child_scope().unwrap().eligible);
+    eligible.store(true, std::sync::atomic::Ordering::Release);
+    let press = frame(&mut phase, 2, 2, Reason::Change, true);
+    desktop.poll_focused(&press, &phase, true).unwrap();
+    assert_eq!(desktop.status()["state"], "waiting");
+    assert!(events.lock().unwrap().is_empty());
+    let neutral = frame(&mut phase, 3, 3, Reason::Change, false);
+    desktop.poll_focused(&neutral, &phase, true).unwrap();
+    let press = frame(&mut phase, 4, 4, Reason::Change, true);
+    desktop.poll_focused(&press, &phase, true).unwrap();
+    assert!(!desktop.output.snapshot().held.is_empty());
+    assert!(desktop.diagnostics.iter().all(|message| !message.contains("expired")));
+}
+
+#[test]
+fn missing_helper_receipt_faults_and_cleans_without_accepting_input() {
+    let (mut desktop, phase, _, events) = crate::desktop::tests::prepared_fixture(Action::KeyHold { key: Key(4) }, false);
+    desktop.started = true;
+    assert!(desktop.poll_focused(&[], &phase, true).unwrap_err().contains("receipt is missing"));
+    assert_eq!(desktop.status()["state"], "faulted");
+    assert!(desktop.output.snapshot().cleanup_complete);
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn helper_callback_during_poll_drops_that_polls_old_shadow_until_next_boundary() {
+    let (mut desktop, mut phase, eligible, events) = fixture(Action::KeyHold { key: Key(4) }, false);
+    let old = desktop.shadow_admission;
+    eligible.store(false, std::sync::atomic::Ordering::Release);
+    std::thread::sleep(std::time::Duration::from_millis(105));
+    let press = frame(&mut phase, 2, 2, Reason::Change, true);
+    // This poll starts with the old receipt. Its Renew ACK publishes the helper
+    // loss before the poll reduces and flushes the newly admitted press.
+    desktop.poll_focused(&press, &phase, true).unwrap();
+    assert_eq!(desktop.shadow_admission, old);
+    assert_ne!(old, desktop.output.child_scope().map(|receipt| receipt.admission));
+    assert!(events.lock().unwrap().is_empty());
+    eligible.store(true, std::sync::atomic::Ordering::Release);
+    desktop.poll_focused(&[], &phase, true).unwrap();
+    assert_ne!(desktop.shadow_admission, old);
+    assert_eq!(desktop.focus_boundary, Some(Counter(2)));
+    assert_eq!(desktop.status()["state"], "waiting");
+    assert!(events.lock().unwrap().is_empty());
+}
+
 #[cfg(windows)]
 mod native {
     use super::*;
@@ -106,7 +211,7 @@ mod native {
             scope: None, focused: false, started: false, registered: false, last_error: None,
             outcomes: VecDeque::new(), dropped_outcomes: 0, diagnostics: VecDeque::new(),
             scope_error: None, focus_boundary: None, waiting_neutral: BTreeSet::new(),
-            rearm_evidence: BTreeMap::new(), shadow: None, audit_shadow: 0,
+            rearm_evidence: BTreeMap::new(), shadow: None, shadow_admission: None, audit_shadow: 0,
             focus_watch: Default::default(), authorization_deadline: None,
         }, phase, requests, clock)
     }

@@ -114,6 +114,7 @@ fn worker_setup() -> (Worker<Recording>, Recording, u64) {
                     Request {
                         sequence: Counter(seq),
                         deadline_us: None,
+                        admission: worker.test_admission(&command),
                         command
                     },
                     1000
@@ -130,11 +131,14 @@ fn send(
     deadline: Option<Counter>,
 ) -> Ack {
     *seq += 1;
+    let command = Command::DeliverPointerBatch { deliveries: values };
+    let admission = worker.test_admission(&command);
     worker.receive(
         Request {
             sequence: Counter(*seq),
             deadline_us: deadline,
-            command: Command::DeliverPointerBatch { deliveries: values },
+            admission,
+            command,
         },
         1000,
     )
@@ -278,7 +282,8 @@ fn partial_batch_submission_faults_and_releases_existing_holds() {
 fn scope_rejection_is_definitive_and_has_no_pointer_submission() {
     let (mut parent, record, _) = setup();
     *record.eligible.lock().unwrap() = Some(false);
-    assert!(parent.submit_pointer_batch(batch(1), 50).is_err());
+    let acknowledgements = parent.submit_pointer_batch(batch(1), 50).unwrap();
+    assert!(acknowledgements.iter().all(|ack| ack.ok && ack.skipped && ack.scope_rejected));
     assert!(!parent.snapshot().uncertain);
     assert_eq!(parent.snapshot().phase, "paused");
     assert!(record.events.lock().unwrap().is_empty());

@@ -35,7 +35,7 @@ fn down(node: &str, operation: u64) -> Delivery {
 }
 fn send(worker: &mut Worker<Recording>, sequence: &mut u64, command: Command, now: u64) -> Ack {
     *sequence += 1;
-    worker.receive(Request { sequence: Counter(*sequence), deadline_us: None, command }, now)
+    worker.receive(Request { admission: worker.test_admission(&command), sequence: Counter(*sequence), deadline_us: None, command }, now)
 }
 fn setup() -> (Worker<Recording>, Recording, u64) {
     let recording = Recording::new();
@@ -83,7 +83,7 @@ fn fresh_post_submit_anchor_prevents_old_request_time_shortening_the_dwell() {
     worker.anchor_release_guard(&ack, 5_000);
     worker.tick(5_999).unwrap();
     assert_eq!(worker.held().len(), 1);
-    assert_eq!(worker.guards.wait(5_999), Duration::from_micros(1));
+    assert_eq!(worker.guards.wait(5_999), Some(Duration::from_micros(1)));
     worker.tick(6_000).unwrap();
     assert!(worker.held().is_empty());
 }
@@ -178,7 +178,7 @@ fn malformed_or_expired_guard_never_installs_a_timer_or_acquires_input() {
     }
     let (mut worker, recording, mut sequence) = setup();
     sequence += 1;
-    let ack = worker.receive(Request { sequence: Counter(sequence), deadline_us: Some(Counter(0)),
+    let ack = worker.receive(Request { admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }), sequence: Counter(sequence), deadline_us: Some(Counter(0)),
         command: Command::DeliverGuarded { delivery: down("tap", 1), release_after_us: Counter(1_000) } }, 0);
     assert!(ack.ok && ack.skipped && worker.guards.active.is_empty());
     assert!(recording.batches.lock().unwrap().is_empty());

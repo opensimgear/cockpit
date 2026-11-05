@@ -149,7 +149,7 @@ fn failed_metadata_commit_fences_acknowledged_delivery_until_recovery() {
             assert!(durable.in_flight.is_some());
             assert!(durable.held.is_empty());
         } else {
-            assert!(durable.in_flight.is_none());
+            assert!(durable.in_flight.is_some(), "A failed projection must retain the prepared recovery request");
             assert!(durable.uncertain && !durable.cleanup_complete);
             assert_eq!(durable.held, vec![key()]);
             assert_eq!(durable.phase, "faulted");

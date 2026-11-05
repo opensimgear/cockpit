@@ -21,7 +21,7 @@ fn callback_revokes_blocked_batch_and_authorization_before_the_next_parent_poll(
     output.renew(run()).unwrap();
     let deliveries = vec![held("key", 1), held("other", 2)];
     reconcile(&output, &deliveries);
-    output.dispatch(deliveries, 10, 0).unwrap();
+    output.dispatch(deliveries, 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let revoke = output.scope_revoker(run());
     let started = Instant::now();
@@ -63,7 +63,7 @@ fn eligible_same_process_and_global_scope_events_preserve_current_output() {
     let epoch = output.shared.lock().epoch;
     output.scope_revoker(run()).observe(notice(1, 2, 0, true));
     assert_eq!(output.shared.lock().epoch, epoch);
-    output.dispatch(vec![held("key", 1)], 10, 0).unwrap();
+    output.dispatch(vec![held("key", 1)], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     assert_eq!(output.take_completion().unwrap().outcomes.len(), 1);
     assert!(!events.lock().unwrap().is_empty());
 }

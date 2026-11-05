@@ -33,8 +33,18 @@ impl Channel for Fixture {
                 .unwrap()
                 .push(Coordinator::inspect_journal(path)?);
         }
-        let mut ack = self.worker.receive(r.clone(), 1000);
         let fault = std::mem::replace(&mut self.fault, Fault::None);
+        let mut actual = r.clone();
+        if matches!(fault, Fault::Rejected) {
+            // A definitive rejection has no command effects. Do not model a
+            // successful native mutation followed by a forged rejection flag.
+            match &mut actual.command {
+                Command::Activate { run, .. } => run.generation = Counter(0),
+                Command::Arm { action_id, .. } => action_id.clear(),
+                _ => panic!("Unsupported definitive rejection fixture"),
+            }
+        }
+        let mut ack = self.worker.receive(actual, 1000);
         match fault {
             Fault::None => {}
             Fault::Sequence => ack.sequence = Counter(999),

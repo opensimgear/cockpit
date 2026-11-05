@@ -21,6 +21,26 @@ pub enum Scope {
     Application { identity: ProcessIdentity },
     DesktopWide,
 }
+/// Ephemeral native registration and loss epoch. Capture with the source shadow,
+/// never replace this proof with a newer epoch while dispatching queued work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScopeAdmission {
+    pub registration: Counter,
+    pub epoch: Counter,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScopeReceipt {
+    pub admission: ScopeAdmission,
+    pub live: bool,
+    pub eligible: bool,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeEvidence {
+    pub loss_epoch: u64,
+    pub eligible: bool,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum NativeEvent {
@@ -61,7 +81,13 @@ pub enum Command {
 pub struct Request {
     pub sequence: Counter,
     pub deadline_us: Option<Counter>,
+    #[serde(deserialize_with = "required_admission")]
+    pub admission: Option<ScopeAdmission>,
     pub command: Command,
+}
+fn required_admission<'de, D: serde::Deserializer<'de>>(deserializer: D)
+    -> Result<Option<ScopeAdmission>, D::Error> {
+    Option::deserialize(deserializer)
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,6 +101,9 @@ pub struct Ack {
     pub uncertain: bool,
     pub cleanup_complete: bool,
     pub skipped: bool,
+    /// Scope rejection is a healthy pause, distinct from an authored deadline.
+    pub scope_rejected: bool,
+    pub scopes: Vec<ScopeReceipt>,
     #[serde(default)]
     pub collision: bool,
     pub error: Option<String>,
@@ -100,6 +129,17 @@ pub struct PointerBatchAck {
     pub dy: i32,
 }
 pub trait Adapter {
+    /// Recording adapters may sample their explicit test state. The native
+    /// adapter overrides these methods with scoped notification evidence.
+    fn bind_scope(&mut self, _registration: u64, scope: &Scope) -> Result<ScopeEvidence, String> {
+        self.scope_evidence(_registration, scope)
+    }
+    fn scope_evidence(&mut self, _registration: u64, scope: &Scope) -> Result<ScopeEvidence, String> {
+        Ok(ScopeEvidence { loss_epoch: 0, eligible: self.eligible(scope)? })
+    }
+    fn retire_scope(&mut self, _registration: u64) {}
+    fn set_scope_wake(&mut self, _wake: std::sync::Arc<dyn Fn() + Send + Sync>) {}
+    fn notification_driven(&self) -> bool { false }
     /// Check foreground identity and interactive desktop immediately before submission.
     fn eligible(&mut self, scope: &Scope) -> Result<bool, String>;
     /// Return the exact SendInput count. A short count is an uncertain failure.

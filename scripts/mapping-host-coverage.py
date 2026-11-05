@@ -74,7 +74,7 @@ def main():
         'companion_native', 'companion_runs', 'typed_sources', 'desktop',
         'desktop/dispatch', 'desktop/deadlines', 'desktop/lifecycle',
         'desktop/output', 'desktop/output/worker', 'desktop/output/execute',
-        'desktop/focus', 'desktop/output/focus']]
+        'desktop/focus', 'desktop/output/focus', 'desktop/helper_scope', 'desktop/output/child']]
     summary = {}
     for source in sources:
         result, annotated = measure_module(source, lambda path: run([

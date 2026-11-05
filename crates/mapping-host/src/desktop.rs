@@ -45,6 +45,7 @@ pub struct Desktop {
     waiting_neutral: BTreeSet<String>,
     rearm_evidence: BTreeMap<String, (Token, Vec<Observation>)>,
     shadow: Option<Phase>,
+    shadow_admission: Option<osg_desktop_output::protocol::ScopeAdmission>,
     audit_shadow: u64,
     focus_watch: focus::FocusWatch,
     authorization_deadline: Option<Counter>,
@@ -85,6 +86,7 @@ impl Desktop {
             waiting_neutral: BTreeSet::new(),
             rearm_evidence: BTreeMap::new(),
             shadow: None,
+            shadow_admission: None,
             audit_shadow: 0,
             focus_watch: Default::default(),
             authorization_deadline: None,
@@ -168,7 +170,7 @@ impl Desktop {
         let admissions = frames.iter().cloned().map(Into::into).collect::<Vec<Admission>>();
         self.poll_admissions_focused(&admissions, reducer, focused)
     }
-    fn poll_admissions_focused(
+    fn poll_admissions_focused_inner(
         &mut self,
         admissions: &[Admission],
         reducer: &Phase,
@@ -196,6 +198,7 @@ impl Desktop {
             return Ok(vec![]);
         }
         if !self.focused {
+            let admission = self.output.child_scope().map(|receipt| receipt.admission);
             self.focused = true;
             self.scheduler
                 .pause("Application scope returned; require a fresh neutral baseline.");
@@ -212,6 +215,8 @@ impl Desktop {
             shadow.require_desktop_neutral_after(reducer.at_us())?;
             self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
             self.shadow = Some(shadow);
+            self.shadow_admission = admission;
+            if let Some(proof) = self.shadow_admission { self.output.acknowledge_child(proof); }
             self.flush(reducer.at_us().0)?;
             // Effects captured before the new scope baseline are never replayed.
             return Ok(vec![]);
@@ -368,6 +373,7 @@ impl Desktop {
         self.scheduler.stop();
         for delivery in self.scheduler.drain() { self.audit_drop(&delivery, 3); }
         self.shadow = None;
+        self.shadow_admission = None;
         self.started = false;
         let result = self.output.stop_all();
         let completion = self.collect_completion();
@@ -399,6 +405,7 @@ impl Desktop {
             "outcomes":self.outcomes,"droppedOutcomes":self.dropped_outcomes,
             "scopeError":self.scope_error,"waitingNeutral":self.waiting_neutral,"focusBoundaryUs":self.focus_boundary,
             "scopeNotifications":self.scope_notifications(),
+            "helperScope":if self.started { self.output.child_scope() } else { None },
             "nativeSubmission":"SendInput count is recorded separately from application observations."})
     }
 }
@@ -447,3 +454,5 @@ mod output;
 mod lifecycle;
 #[path = "desktop/focus.rs"]
 mod focus;
+#[path = "desktop/helper_scope.rs"]
+mod helper_scope;

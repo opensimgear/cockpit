@@ -6,7 +6,7 @@ use crate::{
 };
 use osg_mapping::{
     desktop::{Control, Intent},
-    engine::RunToken,
+    engine::{Counter, RunToken},
 };
 use std::{
     cell::Cell,
@@ -63,6 +63,12 @@ struct Run {
     scope: Scope,
     lease: u64,
     paused: bool,
+    registration: u64,
+    epoch: u64,
+    loss_epoch: u64,
+    source_eligible: bool,
+    live: bool,
+    scope_bound: bool,
 }
 pub struct Worker<A: Adapter> {
     adapter: A,
@@ -94,7 +100,8 @@ impl<A: Adapter> Worker<A> {
         possible.extend(self.reducer.held());
         self.reducer.stop();
         self.guards.clear();
-        self.runs.clear();
+        let registrations = self.runs.drain(..).filter(|run| run.scope_bound)
+            .map(|run| run.registration).collect::<Vec<_>>();
         let result = recovery_releases(&possible).and_then(|events| {
             if events.is_empty() {
                 return Ok(());
@@ -107,6 +114,9 @@ impl<A: Adapter> Worker<A> {
                 Ok(())
             }
         });
+        // Unsubscription can wait for observer shutdown. Native releases must
+        // already have been attempted, including when submission failed.
+        for registration in registrations { self.adapter.retire_scope(registration); }
         self.cleanup_complete = result.is_ok();
         if result.is_ok() {
             self.confirmed.clear()
@@ -132,29 +142,6 @@ impl<A: Adapter> Worker<A> {
         self.confirmed = self.reducer.held();
         Ok((attempted, confirmed))
     }
-    pub fn tick(&mut self, now: u64) -> Result<(), String> {
-        if self.fault.is_some() {
-            return Ok(());
-        }
-        let mut pause = Vec::new();
-        for run in &mut self.runs {
-            let eligible = self.adapter.eligible(&run.scope).unwrap_or(false);
-            if now >= run.lease || !eligible {
-                run.paused = true;
-                pause.push(run.token.clone());
-            }
-        }
-        for run in pause {
-            let events = self.reducer.pause(&run);
-            if let Err(error) = self.submit(&events) {
-                self.fault = Some(error.clone());
-                self.cleanup();
-                return Err(error);
-            }
-        }
-        self.runs.retain(|r| now < r.lease);
-        self.release_due(now)
-    }
     pub fn receive(&mut self, request: Request, now: u64) -> Ack {
         let audit_request = request.sequence.0;
         let (audit_operation, audit_category) = match &request.command {
@@ -175,6 +162,8 @@ impl<A: Adapter> Worker<A> {
             uncertain: false,
             cleanup_complete: self.cleanup_complete,
             skipped: false,
+            scope_rejected: false,
+            scopes: vec![],
             collision: false,
             error: None,
             held: vec![],
@@ -189,13 +178,19 @@ impl<A: Adapter> Worker<A> {
                 return Err("Desktop channel sequence gap or replay.".into());
             }
             self.sequence = request.sequence.0;
-            let guard = self.guards.validate(&request.command)?;
             if !matches!(request.command, Command::Stop | Command::Recover { .. }) {
                 self.tick(now)?;
                 if let Some(error) = &self.fault {
                     return Err(error.clone());
                 }
             }
+            match &request.command {
+                Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => ack.operation_id = Some(delivery.operation_id),
+                Command::DeliverPointerBatch { deliveries } => ack.pointer_batch = Some(crate::pointer_batch::describe(deliveries)?),
+                _ => {}
+            }
+            if !self.admit(&request, now, &mut ack)? { return Ok(()); }
+            let guard = self.guards.validate(&request.command)?;
             let mut events = Vec::new();
             match request.command {
                 Command::Activate { run, scope } => {
@@ -217,18 +212,28 @@ impl<A: Adapter> Worker<A> {
                             return Err("Invalid application process identity.".into());
                         }
                     }
-                    let paused = !self.adapter.eligible(&scope).unwrap_or(false);
+                    let evidence = match self.adapter.bind_scope(audit_request, &scope) {
+                        Ok(evidence) => evidence,
+                        Err(error) => {
+                            self.fault = Some(error.clone());
+                            self.cleanup();
+                            return Err(error);
+                        }
+                    };
+                    let paused = !evidence.eligible;
                     self.runs.push(Run {
                         token: run,
                         scope,
                         lease: now.saturating_add(LEASE_US),
                         paused,
+                        registration: audit_request, epoch: 1,
+                        loss_epoch: evidence.loss_epoch, source_eligible: evidence.eligible, live: true, scope_bound: true,
                     });
                 }
                 Command::Renew { run } => {
                     self.runs
                         .iter_mut()
-                        .find(|r| r.token == run)
+                        .find(|r| r.token == run && r.live)
                         .ok_or("Desktop run lease expired.")?
                         .lease = now.saturating_add(LEASE_US);
                 }
@@ -249,29 +254,12 @@ impl<A: Adapter> Worker<A> {
                         events = self.reducer.pause(&producer.run);
                         ack.skipped = true;
                     } else {
-                        if !self.adapter.eligible(&run.scope).unwrap_or(false) {
-                            return Err("Application scope is not foreground; wait for a fresh neutral baseline.".into());
-                        }
                         run.paused = false;
                         events = self.reducer.arm(producer, action_id)?;
                     }
                 }
                 Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => {
                     ack.operation_id = Some(delivery.operation_id);
-                    let cleanup = matches!(delivery.intent, Intent::Cleanup)
-                        || matches!(&delivery.intent,Intent::Held{controls} if controls.is_empty());
-                    if !cleanup {
-                        let run = self
-                            .runs
-                            .iter()
-                            .find(|r| r.token == delivery.producer.run)
-                            .ok_or("Unknown desktop run.")?;
-                        if run.paused || !self.adapter.eligible(&run.scope).unwrap_or(false) {
-                            return Err(
-                                "Desktop output paused; fresh neutral baseline required.".into()
-                            );
-                        }
-                    }
                     let expired = request.deadline_us.is_some_and(|d| now >= d.0)
                         && !matches!(delivery.intent, Intent::Cleanup);
                     let reduction = self.reducer.delivery(&delivery, expired)?;
@@ -348,6 +336,8 @@ impl<A: Adapter> Worker<A> {
         ack.cleanup_complete = self.cleanup_complete;
         ack.uncertain |= !ack.ok && self.fault.is_some();
         ack.released_guards = self.guards.take_released();
+        ack.scopes = self.scope_receipts();
+        self.runs.retain(|run| run.live);
         ack
     }
 }
@@ -375,6 +365,8 @@ pub fn read_frame(input: &mut impl BufRead) -> Result<Option<Vec<u8>>, String> {
         }
     }
 }
+#[path = "worker/scopes.rs"]
+mod scopes;
 #[path = "worker/serve.rs"]
 mod serve;
 #[path = "worker/wait.rs"]

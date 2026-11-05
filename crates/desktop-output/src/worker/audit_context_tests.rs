@@ -65,6 +65,7 @@ fn short_direct_submission_cleanup_has_no_inherited_request_or_operation() {
             worker
                 .receive(
                     Request {
+                        admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }),
                         sequence: Counter(sequence),
                         deadline_us: None,
                         command
@@ -76,6 +77,7 @@ fn short_direct_submission_cleanup_has_no_inherited_request_or_operation() {
     }
     let ack = worker.receive(
         Request {
+            admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }),
             sequence: Counter(3),
             deadline_us: None,
             command: Command::Deliver {

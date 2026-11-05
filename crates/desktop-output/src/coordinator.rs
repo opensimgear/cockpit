@@ -20,6 +20,11 @@ mod delivery;
 mod journal;
 #[path = "coordinator/pointer_batch.rs"]
 mod pointer_batch;
+#[path = "coordinator/scopes.rs"]
+mod scopes;
+pub use scopes::ScopeUpdate;
+#[path = "coordinator/transaction.rs"]
+mod transaction;
 
 pub trait Channel: Send {
     fn request(&mut self, request: &Request) -> Result<Ack, String>;
@@ -74,6 +79,10 @@ pub struct Coordinator {
     stop_committed: bool,
     dispatch_gate: Option<Arc<dyn Fn(&Request) -> bool + Send + Sync>>,
     guard_deliveries: std::collections::BTreeMap<u64, Delivery>,
+    scope_epochs: std::collections::BTreeMap<u64, ScopeUpdate>,
+    scope_observer: Option<Arc<dyn Fn(ScopeUpdate) + Send + Sync>>,
+    admission: Option<ScopeAdmission>,
+    projection_revision: u64,
     #[cfg(test)]
     persist_attempts: std::cell::Cell<usize>,
     #[cfg(test)]
@@ -128,6 +137,8 @@ impl Coordinator {
             stop_committed: false,
             dispatch_gate: None,
             guard_deliveries: Default::default(),
+            scope_epochs: Default::default(), scope_observer: None, admission: None,
+            projection_revision: 0,
             #[cfg(test)]
             persist_attempts: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -184,212 +195,6 @@ impl Coordinator {
     fn sync_owners(&mut self) -> Result<(), String> {
         self.update_owners();
         self.persist()
-    }
-    fn send(
-        &mut self,
-        command: Command,
-        deadline_us: Option<Counter>,
-        possible: Vec<Control>,
-    ) -> Result<Ack, String> {
-        self.send_with_commit(command, deadline_us, possible, |_, _| Ok(false))
-    }
-    /// Apply a validated delivery's owner projection inside its ACK commit.
-    /// The callback is memory-only and runs after successful native validation.
-    fn send_with_commit(
-        &mut self,
-        command: Command,
-        deadline_us: Option<Counter>,
-        possible: Vec<Control>,
-        commit: impl FnOnce(&mut Self, &Ack) -> Result<bool, String>,
-    ) -> Result<Ack, String> {
-        if self.terminal_stopped {
-            return Err("Desktop worker is stopped; acquire a fresh coordinator before activation or recovery.".into());
-        }
-        if self.snapshot.uncertain && !matches!(command, Command::Stop | Command::Recover { .. }) {
-            return Err(
-                "Desktop delivery is uncertain; explicit stopped-session recovery is required."
-                    .into(),
-            );
-        }
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .ok_or("Desktop channel sequence exhausted.")?;
-        // Relative motion cannot acquire or release a held control and is never
-        // replayed. Its operation counter is volatile, so successful pointer
-        // updates need no recovery-evidence transaction on the lease path.
-        let pointer = matches!(&command, Command::Deliver { delivery } if matches!(delivery.intent, Intent::Pointer { .. }))
-            || matches!(&command, Command::DeliverPointerBatch { .. });
-        // Arm replaces an owner's contribution with an empty one. The old
-        // durable holds remain a recovery superset until arm() commits the
-        // resulting owners. No control can be acquired on this path.
-        let release_only_arm = matches!(&command, Command::Arm { .. });
-        // The validated reducer projection cannot acquire a native hold when
-        // every resulting control was already held. Retained durable holds
-        // cover release uncertainty until the final ACK/owner commit below.
-        let release_only_delivery = matches!(&command, Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. }
-            if matches!(delivery.intent, Intent::Held { .. } | Intent::Cleanup))
-            && possible.iter().all(|control| self.snapshot.held.contains(control));
-        let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
-        let mut request = Request {
-            sequence: Counter(self.sequence),
-            deadline_us,
-            command,
-        };
-        if let Some(channel) = self.channel.audit_id() {
-            let (operation, command, run) = match &request.command {
-                Command::Activate { run, .. } => (0, 1, Some(run)),
-                Command::Arm { producer, .. } => (0, 2, Some(&producer.run)),
-                Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
-                Command::DeliverPointerBatch { deliveries } => (deliveries[0].operation_id.0, 8, Some(&deliveries[0].producer.run)),
-                Command::Renew { run } => (0, 4, Some(run)),
-                Command::Pause { run } => (0, 5, Some(run)),
-                Command::Recover { .. } => (0, 6, None),
-                Command::Stop => (0, 7, None),
-            };
-            let run_alias = run.and_then(|run| crate::audit::alias(crate::audit::AliasKind::Run, run.session.as_bytes())).unwrap_or(0);
-            crate::audit::record(crate::audit::Kind::RequestIssued,
-                &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
-        }
-        if pointer || release_only_arm || release_only_delivery {
-            if let Err(error) = self.verify_current_evidence() {
-                self.audit_outcome(&request, None, 1);
-                return Err(error);
-            }
-        }
-        if changes_ledger && !release_only_delivery {
-            if !self.snapshot.uncertain {
-                self.snapshot.possible_held = self.snapshot.held.clone();
-            }
-            self.snapshot.possible_held.extend(possible);
-            self.snapshot.in_flight = Some(request.clone());
-            if let Err(error) = self.persist() {
-                self.audit_outcome(&request, None, 1);
-                return Err(error);
-            }
-        }
-        let revocable = match &request.command {
-            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => !matches!(&delivery.intent, Intent::Cleanup)
-                && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),
-            Command::DeliverPointerBatch { .. } | Command::Arm { .. } => true,
-            _ => false,
-        };
-        if revocable && self.dispatch_gate.as_ref().is_some_and(|gate| !gate(&request)) {
-            // The journal deliberately retains the conservative original request;
-            // recovery releases possible holds and never replays its deadline.
-            request.deadline_us = Some(Counter(0));
-        }
-        let result = self.channel.request(&request).and_then(|ack| {
-            if ack.sequence != request.sequence {
-                return Err("Stale desktop worker acknowledgement.".into());
-            }
-            if let Some(delivery) = request.command.delivery() {
-                if ack.operation_id != Some(delivery.operation_id) {
-                    return Err("Desktop acknowledgement has the wrong operation identity.".into());
-                }
-            }
-            pointer_batch::validate_ack(&request, &ack)?;
-            if ack.attempted > MAX_BATCH
-                || ack.confirmed > ack.attempted
-                || (ack.ok && ack.attempted != ack.confirmed)
-            {
-                return Err(
-                    "Desktop worker acknowledged an incomplete or invalid native batch.".into(),
-                );
-            }
-            crate::reducer::recovery_releases(&ack.held)?;
-            let mut reconciled = self.stage_guard_receipts(&ack)?;
-            if ack.ok && matches!(request.command, Command::Stop | Command::Recover { .. }) {
-                if let Some(next) = &mut reconciled { next.stop(); }
-            }
-            if pointer && !reconciled.as_ref().map_or_else(|| ack.held == self.snapshot.held,
-                |next| ack.held == next.held()) {
-                return Err("Desktop pointer acknowledgement changed the held-control ledger.".into());
-            }
-            if release_only_arm && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
-                return Err("Desktop arm acknowledgement acquired an unexpected held control.".into());
-            }
-            if release_only_delivery && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
-                return Err("Desktop release acknowledgement acquired an unexpected held control.".into());
-            }
-            if matches!(request.command, Command::Stop | Command::Recover { .. })
-                && (!ack.cleanup_complete || !ack.held.is_empty())
-            {
-                return Err("Desktop worker cleanup acknowledgement is incomplete.".into());
-            }
-            Ok((ack, reconciled))
-        });
-        match result {
-            Ok((ack, reconciled)) => {
-                self.snapshot.held = ack.held.clone();
-                self.snapshot.cleanup_complete = ack.cleanup_complete;
-                self.snapshot.error = ack.error.clone();
-                if ack.uncertain {
-                    self.snapshot.uncertain = true;
-                    self.snapshot.phase = "faulted".into();
-                    let _ = self.persist();
-                    self.audit_outcome(&request, Some(&ack), 2);
-                    return Err(ack.error.unwrap_or("Uncertain native submission.".into()));
-                }
-                self.snapshot.in_flight = None;
-                if ack.ok {
-                    self.snapshot.possible_held = ack.held.clone();
-                    // Install only after the complete ACK has validated. Every
-                    // projection below starts from these exact released owners.
-                    let guards_changed = if let Some(reconciled) = reconciled {
-                        self.reducer = reconciled;
-                        self.update_owners()
-                    } else { false };
-                    let projection = commit(self, &ack).and_then(|changed| {
-                        if !ack.released_guards.is_empty() && self.reducer.held() != ack.held {
-                            return Err("Desktop guard receipt disagrees with the acknowledged owner projection.".into());
-                        }
-                        Ok(changed)
-                    });
-                    let metadata_changed = match projection {
-                        Ok(changed) => changed,
-                        Err(error) => {
-                            self.snapshot.uncertain = true;
-                            self.snapshot.cleanup_complete = false;
-                            self.snapshot.phase = "faulted".into();
-                            self.snapshot.error = Some(error.clone());
-                            let _ = self.persist();
-                            self.audit_outcome(&request, Some(&ack), 3);
-                            return Err(error);
-                        }
-                    };
-                    self.finish_guard_receipts(&request, &ack);
-                    if changes_ledger || metadata_changed || guards_changed {
-                        if let Err(error) = self.persist() {
-                            self.snapshot.uncertain = true;
-                            self.snapshot.cleanup_complete = false;
-                            self.snapshot.phase = "faulted".into();
-                            self.snapshot.error = Some(error.clone());
-                            self.audit_outcome(&request, Some(&ack), 3);
-                            return Err(error);
-                        }
-                    }
-                    self.audit_outcome(&request, Some(&ack), 0);
-                    Ok(ack)
-                } else {
-                    self.snapshot.phase = "paused".into();
-                    let _ = self.persist();
-                    self.audit_outcome(&request, Some(&ack), 4);
-                    Err(ack
-                        .error
-                        .unwrap_or("Desktop worker rejected output.".into()))
-                }
-            }
-            Err(error) => {
-                self.snapshot.uncertain = true;
-                self.snapshot.cleanup_complete = false;
-                self.snapshot.phase = "faulted".into();
-                self.snapshot.error = Some(error.clone());
-                let _ = self.persist();
-                self.audit_outcome(&request, None, 5);
-                Err(error)
-            }
-        }
     }
     pub fn activate(&mut self, run: RunToken, scope: Scope) -> Result<(), String> {
         if self.snapshot.journal_owner.as_ref().is_some_and(|owner|owner!=&run){return Err("Desktop activation does not match the bound ProfileSession journal owner.".into())}

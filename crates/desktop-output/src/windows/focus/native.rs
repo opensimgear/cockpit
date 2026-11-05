@@ -5,7 +5,7 @@ use std::{
     ptr,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
@@ -110,13 +110,14 @@ pub(super) struct Owner {
     thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 impl Owner {
-    pub(super) fn open(shared: Arc<Shared>) -> Result<Arc<Self>, String> {
+    pub(super) fn open(shared: Arc<Shared>, deadline: Instant) -> Result<Arc<Self>, String> {
         let observer = shared.clone();
         let (ready, initialization) = mpsc::sync_channel(1);
         let (finished, completion) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("desktop-scope-events".into())
             .spawn(move || {
+                let exited = super::lifetime::Exit::enter(observer.clone());
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run(&observer, &ready)
                 }));
@@ -138,10 +139,13 @@ impl Owner {
                         let _ = ready.try_send(Err(error));
                     }
                 }
+                // run() and its unwind have dropped all Resources before this
+                // signal. Terminal callbacks also finish before a replacement.
+                drop(exited);
                 let _ = finished.send(());
             })
-            .map_err(|error| error.to_string())?;
-        let (hwnd, thread_id) = match initialization.recv_timeout(Duration::from_secs(5)) {
+            .map_err(|error| { shared.lifetime.finish(); error.to_string() })?;
+        let (hwnd, thread_id) = match initialization.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(result) => result?,
             Err(_) => {
                 // The registry already tracks Shared weakly. A slow initializer

@@ -11,7 +11,7 @@ impl Desktop {
             if self.output.busy() { return Ok(()); }
             let pending = self.scheduler.drain();
             if pending.is_empty() { return Ok(()); }
-            self.output.dispatch(pending, now, self.audit_shadow)?;
+            self.output.dispatch(pending, now, self.audit_shadow, self.shadow_admission)?;
             // Recording completes inline; the native owner completes by wake.
             if self.output.asynchronous() { return Ok(()); }
         }
@@ -37,7 +37,7 @@ impl Desktop {
         acknowledgement: osg_desktop_output::protocol::Ack,
         cancelled: &mut BTreeSet<String>,
     ) -> Result<(), String> {
-        if acknowledgement.collision || acknowledgement.skipped {
+        if acknowledgement.collision || acknowledgement.skipped && !acknowledgement.scope_rejected {
             if self.diagnostics.len() == 32 {
                 self.diagnostics.pop_front();
             }
@@ -47,7 +47,7 @@ impl Desktop {
                 format!("Desktop action {} expired before submission and was skipped.",delivery.action_id)
             });
         }
-        if acknowledgement.skipped
+        if acknowledgement.skipped && !acknowledgement.scope_rejected
             && self.scheduler.active()
             && self.output.current(&delivery)
             && matches!(&delivery.intent, Intent::Held { controls } if !controls.is_empty())

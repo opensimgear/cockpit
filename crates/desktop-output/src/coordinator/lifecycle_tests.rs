@@ -337,6 +337,8 @@ fn acknowledged_stop_is_idempotent_and_cannot_reuse_a_dead_worker() {
                 uncertain: false,
                 cleanup_complete: true,
                 skipped: false,
+                scope_rejected: false,
+                scopes: vec![],
                 collision: false,
                 error: None,
                 held: vec![],
@@ -409,6 +411,7 @@ fn owned_journal_refuses_other_run_scope_and_missing_or_corrupt_records() {
     record.in_flight = Some(Request {
         sequence: Counter(1),
         deadline_us: None,
+        admission: None,
         command: Command::Arm {
             producer: Token {
                 run: other.clone(),
@@ -422,6 +425,7 @@ fn owned_journal_refuses_other_run_scope_and_missing_or_corrupt_records() {
     record.in_flight = Some(Request {
         sequence: Counter(2),
         deadline_us: None,
+        admission: None,
         command: Command::Activate {
             run: expected.clone(),
             scope: application,

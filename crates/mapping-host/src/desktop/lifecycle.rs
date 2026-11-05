@@ -56,21 +56,29 @@ impl Desktop {
     pub fn start_waiting_for_neutral(&mut self) -> Result<(), String> {
         let scope = self.scope.clone().ok_or("A verified desktop scope is required before rearming.")?;
         self.register_scope_watch()?;
-        self.output.activate(self.run.clone(), scope)?;
+        let activated = self.output.activate(self.run.clone(), scope)?;
         self.registered = true;
         self.started = true;
+        self.helper_receipt()?;
+        self.shadow_admission = Some(activated.admission);
+        self.output.acknowledge_child(activated.admission);
         self.focused = false;
         self.shadow = None;
         Ok(())
     }
     pub(super) fn start_focused(&mut self, reducer: &Phase, focused: bool) -> Result<(), String> {
         let shadow = reducer.fork_desktop()?;
-        self.output
+        let activated = self.output
             .activate(self.run.clone(), self.scope.clone().unwrap())?;
         self.registered = true;
         self.started = true;
+        let receipt = self.helper_receipt()?;
+        self.shadow_admission = Some(activated.admission);
+        self.output.acknowledge_child(activated.admission);
+        let focused = focused && activated.eligible && receipt.admission == activated.admission;
         self.focused = focused;
         self.authorization_deadline = focused.then(|| Counter(reducer.at_us().0.saturating_add(100_000)));
+        if !focused { self.shadow = None; return Ok(()); }
         self.baseline(&shadow)?;
         self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
         self.shadow = Some(shadow);

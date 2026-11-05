@@ -35,6 +35,7 @@ fn requests() -> Vec<Request> {
         Command::DeliverGuarded { delivery: down, release_after_us: Counter(1_000) },
         Command::Deliver { delivery: up }, Command::Stop]
         .into_iter().enumerate().map(|(index, command)| Request {
+            admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }),
             sequence: Counter(index as u64 + 1), deadline_us: None, command,
         }).collect()
 }

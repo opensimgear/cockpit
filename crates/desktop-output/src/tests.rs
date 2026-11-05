@@ -72,6 +72,7 @@ fn request(w: &mut Worker<Recording>, seq: &mut u64, command: Command, now: u64)
     *seq += 1;
     w.receive(
         Request {
+            admission: w.test_admission(&command),
             sequence: Counter(*seq),
             deadline_us: None,
             command,
@@ -228,8 +229,7 @@ fn leases_and_focus_release_without_input_and_require_fresh_arm() {
     w.tick(1).unwrap();
     assert!(w.held().is_empty());
     rec.eligible.store(true, Ordering::Relaxed);
-    assert!(
-        !request(
+    let paused = request(
             &mut w,
             &mut seq,
             Command::Deliver {
@@ -242,9 +242,8 @@ fn leases_and_focus_release_without_input_and_require_fresh_arm() {
                 )
             },
             2
-        )
-        .ok
-    );
+        );
+    assert!(paused.ok && paused.skipped && paused.scope_rejected);
     assert!(
         request(
             &mut w,
@@ -333,6 +332,7 @@ fn stale_deadlines_and_channels_never_replay_and_cleanup_survives_scope_loss() {
     seq += 1;
     let ack = w.receive(
         Request {
+            admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }),
             sequence: Counter(seq),
             deadline_us: Some(Counter(1)),
             command: Command::Deliver {
@@ -345,6 +345,7 @@ fn stale_deadlines_and_channels_never_replay_and_cleanup_survives_scope_loss() {
     assert_eq!(ack.attempted, 0);
     let stale = w.receive(
         Request {
+            admission: Some(ScopeAdmission { registration: Counter(1), epoch: Counter(1) }),
             sequence: Counter(seq),
             deadline_us: None,
             command: Command::Deliver {
@@ -564,6 +565,7 @@ fn worker_transport_serves_handshake_stop_and_malformed_frames_without_native_in
     let output = Bytes(Arc::default());
     let buffer = output.0.clone();
     let request = Request {
+        admission: None,
         sequence: Counter(1),
         deadline_us: None,
         command: Command::Stop,

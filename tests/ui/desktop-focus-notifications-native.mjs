@@ -24,7 +24,7 @@ test('native scope notifications release on away and require fresh neutral after
   const launch=async name=>{
     const file=resolve(directory,name+'.json');
     const executable=process.env.OSG_DESKTOP_RECEIVER??resolve('crates/desktop-output/target/debug/examples/native_receiver.exe');
-    const child=spawn(executable,['--receiver-only',file],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(executable,['--keyboard-receiver-only',file],{windowsHide:true,stdio:['ignore','pipe','pipe']});
     let errors='';child.stderr.on('data',bytes=>errors+=bytes);child.stdout.resume();
     child.on('error',error=>{errors+=String(error);});
     const read=async()=>{try{return JSON.parse(await readFile(file,'utf8'));}catch{return null;}};
@@ -36,7 +36,8 @@ test('native scope notifications release on away and require fresh neutral after
   const focus=async receiver=>{
     const previous=(await receiver.read()).focusRequests;
     await writeFile(receiver.file.replace(/\.json$/,'.focus'),'focus');
-    return until(receiver.read,value=>value?.focusRequests>previous&&value.foregroundWindow===value.focusAfter,10000);
+    try { return await until(receiver.read,value=>value?.focusRequests>previous&&value.foregroundWindow===value.focusAfter,10000); }
+    catch(error){ throw new Error(`${receiver.name} receiver focus failed (exit ${receiver.child.exitCode}): ${receiver.errors()}`,{cause:error}); }
   };
   const keys=value=>value.observations.filter(item=>item.injectedMarker&&item.scanCode===30&&[256,257].includes(item.message));
   try {
@@ -67,8 +68,10 @@ test('native scope notifications release on away and require fresh neutral after
     await until(first.read,value=>keys(value??{observations:[]}).some(item=>item.message===256));
     const initial=(await desktop()).runtime;
     assert.equal(initial.scopeNotifications.nativeHealthy,true);
+    assert.equal(initial.helperScope.live,true);
     await focus(second);
-    const away=await until(desktop,value=>value.runtime?.state==='paused'&&value.runtime.backend.held.length===0);
+    const away=await until(desktop,value=>value.runtime?.state==='paused'&&value.runtime.backend.held.length===0
+      &&BigInt(value.runtime.helperScope?.admission.epoch??'0')>BigInt(initial.helperScope.admission.epoch));
     assert.ok(away.runtime.scopeNotifications.lossEpoch>initial.scopeNotifications.lossEpoch);
     assert.equal((await session()).state,'running');
     // Keep the real receiver away longer than the helper's 250 ms lease.
@@ -91,7 +94,7 @@ test('native scope notifications release on away and require fresh neutral after
     assert.ok(stopped&&final.backend.cleanupComplete&&!final.backend.uncertain);
     assert.deepEqual(final.backend.held,[]);assert.deepEqual(final.backend.possibleHeld,[]);
     await writeFile(resolve(directory,'evidence.json'),JSON.stringify({actualNativeCockpit:true,authoredInput:true,
-      physicalLatencyQualified:false,helperFocusPollingRemoved:false,initial,away:away.runtime,returned:returned.runtime,
+      physicalLatencyQualified:false,helperFocusPollingRemoved:true,initial,away:away.runtime,returned:returned.runtime,
       final,receivers:await Promise.all(receivers.map(async receiver=>({name:receiver.name,...await receiver.read()})))},null,2));
   } finally {
     try {

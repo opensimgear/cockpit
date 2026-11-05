@@ -160,10 +160,12 @@ def main():
     modules = ["keys", "protocol", "reducer", "pointer_batch", "worker", "worker/pointer_batch", "worker/serve", "worker/wait",
                "worker/release_guards", "coordinator", "coordinator/journal", "coordinator/pointer_batch",
                "coordinator/guards", "coordinator/delivery", "audit/collector",
-               "audit/collector/capacity", "audit/collector/writer"]
+               "audit/collector/capacity", "audit/collector/writer", "worker/scopes",
+               "coordinator/scopes", "coordinator/transaction"]
     if os.name == "nt":
         modules.extend(["windows/clock", "windows/focus/mod", "windows/focus/state", "windows/focus/native",
-                        "audit/collector/native"])
+                        "audit/collector/native", "windows/worker_scope", "windows/focus/lifetime",
+                        "windows/focus/registry"])
     for module in modules:
         source = root / f"crates/desktop-output/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",

@@ -7,7 +7,7 @@ fn blocked_native_channel_does_not_block_snapshot_renew_or_reserved_pause() {
     let output = threaded(channel);
     let delivery = held("key", 1);
     reconcile(&output, &[delivery.clone()]);
-    output.dispatch(vec![delivery], 10, 0).unwrap();
+    output.dispatch(vec![delivery], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let started = Instant::now();
     output.snapshot();
@@ -33,7 +33,7 @@ fn revocation_during_arm_drops_entire_pointer_vector() {
     let output = threaded(channel);
     let deliveries = vec![pointer("x", 1), pointer("y", 2)];
     reconcile(&output, &deliveries);
-    output.dispatch(deliveries.clone(), 10, 0).unwrap();
+    output.dispatch(deliveries.clone(), 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let mut current = deliveries.iter().map(|d| (d.action_id.clone(), d.producer.clone())).collect::<BTreeMap<_, _>>();
     current.get_mut("y").unwrap().dependencies[0].epoch = Counter(2);
@@ -55,7 +55,7 @@ fn stop_is_a_priority_barrier_and_waits_for_native_ack() {
     let output = Arc::new(threaded(channel));
     let deliveries = vec![held("key", 1), pointer("x", 2), pointer("y", 3)];
     reconcile(&output, &deliveries);
-    output.dispatch(deliveries, 10, 0).unwrap();
+    output.dispatch(deliveries, 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let (done, answer) = mpsc::sync_channel(1);
     let stopping = output.clone();
@@ -79,7 +79,7 @@ fn drop_signals_shutdown_without_waiting_for_blocked_native_channel() {
     let output = threaded(channel);
     let delivery = held("key", 1);
     reconcile(&output, &[delivery.clone()]);
-    output.dispatch(vec![delivery], 10, 0).unwrap();
+    output.dispatch(vec![delivery], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let started = Instant::now();
     drop(output);
@@ -114,7 +114,7 @@ fn heartbeat_failure_is_visible_and_prevents_new_data() {
     std::thread::sleep(Duration::from_millis(105));
     output.renew(run()).unwrap();
     wait_until(|| output.snapshot().error.is_some());
-    assert!(output.dispatch(vec![held("key", 1)], 10, 0).is_err());
+    assert!(output.dispatch(vec![held("key", 1)], 10, 0, output.child_scope().map(|receipt| receipt.admission)).is_err());
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn panic_resolves_accepted_ticket_and_lifecycle_waiter() {
     let output = Arc::new(threaded(channel));
     let delivery = held("key", 1);
     reconcile(&output, &[delivery.clone()]);
-    output.dispatch(vec![delivery], 10, 0).unwrap();
+    output.dispatch(vec![delivery], 10, 0, output.child_scope().map(|receipt| receipt.admission)).unwrap();
     arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     let (done, answer) = mpsc::sync_channel(1);
     let stopping = output.clone();

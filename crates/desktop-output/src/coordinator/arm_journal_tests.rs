@@ -24,11 +24,16 @@ impl Channel for ArmChannel {
     fn request(&mut self, request: &Request) -> Result<Ack, String> {
         let arm = matches!(request.command, Command::Arm { .. });
         if arm { self.state.lock().unwrap().dispatched.push(sql_read(&self.path)?); }
-        let mut ack = self.worker.receive(request.clone(), clock());
+        let fault = if arm { self.state.lock().unwrap().fault.take().unwrap_or(Fault::None) } else { Fault::None };
+        let mut actual = request.clone();
+        if matches!(fault, Fault::Rejected) {
+            if let Command::Arm { action_id, .. } = &mut actual.command { action_id.clear(); }
+        }
+        let mut ack = self.worker.receive(actual, clock());
         if arm {
             let mut state = self.state.lock().unwrap();
             if state.extra_hold { ack.held.push(Control::Key { key: Key(5) }); }
-            match state.fault.take().unwrap_or(Fault::None) {
+            match fault {
                 Fault::None => {},
                 Fault::Sequence => ack.sequence = Counter(999),
                 Fault::Short => { ack.attempted = 2; ack.confirmed = 1; },

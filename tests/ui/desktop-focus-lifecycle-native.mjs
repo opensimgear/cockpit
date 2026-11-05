@@ -34,12 +34,17 @@ test('native scope subscriptions retire across profile replacement and Stop with
     assert.equal(first.state,'running',JSON.stringify(first));
     const firstState=await until(desktop,value=>value.runtime?.scopeNotifications.nativeHealthy);
     assert.ok(firstState.runtime.scopeNotifications.watchId>0);
+    assert.equal(firstState.runtime.helperScope.live,true);
+    assert.ok(BigInt(firstState.runtime.helperScope.admission.registration)>0n);
+    assert.equal(firstState.runtime.helperScope.admission.epoch,'1');
     assert.deepEqual(firstState.runtime.backend.held,[]);
     const second=(await apply(first.owner)).profiles.profileSession;
     assert.equal(second.state,'running',JSON.stringify(second));
     assert.notDeepEqual(second.owner,first.owner);
     const secondState=await until(desktop,value=>value.runtime?.scopeNotifications.nativeHealthy);
     assert.notEqual(secondState.runtime.scopeNotifications.watchId,firstState.runtime.scopeNotifications.watchId);
+    assert.equal(secondState.runtime.helperScope.live,true);
+    assert.equal(secondState.runtime.helperScope.admission.epoch,'1');
     assert.deepEqual(secondState.runtime.backend.held,[]);
     assert.equal(secondState.runtime.backend.uncertain,false);
     await request({command:'profile_stop'});stopped=(await session()).owner===null;
@@ -48,6 +53,7 @@ test('native scope subscriptions retire across profile replacement and Stop with
     assert.deepEqual(final.backend.held,[]);assert.deepEqual(final.backend.possibleHeld,[]);
     assert.equal(final.scopeNotifications.nativeHealthy,false);
     assert.equal(final.scopeNotifications.watchId,null);
+    assert.equal(final.helperScope,null);
     const directory=`.research/reactive/desktop-focus-lifecycle-native/${Date.now()}`;
     await mkdir(directory,{recursive:true});
     await writeFile(directory+'/evidence.json',JSON.stringify({actualNativeCockpit:true,

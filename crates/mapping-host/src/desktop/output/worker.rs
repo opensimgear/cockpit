@@ -1,5 +1,5 @@
 use super::{Completion, Job, Reply, Setup, Shared, execute};
-use osg_desktop_output::Coordinator;
+use osg_desktop_output::{Coordinator, protocol::ScopeAdmission};
 use osg_mapping::engine::{Counter, RunToken, typed::Token};
 use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
 
@@ -9,6 +9,7 @@ pub(super) struct Owner {
     output: Coordinator,
     shared: Arc<Shared>,
     armed: BTreeMap<String, Token>,
+    armed_admission: Option<ScopeAdmission>,
     tap_durations: BTreeMap<String, Counter>,
     pub(super) last_renew: Option<Instant>,
     last_authorization: u64,
@@ -19,7 +20,7 @@ enum Work {
 }
 impl Owner {
     pub(super) fn new(output: Coordinator, shared: Arc<Shared>, tap_durations: BTreeMap<String, Counter>) -> Self {
-        Self { output, shared, armed: BTreeMap::new(), tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false }
+        Self { output, shared, armed: BTreeMap::new(), armed_admission: None, tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false }
     }
     pub(super) fn fail(&mut self, error: String) {
         let mut state = self.shared.lock();
@@ -57,6 +58,7 @@ impl Owner {
         }
         if let Some(job) = state.job.take() {
             state.executing_epoch = job.epoch;
+            state.executing_admission = job.admission;
             return Some(Work::Data(job));
         }
         if let Some((run, admitted, id)) = state.authorization.clone() {
@@ -74,7 +76,12 @@ impl Owner {
         let Some(work) = self.next() else { return false };
         match work {
             Work::Data(job) => {
+                if self.armed_admission != job.admission {
+                    self.armed.clear();
+                    self.armed_admission = job.admission;
+                }
                 let mut completion = execute::execute(&mut self.output, &self.shared, &mut self.armed, &self.tap_durations, job);
+                self.shared.lock().executing_admission = None;
                 // A concurrent admission failure also terminates this ticket.
                 if completion.error.is_none() { completion.error = self.shared.lock().fault.clone(); }
                 let error = completion.error.clone();
@@ -96,6 +103,8 @@ impl Owner {
                 let _ = reply.send(result);
             }
             Work::Pause(run) => {
+                self.armed.clear();
+                self.armed_admission = None;
                 let result = self.output.pause(run);
                 if result.is_ok() { self.armed.clear(); }
                 if let Err(error) = result { self.fail(error); }
@@ -104,8 +113,11 @@ impl Owner {
                 let (result, reply) = match setup {
                     Setup::Bind(run, scope, reply) => (self.output.bind_scope_before_activate(&run, &scope), reply),
                     Setup::Activate(run, scope, reply) => {
-                        let result = self.output.activate(run, scope);
-                        if result.is_ok() { self.last_renew = Some(Instant::now()); }
+                        let result = self.output.activate(run.clone(), scope);
+                        if result.is_ok() {
+                            self.last_renew = Some(Instant::now());
+                            self.shared.lock().activation_scope = self.output.scope_receipt(&run);
+                        }
                         (result, reply)
                     }
                 };

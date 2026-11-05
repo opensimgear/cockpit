@@ -1,5 +1,5 @@
 use super::{Completion, Job, Shared};
-use osg_desktop_output::{protocol::{Command, Request, FRAME_LIMIT, MAX_BATCH}, Coordinator};
+use osg_desktop_output::{protocol::{Command, Request, ScopeAdmission, FRAME_LIMIT, MAX_BATCH}, Coordinator};
 use osg_mapping::{desktop::{Delivery, Intent}, engine::{Counter, typed::Token}};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -19,6 +19,7 @@ pub(in crate::desktop) fn same_pointer_batch(first: &Delivery, next: &Delivery) 
 }
 fn envelope_size() -> Result<usize, String> {
     serde_json::to_vec(&Request { sequence: Counter(u64::MAX), deadline_us: Some(Counter(u64::MAX)),
+        admission: Some(ScopeAdmission { registration: Counter(u64::MAX), epoch: Counter(u64::MAX) }),
         command: Command::DeliverPointerBatch { deliveries: vec![] } })
         .map(|bytes| bytes.len()).map_err(|error| error.to_string())
 }
@@ -28,17 +29,18 @@ fn reason(shared: &Shared, job: &Job, armed: &BTreeMap<String, Token>, cancelled
     let state = shared.lock();
     if state.closed || state.shutdown || state.pause.is_some() { return Some(4); }
     if !cleanup(delivery) && (state.epoch != job.epoch || state.fault.is_some()
+        || !super::child::permitted(&state, job.admission)
         || !super::focus::permitted(&state) || !Shared::current(&state, delivery)) {
         return Some(4);
     }
     None
 }
-fn arm(output: &mut Coordinator, armed: &mut BTreeMap<String, Token>, delivery: &Delivery) -> Result<(), String> {
+fn arm(output: &mut Coordinator, armed: &mut BTreeMap<String, Token>, delivery: &Delivery) -> Result<bool, String> {
     if !cleanup(delivery) && armed.get(&delivery.action_id) != Some(&delivery.producer) {
-        output.arm(delivery.producer.clone(), delivery.action_id.clone())?;
+        if !output.arm_checked(delivery.producer.clone(), delivery.action_id.clone())? { return Ok(false); }
         armed.insert(delivery.action_id.clone(), delivery.producer.clone());
     }
-    Ok(())
+    Ok(true)
 }
 fn source_now(job: &Job) -> u64 {
     effective_source_now(job.source_now, job.admitted)
@@ -53,11 +55,17 @@ fn record(completion: &mut Completion, cancelled: &mut BTreeSet<String>, deliver
     completion.outcomes.push((delivery, ack));
 }
 pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTreeMap<String, Token>, tap_durations: &BTreeMap<String, Counter>, mut job: Job) -> Completion {
+    output.set_admission(job.admission);
     let mut completion = Completion { audit_shadow: job.audit_shadow, outcomes: vec![], dropped: vec![], error: None };
     let mut cancelled = BTreeSet::new();
+    let mut rejected = false;
     let mut pending: VecDeque<_> = std::mem::take(&mut job.deliveries).into();
     let result = (|| {
         while let Some(delivery) = pending.pop_front() {
+            if rejected && !cleanup(&delivery) {
+                completion.dropped.push((delivery, 4));
+                continue;
+            }
             if let Some(reason) = reason(shared, &job, armed, &cancelled, &delivery) {
                 completion.dropped.push((delivery, reason));
                 continue;
@@ -78,9 +86,9 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
             // complete group afterwards, including producers already armed here.
             for delivery in &group {
                 if reason(shared, &job, armed, &cancelled, delivery).is_some() { break; }
-                arm(output, armed, delivery)?;
+                if !arm(output, armed, delivery)? { rejected = true; break; }
             }
-            if group.iter().any(|delivery| reason(shared, &job, armed, &cancelled, delivery).is_some()) {
+            if rejected || group.iter().any(|delivery| reason(shared, &job, armed, &cancelled, delivery).is_some()) {
                 // A motion vector is one physical operation. Revoking any member
                 // rejects the whole vector, including still-current members.
                 completion.dropped.extend(group.into_iter().map(|delivery| (delivery, 4)));
@@ -89,7 +97,10 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
             if group.len() > 1 {
                 let acknowledgements = output.submit_pointer_batch(group.clone(), source_now(&job))?;
                 if acknowledgements.len() != group.len() { return Err("Desktop pointer batch returned an incomplete acknowledgement list.".into()); }
-                for (delivery, ack) in group.into_iter().zip(acknowledgements) { record(&mut completion, &mut cancelled, delivery, ack); }
+                for (delivery, ack) in group.into_iter().zip(acknowledgements) {
+                    rejected |= ack.scope_rejected;
+                    record(&mut completion, &mut cancelled, delivery, ack);
+                }
             } else {
                 let delivery = group.pop().expect("one delivery");
                 let ack = if let Some(release_after_us) = guarded_duration(&delivery, tap_durations) {
@@ -97,11 +108,13 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                 } else {
                     output.submit(delivery.clone(), source_now(&job))?
                 };
+                rejected |= ack.scope_rejected;
                 record(&mut completion, &mut cancelled, delivery, ack);
             }
         }
         Ok(())
     })();
+    output.set_admission(None);
     completion.error = result.err();
     completion
 }

@@ -64,18 +64,21 @@ struct State {
     terminal: Option<String>,
     closing: bool,
 }
-pub(super) struct Shared(Mutex<State>);
+pub(super) struct Shared {
+    state: Mutex<State>,
+    pub(super) lifetime: super::lifetime::Lifetime,
+}
 impl Shared {
     pub(super) fn new() -> Self {
-        Self(Mutex::new(State {
+        Self { state: Mutex::new(State {
             subscribers: BTreeMap::new(),
             last: None,
             terminal: None,
             closing: false,
-        }))
+        }), lifetime: super::lifetime::Lifetime::new() }
     }
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.0.lock().unwrap_or_else(|error| error.into_inner())
+        self.state.lock().unwrap_or_else(|error| error.into_inner())
     }
     pub(super) fn subscribe(
         &self,

@@ -8,6 +8,8 @@ use std::sync::{
 
 mod native;
 mod state;
+mod lifetime;
+mod registry;
 use state::{Shared, Subscriber};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,27 +37,20 @@ pub struct ScopeWatch {
 }
 impl ScopeWatch {
     pub fn open(scope: Scope, wake: Wake) -> Result<Self, String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let id = NEXT_ID
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
             .map_err(|_| "Desktop scope watch identity exhausted.")?;
         let registry = OWNER.get_or_init(|| Mutex::new(Registry::default()));
-        let owner = {
-            let mut slot = registry.lock().unwrap_or_else(|error| error.into_inner());
-            if let Some(owner) = slot.owner.upgrade() {
-                owner
-            } else {
-                // A timed-out Drop may leave the old native thread finishing
-                // cleanup. Never register a second observer over that owner.
-                if slot.shared.upgrade().is_some() {
-                    return Err("Desktop scope observer is still stopping.".into());
-                }
+        let owner = registry::with_available(registry, deadline, |slot, owner| {
+            if let Some(owner) = owner { Ok(owner) } else {
                 let shared = Arc::new(Shared::new());
                 slot.shared = Arc::downgrade(&shared);
-                let owner = native::Owner::open(shared)?;
+                let owner = native::Owner::open(shared, deadline)?;
                 slot.owner = Arc::downgrade(&owner);
-                owner
+                Ok(owner)
             }
-        };
+        })?;
         let subscriber = owner.shared.subscribe(id, scope, wake)?;
         Ok(Self { subscriber, owner })
     }

@@ -1,5 +1,5 @@
 //! A single ordered owner of desktop IPC. Controller calls only touch memory.
-use osg_desktop_output::{protocol::{Ack, Command, Request}, Coordinator, Scope, Snapshot};
+use osg_desktop_output::{protocol::{Ack, Command, Request, ScopeAdmission, ScopeReceipt}, Coordinator, Scope, Snapshot};
 use osg_mapping::{desktop::Delivery, engine::{Counter, RunToken, typed::Token}};
 use std::{collections::BTreeMap, sync::{Arc, Condvar, Mutex, MutexGuard, mpsc}, time::Instant};
 
@@ -38,6 +38,7 @@ pub(super) struct Completion {
     pub error: Option<String>,
 }
 struct Job {
+    admission: Option<ScopeAdmission>,
     deliveries: Vec<Delivery>,
     source_now: u64,
     admitted: Instant,
@@ -54,6 +55,11 @@ struct State {
     allow_empty: bool,
     epoch: u64,
     executing_epoch: u64,
+    executing_admission: Option<ScopeAdmission>,
+    child_run: Option<RunToken>,
+    child_scope: Option<ScopeReceipt>,
+    activation_scope: Option<ScopeReceipt>,
+    acknowledged_child: Option<ScopeAdmission>,
     fault: Option<String>,
     closed: bool,
     shutdown: bool,
@@ -94,8 +100,10 @@ impl Shared {
     fn permitted(&self, request: &Request) -> bool {
         let state = self.lock();
         let valid = |delivery: &Delivery| {
+            if execute::cleanup(delivery) { return true; }
             state.fault.is_none() && !state.closed && !state.shutdown
                 && state.epoch == state.executing_epoch && focus::permitted(&state)
+                && child::permitted(&state, request.admission)
                 && Self::current(&state, delivery)
         };
         match &request.command {
@@ -103,6 +111,7 @@ impl Shared {
             Command::DeliverPointerBatch { deliveries } => deliveries.iter().all(valid),
             Command::Arm { producer, action_id } => state.fault.is_none() && !state.closed
                 && !state.shutdown && state.epoch == state.executing_epoch && focus::permitted(&state)
+                && child::permitted(&state, request.admission)
                 && ((state.allow_empty && state.current.is_empty()) || state.current.get(action_id) == Some(producer)),
             _ => true,
         }
@@ -122,7 +131,8 @@ impl Output {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 snapshot: coordinator.snapshot(), current: BTreeMap::new(), allow_empty,
-                epoch: 0, executing_epoch: 0, fault: None, closed: false, shutdown: false,
+                epoch: 0, executing_epoch: 0, executing_admission: None, child_run: None,
+                child_scope: None, activation_scope: None, acknowledged_child: None, fault: None, closed: false, shutdown: false,
                 busy: false, busy_shadow: 0, control_active: false, completion: None, job: None,
                 pause: None, stop: None, setup: None, authorization: None, authorization_id: 0,
                 scope_watch: None,
@@ -131,6 +141,8 @@ impl Output {
         });
         let gate = shared.clone();
         coordinator.set_dispatch_gate(Arc::new(move |request| gate.permitted(request)));
+        let observer = shared.clone();
+        coordinator.set_scope_observer(Arc::new(move |update| child::observe(&observer, update)));
         let owner = Owner::new(coordinator, shared.clone(), tap_durations);
         (shared, owner)
     }
@@ -193,16 +205,28 @@ impl Output {
     pub(super) fn bind_scope_before_activate(&self, run: &RunToken, scope: &Scope) -> Result<(), String> {
         self.setup(|reply| Setup::Bind(run.clone(), scope.clone(), reply))
     }
-    pub(super) fn activate(&self, run: RunToken, scope: Scope) -> Result<(), String> {
+    pub(super) fn activate(&self, run: RunToken, scope: Scope) -> Result<ScopeReceipt, String> {
+        {
+            let mut state = self.shared.lock();
+            state.child_run = Some(run.clone());
+            state.activation_scope = None;
+        }
         self.setup(|reply| Setup::Activate(run.clone(), scope, reply))?;
+        let receipt = self.shared.lock().activation_scope.filter(|receipt| receipt.live);
+        let Some(receipt) = receipt else {
+            let error = "Desktop helper did not acknowledge a live scope registration.".to_string();
+            self.reject_child(error.clone());
+            return Err(error);
+        };
+        self.acknowledge_child(receipt.admission);
         self.activate_scope_watch(run);
-        Ok(())
+        Ok(receipt)
     }
     pub(super) fn renew(&self, run: RunToken) -> Result<(), String> {
         {
             let mut state = self.shared.lock();
             Self::check(&state)?;
-            if !focus::renewable(&state) { return Ok(()); }
+            if !focus::renewable(&state) || !child::renewable(&state) { return Ok(()); }
             state.authorization_id = state.authorization_id.wrapping_add(1);
             state.authorization = Some((run, Instant::now(), state.authorization_id));
         }
@@ -252,7 +276,7 @@ impl Output {
     pub(super) fn current(&self, delivery: &Delivery) -> bool {
         Shared::current(&self.shared.lock(), delivery)
     }
-    pub(super) fn dispatch(&self, deliveries: Vec<Delivery>, source_now: u64, audit_shadow: u64) -> Result<(), String> {
+    pub(super) fn dispatch(&self, deliveries: Vec<Delivery>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
         let admitted = Instant::now();
         // Validate before serializing: the count bound also bounds serialization work.
         let bounds = if deliveries.len() > DELIVERY_LIMIT {
@@ -274,7 +298,7 @@ impl Output {
         }
         state.busy = true;
         state.busy_shadow = audit_shadow;
-        state.job = Some(Job { deliveries, source_now, admitted, epoch: state.epoch, audit_shadow });
+        state.job = Some(Job { deliveries, source_now, admitted, epoch: state.epoch, audit_shadow, admission });
         drop(state);
         self.drive();
         Ok(())
@@ -313,3 +337,5 @@ impl Drop for Output {
 #[cfg(test)]
 #[path = "output/tests.rs"]
 mod tests;
+#[path = "output/child.rs"]
+mod child;
