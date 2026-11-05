@@ -5,7 +5,6 @@
   import { DebugInputQueue, debugReady, debugDefinition, rawAxisValue, type DebugOperation } from './debug-inputs';
   import { resetDebugOnExit } from './gateway';
   import { canInputTopic, observeCanPanel, type CanPanelPreview } from './can-input-observations';
-  import { panelInputMetadata } from './panel-input-metadata';
   import type { GatewayRequest, GatewayState, GatewayModule } from './gateway';
   let { state: gateway, module, request, read }: { state: GatewayState; module: GatewayModule; request: (request: GatewayRequest) => Promise<boolean>; read: (request: GatewayRequest) => Promise<boolean> } = $props();
   const device = $derived(gateway.debug?.devices.find(device => device.id === module.id));
@@ -13,7 +12,6 @@
   const ready = $derived(debugReady(gateway, module));
   const inputReady = $derived(ready && !!device?.online);
   const outputs = $derived(gateway.moduleActions?.[module.id]);
-  const inputMetadata = $derived(panelInputMetadata(gateway.moduleEvents?.[module.id]));
   const inputTopic = $derived(inputReady && gateway.panelStreamSupported && gateway.gatewayId ? canInputTopic(gateway.gatewayId, module.id) : undefined);
   let preview = $state<CanPanelPreview>();
   const exactPreview = $derived(preview && preview.route.epoch === gateway.epoch
@@ -25,13 +23,12 @@
     if (inputTopic) return observeCanPanel(inputTopic, sample => { preview = sample; });
   });
   function calibratedAxis(index: number) {
-    if (inputTopic) return exactPreview?.axisAvailable[index] ? exactPreview.axes[index] : '—';
-    return (inputMetadata?.boot === module.boot ? inputMetadata?.axes?.[index] : undefined) ?? module.axes[index] ?? '—';
+    return exactPreview?.axisAvailable[index] ? exactPreview.axes[index] : '—';
   }
   let rawDraft = $state<Record<number, number>>({});
   let failure = $state('');
   let refreshing = false;
-  let inputsPending = false, outputsPending = false;
+  let outputsPending = false;
   let mounted = $state(false);
   let resetRevision = 0;
   let disposed = false;
@@ -39,11 +36,7 @@
   // their original target even if a new inventory snapshot arrives.
   const target = untrack(() => ({ moduleId: module.id,
     boot: gateway.debug?.devices.find(device => device.id === module.id)?.boot ?? module.boot!, gatewayId: gateway.gatewayId }));
-  const queue = untrack(() => new DebugInputQueue(target, async command => {
-    const accepted = await request(command);
-    if (accepted && !inputTopic) void refreshReadback(true, false);
-    return accepted;
-  }));
+  const queue = untrack(() => new DebugInputQueue(target, request));
   async function run(operation: DebugOperation, args: number[] = []) {
     if (!ready) return;
     failure = '';
@@ -74,20 +67,15 @@
     event.preventDefault(); void queue.release(contact);
   }
   async function reset() { resetRevision++; rawDraft = {}; failure = ''; if (!await queue.reset()) failure = 'Reset did not complete. Reconnect and reset the device before continuing.'; }
-  async function refreshReadback(inputs: boolean, output: boolean) {
+  async function refreshReadback() {
     if (disposed || !inputReady || document.hidden) return;
-    inputsPending ||= inputs;
-    outputsPending ||= output;
+    outputsPending = true;
     if (refreshing) return;
     refreshing = true;
     try {
-      while (!disposed && inputReady && !document.hidden && (inputsPending || outputsPending)) {
-        const readInputs = inputsPending && !inputTopic, readOutputs = outputsPending;
-        inputsPending = false;
+      while (!disposed && inputReady && !document.hidden && outputsPending) {
         outputsPending = false;
         const moduleId = module.id, boot = module.boot;
-        if (readInputs) await read({ command: 'events_state', moduleId, boot });
-        if (!readOutputs || disposed || !inputReady || module.boot !== boot) continue;
         if ((!outputs || outputs.boot !== boot || !outputs.catalogueRevision) && !await read({ command: 'action_describe', moduleId, boot })) continue;
         if (!disposed && inputReady && module.boot === boot) await read({ command: 'action_state', moduleId, boot });
       }
@@ -95,7 +83,7 @@
   }
   const readbackRoute = $derived(inputReady ? `${module.boot}/${module.configurationGeneration}/${inputTopic ?? ''}` : '');
   $effect(() => {
-    if (mounted && readbackRoute) untrack(() => void refreshReadback(true, true));
+    if (mounted && readbackRoute) untrack(() => void refreshReadback());
   });
   $effect(() => { if (!inputReady && device?.online && device.boot === target.boot && gateway.connected) void queue.releaseHeld(); });
   onMount(() => {
@@ -104,7 +92,7 @@
       if (!gateway.connected || device?.boot !== target.boot) return;
       void queue.reset(); if (target.gatewayId) resetDebugOnExit(target.moduleId, target.boot, target.gatewayId);
     };
-    const visibility = () => { if (document.hidden) release(); else void refreshReadback(true, true); };
+    const visibility = () => { if (document.hidden) release(); else void refreshReadback(); };
     mounted = true;
     window.addEventListener('blur', release); window.addEventListener('pagehide', exit);
     document.addEventListener('visibilitychange', visibility);
@@ -135,7 +123,8 @@
     {#if definition.selectors.length}<fieldset disabled={!inputReady}><legend>Three-position selectors</legend>{#each definition.selectors as mapping, index (index)}<label class="row">Selector {index + 1}<select aria-label={`Selector ${index + 1}`} value={String(device.contacts.includes(mapping[0]) ? 0 : device.contacts.includes(mapping[1]) ? 2 : 1)} onchange={event => run('selector', [index, Number(event.currentTarget.value)])}><option value="0">Low</option><option value="1">Center</option><option value="2">High</option></select></label>{/each}</fieldset>{/if}
     {#if definition.hats.length}<fieldset disabled={!inputReady}><legend>Hat directions</legend>{#each definition.hats as _, index (index)}<div class="row"><span>Hat {index + 1}</span>{#each ['Neutral', 'N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as label, direction (direction)}<button aria-label={`Hat ${index + 1} ${label}`} onclick={() => run('hat', [index, direction - 1])}>{label}</button>{/each}</div>{/each}</fieldset>{/if}
     <details><summary>Expansion bank availability</summary><p class="help">Simulate an attached or missing expansion bank separately from its configuration mapping.</p><div class="banks">{#each Array.from({ length: 8 }, (_, i) => i) as bank (bank)}<label><input type="checkbox" checked={!!(device.expansionMask & (1 << bank))} disabled={!inputReady} onchange={event => run('expansion', [bank, event.currentTarget.checked ? 1 : 0])} /> Bank {bank + 1}</label>{/each}</div></details>
-    <button disabled={!inputReady} onclick={() => refreshReadback(true, true)}><Icon name="refresh" size={14}/>Refresh readback</button>
+    {#if inputReady && !inputTopic}<p class="help">Live calibrated input preview requires gateway firmware with CAN panel streaming.</p>{/if}
+    <button disabled={!inputReady} onclick={() => refreshReadback()}><Icon name="refresh" size={14}/>Refresh readback</button>
     {#if outputs?.states.length}<div class="outputs" aria-label="Virtual output readback"><h3>Device output readback</h3>{#each outputs.states as output (output.id)}{@const action = outputs.actions.find(action => action.id === output.id)}<div class="output"><span>{action?.label ?? output.id}</span>{#if action?.display}<output class="display" aria-label={`${action.label} display`}>{outputs.status === 'ready' ? output.values.join(' ') : 'Unknown'}</output>{:else if action?.parameters[0]?.type === 'boolean' || action?.parameters[0]?.type === 'enum'}<span class={['led', { lit: outputs.status === 'ready' && (output.values[0] === true || output.values[0] === 'on') }]} aria-label={`${action?.label ?? output.id} ${outputs.status !== 'ready' ? 'unknown' : output.values[0] === true || output.values[0] === 'on' ? 'on' : 'off'}`}></span><span>{outputs.status === 'ready' ? String(output.values[0]) : 'Unknown'}</span>{:else}<output>{outputs.status === 'ready' ? output.values.join(' · ') : 'Unknown'}</output>{/if}</div>{/each}</div>{/if}
   {:else}<p class="help">Refresh debug state to discover this virtual device’s input mappings.</p>{/if}
   <button aria-label="Refresh debug state" disabled={!gateway.connected || gateway.reconnecting} onclick={() => request({ command: 'debug_describe' })}><Icon name="refresh" size={14}/>Refresh</button>

@@ -19,7 +19,7 @@ const device = { id: 'panel', boot: 9, online: true, definition };
 const module = { id: 'panel', boot: 9, online: true, enabled: false, published: false };
 const state = { backend: 'pico', protocolVersion: 3, canProtocol: 3, connected: true, debug: { devices: [device] } };
 
-test('Pico debug readback uses the CAN stream and coalesces fallback reads', async () => {
+test('Pico debug input preview requires CAN streaming while output readback stays available', async () => {
   const source = await readFile(new URL('./DebugControls.svelte', import.meta.url), 'utf8');
   const { js } = compile(source.replace('</script>', 'capture(refreshReadback);</script>'), { generate: 'server' });
   const code = ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -33,7 +33,6 @@ test('Pico debug readback uses the CAN stream and coalesces fallback reads', asy
         if (name === 'svelte') return svelte;
         if (name.endsWith('.svelte')) return { default() {} };
         if (name === './debug-inputs') return { DebugInputQueue, debugReady, debugDefinition, rawAxisValue };
-        if (name === './panel-input-metadata') return { panelInputMetadata: () => null };
         if (name === './gateway') return { resetDebugOnExit() {} };
         if (name === './can-input-observations') return { canInputTopic: () => 'can.inputs.fixture' };
         throw Error(name);
@@ -47,19 +46,18 @@ test('Pico debug readback uses the CAN stream and coalesces fallback reads', asy
       read: async request => { calls.push(plain(request)); if (calls.length === 1) await first.promise; return true; },
     } });
     assert.ok(rendered.body.includes("Refresh readback"));
+    assert.equal(rendered.body.includes('Live calibrated input preview requires'), !streamed);
     return { refresh, calls, release: first.done };
   }
   const fallback = fixture(false);
-  const pending = fallback.refresh(true, true);
-  await fallback.refresh(true, false);
-  await fallback.refresh(true, false);
+  const pending = fallback.refresh();
   fallback.release();
   await pending;
-  assert.deepEqual(fallback.calls.map(call => call.command), ['events_state', 'action_describe', 'action_state', 'events_state']);
+  assert.deepEqual(fallback.calls.map(call => call.command), ['action_describe', 'action_state']);
   assert.ok(fallback.calls.every(call => call.moduleId === 'panel' && call.boot === 9));
 
   const streamed = fixture(true);
-  const streamedRead = streamed.refresh(true, true);
+  const streamedRead = streamed.refresh();
   streamed.release();
   await streamedRead;
   assert.deepEqual(streamed.calls.map(call => call.command), ['action_describe', 'action_state']);
