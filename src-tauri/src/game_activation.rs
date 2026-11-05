@@ -5,7 +5,7 @@ use osg_profiles::activation::{GameIdentity, VerifiedGame};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc,Mutex,OnceLock},
+    sync::{Arc,Condvar,Mutex,OnceLock},
     time::{Duration, Instant},
 };
 
@@ -29,7 +29,19 @@ struct State {
     entries: BTreeMap<String, Entry>,
 }
 #[derive(Default)]
-pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>);
+pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>,Condvar);
+
+impl State {
+    fn exact_proof(&self, identity: &GameIdentity, process: &ProcessIdentity) -> Option<&Proof> {
+        if self.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+            return None;
+        }
+        self.entries
+            .get(&identity.game_id)
+            .and_then(|entry| entry.confirmed.as_ref())
+            .filter(|proof| &proof.identity == identity && &proof.process == process)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CurrentProcessObservation {
@@ -211,6 +223,9 @@ impl Observer {
         }
         state.at = Some(Instant::now());
         let changed=state.entries!=previous;drop(state);
+        if changed {
+            self.2.notify_all();
+        }
         if let Some(signal)=self.1.get() {
             if changed {signal.mark(crate::game_read_models::signals::Domain::Runtime);} else {signal.wake.notify();}
         }
@@ -233,20 +248,27 @@ impl Observer {
     }
     /// Matches an already observed native launch without advancing debounce or
     /// substituting another instance of the same executable.
+    pub(crate) fn wait_for_process(
+        &self,
+        identity: &GameIdentity,
+        process: &ProcessIdentity,
+        budget: Duration,
+    ) -> bool {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let (state, _) = self.2.wait_timeout_while(state, budget, |state| {
+            state.exact_proof(identity, process).is_none()
+        }).unwrap_or_else(|p| p.into_inner());
+        state.exact_proof(identity, process).is_some()
+    }
+
     pub(crate) fn confirmed_process(
         &self,
         identity: &GameIdentity,
         process: &ProcessIdentity,
     ) -> Option<VerifiedGame> {
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
-            return None;
-        }
         state
-            .entries
-            .get(&identity.game_id)
-            .and_then(|entry| entry.confirmed.as_ref())
-            .filter(|proof| &proof.identity == identity && &proof.process == process)
+            .exact_proof(identity, process)
             .map(|proof| VerifiedGame {
                 identity: proof.identity.clone(),
                 process_session: proof.session.clone(),

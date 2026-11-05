@@ -359,13 +359,18 @@ impl GatewayManager {
                 let deadline = Instant::now() + Duration::from_secs(3);
                 let confirmed = loop {
                     self.launch_held(&capture, &started.owner, held_epoch)?;
-                    if let Some(confirmed) = self.games.confirm_started_profile_activation(&started)? {
-                        break confirmed;
-                    }
-                    if Instant::now() >= deadline {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
                         return Err("The native watcher did not confirm the exact launched process before its deadline.".into());
                     }
-                    std::thread::sleep(Duration::from_millis(25));
+                    // Keep cancellation checks responsive without scanning the
+                    // process inventory again until the observer has proof.
+                    if self.games.wait_for_started_profile_process(&started, remaining.min(Duration::from_millis(25))) {
+                        self.launch_held(&capture, &started.owner, held_epoch)?;
+                        if let Some(confirmed) = self.games.confirm_started_profile_activation(&started)? {
+                            break confirmed;
+                        }
+                    }
                 };
                 let decision = self.launch_decision(&capture, &confirmed)?;
                 self.note_profile_activation(held_epoch, "configuring-game-context", &format!("Connecting {game_name} mappings and telemetry…"));

@@ -53,6 +53,23 @@ fn fake() -> Fake {
     }
 }
 #[test]
+fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
+    let platform = fake();
+    let observer = Observer::default();
+    let identity = identity(&platform, &game()).unwrap();
+    let process = running(1);
+    *platform.current.lock().unwrap() = Ok(Some(process.clone()));
+    observer.observe(&platform, &[game()]);
+    assert!(!observer.wait_for_process(&identity, &process, Duration::ZERO));
+    std::thread::scope(|scope| {
+        scope.spawn(|| observer.observe(&platform, &[game()]));
+        assert!(observer.wait_for_process(&identity, &process, Duration::from_secs(1)));
+    });
+    assert!(!observer.wait_for_process(&identity, &running(2), Duration::ZERO));
+    assert_eq!(platform.scans.load(Ordering::Relaxed), 2);
+}
+
+#[test]
 fn live_desktop_process_reads_cached_identity_without_scanning_or_waiting() {
     let platform = fake();
     let observer = Observer::default();
