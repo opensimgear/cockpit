@@ -325,6 +325,22 @@ A `ready` phase means the scan results are available for review. The job
 can still advance to `applied`. Once ready, use `game_discovery_status`
 to read the desired result page.
 
+Use a write credential and a unique operation ID for these integration actions.
+Subscribe to `games.jobs` and `games.detail.<gameId>` before starting a job.
+
+| Cockpit action | MCP tool | Additional arguments |
+| --- | --- | --- |
+| Check | `game_integration_check` | Optional DCS `userFolder` |
+| Set up or repair | `game_integration_setup` | Optional DCS `userFolder` and provider-specific `connection` overrides |
+| Cancel | `game_integration_cancel` | Uses the current setup job |
+| Remove | `game_integration_remove` | Optional exact managed DCS `userFolder` |
+| Recover interrupted DCS setup | `game_integration_recover` | Uses the retained DCS recovery record |
+| Allow or stop process monitoring | `game_process_monitor_enable` or `game_process_monitor_cancel` | Windows consent may be required to enable monitoring |
+
+Each tool takes the registered `gameId`. The native workflow validates the
+selected installation and any provider settings. A successful tool response
+can acknowledge a job that is still running.
+
 The `activity.log` observation announces committed changes to the activity
 database. It contains an invalidation revision, with the actual rows read
 through `activity_list`. Use `committedOnly: true` when reacting to the

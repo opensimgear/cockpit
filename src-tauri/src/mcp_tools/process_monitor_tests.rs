@@ -95,6 +95,37 @@ fn process_monitor_arguments_fail_closed_before_native_dispatch() {
 }
 
 #[test]
+fn integration_workflow_tools_forward_the_same_bounded_actions_as_the_portal() {
+    let (tools, backend) = tools();
+    let client = "integration-workflow-client";
+    for (command, fields) in [
+        ("game_integration_check", json!({"userFolder":"C:/Saved Games/DCS"})),
+        ("game_integration_setup", json!({"userFolder":"C:/Saved Games/DCS","connection":{"freshnessMs":2000}})),
+        ("game_integration_cancel", json!({})),
+        ("game_integration_remove", json!({"userFolder":"C:/Saved Games/DCS"})),
+        ("game_integration_recover", json!({})),
+    ] {
+        assert!(is_mutation(command));
+        let mut args = fields.clone();
+        args["gameId"] = json!("dcs");
+        args["operationId"] = json!(operation());
+        let response = tools.call(command, args.clone(), client);
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(tools.call(command, args, client), response);
+        let mut expected = fields;
+        expected["gameId"] = json!("dcs");
+        expected["command"] = json!(command);
+        expected["clientId"] = json!(native_client(client));
+        assert_eq!(backend.requests.lock().unwrap().last(), Some(&expected));
+    }
+    assert_eq!(backend.requests.lock().unwrap().len(), 5);
+    let invalid = tools.call("game_integration_cancel",
+        json!({"gameId":"dcs","operationId":operation(),"userFolder":"C:/unexpected"}), client);
+    assert_eq!(invalid["error"]["code"], "invalid_arguments");
+    assert_eq!(backend.requests.lock().unwrap().len(), 5);
+}
+
+#[test]
 fn native_error_text_maps_to_stable_mcp_failure_codes() {
     for (message, code) in [
         ("Windows authorization denied", "access_denied"),

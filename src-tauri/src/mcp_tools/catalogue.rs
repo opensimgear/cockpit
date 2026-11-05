@@ -138,6 +138,11 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_telemetry_inspect","Read bounded telemetry values and canonical channel metadata from one game. Subscribe to games.telemetry for capture and expiry invalidations. X-Plane inspection requests its selected datarefs from the existing source.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
         tool("game_process_monitor_enable","Explicitly request Windows permission for native process notifications for the currently observed X-Plane or Assetto session. May show Windows consent for a temporary helper; installs no service and sends no simulator commands. Inspect games_list for progress.",vec![("gameId",game_id())],&["gameId"]),
         tool("game_process_monitor_cancel","Cancel pending permission or stop process monitoring for this X-Plane or Assetto integration. This withdraws its telemetry authority and closes its temporary helper.",vec![("gameId",game_id())],&["gameId"]),
+        tool("game_integration_check","Check the selected installation using the native integration workflow. DCS can inspect an explicit Saved Games folder. Assetto verification may start a bounded job. Observe games.jobs and games.detail for its result.",vec![("gameId",game_id()),("userFolder",string(4096))],&["gameId"]),
+        tool("game_integration_setup","Set up or repair the integration for the selected installation. Use provider-specific connection overrides and a DCS Saved Games folder when required. Observe games.jobs and games.detail for progress.",vec![("gameId",game_id()),("userFolder",string(4096)),("connection",object())],&["gameId"]),
+        tool("game_integration_cancel","Cancel a pending integration setup or verification. Observe games.jobs and games.detail for the outcome.",vec![("gameId",game_id())],&["gameId"]),
+        tool("game_integration_remove","Remove the integration from the selected installation using the native cleanup checks. DCS removal can target the exact managed Saved Games folder.",vec![("gameId",game_id()),("userFolder",string(4096))],&["gameId"]),
+        tool("game_integration_recover","Recover interrupted DCS integration setup using the retained native recovery record. DCS must be closed.",vec![("gameId",game_id())],&["gameId"]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
         tool("mcp_settings_get","Read this running Cockpit MCP server's public configuration, credential metadata and exact settingsRevision. Bearer tokens and hashes are excluded.",vec![],&[]),
@@ -268,6 +273,11 @@ pub fn is_mutation(name: &str) -> bool {
                 | "game_installation_select"
                 | "game_process_monitor_enable"
                 | "game_process_monitor_cancel"
+                | "game_integration_check"
+                | "game_integration_setup"
+                | "game_integration_cancel"
+                | "game_integration_remove"
+                | "game_integration_recover"
                 | "gateway_session"
                 | "gateway_config_change"
                 | "usb_module_session"
