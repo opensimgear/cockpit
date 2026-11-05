@@ -13,7 +13,7 @@ test('new frames replace pending pages atomically and old resolutions cannot ove
   const f=blobs(),old=f.add({type:'leaf',items:[game('old','Old')]},'array'),latest=f.add({type:'leaf',items:[game('new','New')]},'array'),gate=deferred();let oldSignal;
   const h=harness(async(...args)=>{if(args[0]===old.$gamePage.id){oldSignal=args[2];await gate.promise;}return f.get(...args);}),states=[];
   const off=h.client.observeGamesState(state=>states.push(state));h.send({value:summary()});await until(()=>states.at(-1).status==='ready');const previous=states.at(-1).value;
-  h.send({value:{...summary(),catalogue:old}},change(2));await until(()=>oldSignal);assert.equal(states.at(-1).status,'lost');assert.equal(states.at(-1).value,previous);
+  h.send({value:{...summary(),catalogue:old}},change(2));await until(()=>oldSignal);assert.equal(states.at(-1).status,'lost');assert.equal(states.at(-1).resolvingPage,true);assert.equal(states.at(-1).value,previous);
   h.send({value:{...summary(),catalogue:latest}},change(3));await until(()=>states.at(-1).status==='ready');assert.equal(states.at(-1).value.catalogue[0].id,'new');assert.equal(oldSignal.aborted,true);
   gate.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(states.at(-1).revision,'3');off();
 });
@@ -26,7 +26,7 @@ test('same pending payload deduplicates pages and publishes the newest frame met
 
 test('loss preserves cached last value, requires a fresh baseline and rejects retired generation work',async()=>{
   const h=harness(),states=[],off=h.client.observeGamesState(state=>states.push(state));h.send({value:summary()});await until(()=>states.at(-1).status==='ready');const cached=states.at(-1).value;
-  h.send(undefined,{kind:'loss',continuity:'lost',generation:'2',revision:'2',sequence:'2',reason:'reset'});assert.equal(states.at(-1).status,'lost');assert.equal(states.at(-1).value,cached);
+  h.send(undefined,{kind:'loss',continuity:'lost',generation:'2',revision:'2',sequence:'2',reason:'reset'});assert.equal(states.at(-1).status,'lost');assert.equal(states.at(-1).resolvingPage,false);assert.equal(states.at(-1).value,cached);
   h.send({value:summary()},change(3));assert.equal(states.at(-1).status,'lost');
   h.send({value:summary([game('next')])},{generation:'2',revision:'3',sequence:'3'});await until(()=>states.at(-1).status==='ready');assert.equal(states.at(-1).generation,'2');off();
 });

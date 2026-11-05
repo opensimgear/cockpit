@@ -256,10 +256,12 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
             .and_then(|at: Instant| at.checked_sub(std::time::Duration::from_nanos(1)))
             .and_then(|before| games.telemetry_deadline(before))
             .is_some_and(|at| at <= now);
-        if worker.telemetry.is_none() || telemetry_changed || dirty != 0 || due.is_some() {
+        let telemetry_sources = Domain::Library.bit() | Domain::Runtime.bit() | Domain::Setup.bit() | Domain::Permissions.bit();
+        let telemetry_changed = telemetry_changed || dirty & telemetry_sources != 0;
+        if worker.telemetry.is_none() || telemetry_changed || due.is_some() {
             telemetry_deadline = games.telemetry_deadline(now);
             if let Some(publisher) = &worker.telemetry {
-                if telemetry_changed || dirty != 0 || expired {
+                if telemetry_changed || expired {
                     publish(observations, publisher, &clock, json!({}), None, false, false)?;
                 }
             } else {

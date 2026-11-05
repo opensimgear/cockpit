@@ -14,6 +14,7 @@ export type GameJobsModel = { jobs: GameJob[] };
 export type GameModelState<T> = Readonly<{
   status: 'connecting' | 'ready' | 'lost' | 'error'; value?: DeepReadonly<T>;
   generation?: string; revision?: string; clockId?: string; session?: string; error?: string;
+  resolvingPage?: boolean;
 }>;
 export type GameListener<T> = (state: GameModelState<T>) => void;
 const gameId = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);

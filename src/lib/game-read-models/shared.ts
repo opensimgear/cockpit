@@ -71,12 +71,12 @@ export class GameReadModels {
   private cancel<T>(entry: Entry<T>): void { const pending = entry.resolution; entry.resolution = undefined; pending?.controller.abort(); }
   private fail<T>(entry: Entry<T>, error: unknown): void {
     this.cancel(entry); entry.continuous = false;
-    entry.state = Object.freeze({ ...entry.state, status: 'error', error: this.message(error) });
+    entry.state = Object.freeze({ ...entry.state, status: 'error', resolvingPage: false, error: this.message(error) });
   }
   private pageFailure<T>(entry: Entry<T>, error: unknown): void {
     this.cancel(entry);
     // A complete wire replacement stays ordered when its immutable page expires.
-    entry.state = Object.freeze({ ...entry.state, status: 'error', error: this.message(error) });
+    entry.state = Object.freeze({ ...entry.state, status: 'error', resolvingPage: false, error: this.message(error) });
   }
   private ready<T>(entry: Entry<T>, frame: WireFrame, value: unknown): void {
     entry.state = Object.freeze({ status: 'ready', value: value as DeepReadonly<T>, generation: frame.generation, revision: frame.revision, clockId: frame.clockId, session: frame.session });
@@ -84,7 +84,7 @@ export class GameReadModels {
   private accept<T>(topic: string, entry: Entry<T>, state: ObservationState, active: () => boolean, publish: () => void): void {
     if (state.status !== 'ready') {
       this.cancel(entry); entry.continuous = false;
-      entry.state = Object.freeze({ ...entry.state, status: state.status, error: state.error }); publish(); return;
+      entry.state = Object.freeze({ ...entry.state, status: state.status, resolvingPage: false, error: state.error }); publish(); return;
     }
     try {
       const frame = state.frame!;
@@ -96,7 +96,7 @@ export class GameReadModels {
           || (frame.kind !== 'snapshot' && frame.revision === previous.revision))))) return;
       if ((!entry.continuous || (previous && previous.generation !== frame.generation)) && frame.kind !== 'snapshot') {
         this.cancel(entry); entry.continuous = false;
-        entry.state = Object.freeze({ ...entry.state, status: 'lost', error: 'Waiting for a fresh game baseline.' }); publish(); return;
+        entry.state = Object.freeze({ ...entry.state, status: 'lost', resolvingPage: false, error: 'Waiting for a fresh game baseline.' }); publish(); return;
       }
       entry.latest = frame; entry.continuous = true;
       if (topic === 'games.jobs') { this.cancel(entry); this.ready(entry, frame, captureGameJobs(payload)); publish(); return; }
@@ -104,7 +104,7 @@ export class GameReadModels {
       if (entry.resolution?.key === key) { entry.resolution.frame = frame; return; }
       this.cancel(entry);
       const resolution: Resolution = { key, controller: new AbortController(), frame }; entry.resolution = resolution;
-      entry.state = Object.freeze({ ...entry.state, status: 'lost', error: 'Loading current game data.' }); publish();
+      entry.state = Object.freeze({ ...entry.state, status: 'lost', resolvingPage: true, error: 'Loading current game data.' }); publish();
       if (!active() || resolution.controller.signal.aborted) return;
       void this.pages.resolve(payload.value, resolution.controller.signal).then(value => {
         if (!active() || entry.resolution !== resolution) return;

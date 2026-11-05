@@ -77,6 +77,27 @@ test('workspace updates reproject gateways and discovery loss without provider r
  h.controller.dispose();
 });
 
+test('discovery artwork does not reproject or persist remembered inventory', async () => {
+ const memory = storage(), writes = [];
+ const h = harness({ games: { catalogue: [game()] }, storage: {
+   ...memory, setItem(key, value) { writes.push(key); memory.setItem(key, value); },
+ } });
+ try {
+   await h.controller.refresh();
+   const before = h.controller.snapshot;
+   const count = writes.length;
+   h.emitGames({ status: 'lost', resolvingPage: true, error: 'Loading current game data.' });
+   await new Promise(resolve => setImmediate(resolve));
+   assert.equal(h.controller.snapshot, before);
+   h.emitGames({ status: 'ready', revision: '2', value: {
+     catalogue: [game()], discovery: { entries: [{ id: 'discovered', image: 'new artwork' }] },
+   } });
+   await new Promise(resolve => setImmediate(resolve));
+   assert.equal(h.controller.snapshot, before);
+   assert.equal(writes.length, count);
+ } finally { h.controller.dispose(); }
+});
+
 test('USB events replace list polling and fence a reply after observation loss', async () => {
  const h = harness({usb:[usb()]});
  await h.controller.refresh();

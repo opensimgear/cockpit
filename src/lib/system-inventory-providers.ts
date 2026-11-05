@@ -123,6 +123,7 @@ export class SystemInventoryController {
   private associations: NonNullable<NativeSystemInventory['controllerAssociations']> = [];
   private onChange: (snapshot: SystemSnapshot) => void;
   private gamesState: GameModelState<GamesSummaryState> = { status: 'connecting' };
+  private gamesInventoryKey = '';
   private stopGamesState: () => void;
   private runtimeState: ModelState<RuntimeModel> = { status: 'connecting' };
   private stopRuntimeState: () => void;
@@ -143,7 +144,18 @@ export class SystemInventoryController {
     const project = () => {
       if (this.readyProjection && (!this.pending || this.projecting) && !this.disposed) void this.projectCurrent().catch(() => {});
     };
-    this.stopGamesState = observeGamesState(state => { this.gamesState = state; project(); });
+    this.stopGamesState = observeGamesState(state => {
+      if (state.resolvingPage && this.gamesState.status === 'ready') return;
+      const key = JSON.stringify([state.status, state.error, state.value?.error,
+        state.value?.catalogue.filter(game => !!game.provider).map(game => [
+          game.id, game.name, game.provider, game.installed, game.integrationSetup,
+        ]),
+      ]);
+      if (this.gamesInventoryKey === key) return;
+      this.gamesInventoryKey = key;
+      this.gamesState = state;
+      project();
+    });
     this.stopRuntimeState = observeProfileRuntime(state => { this.runtimeState = state; project(); });
     this.stopControllerState = observeControllerInventory(state => {
       this.controllerState = state;
