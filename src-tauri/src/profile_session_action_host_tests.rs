@@ -518,11 +518,18 @@ struct Scripted {
     states: Mutex<VecDeque<ActionPoll>>,
     binds: usize,
     stops: usize,
+    phase_wake: std::sync::Weak<osg_streams::NativeWake>,
 }
 impl Actor for Scripted {
+    fn watch_phase(&mut self, wake: &Arc<osg_streams::NativeWake>) {
+        self.phase_wake = Arc::downgrade(wake);
+    }
     fn poll(&self) -> ActionPoll {
         let mut p = self.states.lock().unwrap();
         if p.len() > 1 {
+            if let Some(wake) = self.phase_wake.upgrade() {
+                wake.notify();
+            }
             p.pop_front().unwrap()
         } else {
             {

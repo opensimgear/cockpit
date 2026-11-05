@@ -8,11 +8,15 @@ pub(super) fn has_receipts(receipts: &[Receipt]) -> bool {
     receipts.iter().any(|r| r.kind == KIND)
 }
 trait Actor {
+    fn watch_phase(&mut self, wake: &Arc<osg_streams::NativeWake>);
     fn poll(&self) -> ActionPoll;
     fn bind(&mut self, plan: &ExecutionPlan) -> Result<bool, String>;
     fn stop(&mut self) -> Result<ActionPoll, String>;
 }
 impl Actor for PanelActions {
+    fn watch_phase(&mut self, wake: &Arc<osg_streams::NativeWake>) {
+        PanelActions::watch_phase(self, wake);
+    }
     fn poll(&self) -> ActionPoll {
         self.poll()
     }
@@ -38,8 +42,13 @@ fn wait(
     mut keep_alive: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current())
+        .map_err(|_| "Cannot bind the physical output phase waiter.")?;
+    actor.watch_phase(&wake);
     loop {
         guard()?;
+        let revision = wake.observed();
         let status = match goal {
             Goal::Restored => actor.stop()?,
             Goal::Bound => {
@@ -70,11 +79,18 @@ fn wait(
                 status.diagnostics.join("; ")
             });
         }
-        if Instant::now() >= deadline {
-            return Err(if matches!(goal,Goal::Restored){"Physical output cleanup remains pending; its sealed recovery receipt was retained."}else{"Physical output did not finish current native acquisition and binding before its deadline."}.into());
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(if matches!(goal,Goal::Restored){"Physical output cleanup remains pending; its sealed recovery receipt was retained."}else{"Physical output did not finish current native acquisition and binding before its deadline."}.into());
+            }
+            keep_alive()?;
+            if wake.observed() != revision {
+                break;
+            }
+            wake.wait(revision, remaining.min(Duration::from_millis(5)));
+            guard()?;
         }
-        keep_alive()?;
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
 fn exact_receipts(run: &OwnedRun, actions: &PanelActions) -> Result<(), String> {

@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, Weak,
     },
     thread,
     time::{Duration, Instant},
@@ -85,6 +85,7 @@ struct State {
     bind: Option<SinkPlan>,
     error: Option<String>,
     cleanup_done: bool,
+    phase_wake: Weak<osg_streams::NativeWake>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -94,6 +95,14 @@ impl Default for State {
             bind: None,
             error: None,
             cleanup_done: false,
+            phase_wake: Weak::new(),
+        }
+    }
+}
+impl State {
+    fn notify_phase(&self) {
+        if let Some(wake) = self.phase_wake.upgrade() {
+            wake.notify();
         }
     }
 }
@@ -113,7 +122,14 @@ impl Shared {
     }
     fn fail(&self, error: String) {
         self.revoke();
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).error = Some(error);
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.error = Some(error);
+        state.notify_phase();
+    }
+    fn complete_phase(&self, stage: Stage) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.stage = stage;
+        state.notify_phase();
     }
 }
 struct Slot {
@@ -648,6 +664,11 @@ impl PanelActions {
         }
         result
     }
+    pub(crate) fn watch_phase(&self, wake: &Arc<osg_streams::NativeWake>) {
+        for slot in &self.slots {
+            slot.shared.state.lock().unwrap_or_else(|p| p.into_inner()).phase_wake = Arc::downgrade(wake);
+        }
+    }
     /// Every dispatched driver is moved into its worker. A retained driver
     /// proves that this preparation never reached an action I/O worker, even
     /// after stop() has marked an inert preparation acquired for shutdown.
@@ -705,7 +726,7 @@ fn worker(
         if stopped() {
             return Ok(());
         }
-        shared.state.lock().unwrap_or_else(|p| p.into_inner()).stage = Stage::Claimed;
+        shared.complete_phase(Stage::Claimed);
         loop {
             if stopped() {
                 break;
@@ -727,7 +748,7 @@ fn worker(
                 }
                 bound = true;
                 renew_at = Instant::now() + RENEW;
-                shared.state.lock().unwrap_or_else(|p| p.into_inner()).stage = Stage::Bound;
+                shared.complete_phase(Stage::Bound);
             }
             if !bound && claim_at.elapsed() >= WAIT_FOR_BIND {
                 return Err("Physical output delivery did not acquire its fresh native binding before the bounded lease expired.".into());
@@ -778,6 +799,7 @@ fn worker(
     if let Err(e) = cleanup {
         state.error = Some(format!("Physical output cleanup remains unresolved: {e}"));
     }
+    state.notify_phase();
 }
 #[cfg(test)]
 #[path = "profile_session_actions_tests.rs"]
