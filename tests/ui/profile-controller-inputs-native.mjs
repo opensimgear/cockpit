@@ -67,7 +67,13 @@ test('physical controller settings stay simple and show every real input without
     await expect(inspector.locator('.button-information')).toHaveCount(0);
     for (const meter of await inspector.getByRole('meter').all()) assert.ok(Number.isFinite(Number(await meter.getAttribute('value'))));
     const squares = inspector.locator('.button-indicator');
-    if (await squares.count()) assert.equal(Math.round((await squares.first().boundingBox()).width), 28);
+    if (await squares.count()) {
+      const buttonBox = await squares.first().boundingBox();
+      const inputHeight = await squares.first().evaluate(element =>
+        Number.parseFloat(getComputedStyle(element).getPropertyValue('--ui-input-cell-height')));
+      assert.equal(Math.round(buttonBox.height), Math.round(inputHeight));
+      assert.ok(buttonBox.width > 0 && buttonBox.width <= panelBox.width, 'Buttons fit the inspector column.');
+    }
     const blank = await page.getByRole('application', { name: 'Profile canvas' }).evaluate(node => {
       const box = node.getBoundingClientRect();
       for (let y = 16; y < Math.min(box.height, innerHeight - box.top) - 16; y += 24) for (let x = 16; x < box.width / 3; x += 24) {

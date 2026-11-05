@@ -35,7 +35,7 @@
     <label>Label<input maxlength="80" value={resource.name} onchange={event=>policy('name',event.currentTarget.value)}/></label>
     <label class="check"><input type="checkbox" checked={resource.required} onchange={event=>policy('required',event.currentTarget.checked)}/> Required</label>
     {#if resource.kind==='device'}
-      <label>Visibility<select value={document.visibility.find(item=>item.resourceId===node.id)?.mode??'visible'} onchange={event=>visibility(event.currentTarget.value)}>
+      <label>Visibility<select aria-label="Visibility" value={document.visibility.find(item=>item.resourceId===node.id)?.mode??'visible'} onchange={event=>visibility(event.currentTarget.value)}>
         <option value="visible">Visible</option><option value="hidden-while-active">Hidden while active</option>
       </select></label>
     {/if}
