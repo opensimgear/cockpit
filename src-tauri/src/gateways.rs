@@ -244,6 +244,7 @@ pub struct GatewayManager {
     profile_wake: Arc<ProfileWake>,
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     profile_automatic: automatic::Runtime,
+    profile_automatic_wake: Arc<osg_streams::NativeWake>,
     profile_automatic_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     pub(crate) module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
@@ -543,6 +544,7 @@ impl GatewayManager {
             profile_wake,
             profile_worker: Mutex::new(profile_worker),
             profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
+            profile_automatic_wake: Arc::new(Default::default()),
             profile_automatic_worker: Mutex::new(None),
             storage:crate::persistence::backup::Runtime::new(native),
             profiles: Arc::new(Mutex::new(osg_profiles::service::Service::new(native.then(|| {
@@ -1700,6 +1702,7 @@ impl GatewayManager {
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
         self.profile_closed.store(true,Ordering::Release);
         self.profile_wake.notify();
+        self.profile_automatic_wake.notify();
         self.profile_samples.shutdown();
         if let Some(worker)=self.profile_automatic_worker.lock().unwrap_or_else(|p|p.into_inner()).take(){if worker.thread().id()!=std::thread::current().id(){let _=worker.join();}}
         self.profile_learning.shutdown();

@@ -818,15 +818,21 @@ impl GatewayManager {
             .profile_automatic_worker
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if worker.is_some() {
+        if worker.is_some() || self.profile_closed.load(Ordering::Acquire) {
             return;
         }
         let weak = Arc::downgrade(self);
         let closed = self.profile_closed.clone();
+        let wake = self.profile_automatic_wake.clone();
+        self.games.read_model_signal().watch_automatic(&wake);
         *worker = std::thread::Builder::new()
             .name("profile-automatic-selection".into())
             .spawn(move || {
+                if wake.bind_thread(std::thread::current()).is_err() {
+                    return;
+                }
                 while !closed.load(Ordering::Acquire) {
+                    let observed = wake.observed();
                     let Some(manager) = weak.upgrade() else {
                         break;
                     };
@@ -834,11 +840,9 @@ impl GatewayManager {
                     manager.poll_peripheral_profile();
                     manager.poll_automatic();
                     drop(manager);
-                    for _ in 0..5 {
-                        if closed.load(Ordering::Acquire) {
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Vehicle and peripheral reconciliation still need the fallback.
+                    if !closed.load(Ordering::Acquire) {
+                        wake.wait(observed, std::time::Duration::from_millis(500));
                     }
                 }
             })

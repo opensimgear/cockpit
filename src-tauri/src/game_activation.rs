@@ -272,7 +272,7 @@ impl Observer {
             self.2.notify_all();
         }
         if let Some(signal)=self.1.get() {
-            if changed {signal.mark(crate::game_read_models::signals::Domain::Runtime);} else {signal.wake.notify();}
+            if changed {signal.mark_process_activation();} else {signal.wake.notify();}
         }
     }
     pub(crate) fn snapshot(&self) -> Result<Vec<VerifiedGame>, String> {

@@ -247,13 +247,23 @@ fn launch_confirmation_requires_exact_debounced_process_without_scanning() {
 fn replacement_exit_ambiguity_and_executable_change_revoke_without_replay() {
     let platform = fake();
     let observer = Observer::default();
+    let changes = Arc::new(crate::game_read_models::signals::Signal::default());
+    let automatic = Arc::new(osg_streams::NativeWake::default());
+    changes.watch_automatic(&automatic);
+    observer.watch_changes(changes);
     *platform.current.lock().unwrap() = Ok(Some(running(1)));
     observer.observe(&platform, &[game()]);
+    let settling = automatic.observed();
     observer.observe(&platform, &[game()]);
+    assert_ne!(automatic.observed(), settling);
     let original = observer.snapshot().unwrap().pop().unwrap();
+    let confirmed = automatic.observed();
+    observer.observe(&platform, &[game()]);
+    assert_eq!(automatic.observed(), confirmed);
     *platform.current.lock().unwrap() = Ok(Some(running(2)));
     assert!(observer.validate(&platform, &game(), &original).is_err());
     observer.observe(&platform, &[game()]);
+    assert_ne!(automatic.observed(), confirmed);
     assert!(observer.snapshot().unwrap().is_empty());
     observer.observe(&platform, &[game()]);
     let replacement = observer.snapshot().unwrap().pop().unwrap();

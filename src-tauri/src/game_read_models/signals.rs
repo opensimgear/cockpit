@@ -32,13 +32,13 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>> }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),activation_wake:Default::default(),resource_wake:Mutex::default()}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default()}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
@@ -57,6 +57,15 @@ impl Signal {
         self.context_wake.notify();
         self.activation_wake.notify();
         self.mark_resources();
+    }
+    pub(crate) fn watch_automatic(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.automatic_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+    pub(crate) fn mark_process_activation(&self) {
+        self.mark(Domain::Runtime);
+        if let Some(wake) = self.automatic_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
     }
     pub(crate) fn watch_resources(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.resource_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
