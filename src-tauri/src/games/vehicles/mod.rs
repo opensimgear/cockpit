@@ -147,6 +147,12 @@ impl Tracker {
         }
         self.capture_wake = Some(wake);
     }
+    /// Opening/retry work belongs to the context owner. This worker services
+    /// only admitted readers, including one temporarily detached for I/O.
+    pub(crate) fn maintenance_delay(&self, at: Instant) -> Option<Duration> {
+        self.entries.values().any(|entry| entry.reader.is_some() || entry.polling)
+            .then(|| at.saturating_duration_since(Instant::now()))
+    }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let weak = Arc::downgrade(&changes);
         if let Some(writer) = &self.writer {

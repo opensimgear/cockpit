@@ -238,6 +238,9 @@ impl Tracker {
                         .and_then(|wake| CaptureBinding::open(&reader, wake));
                     self.retired.extend(entry.reader.replace(reader));
                     entry.error = None;
+                    // Admission must wake a worker parked without any readers,
+                    // even if the provider has not published its first packet.
+                    if let Some(wake) = &self.capture_wake { wake.notify(); }
                 }
                 Err(error) => {
                     entry.error = Some(error);

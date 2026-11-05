@@ -190,7 +190,8 @@ impl GamesRuntime {
                         polling_inner.poll_vehicle_telemetry(true);
                     }
                     drained = observed;
-                    worker_wake.wait_scheduled(observed, Some(next_maintenance.saturating_duration_since(Instant::now())));
+                    let delay = polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).maintenance_delay(next_maintenance);
+                    worker_wake.wait_scheduled(observed, delay);
                 }
             });
             let context_wake = &inner.changes.context_wake;
@@ -350,7 +351,6 @@ impl Inner {
             self.update_vehicles(|vehicles| vehicles.apply_poll(result));
         }
     }
-
     fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
         // Other games already select their profile vehicle independently. DCS
         // additionally binds decoder/command authority to its exact aircraft.

@@ -37,6 +37,44 @@ fn read(work: VehicleObservation) -> VehicleObservation {
     })
 }
 #[test]
+fn quiet_reader_admission_wakes_idle_maintenance_and_withdrawal_parks_it() {
+    let (_directory, mut tracker) = tracker();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    tracker.watch_captures(wake.clone());
+    let baseline = wake.observed();
+    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+    let opening = read(work(&mut tracker, 1));
+    assert!(tracker.maintenance_delay(Instant::now()).is_none(), "Opening runs on the context owner");
+    tracker.apply_observation(opening);
+    assert_ne!(wake.observed(), baseline, "A quiet provider must wake admission without a packet");
+    assert_eq!(tracker.maintenance_delay(Instant::now()), Some(Duration::ZERO));
+
+    let candidates = tracker.poll_candidates();
+    let poll = tracker.begin_polls(candidates).pop().unwrap();
+    assert!(tracker.entries["x-plane-12"].reader.is_none());
+    assert!(tracker.maintenance_delay(Instant::now() + Duration::from_secs(1)).is_some(),
+        "Temporarily detached I/O still owns maintenance");
+    tracker.begin_observation(&game(), &json!({}), None, "setup", false, 2);
+    let withdrawn = wake.observed();
+    tracker.apply_poll(poll.read());
+    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+    assert_eq!(wake.observed(), withdrawn, "Late I/O cannot readmit a withdrawn reader");
+
+    let retry = read(work(&mut tracker, 3));
+    tracker.apply_observation(retry);
+    assert_ne!(wake.observed(), withdrawn);
+    assert!(tracker.maintenance_delay(Instant::now()).is_some());
+}
+
+#[test]
+fn failed_reader_open_does_not_schedule_vehicle_maintenance() {
+    let (_directory, mut tracker) = tracker();
+    let failed = work(&mut tracker, 1).read_with(|_, _, _| Err("Fixture unavailable".into()));
+    tracker.apply_observation(failed);
+    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+    assert!(tracker.entries["x-plane-12"].error.is_some());
+}
+#[test]
 fn detached_observation_publishes_only_matching_current_identity_and_epoch() {
     let (_directory, mut tracker) = tracker();
     let old = read(work(&mut tracker, 1));

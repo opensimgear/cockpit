@@ -60,7 +60,11 @@ invalidate the profile inventory's catalogue cache by source generation.
 
 The game-context owner parks after its initial pass when the library has no
 configured integration. A committed library replacement wakes the owner after
-the new catalogue is visible. Configured integrations still use the 500 ms
+the new catalogue is visible. The independent vehicle telemetry worker also
+parks while it owns no reader. Accepted reader admission wakes it even before
+the first packet; detached reads retain maintenance until their result is
+accepted or retired. Admitted readers still use the separate 100 ms process
+qualification pass. Configured integrations still use the 500 ms
 process pass. For a watched DCS installation, native changes to the selected
 export, BIOS, catalogue and aircraft files trigger setup reinspection. The
 Saved Games root watch also observes direct DCS profile directory creation,
