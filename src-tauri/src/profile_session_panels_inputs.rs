@@ -148,6 +148,7 @@ struct Mailbox {
     loss_epoch: u64,
     liveness: BTreeMap<String,(u64,u64,u64)>,
     wake: Option<Arc<NativeWake>>,
+    baseline_wake: Weak<NativeWake>,
     controls: Vec<Weak<NativeWake>>,
 }
 #[derive(Default)]
@@ -171,6 +172,10 @@ pub(crate) struct PanelInputs {
     bound: bool,
 }
 impl PanelInputs {
+    pub(crate) fn watch_baseline(&self, wake: &Arc<NativeWake>) {
+        self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).baseline_wake = Arc::downgrade(wake);
+    }
+
     pub(crate) fn set_wake(&self, wake: Option<Arc<NativeWake>>) {
         let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         state.wake = wake;

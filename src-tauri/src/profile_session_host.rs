@@ -272,20 +272,37 @@ impl NativeProfileHost {
             matches!(route.transport, Transport::Usb | Transport::Can) && !route.id.starts_with("companion:"))) {
             self.report_progress(owner, "peripheral-input-baseline", "Waiting for fresh peripheral input states");
         }
-        if live {self.check_transition(owner)?;self.run(owner)?.panels.begin_live_baseline()?;}
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current())
+            .map_err(|_| "Cannot bind the native panel baseline waiter.")?;
+        self.check_transition(owner)?;
+        let panels = &mut self.run(owner)?.panels;
+        panels.watch_baseline(&wake);
+        if live {
+            panels.begin_live_baseline()?;
+        }
         loop {
             self.check_transition(owner)?;
+            let revision = wake.observed();
             let state = self.run(owner)?;
             let baseline=if live {state.panels.live_baseline(delivery,|token|Self::validate_token(&resources,token))?}else{state.panels.baseline(delivery,|token|Self::validate_token(&resources,token))?};
             if let Some(frames) = baseline {
                 return Ok(frames);
             }
-            if Instant::now() >= deadline {
-                return Err("The selected native panels did not supply fresh baselines before activation.".into());
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err("The selected native panels did not supply fresh baselines before activation.".into());
+                }
+                self.check_transition(owner)?;
+                let state = self.run(owner)?;
+                if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+                if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
+                if wake.observed() != revision {
+                    break;
+                }
+                wake.wait(revision, remaining.min(std::time::Duration::from_millis(5)));
             }
-            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
-            if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
-            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
     fn check_epoch(epoch: &AtomicU64, expected: u64) -> Result<(), String> {
