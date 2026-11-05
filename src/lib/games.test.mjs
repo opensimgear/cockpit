@@ -112,7 +112,7 @@ test('game-owned setup targets use only explicit bounded installation metadata',
  for(const path of ['',' ','DCS','..\\DCS','C:DCS',String.raw`\Saved Games\DCS`])assert.ok(gameIntegrationFolderError(path));
  for(const path of [first,'D:/Profiles/DCS',String.raw`\\server\Profiles\DCS`,'/home/pilot/Saved Games/DCS',' /home/pilot/DCS '])assert.equal(gameIntegrationFolderError(path),'');
  for(const path of ['C:/Users/pilot/\nDCS','C:/Users/pilot/\u0000DCS'])assert.match(gameIntegrationFolderError(path),/control/);
- for(const game of catalogueGames){assert.equal(gameIntegrationTargetError(game,''),game.id==='dcs'?'Choose the DCS Saved Games folder.':'');for(const command of ['game_integration_check','game_integration_setup','game_integration_cancel','game_integration_recover'])assert.deepEqual(plain(gameIntegrationSetupRequest(game,command,'  C:/Pilot/DCS  ')),{command,gameId:game.id,...(game.id==='dcs'?{userFolder:'C:/Pilot/DCS'}:{})});}
+ for(const game of catalogueGames){assert.equal(gameIntegrationTargetError(game,''),game.id==='dcs'?'Choose the DCS Saved Games folder.':'');for(const command of ['game_integration_check','game_integration_setup','game_integration_recover'])assert.deepEqual(plain(gameIntegrationSetupRequest(game,command,'  C:/Pilot/DCS  ')),{command,gameId:game.id,...(game.id==='dcs'?{userFolder:'C:/Pilot/DCS'}:{})});}
  assert.deepEqual(plain(gameIntegrationSetupRequest(dcs(),'game_integration_check','')),{command:'game_integration_check',gameId:'dcs'});
 });
 

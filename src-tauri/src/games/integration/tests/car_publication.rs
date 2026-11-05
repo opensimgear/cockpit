@@ -64,7 +64,7 @@ fn blocked_persistence_keeps_readers_available_and_cancel_reports_finalizing_pro
     let selected = game.clone();
     let cancel = thread::spawn(move || {
         sent.send(cancelling.request(
-            &json!({"command":"game_integration_cancel"}),
+            &cancel_request(&cancelling),
             &selected,
             Arc::new(FakePlatform(false)),
         ))
@@ -127,7 +127,7 @@ fn accepted_cancel_before_reservation_returns_promptly_and_retains_durable_revis
     let selected = game.clone();
     let cancel = thread::spawn(move || {
         sent.send(cancelling.request(
-            &json!({"command":"game_integration_cancel"}),
+            &cancel_request(&cancelling),
             &selected,
             Arc::new(FakePlatform(false)),
         ))

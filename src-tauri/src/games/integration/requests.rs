@@ -14,6 +14,13 @@ impl GameIntegrationSetup {
         }
         let command = request["command"].as_str().unwrap_or("");
         if command == "game_integration_cancel" {
+            let key = format!("setup:{}", game["id"].as_str().unwrap_or(""));
+            let job = self.inner.job.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            if !job.as_ref().is_some_and(|(active_key, run)| {
+                active_key == &key && request["jobId"].as_str() == Some(run.as_str())
+            }) {
+                return Err("The integration setup job changed or finished. Refresh its status before cancelling.".into());
+            }
             return self.inner.cancel();
         }
         if self.busy() {

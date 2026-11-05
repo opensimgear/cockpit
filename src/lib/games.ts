@@ -72,7 +72,7 @@ export type GameDiscoveryAction = { id: string; selected: boolean; executable?: 
 export type GamesState = { artworkPending?: boolean; backgroundPreview?: {image:string}; tags?: GameTags; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
 export type GameCommandName = 'game_process_monitor_enable' | 'game_process_monitor_cancel' | 'game_metadata_get' | 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_tag_definitions_save' | 'game_tags_save' | 'game_add' | 'game_save' | 'game_rescan' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; imagePath?:string; installPath?:string; crop?:GameCrop; tags?: GameTags; expectedTags?: GameTags; expectedTagIds?: string[]; tagIds?: string[]; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; imagePath?:string; installPath?:string; crop?:GameCrop; tags?: GameTags; expectedTags?: GameTags; expectedTagIds?: string[]; tagIds?: string[]; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; jobId?: string; aircraftModule?: string };
 
 export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);
@@ -212,7 +212,7 @@ export function gameIntegrationTargetError(game: Game, folder: string): string {
   return game.provider === 'dcs-bios' ? gameIntegrationFolderError(folder) : '';
 }
 
-export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove', folder: string): GameRequest {
+export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_recover' | 'game_integration_remove', folder: string): GameRequest {
   return { command, gameId: game.id, ...(game.provider === 'dcs-bios' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 

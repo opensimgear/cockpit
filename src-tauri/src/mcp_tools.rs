@@ -411,7 +411,8 @@ impl Tools {
             "game_process_monitor_enable" | "game_process_monitor_cancel" => forward(name, &["gameId"], Some("games")),
             "game_integration_check" | "game_integration_remove" => forward(name, &["gameId", "userFolder"], Some("games")),
             "game_integration_setup" => forward(name, &["gameId", "userFolder", "connection"], Some("games")),
-            "game_integration_cancel" | "game_integration_recover" => forward(name, &["gameId"], Some("games")),
+            "game_integration_cancel" => forward(name, &["gameId", "jobId"], Some("games")),
+            "game_integration_recover" => forward(name, &["gameId"], Some("games")),
             "game_telemetry_inspect" => forward(
                 "game_telemetry_inspect",
                 &["gameId", "search", "group", "offset", "limit"],

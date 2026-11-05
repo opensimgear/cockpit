@@ -141,9 +141,9 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
             .unwrap_err()
             .contains("Repair game installation metadata"));
     }
-    runtime
+    assert!(runtime
         .request(&json!({"command":"game_integration_cancel","gameId":"dcs"}))
-        .unwrap();
+        .unwrap_err().contains("setup job changed or finished"));
     runtime
         .request(&json!({"command":"game_get_state"}))
         .unwrap();

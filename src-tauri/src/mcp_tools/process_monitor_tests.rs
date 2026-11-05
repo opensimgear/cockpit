@@ -101,7 +101,7 @@ fn integration_workflow_tools_forward_the_same_bounded_actions_as_the_portal() {
     for (command, fields) in [
         ("game_integration_check", json!({"userFolder":"C:/Saved Games/DCS"})),
         ("game_integration_setup", json!({"userFolder":"C:/Saved Games/DCS","connection":{"freshnessMs":2000}})),
-        ("game_integration_cancel", json!({})),
+        ("game_integration_cancel", json!({"jobId":operation()})),
         ("game_integration_remove", json!({"userFolder":"C:/Saved Games/DCS"})),
         ("game_integration_recover", json!({})),
     ] {

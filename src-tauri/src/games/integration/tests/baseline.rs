@@ -222,13 +222,13 @@ fn checks_and_cancel_have_no_provisioning_side_effects() {
             Arc::new(FakePlatform(false))
         )
         .is_err());
-    runtime
+    assert!(runtime
         .request(
             &json!({"command":"game_integration_cancel"}),
             &missing,
             Arc::new(FakePlatform(false)),
         )
-        .unwrap();
+        .is_err());
     assert_eq!(
         fs::read_dir(&scratch.0)
             .unwrap()

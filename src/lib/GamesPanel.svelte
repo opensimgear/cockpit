@@ -115,7 +115,12 @@
     finally{refreshing=false;}
   }
   async function integrationCommand(command:'game_integration_check'|'game_integration_setup'|'game_integration_cancel'|'game_integration_recover'|'game_integration_remove'){
-    if(!selected||command==='game_integration_setup'&&setupDisabled)return;await send(gameIntegrationSetupRequest(selected,command,integrationFolder));
+    if(!selected||command==='game_integration_setup'&&setupDisabled)return;
+    if(command==='game_integration_cancel'){
+      if(setupJob&&!setupJob.terminal)await send({command,gameId:selected.id,jobId:setupJob.run});
+      return;
+    }
+    await send(gameIntegrationSetupRequest(selected,command,integrationFolder));
   }
 </script>
 
@@ -161,7 +166,7 @@
             <div class="integration-actions">
               <button class="secondary-button" disabled={locked|| (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={14}/>Refresh state</button>
               {#if selected.integrationSetup?.state === 'setting-up'}
-                <button class="secondary-button" disabled={busy||pending||!streamReady||!detailReady} onclick={()=>integrationCommand('game_integration_cancel')}><Icon name="close" size={14}/>Cancel setup</button>
+                <button class="secondary-button" disabled={busy||pending||!streamReady||!detailReady||!setupJob||setupJob.terminal} onclick={()=>integrationCommand('game_integration_cancel')}><Icon name="close" size={14}/>Cancel setup</button>
               {:else if selected.integrationSetup?.recoveryNeeded}
                 <button class="secondary-button" disabled={locked||!!profileBlockedReason} onclick={()=>integrationCommand('game_integration_recover')}><Icon name="refresh" size={14}/>Recover integration setup</button>
               {:else if integrationInstalled}

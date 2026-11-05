@@ -1,5 +1,10 @@
 use super::*;
 use crate::game_discovery::ProcessIdentity;
+
+fn cancel_request(runtime: &GameIntegrationSetup) -> Value {
+    let run = runtime.inner.job.lock().unwrap().as_ref().unwrap().1.clone();
+    json!({"command":"game_integration_cancel","jobId":run})
+}
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {

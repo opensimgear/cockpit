@@ -332,7 +332,7 @@ Subscribe to `games.jobs` and `games.detail.<gameId>` before starting a job.
 | --- | --- | --- |
 | Check | `game_integration_check` | Optional DCS `userFolder` |
 | Set up or repair | `game_integration_setup` | Optional DCS `userFolder` and provider-specific `connection` overrides |
-| Cancel | `game_integration_cancel` | Uses the current setup job |
+| Cancel | `game_integration_cancel` | Pass the exact `run` from `games.jobs` as `jobId` |
 | Remove | `game_integration_remove` | Optional exact managed DCS `userFolder` |
 | Recover interrupted DCS setup | `game_integration_recover` | Uses the retained DCS recovery record |
 | Allow or stop process monitoring | `game_process_monitor_enable` or `game_process_monitor_cancel` | Windows consent may be required to enable monitoring |

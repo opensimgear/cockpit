@@ -117,6 +117,9 @@ fn ac_setup_repair_replaces_catalogue_even_for_same_build_and_check_never_rescan
     let initial =
         json!([{"id":"lotus_elise_sc","name":"Lotus Elise SC"},{"id":"old_mod","name":"Old Mod"}]);
     assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+    let stale = json!({"command":"game_integration_cancel","jobId":uuid::Uuid::new_v4().to_string()});
+    assert!(runtime.request(&stale, &game, Arc::new(FakePlatform(false))).is_err());
+    assert!(!runtime.inner.cancel.load(Ordering::Acquire));
     assert_eq!(runtime.inner.inspect(&game, None)["verified"], false);
     let identity =
         read_settings(&path).unwrap()["games"]["assetto-corsa"]["configuredFingerprint"].clone();
@@ -220,7 +223,7 @@ fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_pres
     assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
     runtime
         .request(
-            &json!({"command":"game_integration_cancel"}),
+            &cancel_request(&runtime),
             &game,
             Arc::new(FakePlatform(false)),
         )
@@ -269,7 +272,7 @@ fn ac_cancel_at_final_publication_boundary_preserves_memory_and_disk_catalogue()
     assert!(runtime.busy());
     runtime
         .request(
-            &json!({"command":"game_integration_cancel"}),
+            &cancel_request(&runtime),
             &game,
             Arc::new(FakePlatform(false)),
         )
