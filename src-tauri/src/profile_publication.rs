@@ -3,6 +3,7 @@
 use crate::{
     gateways::ProfilePanelIo,
     profile_session::{OwnedRun, Receipt, RunOwner},
+    stm32::PublicationFence,
 };
 use osg_profiles::{
     compiler_models::{CompileSnapshot, ExecutionPlan},
@@ -377,6 +378,7 @@ fn open_receipt(receipt: &Receipt, owner: &RunOwner) -> Result<Cleanup, String> 
 }
 trait Io: Send + Sync {
     fn watch_inventory(&self, _gateway: &str, _wake: &Arc<osg_streams::NativeWake>) {}
+    fn fence(&self, gateway: &str) -> Option<PublicationFence>;
     fn cached(&self, gateway: &str) -> Result<Value, String>;
     fn request(
         &self,
@@ -390,10 +392,14 @@ struct NativeIo {
 }
 impl Io for NativeIo {
     fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
-        self.panels.watch_publication_inventory(&[gateway].into(), wake);
+        self.panels
+            .watch_publication_inventory(&[gateway].into(), wake);
     }
     fn cached(&self, g: &str) -> Result<Value, String> {
         self.panels.can_snapshot(g)
+    }
+    fn fence(&self, g: &str) -> Option<PublicationFence> {
+        self.panels.publication_fence(g)
     }
     fn request(
         &self,
@@ -424,7 +430,24 @@ struct Shared {
     authority: Arc<AtomicBool>,
     stop: AtomicBool,
     status: Mutex<Status>,
-    verified: Mutex<Option<(Instant, Value)>>,
+    verified: Mutex<Option<Proof>>,
+}
+struct Proof {
+    state: Value,
+    live: Option<(Instant, PublicationFence)>,
+}
+impl Proof {
+    fn live_at(&self, io: &dyn Io, gateway: &str) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live_at(live, io, gateway))
+    }
+}
+fn live_at((deadline, fence): &(Instant, PublicationFence), io: &dyn Io, gateway: &str) -> bool {
+    Instant::now() < *deadline
+        && io
+            .fence(gateway)
+            .is_some_and(|latest| fence.same_stream(&latest) && fence.is_current())
 }
 fn shared(recovery: bool) -> Arc<Shared> {
     Arc::new(Shared {
@@ -755,6 +778,7 @@ fn request(
     value: &Cleanup,
     operation: crate::stm32::PublicationOperation,
     authority: Option<Arc<AtomicBool>>,
+    fence: &PublicationFence,
 ) -> Result<crate::stm32::PublicationReply, String> {
     io.request(
         &value.gateway,
@@ -763,6 +787,7 @@ fn request(
             operation,
             authority,
             control_epoch: None,
+            fence: Some(fence.clone()),
         },
     )
 }
@@ -800,10 +825,15 @@ fn module_delivery<'a>(target: &Target, state: &'a Value) -> Option<(&'a Value, 
 }
 enum Inspection {
     Absent(Value),
-    Foreign(Value),
+    Foreign,
     Owned(u32, Value),
 }
-fn inspect(io: &dyn Io, value: &Cleanup, state: &Value) -> Result<Inspection, String> {
+fn inspect(
+    io: &dyn Io,
+    value: &Cleanup,
+    state: &Value,
+    fence: &PublicationFence,
+) -> Result<Inspection, String> {
     if gateway_identity(state).as_deref() != Some(value.gateway.as_str()) {
         return Err(INVALID.into());
     }
@@ -824,6 +854,7 @@ fn inspect(io: &dyn Io, value: &Cleanup, state: &Value) -> Result<Inspection, St
             lease,
         },
         None,
+        fence,
     )?;
     if gateway_identity(&reply.state).as_deref() != Some(value.gateway.as_str())
         || reply.state["epoch"] != value.epoch
@@ -834,7 +865,7 @@ fn inspect(io: &dyn Io, value: &Cleanup, state: &Value) -> Result<Inspection, St
         if reply.state["publication"]["phase"] == "idle" {
             return Ok(Inspection::Absent(reply.state));
         }
-        return Ok(Inspection::Foreign(reply.state));
+        return Ok(Inspection::Foreign);
     }
     if reply.owned != Some(true)
         || !candidate(value, &reply.state)
@@ -873,8 +904,9 @@ fn confirmed_restored(value: &Cleanup, state: &Value) -> bool {
                     .is_some_and(|m| m["published"] == t.configured_enabled)
         })
 }
-fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), status: Status) {
+fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), mut status: Status) {
     let mut current = shared.status.lock().unwrap_or_else(|p| p.into_inner());
+    status.active &= shared.authority.load(Ordering::Acquire);
     if *current != status {
         *current = status;
         drop(current);
@@ -883,256 +915,9 @@ fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), status: Stat
         changes.1.notify_all();
     }
 }
-fn drive(
-    io: Arc<dyn Io>,
-    value: Cleanup,
-    shared: &Shared,
-    recovery: bool,
-    update: impl Fn(Status),
-) -> Status {
-    shared.wake.bind_thread(thread::current()).expect("A publication slot owns one worker");
-    loop {
-        let observed = shared.wake.observed();
-        if shared.start.load(Ordering::Acquire) || shared.stop.load(Ordering::Acquire) {
-            break;
-        }
-        shared.wake.wait_scheduled(observed, None);
-    }
-    io.watch_inventory(&value.gateway, &shared.wake);
-    let mut error = None;
-    let mut state = io.cached(&value.gateway).unwrap_or(Value::Null);
-    let mut released = false;
-    if !recovery && !shared.stop.load(Ordering::Acquire) && shared.authority.load(Ordering::Acquire)
-    {
-        if state["publicationRevision"] != value.revision
-            || state["publication"]["phase"] != "idle"
-            || state["layoutPending"] != false
-            || value.targets.iter().any(|t| !matches_target(t, &state))
-        {
-            error = Some(INVALID.into());
-        } else {
-            match request(
-                io.as_ref(),
-                &value,
-                crate::stm32::PublicationOperation::Claim {
-                    owner: value.secret.clone(),
-                    revision: value.revision,
-                    target_mask: value.target_mask,
-                    enabled_mask: value.enabled_mask,
-                    ttl_ms: 5000,
-                },
-                Some(shared.authority.clone()),
-            ) {
-                Ok(reply) => state = reply.state,
-                Err(e) => error = Some(e),
-            }
-        }
-    }
-    let started = Instant::now();
-    let mut renewed = Instant::now();
-    let mut cleanup_started = None;
-    let mut active = false;
-    let mut delivery_lease: Option<Vec<Value>> = None;
-    loop {
-        let observed = shared.wake.observed();
-        match request(
-            io.as_ref(),
-            &value,
-            crate::stm32::PublicationOperation::State,
-            None,
-        ) {
-            Ok(reply) => state = reply.state,
-            Err(e) => {
-                if error.is_none() {
-                    error = Some(e);
-                }
-            }
-        }
-        let lease = match inspect(io.as_ref(), &value, &state) {
-            Ok(Inspection::Owned(lease, proof)) => {
-                state = proof;
-                Some(lease)
-            }
-            Ok(Inspection::Absent(current)) => {
-                state = current;
-                None
-            }
-            Ok(Inspection::Foreign(_state)) => {
-                shared.authority.store(false, Ordering::Release);
-                shared
-                    .verified
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .take();
-                return Status {
-                    active: false,
-                    stopped: true,
-                    cleanup_complete: true,
-                    error: Some(
-                        "An independently owned publication was verified and preserved.".into(),
-                    ),
-                };
-            }
-            Err(e) => {
-                if error.is_none() {
-                    error = Some(e);
-                }
-                None
-            }
-        };
-        let stopping = recovery
-            || shared.stop.load(Ordering::Acquire)
-            || !shared.authority.load(Ordering::Acquire)
-            || error.is_some();
-        if stopping {
-            if !recovery && !shared.stop.load(Ordering::Acquire) && error.is_none() {
-                error = Some("The native publication authority was withdrawn; only ordered restoration remains available.".into());
-            }
-            shared.authority.store(false, Ordering::Release);
-            shared
-                .verified
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .take();
-            active = false;
-            let since = *cleanup_started.get_or_insert_with(Instant::now);
-            if let Some(lease) = lease {
-                if !released && (recovery || shared.stop.load(Ordering::Acquire)) {
-                    released = true;
-                    if let Err(e) = request(
-                        io.as_ref(),
-                        &value,
-                        crate::stm32::PublicationOperation::Release {
-                            owner: value.secret.clone(),
-                            lease,
-                        },
-                        None,
-                    ) {
-                        if error.is_none() {
-                            error = Some(e);
-                        }
-                    }
-                }
-            } else if gateway_identity(&state).as_deref() == Some(value.gateway.as_str())
-                && state["connected"] == true
-                && state["epoch"] == value.epoch
-                && state["publication"]["phase"] == "idle"
-                && state["layoutPending"] == false
-            {
-                let pristine = state["publication"]["outcome"] == "ok"
-                    && state["publication"]["leaseId"] == 0
-                    && value.targets.iter().all(|t| matches_target(t, &state));
-                if state["publication"]["outcome"] == "preserved" {
-                    error=Some("An independently changed publication was preserved; its original layout was not restored.".into());
-                    return Status {
-                        active: false,
-                        stopped: true,
-                        cleanup_complete: true,
-                        error,
-                    };
-                }
-                if confirmed_restored(&value, &state) || pristine {
-                    // Acquisition failure remains visible until the original
-                    // owned state is positively confirmed restored. It cannot
-                    // turn a completed restoration into a permanent deadlock.
-                    if confirmed_restored(&value, &state) {
-                        error = None;
-                    }
-                    if error.is_none() {
-                        *shared.verified.lock().unwrap_or_else(|p| p.into_inner()) =
-                            Some((Instant::now(), state.clone()));
-                    }
-                    return Status {
-                        active: false,
-                        stopped: true,
-                        cleanup_complete: true,
-                        error,
-                    };
-                }
-                if error.is_none() {
-                    error=Some("Publication restoration has no exact settled readback of the sealed original targets; recovery remains pending.".into());
-                }
-            }
-            if since.elapsed() > Duration::from_secs(8) {
-                return Status {
-                    active: false,
-                    stopped: true,
-                    cleanup_complete: false,
-                    error: Some(error.unwrap_or("Publication restoration remains unverified; retain its sealed recovery receipt.".into())),
-                };
-            }
-        } else if lease.is_some() && settled(&value, &state) {
-            let leases = value
-                .targets
-                .iter()
-                .map(|t| {
-                    state["modules"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|m| m["id"] == t.module)
-                        .unwrap()["lease"]
-                        .clone()
-                })
-                .collect::<Vec<_>>();
-            if delivery_lease.as_ref().is_some_and(|old| old != &leases) {
-                error=Some("The admitted CAN delivery lease changed independently of the owned publication.".into());
-                shared.authority.store(false, Ordering::Release);
-                shared
-                    .verified
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .take();
-                active = false;
-                update(Status {
-                    active: false,
-                    stopped: false,
-                    cleanup_complete: false,
-                    error: error.clone(),
-                });
-                // Do not publish a replacement proof or enter a potentially
-                // blocking renewal after observing an independent route.
-                continue;
-            } else {
-                delivery_lease = Some(leases);
-            }
-            active = true;
-            *shared.verified.lock().unwrap_or_else(|p| p.into_inner()) =
-                Some((Instant::now(), state.clone()));
-            if renewed.elapsed() >= Duration::from_secs(1) {
-                match request(
-                    io.as_ref(),
-                    &value,
-                    crate::stm32::PublicationOperation::Renew {
-                        owner: value.secret.clone(),
-                        lease: lease.unwrap(),
-                        ttl_ms: 5000,
-                    },
-                    Some(shared.authority.clone()),
-                ) {
-                    Ok(reply) if settled(&value, &reply.state) => renewed = Instant::now(),
-                    Ok(_) => error = Some(INVALID.into()),
-                    Err(e) => error = Some(e),
-                }
-            }
-        } else if active || started.elapsed() > Duration::from_secs(3) {
-            active = false;
-            error =
-                Some("The temporary CAN publication lost its exact settled native owner.".into());
-        }
-        if error.is_some() {
-            shared.authority.store(false, Ordering::Release);
-            active = false;
-        }
-        update(Status {
-            active,
-            stopped: false,
-            cleanup_complete: false,
-            error: error.clone(),
-        });
-        shared.wake.wait(observed, Duration::from_millis(20));
-    }
-}
+#[path = "profile_publication_actor.rs"]
+mod actor;
+use actor::drive;
 
 /// Only this native actor constructs an acquisition refresh permission. It is
 /// bound to either current private-owner proof or completed exact restoration.
@@ -1141,6 +926,7 @@ pub(crate) struct VerifiedPublication {
     io: Arc<dyn Io>,
     states: BTreeMap<String, Value>,
     live: BTreeMap<String, Option<Arc<Shared>>>,
+    fences: BTreeMap<String, (Instant, PublicationFence)>,
 }
 
 impl VerifiedPublication {
@@ -1166,9 +952,9 @@ impl VerifiedPublication {
                 }
                 drop(status);
                 let verified = shared.verified.lock().unwrap_or_else(|p| p.into_inner());
-                if verified.as_ref().is_none_or(|(at, current)| {
-                    at.elapsed() > Duration::from_millis(500)
-                        || !same_publication(current, observed)
+                if verified.as_ref().is_none_or(|proof| {
+                    !proof.live_at(self.io.as_ref(), gateway)
+                        || !same_publication(&proof.state, observed)
                 }) {
                     return Err(INVALID.into());
                 }
@@ -1178,6 +964,13 @@ impl VerifiedPublication {
                 return Err(INVALID.into());
             }
             let current = self.io.cached(gateway)?;
+            if self
+                .fences
+                .get(gateway)
+                .is_some_and(|captured| !live_at(captured, self.io.as_ref(), gateway))
+            {
+                return Err(INVALID.into());
+            }
             if current["epoch"] != observed["epoch"]
                 || !same_publication(&current, observed)
                 || current["layoutPending"] != false
@@ -1218,6 +1011,7 @@ impl Overrides {
             return Err("Publication acquisition refresh requires exact settled native ownership or its confirmed restoration.".into());
         }
         let mut states = BTreeMap::new();
+        let mut fences = BTreeMap::new();
         for slot in &self.slots {
             let state = self.io.cached(&slot.value.gateway)?;
             let verified = slot
@@ -1225,14 +1019,12 @@ impl Overrides {
                 .verified
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
-            let (at, proof) = verified.as_ref().ok_or(INVALID)?;
-            if (!restored && at.elapsed() > Duration::from_millis(500))
-                || !same_publication(proof, &state)
-                || slot
-                    .value
-                    .targets
-                    .iter()
-                    .any(|target| module_delivery(target, proof) != module_delivery(target, &state))
+            let proof = verified.as_ref().ok_or(INVALID)?;
+            if (!restored && !proof.live_at(self.io.as_ref(), &slot.value.gateway))
+                || !same_publication(&proof.state, &state)
+                || slot.value.targets.iter().any(|target| {
+                    module_delivery(target, &proof.state) != module_delivery(target, &state)
+                })
             {
                 return Err(INVALID.into());
             }
@@ -1244,6 +1036,10 @@ impl Overrides {
                 if !slot.shared.authority.load(Ordering::Acquire) || !settled(&slot.value, &state) {
                     return Err(INVALID.into());
                 }
+                fences.insert(
+                    slot.value.gateway.clone(),
+                    proof.live.as_ref().ok_or(INVALID)?.clone(),
+                );
             }
             states.insert(slot.value.gateway.clone(), state);
         }
@@ -1251,6 +1047,7 @@ impl Overrides {
             targets: self.targets(),
             io: self.io.clone(),
             states,
+            fences,
             live: self
                 .slots
                 .iter()

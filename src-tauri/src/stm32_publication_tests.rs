@@ -17,7 +17,7 @@ fn wire()->Value {
 fn owned(wire:&mut Value,enabled:bool){
     wire["publication"]=json!({"phase":"owned","outcome":"ok","leaseId":8,"expiresAtMs":5000,"transition":"1","claimRevision":4,"targetMask":"00000001","enabledMask":if enabled{"00000001"}else{"00000000"},"expectedReconnect":false});
 }
-fn request(operation:PublicationOperation)->PublicationRequest{PublicationRequest{epoch:10,operation,authority:Some(Arc::new(AtomicBool::new(true))),control_epoch:Some((Arc::new(AtomicU64::new(4)),4))}}
+fn request(operation:PublicationOperation)->PublicationRequest{PublicationRequest{epoch:10,operation,authority:Some(Arc::new(AtomicBool::new(true))),control_epoch:Some((Arc::new(AtomicU64::new(4)),4)),fence:None}}
 
 #[test]
 fn capability_and_actual_overlay_preserve_configured_state_without_granting_debug_authority(){
@@ -195,8 +195,14 @@ fn lost_mutation_reply_reconnects_by_reads_without_replaying_claim(){
     context.lock().unwrap().drop_reply=false;
     gateway.publication(request(PublicationOperation::State)).unwrap();
     assert_eq!(context.lock().unwrap().writes.iter().filter(|text|text.contains("publication claim ")).count(),1);
-    let latch=Arc::new(AtomicBool::new(false));let before=context.lock().unwrap().writes.len();assert!(gateway.exchange_guarded("publication renew unsent",Duration::from_millis(1),Some(&latch),None).is_err());assert_eq!(context.lock().unwrap().writes.len(),before);assert!(gateway.connection.is_some(),"Unsent old work cannot close the replacement transport");
-    let epoch=AtomicU64::new(6);assert!(gateway.exchange_guarded("publication renew late",Duration::from_millis(1),None,Some((&epoch,5))).is_err());assert_eq!(context.lock().unwrap().writes.len(),before);assert!(gateway.connection.is_some());
+    let latch=Arc::new(AtomicBool::new(false));let before=context.lock().unwrap().writes.len();assert!(gateway.exchange_guarded("publication renew unsent",Duration::from_millis(1),Some(&latch),None,None).is_err());assert_eq!(context.lock().unwrap().writes.len(),before);assert!(gateway.connection.is_some(),"Unsent old work cannot close the replacement transport");
+    let epoch=AtomicU64::new(6);assert!(gateway.exchange_guarded("publication renew late",Duration::from_millis(1),None,Some((&epoch,5)),None).is_err());assert_eq!(context.lock().unwrap().writes.len(),before);assert!(gateway.connection.is_some());
+    let counter = Arc::new(AtomicU64::new(1));
+    let fence = PublicationFence::fixture(10, counter.clone()).unwrap();
+    counter.store(2, Ordering::Release);
+    assert!(gateway.exchange_guarded("publication state", Duration::from_millis(1), None, None, Some(&fence)).is_err());
+    assert_eq!(context.lock().unwrap().writes.len(), before);
+    assert!(gateway.connection.is_some());
 }
 #[test]
 fn typed_service_uses_the_existing_serial_owner_and_closes_bounded_requests(){

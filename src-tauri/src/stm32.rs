@@ -31,6 +31,8 @@ const CONFIG_ROUTE_CHANGED: &str =
 #[path = "stm32_publication.rs"]
 mod publication;
 pub(crate) use publication::{PublicationOperation, PublicationReply, PublicationRequest};
+pub(crate) mod publication_feed;
+pub(crate) use publication_feed::{PublicationFence, PUBLICATION_EVIDENCE_CHANGED};
 pub(crate) mod workspace;
 
 #[derive(Clone)]
@@ -588,6 +590,8 @@ struct Gateway {
     events_reply: Option<Value>,
     publication_reply: Option<bool>,
     workspace: Option<Arc<workspace::Cache>>,
+    reader_wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    publication_reconnect: bool,
 }
 impl Gateway {
     fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
@@ -634,6 +638,8 @@ impl Gateway {
             events_reply: None,
             publication_reply: None,
             workspace: None,
+            reader_wake: None,
+            publication_reconnect: false,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -765,9 +771,9 @@ impl Gateway {
         Ok(())
     }
     fn exchange(&mut self, command: &str, timeout: Duration) -> Result<(), String> {
-        self.exchange_guarded(command,timeout,None,None)
+        self.exchange_guarded(command,timeout,None,None,None)
     }
-    fn exchange_guarded(&mut self, command: &str, timeout: Duration, authority:Option<&AtomicBool>, control_epoch:Option<(&AtomicU64,u64)>) -> Result<(), String> {
+    fn exchange_guarded(&mut self, command: &str, timeout: Duration, authority:Option<&AtomicBool>, control_epoch:Option<(&AtomicU64,u64)>, fence: Option<&PublicationFence>) -> Result<(), String> {
         self.action_reply = None;
         self.events_reply = None;
         self.publication_reply = None;
@@ -794,6 +800,9 @@ impl Gateway {
             // An unsent obsolete request cannot close a replacement owner's
             // transport or release unrelated configuration ownership.
             return Err("The native gateway request was revoked before its serial write.".into());
+        }
+        if fence.is_some_and(|fence| !fence.is_current()) {
+            return Err(PUBLICATION_EVIDENCE_CHANGED.into());
         }
         let result = (|| {
             let connection = match self.connection.as_mut().unwrap() {
@@ -1006,7 +1015,11 @@ impl Gateway {
         self.connection = Some(match duplex {
             Some(parts) => {
                 let panels = self.panels.clone();
-                GatewayConnection::Parked(GatewaySerial::open(parts?, move |record| panels.accept(record, Instant::now()))?)
+                let publication = self.workspace.as_ref().map(|cache| cache.publication.clone()).unwrap_or_default();
+                GatewayConnection::Parked(GatewaySerial::open(
+                    parts?, move |record| panels.accept(record, Instant::now()),
+                    &publication, self.reader_wake.clone(),
+                )?)
             }
             None => {
                 let mut connection = self.factory.open(&info, self.timing.poll)?;
@@ -1021,8 +1034,9 @@ impl Gateway {
                 .saturating_duration_since(Instant::now())
                 .min(self.timing.command),
         )?;
+        let publication_events = self.state["controllerPublicationOverride"] == publication::capability();
         if let Some(GatewayConnection::Parked(connection)) = self.connection.as_mut() {
-            if connection.supports_panel() {
+            if connection.supports_panel() || publication_events {
                 if let Err(error) = connection.send(b"panel-stream\n", deadline) {
                     self.close();
                     return Err(error);
@@ -2273,6 +2287,7 @@ impl Gateway {
 }
 
 enum Message {
+    SerialWake,
     Request(Value, mpsc::Sender<Value>),
     Publication(PublicationRequest,mpsc::Sender<Result<PublicationReply,String>>),
     RenewWorkspace(String, mpsc::SyncSender<Result<Vec<String>, String>>),
@@ -2345,15 +2360,26 @@ impl Stm32Service {
         let workspace_latest = workspace.clone();
         let panels = Arc::<PanelHub>::default();
         let worker_panels = panels.clone();
+        let reader_sender = sender.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
                 gateway.panels = worker_panels;
                 gateway.workspace = Some(workspace_latest.clone());
+                gateway.reader_wake = Some(Arc::new(move || { let _ = reader_sender.try_send(Message::SerialWake); }));
                 let mut seen = Instant::now();
                 let mut heartbeat = Instant::now() + gateway.timing.heartbeat;
                 while !cancel.load(Ordering::Acquire) {
+                    let recover_publication = std::mem::take(&mut gateway.publication_reconnect);
+                    if recover_publication || matches!(&gateway.connection, Some(GatewayConnection::Parked(serial)) if serial.ended()) {
+                        if gateway.automatic() {
+                            let _ = gateway.recover_automatic(Instant::now() + gateway.timing.reconnect);
+                        } else {
+                            gateway.close();
+                        }
+                        gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
+                    }
                     match receiver.recv_timeout(heartbeat.saturating_duration_since(Instant::now()))
                     {
                         Ok(Message::Request(request, response)) => {
@@ -2373,6 +2399,7 @@ impl Stm32Service {
                             gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                             let _ = response.try_send(result);
                         }
+                        Ok(Message::SerialWake) => {}
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             gateway.heartbeat(seen);
@@ -2388,7 +2415,7 @@ impl Stm32Service {
                         Message::Request(_,response)=>{let _=response.send(json!({"ok":false,"error":CLOSED,"state":gateway.decorated(None)}));}
                         Message::Publication(_,response)=>{let _=response.send(Err(CLOSED.into()));}
                         Message::RenewWorkspace(_, response)=>{let _=response.try_send(Err(CLOSED.into()));}
-                        Message::Shutdown=>{}
+                        Message::Shutdown | Message::SerialWake=>{}
                     }
                 }
             })

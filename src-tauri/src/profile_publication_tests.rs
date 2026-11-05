@@ -18,7 +18,11 @@ struct FakeState {
     mode: ClaimMode,
     pending: bool,
 }
-struct FakeIo(Mutex<FakeState>);
+struct FakeIo(
+    Mutex<FakeState>,
+    Mutex<Arc<AtomicU64>>,
+    Mutex<std::sync::Weak<osg_streams::NativeWake>>,
+);
 
 fn target(index: u8, enabled: bool) -> Target {
     Target {
@@ -55,21 +59,44 @@ impl FakeIo {
             "profile":t.profile,"axisCount":t.profile["axes"],"publicationSlot":t.slot,"configuredEnabled":t.configured_enabled,
             "publicationReportId":t.report,"configuredDescriptorIndex":t.order,"published":t.configured_enabled,
             "lease":66,"hasInput":false,"eventBaselineReady":false})).collect::<Vec<_>>();
-        Arc::new(Self(Mutex::new(FakeState {
-            state: json!({"gatewayType":"stm32-can-gateway",
+        Arc::new(Self(
+            Mutex::new(FakeState {
+                state: json!({"gatewayType":"stm32-can-gateway",
             "gatewaySerial":"0123456789abcdef01234567","protocolVersion":3,"canProtocol":3,"controllerPublicationOverride":json!({"schema":1,"scope":"gateway-can","nonpersistent":true,"captureAtClaim":true,"restore":"compare-if-unchanged","minLeaseMs":250,"maxLeaseMs":5000,"maxTargets":32,"reconnectRequired":true}),
             "connected":true,"epoch":65536,"publicationRevision":17,"layoutPending":false,"modules":modules,
             "publication":{"phase":"idle","outcome":"no_change","leaseId":0,"expiresAtMs":0,
                 "transition":"0","claimRevision":0,"targetMask":"00000000","enabledMask":"00000000","expectedReconnect":false}}),
-            owner: None,
-            calls: vec![],
-            masks: vec![],
-            mode: ClaimMode::Confirmed,
-            pending: false,
-        })))
+                owner: None,
+                calls: vec![],
+                masks: vec![],
+                mode: ClaimMode::Confirmed,
+                pending: false,
+            }),
+            Mutex::new(Arc::new(AtomicU64::new(1))),
+            Mutex::default(),
+        ))
     }
     fn change(&self, update: impl FnOnce(&mut FakeState)) {
-        update(&mut self.0.lock().unwrap());
+        let mut state = self.0.lock().unwrap();
+        let prior = state.state.clone();
+        update(&mut state);
+        if prior != state.state {
+            self.1.lock().unwrap().fetch_add(1, Ordering::AcqRel);
+            drop(state);
+            self.notify();
+        }
+    }
+    fn notify(&self) {
+        if let Some(wake) = self.2.lock().unwrap().upgrade() {
+            wake.notify();
+        }
+    }
+    fn replace_stream(&self) {
+        let mut counter = self.1.lock().unwrap();
+        counter.store(0, Ordering::Release);
+        *counter = Arc::new(AtomicU64::new(1));
+        drop(counter);
+        self.notify();
     }
     fn count(&self, operation: &str) -> usize {
         self.0
@@ -105,6 +132,14 @@ impl FakeIo {
     }
 }
 impl Io for FakeIo {
+    fn fence(&self, gateway: &str) -> Option<PublicationFence> {
+        assert_eq!(gateway, GATEWAY);
+        PublicationFence::fixture(65536, self.1.lock().unwrap().clone())
+    }
+    fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+        assert_eq!(gateway, GATEWAY);
+        *self.2.lock().unwrap() = Arc::downgrade(wake);
+    }
     fn cached(&self, gateway: &str) -> Result<Value, String> {
         assert_eq!(gateway, GATEWAY);
         Ok(self.0.lock().unwrap().state.clone())
@@ -117,6 +152,13 @@ impl Io for FakeIo {
         assert_eq!(gateway, GATEWAY);
         assert_eq!(request.epoch, 65536);
         let mut s = self.0.lock().unwrap();
+        if request
+            .fence
+            .as_ref()
+            .is_some_and(|fence| !fence.is_current())
+        {
+            return Err("Publication fixture stream changed before dispatch".into());
+        }
         let admitted = request
             .authority
             .as_ref()
@@ -281,6 +323,145 @@ fn batches_exact_targets_and_seals_receipts_before_any_mutation() {
     actor.verified(true).unwrap().validate().unwrap();
 }
 #[test]
+fn quiet_publication_renews_without_polling_state_or_private_ownership() {
+    let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+    let targets = vec![target(0, false)];
+    let io = FakeIo::new(&targets);
+    let mut actor = prepare(targets, io.clone());
+    actor.acquire().unwrap();
+    wait(&actor, |s| s.active);
+    let state_reads = io.count("state");
+    let inspections = io.count("inspect");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while io.count("renew") == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "Renewal did not meet its deadline"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(io.count("state"), state_reads);
+    assert_eq!(io.count("inspect"), inspections);
+    let captured = actor.verified(false).unwrap();
+    captured.validate().unwrap();
+    io.change(|state| state.state["configuredGeneration"] = json!(3));
+    assert!(captured.validate().is_err());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while actor.verified(false).is_err() {
+        assert!(
+            Instant::now() < deadline,
+            "The changed fence was never revalidated"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(captured.validate().is_err());
+    assert_eq!(io.count("state"), state_reads + 1);
+    assert_eq!(io.count("inspect"), inspections);
+    stop(&mut actor);
+}
+
+#[test]
+fn an_unsent_renew_revalidates_a_new_fence_without_withdrawing_the_same_lease() {
+    let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+    struct StaleRenew {
+        inner: Arc<FakeIo>,
+        rejected: AtomicBool,
+    }
+    impl Io for StaleRenew {
+        fn fence(&self, gateway: &str) -> Option<PublicationFence> {
+            self.inner.fence(gateway)
+        }
+        fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+            self.inner.watch_inventory(gateway, wake);
+        }
+        fn cached(&self, gateway: &str) -> Result<Value, String> {
+            self.inner.cached(gateway)
+        }
+        fn request(
+            &self,
+            gateway: &str,
+            request: PublicationRequest,
+        ) -> Result<PublicationReply, String> {
+            if matches!(request.operation, PublicationOperation::Renew { .. })
+                && !self.rejected.swap(true, Ordering::AcqRel)
+            {
+                self.inner.change(|s| s.state["configuredGeneration"] = json!(3));
+                assert!(!request.fence.as_ref().unwrap().is_current());
+                return Err(crate::stm32::PUBLICATION_EVIDENCE_CHANGED.into());
+            }
+            self.inner.request(gateway, request)
+        }
+    }
+    let targets = vec![target(0, false)];
+    let inner = FakeIo::new(&targets);
+    let io = Arc::new(StaleRenew {
+        inner: inner.clone(),
+        rejected: AtomicBool::new(false),
+    });
+    let mut actor = Overrides::prepare_io(&Staged { targets }, &owner(), io.clone()).unwrap();
+    actor.acquire().unwrap();
+    wait(&actor, |s| s.active);
+    let old = actor.verified(false).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while inner.count("renew") == 0 || actor.verified(false).is_err() {
+        assert!(actor.poll().error.is_none());
+        assert!(Instant::now() < deadline, "The unchanged lease was never renewed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(io.rejected.load(Ordering::Acquire));
+    assert!(old.validate().is_err());
+    assert_eq!(inner.count("claim"), 1);
+    assert_eq!(inner.count("state"), 2);
+    assert_eq!(inner.count("inspect"), 0);
+    assert_eq!(inner.count("renew"), 1);
+    stop(&mut actor);
+}
+
+#[test]
+fn a_replacement_stream_cannot_resume_an_admitted_publication() {
+    let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+    let targets = vec![target(0, false)];
+    let io = FakeIo::new(&targets);
+    let mut actor = prepare(targets, io.clone());
+    actor.acquire().unwrap();
+    wait(&actor, |s| s.active);
+    let proof = actor.verified(false).unwrap();
+    io.replace_stream();
+    assert!(proof.validate().is_err());
+    let status = wait(&actor, |s| s.error.is_some());
+    assert!(!status.active);
+    assert_eq!(io.count("release"), 0);
+    stop(&mut actor);
+    assert_eq!(io.count("claim"), 1);
+    assert_eq!(io.count("renew"), 0);
+    assert_eq!(io.count("release"), 1);
+}
+
+#[test]
+fn expected_startup_reconnect_rechecks_private_ownership_before_admission() {
+    let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+    let targets = vec![target(0, false)];
+    let io = FakeIo::new(&targets);
+    io.change(|state| state.pending = true);
+    let mut actor = prepare(targets, io.clone());
+    actor.acquire().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while io.count("state") == 0 {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    io.replace_stream();
+    io.settle();
+    assert!(actor.verified(false).is_err());
+    io.change(|s| s.state["modules"][0]["hasInput"] = json!(true));
+    wait(&actor, |s| s.active);
+    assert_eq!(io.count("claim"), 1);
+    assert!(io.count("inspect") >= 1);
+    actor.verified(false).unwrap().validate().unwrap();
+    stop(&mut actor);
+}
+
+#[test]
 fn unsettled_descriptor_never_admits_execution_or_a_fabricated_baseline() {
     let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
     let targets = vec![target(0, false)];
@@ -289,7 +470,7 @@ fn unsettled_descriptor_never_admits_execution_or_a_fabricated_baseline() {
     let mut actor = prepare(targets, io.clone());
     actor.acquire().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
-    while io.count("inspect") == 0 {
+    while io.count("state") == 0 {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(5));
     }
@@ -520,6 +701,7 @@ fn crash_recovery_inspects_and_releases_only_the_exact_existing_private_receipt(
             },
             authority: Some(Arc::new(AtomicBool::new(true))),
             control_epoch: None,
+            fence: None,
         },
     )
     .unwrap();
@@ -560,6 +742,12 @@ fn can_lease_drift_at_due_renewal_revokes_before_any_blocking_renew_or_new_proof
         release_renew: (Mutex<bool>, std::sync::Condvar),
     }
     impl Io for DriftIo {
+        fn fence(&self, gateway: &str) -> Option<PublicationFence> {
+            self.inner.fence(gateway)
+        }
+        fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+            self.inner.watch_inventory(gateway, wake);
+        }
         fn cached(&self, gateway: &str) -> Result<Value, String> {
             self.inner.cached(gateway)
         }
@@ -604,6 +792,7 @@ fn can_lease_drift_at_due_renewal_revokes_before_any_blocking_renew_or_new_proof
     actor.acquire().unwrap();
     wait(&actor, |s| s.active);
     io.arm.store(true, Ordering::Release);
+    inner.change(|s| s.state["configuredGeneration"] = json!(3));
     let deadline = Instant::now() + Duration::from_secs(3);
     while actor.poll().error.is_none()
         && !io.renew_entered.load(Ordering::Acquire)
@@ -641,13 +830,19 @@ fn expiry_between_state_and_private_inspect_confirms_exact_restoration_without_r
         expire: AtomicBool,
     }
     impl Io for ExpireIo {
+        fn fence(&self, gateway: &str) -> Option<PublicationFence> {
+            self.inner.fence(gateway)
+        }
+        fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+            self.inner.watch_inventory(gateway, wake);
+        }
         fn cached(&self, gateway: &str) -> Result<Value, String> {
             self.inner.cached(gateway)
         }
         fn request(
             &self,
             gateway: &str,
-            request: PublicationRequest,
+            mut request: PublicationRequest,
         ) -> Result<PublicationReply, String> {
             if matches!(&request.operation, PublicationOperation::Inspect { .. })
                 && self.expire.swap(false, Ordering::AcqRel)
@@ -666,6 +861,7 @@ fn expiry_between_state_and_private_inspect_confirms_exact_restoration_without_r
                         m["hasInput"] = json!(false);
                     }
                 });
+                request.fence = None; // The transport already dispatched this Inspect.
             }
             self.inner.request(gateway, request)
         }
@@ -688,6 +884,7 @@ fn expiry_between_state_and_private_inspect_confirms_exact_restoration_without_r
                 },
                 authority: Some(Arc::new(AtomicBool::new(true))),
                 control_epoch: None,
+                fence: None,
             },
         )
         .unwrap();
@@ -730,6 +927,12 @@ fn timed_out_cleanup_retries_after_transport_returns_without_claim_or_renewal() 
         offline: AtomicBool,
     }
     impl Io for OfflineIo {
+        fn fence(&self, gateway: &str) -> Option<PublicationFence> {
+            self.inner.fence(gateway)
+        }
+        fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+            self.inner.watch_inventory(gateway, wake);
+        }
         fn cached(&self, gateway: &str) -> Result<Value, String> {
             self.inner.cached(gateway)
         }
@@ -798,7 +1001,14 @@ fn completed_exact_restoration_proof_does_not_expire_like_active_ownership() {
     wait(&actor, |s| s.active);
     stop(&mut actor);
     let shared = &actor.slots[0].shared;
-    shared.verified.lock().unwrap().as_mut().unwrap().0 = Instant::now() - Duration::from_secs(30);
+    assert!(shared
+        .verified
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .live
+        .is_none());
     actor.verified(true).unwrap().validate().unwrap();
     assert!(actor.verified(false).is_err());
     io.change(|s| s.state["modules"][0]["lease"] = json!(999));
@@ -962,6 +1172,8 @@ mod native_host {
             let publication_actions = actions.clone();
             let ordinary_actions = actions.clone();
             let ordinary_io = io.clone();
+            let fence_io = io.clone();
+            let watch_io = io.clone();
             let captures = Arc::new(crate::stm32_panel_capture::Hub::default());
             let panels = Arc::new(crate::gateways::ProfilePanelIo::publication_action_fixture(
                 GATEWAY.into(),
@@ -1028,6 +1240,8 @@ mod native_host {
                         .unwrap_or_else(|| json!({"ok":false,"error":"No ordinary action"}))
                 }),
                 captures.clone(),
+                Arc::new(move || fence_io.fence(GATEWAY)),
+                Arc::new(move |wake| watch_io.watch_inventory(GATEWAY, wake)),
             ));
             let host = NativeProfileHost::new(
                 resources.clone(),

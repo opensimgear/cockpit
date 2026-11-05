@@ -1,5 +1,6 @@
 //! Splits a parked gateway USB reader into ordered panel records and command replies.
 use crate::{
+    stm32::publication_feed::{Ingress, Lifetime, PublicationFeed},
     stm32_panel_wire::{decode, Record},
     transport::duplex::{BlockingReceiver, CancelIo, DeadlineWriter, DuplexParts},
 };
@@ -23,12 +24,16 @@ pub(crate) struct GatewaySerial {
     reader: Option<JoinHandle<()>>,
     replies: mpsc::Receiver<Result<Value, String>>,
     supports_panel: Arc<AtomicBool>,
+    publication: Lifetime,
+    ended: Arc<AtomicBool>,
 }
 
 impl GatewaySerial {
     pub(crate) fn open(
         parts: DuplexParts,
         mut panel: impl FnMut(Record) + Send + 'static,
+        publication: &PublicationFeed,
+        reader_wake: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<Self, String> {
         let DuplexParts {
             receiver,
@@ -39,6 +44,10 @@ impl GatewaySerial {
         let (send, replies) = mpsc::sync_channel(4);
         let supports_panel = Arc::new(AtomicBool::new(false));
         let reader_support = supports_panel.clone();
+        let mut ingress = publication.attach();
+        let publication = ingress.lifetime();
+        let ended = Arc::new(AtomicBool::new(false));
+        let reader_ended = ended.clone();
         let reader = thread::Builder::new()
             .name("osg-stm32-cdc-rx".into())
             .spawn(move || {
@@ -50,7 +59,11 @@ impl GatewaySerial {
                     },
                     &mut panel,
                     &reader_support,
+                    &mut ingress,
                 );
+                drop(ingress);
+                reader_ended.store(true, Ordering::Release);
+                if let Some(wake) = reader_wake { wake(); }
                 panel(Record::Reset);
                 if let Err(error) = result {
                     let _ = send.try_send(Err(error));
@@ -63,6 +76,8 @@ impl GatewaySerial {
                 reader: Some(reader),
                 replies,
                 supports_panel,
+                publication,
+                ended,
             }),
             Err(error) => {
                 let _ = writer.control_lines(false, false);
@@ -74,6 +89,10 @@ impl GatewaySerial {
 
     pub(crate) fn supports_panel(&self) -> bool {
         self.supports_panel.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     pub(crate) fn send(&mut self, line: &[u8], deadline: Instant) -> Result<(), String> {
@@ -102,6 +121,7 @@ impl GatewaySerial {
 
 impl Drop for GatewaySerial {
     fn drop(&mut self) {
+        self.publication.close();
         let _ = self.writer.control_lines(false, false);
         self.cancel.cancel();
         if let Some(reader) = self.reader.take() {
@@ -115,6 +135,7 @@ pub(crate) fn receive(
     mut reply: impl FnMut(Value) -> Result<(), String>,
     mut panel: impl FnMut(Record),
     supports_panel: &AtomicBool,
+    publication: &mut Ingress,
 ) -> Result<(), String> {
     let mut pending = Vec::new();
     let mut chunk = [0; 4096];
@@ -146,6 +167,8 @@ pub(crate) fn receive(
                     .map_err(|_| "CAN gateway sent malformed serial data.".to_owned())?;
                 if value.get("panelStream").is_some() {
                     panel(decode(&value).ok_or("CAN gateway sent an invalid panel record.")?);
+                } else if value.get("publicationStream").is_some() {
+                    publication.accept(&value)?;
                 } else {
                     reply(value)?;
                 }
@@ -177,19 +200,23 @@ mod tests {
         let input = Fragments(VecDeque::from([
             &b"gatewayType=stm32-can-gateway panelStream=1\r\ntype help for com"[..],
             &b"mands\r\n{\"panelStream\":\"re"[..],
-            &b"set\"}\r\n{\"id\":8,\"ok\":true}\r\n"[..],
+            &b"set\"}\r\n{\"publicationStream\":\"change\",\"epoch\":5,\"sequence\":\"1\"}\r\n{\"id\":8,\"ok\":true}\r\n"[..],
         ]));
         let mut replies = Vec::new();
         let mut panels = Vec::new();
         let supports_panel = AtomicBool::new(false);
+        let publication = PublicationFeed::default();
+        let mut ingress = publication.attach();
         let error = receive(
             Box::new(input),
             |value| {
+                assert_eq!(publication.current().unwrap().epoch(), 5);
                 replies.push(value);
                 Ok(())
             },
             |event| panels.push(event),
             &supports_panel,
+            &mut ingress,
         );
         assert_eq!(error.unwrap_err(), "CAN gateway was unplugged.");
         assert_eq!(replies, vec![serde_json::json!({"id":8,"ok":true})]);
@@ -236,6 +263,8 @@ mod tests {
             move |event| {
                 let _ = events.send(event);
             },
+            &PublicationFeed::default(),
+            None,
         )
         .unwrap();
         // Payload captured from the canonical firmware encoder.

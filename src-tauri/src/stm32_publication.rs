@@ -66,6 +66,7 @@ pub(crate) struct PublicationRequest {
     /// Claim/renew share the run's revocation latch, checked by the serial owner.
     pub authority:Option<Arc<AtomicBool>>,
     pub control_epoch:Option<(Arc<AtomicU64>,u64)>,
+    pub fence: Option<PublicationFence>,
 }
 #[derive(Clone,Debug)]
 pub(crate) enum PublicationOperation {
@@ -82,6 +83,9 @@ impl PublicationRequest {
     fn command(&self)->Result<String,String> {
         let bad=||"Invalid bounded native publication request.".to_owned();
         if self.epoch==0{return Err(bad());}
+        if self.fence.as_ref().is_some_and(|fence| fence.epoch() != self.epoch || !fence.is_current()) {
+            return Err(PUBLICATION_EVIDENCE_CHANGED.into());
+        }
         let owner=match &self.operation {PublicationOperation::State=>None,PublicationOperation::Inspect{owner,..}|PublicationOperation::Claim{owner,..}|PublicationOperation::Renew{owner,..}|PublicationOperation::Release{owner,..}=>Some(owner)};
         if owner.is_some_and(|owner|!hex_identity(owner,32)){return Err(bad());}
         let text=match &self.operation {
@@ -105,7 +109,11 @@ impl Gateway {
         if self.role!=Role::Can {return Err("This gateway has no native controller publication capability.".into());}
         if self.connection.is_none(){self.recover_automatic(Instant::now()+Duration::from_millis(1500))?;}
         if self.state["epoch"].as_u64()!=Some(request.epoch as u64) || self.state["controllerPublicationOverride"]!=capability(){return Err("The native publication capability or gateway boot changed.".into());}
-        self.exchange_guarded(&command,self.timing.command,request.authority.as_deref(),request.control_epoch.as_ref().map(|(epoch,expected)|(epoch.as_ref(),*expected)))?;
+        let result = self.exchange_guarded(&command,self.timing.command,request.authority.as_deref(),request.control_epoch.as_ref().map(|(epoch,expected)|(epoch.as_ref(),*expected)),request.fence.as_ref());
+        if result.is_err() && self.connection.is_none() && self.automatic() {
+            self.publication_reconnect = true;
+        }
+        result?;
         if self.state["epoch"].as_u64()!=Some(request.epoch as u64){return Err("The gateway restarted during publication dispatch.".into());}
         let owned=if matches!(request.operation,PublicationOperation::Inspect{..}) {
             Some(self.publication_reply.ok_or("The gateway returned no request-scoped publication ownership proof.")?)
@@ -114,6 +122,13 @@ impl Gateway {
     }
 }
 impl Stm32Service {
+    pub(crate) fn publication_fence(&self) -> Option<PublicationFence> {
+        self.workspace.publication.current()
+    }
+
+    pub(crate) fn watch_publication(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.workspace.publication.watch(wake);
+    }
     pub(crate) fn publication(&self,request:PublicationRequest)->Result<PublicationReply,String> {
         request.command()?;
         if self.closed.load(Ordering::Acquire){return Err(CLOSED.into());}

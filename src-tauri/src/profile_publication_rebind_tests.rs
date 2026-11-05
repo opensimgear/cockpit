@@ -36,8 +36,12 @@ fn state() -> Value {
     let t = target();
     json!({"gatewayType":"stm32-can-gateway","gatewaySerial":"0123456789abcdef01234567","protocolVersion":3,"canProtocol":3,"controllerPublicationOverride":{"schema":1,"scope":"gateway-can","nonpersistent":true,"captureAtClaim":true,"restore":"compare-if-unchanged","minLeaseMs":250,"maxLeaseMs":5000,"maxTargets":32,"reconnectRequired":true},"connected":true,"epoch":t.epoch,"publicationRevision":18,"layoutPending":false,"publication":{"phase":"owned","outcome":"ok","leaseId":73,"expiresAtMs":5000,"transition":"1","claimRevision":17,"targetMask":"00000001","enabledMask":"00000000","expectedReconnect":false},"modules":[{"id":MODULE,"online":true,"directUsb":false,"boot":t.boot,"configurationGeneration":t.configuration,"node":t.node,"sourceNode":t.source,"profile":t.profile,"publicationSlot":0,"configuredEnabled":true,"publicationReportId":1,"configuredDescriptorIndex":0,"published":false,"lease":67,"hasInput":true}]})
 }
-struct ReadOnlyIo(Arc<Mutex<Value>>);
+struct ReadOnlyIo(Arc<Mutex<Value>>, Arc<AtomicU64>);
 impl Io for ReadOnlyIo {
+    fn fence(&self, g: &str) -> Option<PublicationFence> {
+        assert_eq!(g, GATEWAY);
+        PublicationFence::fixture(target().epoch, self.1.clone())
+    }
     fn cached(&self, g: &str) -> Result<Value, String> {
         assert_eq!(g, GATEWAY);
         Ok(self.0.lock().unwrap().clone())
@@ -231,12 +235,21 @@ impl Fixture {
         let active = shared(false);
         active.authority.store(true, Ordering::Release);
         active.status.lock().unwrap().active = true;
-        *active.verified.lock().unwrap() = Some((Instant::now(), state.clone()));
+        let io = Arc::new(ReadOnlyIo(self.state.clone(), Arc::new(AtomicU64::new(1))));
+        let live = (
+            Instant::now() + Duration::from_secs(5),
+            io.fence(GATEWAY).unwrap(),
+        );
+        *active.verified.lock().unwrap() = Some(Proof {
+            state: state.clone(),
+            live: Some(live.clone()),
+        });
         VerifiedPublication {
             targets: vec![target],
-            io: Arc::new(ReadOnlyIo(self.state.clone())),
+            io,
             states: BTreeMap::from([(GATEWAY.into(), state)]),
             live: BTreeMap::from([(GATEWAY.into(), Some(active))]),
+            fences: BTreeMap::from([(GATEWAY.into(), live)]),
         }
     }
 }
@@ -358,8 +371,16 @@ fn stale_or_revoked_private_owner_proof_cannot_refresh_cached_routes() {
     assert!(proof.validate().is_err());
     let proof = f.proof();
     let active = proof.live[GATEWAY].as_ref().unwrap();
-    active.verified.lock().unwrap().as_mut().unwrap().0 =
-        Instant::now() - Duration::from_millis(501);
+    active
+        .verified
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .live
+        .as_mut()
+        .unwrap()
+        .0 = Instant::now() - Duration::from_millis(1);
     assert!(proof.validate().is_err());
 }
 
@@ -440,7 +461,7 @@ fn malformed_sealed_target_receipts_fail_before_any_transport_request() {
         game_id: None,
     };
     let actor =
-        Overrides::prepare_io(&staged, &owner, Arc::new(ReadOnlyIo(f.state.clone()))).unwrap();
+        Overrides::prepare_io(&staged, &owner, Arc::new(ReadOnlyIo(f.state.clone(), Arc::new(AtomicU64::new(1))))).unwrap();
     let original = actor.slots[0].value.clone();
     for mutation in 0..4 {
         let mut value = original.clone();

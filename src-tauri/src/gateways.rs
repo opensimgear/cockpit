@@ -59,6 +59,8 @@ trait Adapter: Send + Sync {
     }
     fn watch_workspace(&self,_wake:Arc<osg_streams::NativeWake>) {}
     fn watch_resource_inventory(&self, _wake: &Arc<osg_streams::NativeWake>) {}
+    fn watch_publication(&self, _wake: &Arc<osg_streams::NativeWake>) {}
+    fn publication_fence(&self) -> Option<crate::stm32::PublicationFence> { None }
     fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){(Arc::new(self.cached_state()),BTreeMap::new())}
     fn set_workspace_owned(&self,_owned:bool) {}
     fn renew_workspace_client(&self,_client:&str)->Result<Vec<String>,String>{Err("Workspace lease renewal is unsupported.".into())}
@@ -85,6 +87,12 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn watch_publication(&self, wake: &Arc<osg_streams::NativeWake>) {
+        Stm32Service::watch_publication(self, wake);
+    }
+    fn publication_fence(&self) -> Option<crate::stm32::PublicationFence> {
+        Stm32Service::publication_fence(self)
+    }
     fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
         self.watch_resource_inventory(wake);
     }

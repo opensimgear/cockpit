@@ -254,14 +254,14 @@ fn cached_native_can_snapshot_performs_no_request_or_discovery() {
 fn native_publication_dispatch_is_typed_exact_scoped_and_closed_after_the_writer_gate(){
     use crate::stm32::{PublicationOperation,PublicationRequest};
     let (io,adapter,_,_)=fixture();
-    let read=||PublicationRequest{epoch:10,operation:PublicationOperation::State,authority:None,control_epoch:None};
+    let read=||PublicationRequest{epoch:10,operation:PublicationOperation::State,authority:None,control_epoch:None,fence:None};
     assert!(io.publication(GATEWAY,read()).is_ok());
     assert_eq!(adapter.publications.lock().unwrap().len(),1);
     assert!(io.publication("unknown",read()).is_err());
     assert_eq!(io.can(request("publication_claim"))["ok"],false,"JSON routes cannot provide private ownership");
     adapter.publications.lock().unwrap().clear();
     let guard=io.gate.lock().unwrap();let waiting=io.clone();
-    let operation=thread::spawn(move||waiting.publication(GATEWAY,PublicationRequest{epoch:10,operation:PublicationOperation::Release{owner:"1234567890abcdef1234567890abcdef".into(),lease:1},authority:None,control_epoch:None}));
+    let operation=thread::spawn(move||waiting.publication(GATEWAY,PublicationRequest{epoch:10,operation:PublicationOperation::Release{owner:"1234567890abcdef1234567890abcdef".into(),lease:1},authority:None,control_epoch:None,fence:None}));
     thread::sleep(Duration::from_millis(10));assert!(adapter.publications.lock().unwrap().is_empty());
     io.closed.store(true,Ordering::Release);drop(guard);assert!(operation.join().unwrap().is_err());
     assert!(io.publication(GATEWAY,read()).is_err());assert!(adapter.publications.lock().unwrap().is_empty());

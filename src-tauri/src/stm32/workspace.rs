@@ -10,13 +10,18 @@ struct Snapshot {
     wakes: Vec<Weak<osg_streams::NativeWake>>,
     inventory_wakes: Vec<Weak<osg_streams::NativeWake>>,
 }
-pub(crate) struct Cache { snapshot: Mutex<Snapshot>, owned: AtomicBool }
+pub(crate) struct Cache {
+    snapshot: Mutex<Snapshot>,
+    owned: AtomicBool,
+    pub(super) publication: publication_feed::PublicationFeed,
+}
 impl Cache {
     pub(crate) fn new(state: Value) -> Self {
         let state = public_state(state);
         let visible = visible_state(&state);
         Self { snapshot: Mutex::new(Snapshot { state: Arc::new(state), visible: Arc::new(visible),
-            owners: BTreeMap::new(), wakes: vec![], inventory_wakes: vec![] }), owned: AtomicBool::new(false) }
+            owners: BTreeMap::new(), wakes: vec![], inventory_wakes: vec![] }), owned: AtomicBool::new(false),
+            publication: Default::default() }
     }
     pub(crate) fn watch(&self, wake: Arc<osg_streams::NativeWake>) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
