@@ -22,6 +22,7 @@ pub(super) struct StateMutex {
     confirmed: Mutex<Confirmed>,
     pub(super) learning_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     pub(super) reconnect_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
+    pub(super) activation_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     reconnect_waiting: AtomicBool,
     pub(super) catalogue_wake: Arc<osg_streams::NativeWake>,
 }
@@ -46,7 +47,7 @@ impl Drop for RegistryReleased<'_> {
 
 impl StateMutex {
     pub(super) fn new(state: State) -> Self {
-        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), learning_wake: Mutex::default(), reconnect_wake: Mutex::default(), reconnect_waiting: AtomicBool::new(false) }
+        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), activation_wake: Mutex::default(), learning_wake: Mutex::default(), reconnect_wake: Mutex::default(), reconnect_waiting: AtomicBool::new(false) }
     }
     fn guard<'a>(&'a self, state: MutexGuard<'a, State>) -> StateGuard<'a> {
         StateGuard { owner: self, state, dirty: false, _released: RegistryReleased(self) }
@@ -151,6 +152,9 @@ impl Drop for StateGuard<'_> {
         };
         drop(old);
         self.owner.catalogue_wake.notify();
+        if let Some(wake) = self.owner.activation_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
         if let Some(wake) = self.owner.learning_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }

@@ -16,6 +16,11 @@ fn capture(state: &live_validation::StateMutex) -> Value {
 }
 
 impl Runtime {
+    // The serialized profile transition owns the only activation waiter.
+    pub(crate) fn watch_activation_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.state.activation_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+
     pub(crate) fn watch_reconnect_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.state.reconnect_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
     }

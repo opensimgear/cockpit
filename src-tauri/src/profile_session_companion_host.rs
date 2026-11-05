@@ -311,18 +311,30 @@ impl NativeProfileHost {
         let runtime = self.companions.clone();
         let provider = self.companions.profile_provider();
         let resources = self.resources.clone();
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current())
+            .map_err(|_| "Cannot bind the native companion baseline waiter.")?;
+        hub.observe_presence(wake.clone());
+        hub.observe_record_changes(wake.clone());
+        hub.observe_panel_operations(wake.clone());
+        resources.watch_activation_catalogue(&wake);
         let deadline = Instant::now() + PANEL_LOAD_TIMEOUT;
         let legacy_deadline = Instant::now() + PANEL_LOAD_LEGACY_TIMEOUT;
         let mut initial_operations = self.run(owner)?.companion_initial_operations.clone();
         let mut progress = std::collections::BTreeMap::<String, (Value, Instant, Value)>::new();
         let mut live_seen = BTreeSet::new();
         let mut latest_operation = None;
+        let service_leases = |host: &mut Self| -> Result<(), String> {
+            host.check_transition(owner)?;
+            let state = host.run(owner)?;
+            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
+            if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
+            Ok(())
+        };
         loop {
-            self.check_transition(owner)?;
-            if let Some(output) = self.run(owner)?.output.as_mut() {
-                output.keep_alive()?;
-            }
-            if let Some(desktop) = self.run(owner)?.desktop.as_mut() { desktop.keep_alive()?; }
+            service_leases(self)?;
+            let observed = wake.observed();
+            let mut wait_until = deadline;
             // The independent inventory worker publishes the replacement
             // browser's actual generation. Wait for that cached observation:
             // synchronous discovery here can starve the acquired output lease.
@@ -357,12 +369,14 @@ impl NativeProfileHost {
                 }
                 if let Some((_,until,operation)) = progress.get(&catalogue.instance_id) {
                     if Instant::now() >= *until { return Err(panel_load_timeout(Some(operation),false)); }
-                } else if Instant::now() >= legacy_deadline {
-                    return Err(panel_load_timeout(None, false));
+                    wait_until = wait_until.min(*until);
+                } else {
+                    if Instant::now() >= legacy_deadline { return Err(panel_load_timeout(None, false)); }
+                    wait_until = wait_until.min(legacy_deadline);
                 }
             }
             // Multiple companions may prepare concurrently. Keep every current
-            // operation visible instead of cycling messages on each 5 ms poll.
+            // operation visible instead of cycling messages on each update.
             if !current_operations.is_empty() {
                 let step = current_operations.iter().find(|(step, _)| *step != "companion-baseline")
                     .map_or("companion-baseline", |(step, _)| *step);
@@ -401,7 +415,14 @@ impl NativeProfileHost {
             if Instant::now() >= deadline {
                 return Err(panel_load_timeout(latest_operation.as_ref(), true));
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            // Service neutral leases and cancellation independently of readiness.
+            // Only a producer commit or a panel deadline requests another scan.
+            while wake.observed() == observed {
+                let remaining = wait_until.saturating_duration_since(Instant::now());
+                if remaining.is_zero() { break; }
+                wake.wait(observed, remaining.min(std::time::Duration::from_millis(5)));
+                service_leases(self)?;
+            }
         }
     }
     pub(super) fn companion_poll(
