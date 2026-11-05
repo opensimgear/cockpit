@@ -93,11 +93,11 @@
 </div>
 
 <div class="settings-content" id="settings-panel-outputs" role="tabpanel" aria-labelledby="settings-tab-outputs" tabindex="0" hidden={selected !== 'outputs'}>
-  <OutputSettings />
+  {#if selected === 'outputs'}<OutputSettings />{/if}
 </div>
 
 <div class="settings-content" id="settings-panel-companions" role="tabpanel" aria-labelledby="settings-tab-companions" tabindex="0" hidden={selected !== 'companions'}>
-  <CompanionListenerSettings />
+  <CompanionListenerSettings active={selected === 'companions'} />
 </div>
 
 <div class="settings-content" id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai" tabindex="0" hidden={selected !== 'ai'}>

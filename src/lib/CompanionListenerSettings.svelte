@@ -3,10 +3,11 @@
   import Icon from './Icon.svelte';
   import { notify } from './notifications';
   import Notification from './Notification.svelte';
-  import { onMount } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { gatewayRequest } from './gateway';
   import { SharedObservations } from './streams/shared';
   import type { CompanionHostState } from './companions';
+  let { active = true }: { active?: boolean } = $props();
   let hostState = $state<CompanionHostState>({});
   let address = $state('');
   let port = $state(54437);
@@ -27,7 +28,7 @@
     catch(e){notify(String(e),'error');}
   }
   function invalidate() {
-    if (disposed) return;
+    if (disposed || !active) return;
     if (busy || reading) { refreshQueued = true; return; }
     refreshQueued = false;
     void refresh();
@@ -37,7 +38,7 @@
     const version=requestVersion;
     try {
       const result=(await gatewayRequest({ command: 'companion_inventory', companion: { listenerOnly: true } })).companions ?? {};
-      if(disposed || version!==requestVersion || busy)return;
+      if(disposed || !active || version!==requestVersion || busy)return;
       if (!result.listener) throw new Error('Companion listener settings are unavailable.');
       hostState=result;
       readError='';
@@ -47,7 +48,7 @@
         if (!address) address = hostState.interfaces?.find(ip => ip !== '127.0.0.1' && !ip.includes(':')) ?? '127.0.0.1';
         loaded=true;
       }
-    } catch (e) { if (!disposed && version === requestVersion) readError = String(e); }
+    } catch (e) { if (!disposed && active && version === requestVersion) readError = String(e); }
     finally { reading = false; if (refreshQueued) invalidate(); }
   }
   async function toggle(enabled: boolean) {
@@ -65,15 +66,17 @@
     } catch (e) { if (!disposed) error = String(e); }
     finally { if (!disposed) { busy = false; if (refreshQueued) invalidate(); } }
   }
-  onMount(() => {
+  onDestroy(() => { disposed = true; });
+  $effect(() => {
+    if (!active) return;
     const observations = new SharedObservations();
     observations.subscribe('companion.listener', state => {
       observationError = state.error ?? '';
-      if (state.status === 'ready') invalidate();
+      if (state.status === 'ready') untrack(invalidate);
     });
     window.addEventListener('focus', invalidate);
     return () => {
-      disposed = true;
+      requestVersion++;
       window.removeEventListener('focus', invalidate);
       observations.close();
     };
