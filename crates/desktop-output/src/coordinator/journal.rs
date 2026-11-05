@@ -1,4 +1,4 @@
-//! Durable evidence commits finish before helper dispatch; the OS lock spans the session.
+//! Durable acquisition evidence precedes dispatch; the OS lock spans the session.
 use super::*;
 use std::fs::{File, OpenOptions};
 pub(super) struct Store {
@@ -194,8 +194,8 @@ impl Coordinator {
         coordinator.recover(controls)?;
         coordinator.stop_all()
     }
-    /// Motion may omit writes, but must still hold the exact retained evidence
-    /// authority before native dispatch. Verification never creates a store.
+    /// Non-acquiring commands may omit writes, but must still hold the exact
+    /// retained evidence before dispatch. Verification never creates a store.
     pub(super) fn verify_current_evidence(&self) -> Result<(), String> {
         let Some(path) = &self.journal else { return Ok(()); };
         let slot = self.journal_store.borrow();

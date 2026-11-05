@@ -192,7 +192,11 @@ impl Coordinator {
         // updates need no recovery-evidence transaction on the lease path.
         let pointer = matches!(&command, Command::Deliver { delivery } if matches!(delivery.intent, Intent::Pointer { .. }))
             || matches!(&command, Command::DeliverPointerBatch { .. });
-        let changes_ledger = !pointer && !matches!(command, Command::Renew { .. });
+        // Arm replaces an owner's contribution with an empty one. The old
+        // durable holds remain a recovery superset until arm() commits the
+        // resulting owners. No control can be acquired on this path.
+        let release_only_arm = matches!(&command, Command::Arm { .. });
+        let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
         let request = Request {
             sequence: Counter(self.sequence),
             deadline_us,
@@ -213,7 +217,7 @@ impl Coordinator {
             crate::audit::record(crate::audit::Kind::RequestIssued,
                 &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
         }
-        if pointer {
+        if pointer || release_only_arm {
             if let Err(error) = self.verify_current_evidence() {
                 self.audit_outcome(&request, None, 1);
                 return Err(error);
@@ -251,6 +255,9 @@ impl Coordinator {
             crate::reducer::recovery_releases(&ack.held)?;
             if pointer && ack.held != self.snapshot.held {
                 return Err("Desktop pointer acknowledgement changed the held-control ledger.".into());
+            }
+            if release_only_arm && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
+                return Err("Desktop arm acknowledgement acquired an unexpected held control.".into());
             }
             if matches!(request.command, Command::Stop | Command::Recover { .. })
                 && (!ack.cleanup_complete || !ack.held.is_empty())

@@ -215,10 +215,10 @@ fn lifecycle_final_writes_remain_even_when_owners_are_unchanged() {
         |c| c.pause(run()),
         |c| c.stop_all(),
     ];
-    for operation in operations {
+    for (operation, expected_writes) in operations.into_iter().zip([3, 1, 1, 3, 3, 3]) {
         let before = c.persist_attempts.get();
         operation(&mut c).unwrap();
-        assert_eq!(c.persist_attempts.get() - before, 3);
+        assert_eq!(c.persist_attempts.get() - before, expected_writes);
         assert_eq!(sql_read(c.journal.as_ref().unwrap()).unwrap(), serde_json::to_vec(&c.snapshot()).unwrap());
     }
     let mut recovery = fixture(Fault::None);

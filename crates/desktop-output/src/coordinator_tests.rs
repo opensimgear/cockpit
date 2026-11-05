@@ -396,3 +396,5 @@ fn stale_evidence_and_exclusive_lifetime_owner_prevent_helper_dispatch(){
 
 #[path="coordinator/lifecycle_tests.rs"]
 mod lifecycle;
+#[path="coordinator/arm_journal_tests.rs"]
+mod arm_journal;
