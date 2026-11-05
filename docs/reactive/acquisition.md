@@ -42,6 +42,11 @@ reports request an immediate drain. The 5 ms adapter fallback remains for games,
 desktop output, panels, companions, visibility, publication and physical actions,
 and for hosts without the required native watches.
 
+Desktop tap, repeat, moving-pointer and isolated reducer deadlines now join the
+native host's deadline selection. Its parent and worker still retain the 5 ms
+focus/lease service requirement. Native dispatch cost and notification of focus
+discontinuities remain open; exposing deadlines alone does not qualify timing.
+
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. Changes in the serial topology cache,
 including enumeration failure and recovery, wake the aggregate resource worker.

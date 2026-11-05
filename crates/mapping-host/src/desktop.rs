@@ -485,15 +485,14 @@ impl Drop for Desktop {
 
 #[path = "desktop/dispatch.rs"]
 mod dispatch;
-
+#[path = "desktop/deadlines.rs"]
+mod deadlines;
 #[cfg(test)]
 #[path = "desktop/dispatch_integration_tests.rs"]
 mod dispatch_integration_tests;
-
 #[cfg(test)]
 #[path = "desktop_tests.rs"]
 mod tests;
-
 #[cfg(test)]
 #[path = "desktop/focus_health_tests.rs"]
 mod focus_health_tests;

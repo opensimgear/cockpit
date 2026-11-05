@@ -1199,7 +1199,10 @@ impl Host for NativeProfileHost {
     }
     fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner))?;
-        let routing = state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()).map(|deadline| {
+        let pending = [state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()),
+            state.desktop.as_ref().and_then(|desktop| desktop.next_deadline_us())]
+            .into_iter().flatten().min_by_key(|deadline| deadline.0);
+        let routing = pending.map(|deadline| {
             // Sampling Instant first favors an early wake after preemption.
             let before = Instant::now();
             let now = self.controllers.monotonic_us();

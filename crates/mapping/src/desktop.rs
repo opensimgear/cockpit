@@ -477,6 +477,20 @@ impl Scheduler {
     pub fn at_us(&self) -> Counter {
         Counter(self.now)
     }
+    /// Earliest pending tap transition, repeat or moving-pointer tick on the
+    /// explicit scheduler clock. Querying does not advance or record work.
+    pub fn next_deadline_us(&self) -> Option<Counter> {
+        if !self.active || self.fault.is_some() {
+            return None;
+        }
+        let transitions = self.states.values().flat_map(|state| [state.due, state.repeat]);
+        // Cancellation clears each state but can leave the shared cadence set.
+        // An idle pointer must never keep an expired deadline spinning the host.
+        let pointer = self.pointer_due.filter(|_| {
+            self.states.values().any(|state| state.velocity != 0.0)
+        });
+        transitions.flatten().chain(pointer).min().map(Counter)
+    }
     /// Inspect queued identities without draining, advancing time or recording a
     /// replay command. Native diagnostics can bind immediate emissions to the
     /// exact accepted effect while leaving dispatch order unchanged.
@@ -1051,3 +1065,7 @@ mod tests;
 #[cfg(test)]
 #[path = "desktop_pointer_tests.rs"]
 mod pointer_tests;
+
+#[cfg(test)]
+#[path = "desktop/deadline_tests.rs"]
+mod deadline_tests;

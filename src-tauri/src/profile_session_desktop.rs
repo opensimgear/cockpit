@@ -83,6 +83,10 @@ pub(crate) struct Desktop {
     started: bool,
 }
 impl Desktop {
+    pub(crate) fn next_deadline_us(&self) -> Option<Counter> {
+        if !self.started || self.scope.is_none() { return None; }
+        self.inner.as_ref().and_then(|inner| inner.next_deadline_us())
+    }
     pub(crate) fn acquire(owner:&RunOwner,program:&Program,scope:Option<Scope>)->Result<Self,String>{
         let preferences=settings::Settings::native();
         if let Some(error)=preferences.error{return Err(error);}
@@ -135,6 +139,7 @@ mod tests{
         let reducer=Phase::new(program.clone(),Counter(1),owner.session.clone()).unwrap();
         let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true};
         assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
+        assert!(desktop.next_deadline_us().is_none());
         assert_eq!(desktop.status()["state"],"waiting");
         assert_eq!(desktop.status()["scopeError"],"Waiting for the profile's game to open.");
         assert!(desktop.inner.is_none(),"Waiting must not construct or activate an output adapter");

@@ -114,7 +114,7 @@ fn source_program(action: Action, edge: bool) -> Program {
     });
     program
 }
-fn frame(phase: &mut Phase, sequence: u64, at: u64, reason: Reason, value: bool) -> Vec<Frame> {
+pub(super) fn frame(phase: &mut Phase, sequence: u64, at: u64, reason: Reason, value: bool) -> Vec<Frame> {
     let frame = Frame {
         source: "source".into(),
         generation: Counter(7),
@@ -190,7 +190,7 @@ fn prepared_program_fixture(
     };
     (desktop, phase, focused, events)
 }
-fn fixture(
+pub(super) fn fixture(
     action: Action,
     edge: bool,
 ) -> (
