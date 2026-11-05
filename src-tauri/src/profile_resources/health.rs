@@ -46,7 +46,7 @@ impl Runtime {
         {
             return Err("Preparation capture exceeds bounded assignments.".into());
         }
-        let state = match self.state.try_lock() {
+        let state = match self.state.try_lock_for_reconnect() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Poisoned(poison)) => poison.into_inner(),

@@ -119,6 +119,22 @@ fn reconnect_wakes_after_catalogue_commit_releases_the_registry() {
 }
 
 #[test]
+fn contended_reconnect_wakes_on_read_unlock_without_a_catalogue_commit() {
+    let (runtime, assignment) = fixture();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    runtime.watch_reconnect_catalogue(&wake);
+    let before = wake.observed();
+    let reader = runtime.state.lock().unwrap();
+    assert!(runtime.try_snapshot_for_preparation(vec![assignment.clone()]).unwrap().is_none());
+    assert_eq!(wake.observed(), before);
+    drop(reader);
+    let unlocked = wake.observed();
+    assert_ne!(unlocked, before);
+    assert!(runtime.try_snapshot_for_preparation(vec![assignment]).unwrap().is_some());
+    assert_eq!(wake.observed(), unlocked);
+}
+
+#[test]
 fn changed_provider_generation_revokes_the_exact_old_token_at_commit() {
     let (runtime, token) = delivery();
     let mut route = runtime.validate_delivery(&token).unwrap();

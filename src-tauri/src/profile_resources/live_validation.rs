@@ -22,6 +22,7 @@ pub(super) struct StateMutex {
     confirmed: Mutex<Confirmed>,
     pub(super) learning_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     pub(super) reconnect_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
+    reconnect_waiting: AtomicBool,
     pub(super) catalogue_wake: Arc<osg_streams::NativeWake>,
 }
 
@@ -29,14 +30,26 @@ pub(super) struct StateGuard<'a> {
     owner: &'a StateMutex,
     state: MutexGuard<'a, State>,
     dirty: bool,
+    // Fields drop in declaration order, so this runs after the mutex unlocks.
+    _released: RegistryReleased<'a>,
+}
+
+struct RegistryReleased<'a>(&'a StateMutex);
+
+impl Drop for RegistryReleased<'_> {
+    fn drop(&mut self) {
+        if self.0.reconnect_waiting.swap(false, Ordering::AcqRel) {
+            self.0.wake_reconnect();
+        }
+    }
 }
 
 impl StateMutex {
     pub(super) fn new(state: State) -> Self {
-        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), learning_wake: Mutex::default(), reconnect_wake: Mutex::default() }
+        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), learning_wake: Mutex::default(), reconnect_wake: Mutex::default(), reconnect_waiting: AtomicBool::new(false) }
     }
     fn guard<'a>(&'a self, state: MutexGuard<'a, State>) -> StateGuard<'a> {
-        StateGuard { owner: self, state, dirty: false }
+        StateGuard { owner: self, state, dirty: false, _released: RegistryReleased(self) }
     }
     pub(super) fn lock(&self) -> LockResult<StateGuard<'_>> {
         self.state.lock().map(|state| self.guard(state))
@@ -48,6 +61,24 @@ impl StateMutex {
             Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
             Err(TryLockError::Poisoned(error)) => Err(TryLockError::Poisoned(
                 PoisonError::new(self.guard(error.into_inner())))),
+        }
+    }
+    pub(super) fn try_lock_for_reconnect(&self) -> TryLockResult<StateGuard<'_>> {
+        let first = self.try_lock();
+        if !matches!(first, Err(TryLockError::WouldBlock)) {
+            return first;
+        }
+        self.reconnect_waiting.store(true, Ordering::Release);
+        // Close the race with an unlock between the first attempt and registration.
+        let retried = self.try_lock();
+        if !matches!(retried, Err(TryLockError::WouldBlock)) {
+            self.reconnect_waiting.store(false, Ordering::Release);
+        }
+        retried
+    }
+    pub(super) fn wake_reconnect(&self) {
+        if let Some(wake) = self.reconnect_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
         }
     }
     pub(super) fn confirmed(&self, token: &ResourceToken) -> Result<Option<Route>, String> {
