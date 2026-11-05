@@ -12,6 +12,10 @@ use std::{
     sync::Arc,
 };
 pub const MAX_JOURNAL_BYTES: usize = 131_072;
+#[path = "coordinator/guards.rs"]
+mod guards;
+#[path = "coordinator/delivery.rs"]
+mod delivery;
 #[path="coordinator/journal.rs"]
 mod journal;
 #[path = "coordinator/pointer_batch.rs"]
@@ -69,6 +73,7 @@ pub struct Coordinator {
     terminal_stopped: bool,
     stop_committed: bool,
     dispatch_gate: Option<Arc<dyn Fn(&Request) -> bool + Send + Sync>>,
+    guard_deliveries: std::collections::BTreeMap<u64, Delivery>,
     #[cfg(test)]
     persist_attempts: std::cell::Cell<usize>,
     #[cfg(test)]
@@ -78,7 +83,7 @@ impl Coordinator {
     fn audit_outcome(&self, request: &Request, ack: Option<&Ack>, error: u64) {
         let Some(channel) = self.channel.audit_id() else { return; };
         let operation = match &request.command {
-            Command::Deliver { delivery } => delivery.operation_id.0,
+            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => delivery.operation_id.0,
             Command::DeliverPointerBatch { deliveries } => deliveries.first().map_or(0, |d| d.operation_id.0),
             _ => 0,
         };
@@ -122,6 +127,7 @@ impl Coordinator {
             terminal_stopped: false,
             stop_committed: false,
             dispatch_gate: None,
+            guard_deliveries: Default::default(),
             #[cfg(test)]
             persist_attempts: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -221,7 +227,7 @@ impl Coordinator {
         // The validated reducer projection cannot acquire a native hold when
         // every resulting control was already held. Retained durable holds
         // cover release uncertainty until the final ACK/owner commit below.
-        let release_only_delivery = matches!(&command, Command::Deliver { delivery }
+        let release_only_delivery = matches!(&command, Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. }
             if matches!(delivery.intent, Intent::Held { .. } | Intent::Cleanup))
             && possible.iter().all(|control| self.snapshot.held.contains(control));
         let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
@@ -234,7 +240,7 @@ impl Coordinator {
             let (operation, command, run) = match &request.command {
                 Command::Activate { run, .. } => (0, 1, Some(run)),
                 Command::Arm { producer, .. } => (0, 2, Some(&producer.run)),
-                Command::Deliver { delivery } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
+                Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
                 Command::DeliverPointerBatch { deliveries } => (deliveries[0].operation_id.0, 8, Some(&deliveries[0].producer.run)),
                 Command::Renew { run } => (0, 4, Some(run)),
                 Command::Pause { run } => (0, 5, Some(run)),
@@ -263,7 +269,7 @@ impl Coordinator {
             }
         }
         let revocable = match &request.command {
-            Command::Deliver { delivery } => !matches!(&delivery.intent, Intent::Cleanup)
+            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => !matches!(&delivery.intent, Intent::Cleanup)
                 && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),
             Command::DeliverPointerBatch { .. } => true,
             _ => false,
@@ -277,7 +283,7 @@ impl Coordinator {
             if ack.sequence != request.sequence {
                 return Err("Stale desktop worker acknowledgement.".into());
             }
-            if let Command::Deliver { delivery } = &request.command {
+            if let Some(delivery) = request.command.delivery() {
                 if ack.operation_id != Some(delivery.operation_id) {
                     return Err("Desktop acknowledgement has the wrong operation identity.".into());
                 }
@@ -292,7 +298,12 @@ impl Coordinator {
                 );
             }
             crate::reducer::recovery_releases(&ack.held)?;
-            if pointer && ack.held != self.snapshot.held {
+            let mut reconciled = self.stage_guard_receipts(&ack)?;
+            if ack.ok && matches!(request.command, Command::Stop | Command::Recover { .. }) {
+                if let Some(next) = &mut reconciled { next.stop(); }
+            }
+            if pointer && !reconciled.as_ref().map_or_else(|| ack.held == self.snapshot.held,
+                |next| ack.held == next.held()) {
                 return Err("Desktop pointer acknowledgement changed the held-control ledger.".into());
             }
             if release_only_arm && ack.held.iter().any(|control| !self.snapshot.held.contains(control)) {
@@ -306,10 +317,10 @@ impl Coordinator {
             {
                 return Err("Desktop worker cleanup acknowledgement is incomplete.".into());
             }
-            Ok(ack)
+            Ok((ack, reconciled))
         });
         match result {
-            Ok(ack) => {
+            Ok((ack, reconciled)) => {
                 self.snapshot.held = ack.held.clone();
                 self.snapshot.cleanup_complete = ack.cleanup_complete;
                 self.snapshot.error = ack.error.clone();
@@ -323,7 +334,19 @@ impl Coordinator {
                 self.snapshot.in_flight = None;
                 if ack.ok {
                     self.snapshot.possible_held = ack.held.clone();
-                    let metadata_changed = match commit(self, &ack) {
+                    // Install only after the complete ACK has validated. Every
+                    // projection below starts from these exact released owners.
+                    let guards_changed = if let Some(reconciled) = reconciled {
+                        self.reducer = reconciled;
+                        self.update_owners()
+                    } else { false };
+                    let projection = commit(self, &ack).and_then(|changed| {
+                        if !ack.released_guards.is_empty() && self.reducer.held() != ack.held {
+                            return Err("Desktop guard receipt disagrees with the acknowledged owner projection.".into());
+                        }
+                        Ok(changed)
+                    });
+                    let metadata_changed = match projection {
                         Ok(changed) => changed,
                         Err(error) => {
                             self.snapshot.uncertain = true;
@@ -335,7 +358,8 @@ impl Coordinator {
                             return Err(error);
                         }
                     };
-                    if changes_ledger || metadata_changed {
+                    self.finish_guard_receipts(&request, &ack);
+                    if changes_ledger || metadata_changed || guards_changed {
                         if let Err(error) = self.persist() {
                             self.snapshot.uncertain = true;
                             self.snapshot.cleanup_complete = false;
@@ -382,61 +406,6 @@ impl Coordinator {
         self.snapshot.runs.push(RunScope { run, scope });
         self.snapshot.phase = "waiting-for-neutral".into();
         self.persist()
-    }
-    pub fn arm(&mut self, producer: Token, action_id: String) -> Result<(), String> {
-        let mut next = self.reducer.clone();
-        next.arm(producer.clone(), action_id.clone())?;
-        self.send(
-            Command::Arm {
-                producer,
-                action_id,
-            },
-            None,
-            next.held(),
-        )?;
-        self.reducer = next;
-        self.snapshot.phase = "active".into();
-        self.sync_owners()
-    }
-    /// `source_now_us` is the mapping engine's current explicit clock. Convert its
-    /// remaining deadline to the worker's monotonic clock, never compare origins.
-    pub fn submit(&mut self, delivery: Delivery, source_now_us: u64) -> Result<Ack, String> {
-        let expired = delivery.deadline_us.is_some_and(|d| source_now_us >= d.0)
-            && !matches!(delivery.intent, Intent::Cleanup);
-        let deadline_us = delivery
-            .deadline_us
-            .map(|d| Counter((self.clock)().saturating_add(d.0.saturating_sub(source_now_us))));
-        let mut next = self.reducer.clone();
-        next.delivery(&delivery, expired)?;
-        self.send_with_commit(
-            Command::Deliver {
-                delivery: delivery.clone(),
-            },
-            deadline_us,
-            next.held(),
-            |coordinator, ack| {
-                // Worker-clock expiry can happen during durable dispatch/IPC.
-                // Resolve cancellation before committing the final owner view.
-                if ack.skipped && matches!(delivery.intent, Intent::Held { .. }) {
-                    next = coordinator.reducer.clone();
-                    next.delivery(&delivery, true)?;
-                }
-                coordinator.reducer = next;
-                Ok(coordinator.update_owners())
-            },
-        )
-    }
-    pub fn renew(&mut self, run: RunToken) -> Result<(), String> {
-        self.send(Command::Renew { run }, None, self.reducer.held())?;
-        Ok(())
-    }
-    pub fn pause(&mut self, run: RunToken) -> Result<(), String> {
-        let mut next = self.reducer.clone();
-        next.pause(&run);
-        self.send(Command::Pause { run }, None, next.held())?;
-        self.reducer = next;
-        self.snapshot.phase = "paused".into();
-        self.sync_owners()
     }
     pub fn stop_all(&mut self) -> Result<(), String> {
         if self.terminal_stopped {

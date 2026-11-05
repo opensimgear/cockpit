@@ -21,11 +21,13 @@ fn changed(receive: &Receiver<Result<(), String>>) {
         .unwrap();
 }
 
+#[track_caller]
 fn quiet(receive: &Receiver<Result<(), String>>) {
+    let notification = receive.recv_timeout(Duration::from_millis(150));
     assert!(matches!(
-        receive.recv_timeout(Duration::from_millis(150)),
+        notification,
         Err(mpsc::RecvTimeoutError::Timeout)
-    ));
+    ), "unexpected native source notification: {notification:?}");
 }
 
 fn settled(receive: &Receiver<Result<(), String>>) {
@@ -126,8 +128,10 @@ fn replacement_drops_old_targets_and_empty_configuration_stops_changes() {
     fs::write(&new, b"new").unwrap();
     changed(&receive);
     watch.replace(&[]).unwrap();
-    // Drain native changes already delivered before replacement completed.
-    while receive.try_recv().is_ok() {}
+    // A callback for the preceding write may already hold its old filter while
+    // replacement completes. Drain that in-flight work before testing a NEW
+    // write against the empty configuration; draining only queued items races.
+    settled(&receive);
     fs::write(new, b"changed again").unwrap();
     quiet(&receive);
 }

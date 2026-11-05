@@ -10,16 +10,16 @@ use osg_mapping::{
 };
 use std::{
     cell::Cell,
-    io::{BufRead, Write},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc,
-    },
-    thread,
+    io::BufRead,
+    sync::Arc,
     time::Duration,
 };
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 #[path = "worker/pointer_batch.rs"]
 mod pointer_batch;
+#[path = "worker/release_guards.rs"]
+mod release_guards;
 /// Diagnostic context is scoped to one actual adapter submission. Watchdog and
 /// error cleanup must never inherit the incoming request's operation identity.
 #[derive(Clone, Copy)]
@@ -72,6 +72,7 @@ pub struct Worker<A: Adapter> {
     confirmed: Vec<Control>,
     fault: Option<String>,
     cleanup_complete: bool,
+    guards: release_guards::ReleaseGuards,
 }
 impl<A: Adapter> Worker<A> {
     pub fn new(adapter: A) -> Self {
@@ -83,18 +84,16 @@ impl<A: Adapter> Worker<A> {
             confirmed: Vec::new(),
             fault: None,
             cleanup_complete: true,
+            guards: Default::default(),
         }
     }
-    pub fn held(&self) -> Vec<Control> {
-        self.reducer.held()
-    }
-    pub fn fault(&self) -> Option<&str> {
-        self.fault.as_deref()
-    }
+    pub fn held(&self) -> Vec<Control> { self.reducer.held() }
+    pub fn fault(&self) -> Option<&str> { self.fault.as_deref() }
     fn cleanup(&mut self) -> bool {
         let mut possible = self.confirmed.clone();
         possible.extend(self.reducer.held());
         self.reducer.stop();
+        self.guards.clear();
         self.runs.clear();
         let result = recovery_releases(&possible).and_then(|events| {
             if events.is_empty() {
@@ -114,9 +113,7 @@ impl<A: Adapter> Worker<A> {
         }
         self.cleanup_complete
     }
-    pub fn stop(&mut self) -> bool {
-        self.cleanup()
-    }
+    pub fn stop(&mut self) -> bool { self.cleanup() }
     fn submit(&mut self, events: &[NativeEvent]) -> Result<(usize, usize), String> {
         let attempted = native_count(events);
         if attempted == 0 {
@@ -156,12 +153,12 @@ impl<A: Adapter> Worker<A> {
             }
         }
         self.runs.retain(|r| now < r.lease);
-        Ok(())
+        self.release_due(now)
     }
     pub fn receive(&mut self, request: Request, now: u64) -> Ack {
         let audit_request = request.sequence.0;
         let (audit_operation, audit_category) = match &request.command {
-            Command::Deliver { delivery } => (delivery.operation_id.0,
+            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => (delivery.operation_id.0,
                 if matches!(delivery.intent, Intent::Cleanup) { 6 } else { 1 }),
             Command::DeliverPointerBatch { deliveries } => (deliveries.first().map_or(0, |d| d.operation_id.0), 1),
             Command::Recover { .. } => (0, 3),
@@ -171,6 +168,7 @@ impl<A: Adapter> Worker<A> {
             sequence: request.sequence,
             operation_id: None,
             pointer_batch: None,
+            released_guards: vec![],
             ok: false,
             attempted: 0,
             confirmed: 0,
@@ -191,6 +189,7 @@ impl<A: Adapter> Worker<A> {
                 return Err("Desktop channel sequence gap or replay.".into());
             }
             self.sequence = request.sequence.0;
+            let guard = self.guards.validate(&request.command)?;
             if !matches!(request.command, Command::Stop | Command::Recover { .. }) {
                 self.tick(now)?;
                 if let Some(error) = &self.fault {
@@ -248,7 +247,7 @@ impl<A: Adapter> Worker<A> {
                     run.paused = false;
                     events = self.reducer.arm(producer, action_id)?;
                 }
-                Command::Deliver { delivery } => {
+                Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => {
                     ack.operation_id = Some(delivery.operation_id);
                     let cleanup = matches!(delivery.intent, Intent::Cleanup)
                         || matches!(&delivery.intent,Intent::Held{controls} if controls.is_empty());
@@ -327,6 +326,10 @@ impl<A: Adapter> Worker<A> {
                 self.cleanup();
                 Err(error)
             } else {
+                self.guards.prune(&self.reducer);
+                if let Some((delivery, duration)) = guard.filter(|_| !ack.skipped) {
+                    self.guards.install(audit_request, delivery, duration, now);
+                }
                 Ok(())
             }
         })();
@@ -334,6 +337,8 @@ impl<A: Adapter> Worker<A> {
         ack.error = outcome.err();
         ack.held = self.confirmed.clone();
         ack.cleanup_complete = self.cleanup_complete;
+        ack.uncertain |= !ack.ok && self.fault.is_some();
+        ack.released_guards = self.guards.take_released();
         ack
     }
 }
@@ -361,129 +366,11 @@ pub fn read_frame(input: &mut impl BufRead) -> Result<Option<Vec<u8>>, String> {
         }
     }
 }
-pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>(
-    adapter: A,
-    mut input: R,
-    mut output: W,
-    clock: fn() -> u64,
-) -> Result<(), String> {
-    let (send, recv) = mpsc::sync_channel(32);
-    let audit_channel = crate::audit::channel();
-    let incoming_depth = Arc::new(AtomicUsize::new(0));
-    let reader_depth = incoming_depth.clone();
-    let failure = Arc::new(AtomicBool::new(false));
-    let reader_failure = failure.clone();
-    thread::spawn(move || loop {
-        let message = read_frame(&mut input).and_then(|b| {
-            b.map(|v| serde_json::from_slice::<Request>(&v).map_err(|e| e.to_string()))
-                .transpose()
-        });
-        let done = !matches!(message, Ok(Some(_)));
-        let request_sequence = message.as_ref().ok().and_then(|request| request.as_ref()).map(|request| request.sequence.0);
-        let queued_at = crate::audit::stamp();
-        let tracked = audit_channel.is_some() && request_sequence.is_some();
-        if message.is_err() && audit_channel.is_some() {
-            crate::audit::record(crate::audit::Kind::QueueFault, &[2, 3, reader_depth.load(Ordering::Acquire) as u64]);
-        }
-        let queued_depth = if tracked { reader_depth.fetch_add(1, Ordering::AcqRel) + 1 } else { 0 };
-        if send.try_send(message).is_err() {
-            if tracked {
-                reader_depth.fetch_sub(1, Ordering::AcqRel);
-            }
-            if audit_channel.is_some() {
-                crate::audit::record(crate::audit::Kind::QueueFault, &[2, 1, queued_depth as u64]);
-            }
-            reader_failure.store(true, Ordering::Release);
-            break;
-        }
-        if let (Some(at), Some(channel), Some(sequence)) = (queued_at, audit_channel, request_sequence) {
-            crate::audit::record_at(at, crate::audit::Kind::RequestQueued,
-                &[channel, sequence, queued_depth as u64]);
-        }
-        if done {
-            break;
-        }
-    });
-    let (responses, writes) = mpsc::sync_channel::<serde_json::Value>(32);
-    let writer_failure = failure.clone();
-    let (finished, completion) = mpsc::sync_channel(1);
-    let writer = thread::spawn(move || {
-        for response in writes {
-            if writeln!(output, "{response}")
-                .and_then(|_| output.flush())
-                .is_err()
-            {
-                writer_failure.store(true, Ordering::Release);
-                break;
-            }
-        }
-        let _ = finished.send(());
-    });
-    responses
-        .try_send(serde_json::json!({"protocol":PROTOCOL,"backend":"desktop-input","ok":true}))
-        .map_err(|_| "Desktop hello failed.")?;
-    let mut worker = Worker::new(adapter);
-    let result = (|| loop {
-        if failure.load(Ordering::Acquire) {
-            return Err("Desktop worker transport failed.".into());
-        }
-        worker.tick(clock())?;
-        match recv.recv_timeout(Duration::from_millis(5)) {
-            Ok(Ok(Some(request))) => {
-                if let Some(channel) = audit_channel {
-                    let depth = incoming_depth.fetch_sub(1, Ordering::AcqRel).saturating_sub(1);
-                    crate::audit::record(crate::audit::Kind::RequestDequeued, &[channel, request.sequence.0, depth as u64]);
-                }
-                let stop = matches!(request.command, Command::Stop);
-                let delivery = matches!(request.command, Command::Deliver { .. } | Command::DeliverPointerBatch { .. });
-                let ack = worker.receive(request, clock());
-                if let Some(channel) = audit_channel {
-                    crate::audit::record(crate::audit::Kind::WorkerOutcome, &[
-                        channel, ack.sequence.0, ack.operation_id.or_else(|| ack.pointer_batch.as_ref().and_then(|batch| batch.operation_ids.first().copied())).map(|value| value.0).unwrap_or(0),
-                        audit_ack_flags(&ack), ack.attempted as u64, ack.confirmed as u64,
-                    ]);
-                }
-                // Explicit debug acceptance hook: prove the actual submission/
-                // acknowledgement gap. No retries or production hook is enabled.
-                #[cfg(debug_assertions)]
-                if delivery
-                    && ack.ok
-                    && ack.attempted > 0
-                    && crate::qualification_gate()
-                    && std::env::var("OSG_DESKTOP_TEST_EXIT_AFTER_SEND").as_deref() == Ok("1")
-                {
-                    std::process::exit(86);
-                }
-                #[cfg(not(debug_assertions))]
-                let _ = delivery;
-                let fault = ack.uncertain;
-                responses
-                    .try_send(serde_json::to_value(ack).map_err(|e| e.to_string())?)
-                    .map_err(|_| "Desktop response queue overflow.")?;
-                if stop || fault {
-                    return Ok(());
-                }
-            }
-            Ok(Ok(None)) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-            Ok(Err(e)) => return Err(e),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-    })();
-    let cleanup = worker.stop();
-    drop(responses);
-    if completion.recv_timeout(Duration::from_millis(50)).is_ok() {
-        let _ = writer.join();
-    } else {
-        return Err("Desktop worker response pipe stalled during shutdown.".into());
-    }
-    if !cleanup {
-        return Err("Desktop worker cleanup incomplete.".into());
-    }
-    if failure.load(Ordering::Acquire) {
-        return Err("Desktop worker transport failed during shutdown.".into());
-    }
-    result
-}
+#[path = "worker/serve.rs"]
+mod serve;
+#[path = "worker/wait.rs"]
+mod wait;
+pub use serve::serve;
 
 #[cfg(test)]
 #[path = "worker/audit_context_tests.rs"]

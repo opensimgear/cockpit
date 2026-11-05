@@ -150,7 +150,7 @@ impl Coordinator {
                     validate_scope(scope)?;
                 }
                 Command::Arm { producer, .. } => validate_run(&producer.run)?,
-                Command::Deliver { delivery } => validate_run(&delivery.producer.run)?,
+                Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => validate_run(&delivery.producer.run)?,
                 Command::DeliverPointerBatch { deliveries } => {
                     crate::pointer_batch::describe(deliveries)?;
                     validate_run(&deliveries[0].producer.run)?;

@@ -28,6 +28,17 @@ fn eligible(scope: &Scope) -> Result<bool, String> {
         Ok(false)
     }
 }
+fn tap_durations(program: &Program) -> BTreeMap<String, Counter> {
+    program.sinks.iter().filter_map(|sink| {
+        let SinkKind::Desktop { action } = &sink.kind else { return None };
+        let down_ms = match action {
+            osg_mapping::desktop::Action::KeyTap { down_ms, .. }
+            | osg_mapping::desktop::Action::MouseClick { down_ms, .. } => *down_ms,
+            _ => return None,
+        };
+        Some((sink.id.clone(), Counter(u64::from(down_ms) * 1_000)))
+    }).collect()
+}
 pub struct Desktop {
     output: Output,
     scheduler: Scheduler,
@@ -58,6 +69,7 @@ impl Desktop {
         wake: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Self, String> {
         let scheduler = Scheduler::from_program(run.clone(), program)?;
+        let tap_durations = tap_durations(program);
         let output = Coordinator::spawn_with_owned_journal(
             enabled,
             qualified,
@@ -66,7 +78,7 @@ impl Desktop {
             scope.clone(),
         )?;
         Ok(Self {
-            output: Output::threaded(output, wake)?,
+            output: Output::threaded(output, wake, tap_durations)?,
             scheduler,
             run,
             scope,

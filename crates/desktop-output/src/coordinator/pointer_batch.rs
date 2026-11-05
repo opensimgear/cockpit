@@ -37,18 +37,22 @@ impl Coordinator {
         let expired = source_deadline.is_some_and(|d| source_now_us >= d.0);
         let deadline_us = source_deadline
             .map(|d| Counter((self.clock)().saturating_add(d.0.saturating_sub(source_now_us))));
-        let next = crate::pointer_batch::reduce(&self.reducer, &deliveries, expired)?;
-        let ack = self.send(
+        let mut next = crate::pointer_batch::reduce(&self.reducer, &deliveries, expired)?;
+        let ack = self.send_with_commit(
             Command::DeliverPointerBatch {
                 deliveries: deliveries.clone(),
             },
             deadline_us,
             next.held(),
+            |coordinator, ack| {
+                if !ack.released_guards.is_empty() {
+                    next = crate::pointer_batch::reduce(&coordinator.reducer,
+                        &deliveries, expired || ack.skipped)?;
+                }
+                coordinator.reducer = next;
+                Ok(coordinator.update_owners())
+            },
         )?;
-        self.reducer = next;
-        if self.update_owners() {
-            self.persist()?;
-        }
         Ok(deliveries
             .iter()
             .enumerate()

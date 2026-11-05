@@ -26,7 +26,7 @@ fn actual_desktop_poll_keeps_reducing_inputs_and_revokes_a_blocked_destination()
     let (wake, notifications) = mpsc::sync_channel(32);
     desktop.output = Output::threaded(Coordinator::with_channel(Box::new(BlockedArm {
         worker: Worker::new(Recording { focused, events: events.clone() }), entered: Some(entered), resume: release,
-    }), clock), Arc::new(move || { let _ = wake.try_send(()); })).unwrap();
+    }), clock), Arc::new(move || { let _ = wake.try_send(()); }), BTreeMap::new()).unwrap();
     desktop.start_focused(&phase, true).unwrap();
     // Complete any initial neutral cleanup before admitting the press.
     let deadline = Instant::now() + Duration::from_secs(1);

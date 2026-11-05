@@ -22,7 +22,7 @@ and #198 are In progress because implementation/qualification is underway.
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
-| #193 | Desktop timing and focus/lease notification cutover; mixed-stream fault and affected-owner cleanup matrices; independent dispatch under stalled consumers. |
+| #193 | Worker-owned tap release and native high-resolution waits are delivered. First-dispatch/burst timing and focus/lease notification cutover; mixed-stream fault and affected-owner cleanup matrices; independent dispatch under stalled consumers. |
 | #194 | Complete producer/read-model and cancellation/lock matrices. Activity still samples the aggregate metadata snapshot every 750 ms even after direct lifecycle wakeups. The denied-process-event fallback remains explicit. |
 | #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts and server peer I/O now have readiness/deadline owners and direct cancellation. Native client reads now use scoped event I/O. Native pending approval now uses a host event. Legacy routing polls and physical companion firmware loops remain unresolved software. |
 | #196 | Nested navigation/query/editor lifetime and background/reopen matrices; consistent component review. |
@@ -43,8 +43,10 @@ step does not move its missing software prerequisite out of the original issue.
 
 Controller preview timing and raw-input-to-virtual timing are separate checks.
 The preview backlog fix is delivered, but it does not establish physical
-end-to-end latency. The desktop precise-clock trace still exceeded an authored
-1 ms tap; that is software timing work under #193, not hardware acceptance.
+end-to-end latency. The native worker now releases taps independently of parent journal persistence.
+Its latest measured native-call span is 1.5959 ms for an authored 1 ms dwell.
+First-dispatch, queued burst and focus/timer precision remain software timing
+work under #193; these observations do not qualify physical input latency.
 
 ## Passive telemetry authority evidence
 

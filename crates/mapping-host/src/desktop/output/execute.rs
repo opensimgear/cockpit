@@ -7,6 +7,11 @@ pub(super) fn cleanup(delivery: &Delivery) -> bool {
     matches!(&delivery.intent, Intent::Cleanup)
         || matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty())
 }
+pub(super) fn guarded_duration(delivery: &Delivery, tap_durations: &BTreeMap<String, Counter>) -> Option<Counter> {
+    matches!(&delivery.intent, Intent::Held { controls } if !controls.is_empty())
+        .then(|| tap_durations.get(&delivery.action_id).copied())
+        .flatten()
+}
 pub(in crate::desktop) fn same_pointer_batch(first: &Delivery, next: &Delivery) -> bool {
     matches!(first.intent, Intent::Pointer { .. })
         && matches!(next.intent, Intent::Pointer { .. })
@@ -46,7 +51,7 @@ fn record(completion: &mut Completion, cancelled: &mut BTreeSet<String>, deliver
     }
     completion.outcomes.push((delivery, ack));
 }
-pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTreeMap<String, Token>, mut job: Job) -> Completion {
+pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTreeMap<String, Token>, tap_durations: &BTreeMap<String, Counter>, mut job: Job) -> Completion {
     let mut completion = Completion { audit_shadow: job.audit_shadow, outcomes: vec![], dropped: vec![], error: None };
     let mut cancelled = BTreeSet::new();
     let mut pending: VecDeque<_> = std::mem::take(&mut job.deliveries).into();
@@ -83,7 +88,11 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                 for (delivery, ack) in group.into_iter().zip(acknowledgements) { record(&mut completion, &mut cancelled, delivery, ack); }
             } else {
                 let delivery = group.pop().expect("one delivery");
-                let ack = output.submit(delivery.clone(), source_now(&job))?;
+                let ack = if let Some(release_after_us) = guarded_duration(&delivery, tap_durations) {
+                    output.submit_guarded(delivery.clone(), source_now(&job), release_after_us)?
+                } else {
+                    output.submit(delivery.clone(), source_now(&job))?
+                };
                 record(&mut completion, &mut cancelled, delivery, ack);
             }
         }

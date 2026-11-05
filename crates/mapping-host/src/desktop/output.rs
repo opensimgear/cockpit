@@ -1,6 +1,6 @@
 //! A single ordered owner of desktop IPC. Controller calls only touch memory.
 use osg_desktop_output::{protocol::{Ack, Command, Request}, Coordinator, Scope, Snapshot};
-use osg_mapping::{desktop::Delivery, engine::{RunToken, typed::Token}};
+use osg_mapping::{desktop::Delivery, engine::{Counter, RunToken, typed::Token}};
 use std::{collections::BTreeMap, sync::{Arc, Condvar, Mutex, MutexGuard, mpsc}, time::Instant};
 
 #[path = "output/execute.rs"]
@@ -94,7 +94,7 @@ impl Shared {
                 && state.epoch == state.executing_epoch && Self::current(&state, delivery)
         };
         match &request.command {
-            Command::Deliver { delivery } => valid(delivery),
+            Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => valid(delivery),
             Command::DeliverPointerBatch { deliveries } => deliveries.iter().all(valid),
             _ => true,
         }
@@ -110,7 +110,7 @@ pub(super) struct Output {
     mode: Mode,
 }
 impl Output {
-    fn prepare(mut coordinator: Coordinator, wake: Wake, allow_empty: bool) -> (Arc<Shared>, Owner) {
+    fn prepare(mut coordinator: Coordinator, wake: Wake, allow_empty: bool, tap_durations: BTreeMap<String, Counter>) -> (Arc<Shared>, Owner) {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 snapshot: coordinator.snapshot(), current: BTreeMap::new(), allow_empty,
@@ -122,11 +122,11 @@ impl Output {
         });
         let gate = shared.clone();
         coordinator.set_dispatch_gate(Arc::new(move |request| gate.permitted(request)));
-        let owner = Owner::new(coordinator, shared.clone());
+        let owner = Owner::new(coordinator, shared.clone(), tap_durations);
         (shared, owner)
     }
-    pub(super) fn threaded(coordinator: Coordinator, wake: Wake) -> Result<Self, String> {
-        let (shared, mut owner) = Self::prepare(coordinator, wake, false);
+    pub(super) fn threaded(coordinator: Coordinator, wake: Wake, tap_durations: BTreeMap<String, Counter>) -> Result<Self, String> {
+        let (shared, mut owner) = Self::prepare(coordinator, wake, false, tap_durations);
         let monitor = shared.clone();
         std::thread::Builder::new().name("desktop-output".into()).spawn(move || {
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| owner.run())).is_err() {
@@ -146,7 +146,11 @@ impl Output {
     }
     #[cfg(test)]
     pub(super) fn inline(coordinator: Coordinator) -> Self {
-        let (shared, owner) = Self::prepare(coordinator, Arc::new(|| {}), true);
+        Self::inline_with_tap_durations(coordinator, BTreeMap::new())
+    }
+    #[cfg(test)]
+    pub(super) fn inline_with_tap_durations(coordinator: Coordinator, tap_durations: BTreeMap<String, Counter>) -> Self {
+        let (shared, owner) = Self::prepare(coordinator, Arc::new(|| {}), true, tap_durations);
         Self { shared, mode: Mode::Inline(Mutex::new(owner)) }
     }
     pub(super) fn snapshot(&self) -> Snapshot {

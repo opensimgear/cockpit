@@ -26,7 +26,7 @@ struct RecordingChannel {
 fn kind(request: &Request) -> &'static str {
     match request.command {
         Command::Activate { .. } => "activate", Command::Arm { .. } => "arm",
-        Command::Deliver { .. } => "deliver", Command::DeliverPointerBatch { .. } => "pointer",
+        Command::Deliver { .. } => "deliver", Command::DeliverGuarded { .. } => "guarded", Command::DeliverPointerBatch { .. } => "pointer",
         Command::Pause { .. } => "pause", Command::Renew { .. } => "renew", Command::Stop => "stop",
         Command::Recover { .. } => "recover",
     }
@@ -87,9 +87,49 @@ fn block(channel: &mut RecordingChannel, kind: &'static str) -> (Receiver<()>, S
     (arrival, release)
 }
 fn threaded(channel: RecordingChannel) -> Output {
-    let output = Output::threaded(Coordinator::with_channel(Box::new(channel), || 10), Arc::new(|| {})).unwrap();
+    let output = Output::threaded(Coordinator::with_channel(Box::new(channel), || 10), Arc::new(|| {}), BTreeMap::new()).unwrap();
     output.activate(run(), Scope::DesktopWide).unwrap();
     output
+}
+
+#[test]
+fn guarded_annotation_requires_nonempty_held_delivery_for_known_tap_action() {
+    let durations = BTreeMap::from([("tap".to_string(), Counter(12_000))]);
+    assert_eq!(execute::guarded_duration(&held("tap", 1), &durations), Some(Counter(12_000)));
+    assert_eq!(execute::guarded_duration(&held("hold", 2), &durations), None);
+    assert_eq!(execute::guarded_duration(&delivery("tap", 3, Intent::Held { controls: vec![] }), &durations), None);
+    assert_eq!(execute::guarded_duration(&delivery("tap", 4, Intent::Cleanup), &durations), None);
+    assert_eq!(execute::guarded_duration(&delivery("tap", 5, Intent::Repeat { key: Key(4) }), &durations), None);
+}
+
+#[test]
+fn current_gate_rejects_guarded_delivery_before_ipc() {
+    let (output, requests, _) = inline();
+    let delivery = held("tap", 1);
+    let mut stale = delivery.producer.clone();
+    stale.run.generation = Counter(2);
+    output.reconcile(&BTreeMap::from([("tap".into(), stale)]));
+    let request = Request { sequence: Counter(1), deadline_us: None,
+        command: Command::DeliverGuarded { delivery, release_after_us: Counter(12_000) } };
+    assert!(!output.shared.permitted(&request));
+    assert!(!requests.lock().unwrap().iter().any(|request| matches!(request.command, Command::DeliverGuarded { .. })));
+}
+
+#[test]
+fn mapped_held_tap_uses_guarded_command() {
+    let (channel, requests, _) = channel();
+    let output = Output::inline_with_tap_durations(
+        Coordinator::with_channel(Box::new(channel), || 10),
+        BTreeMap::from([("tap".into(), Counter(12_000))]),
+    );
+    output.activate(run(), Scope::DesktopWide).unwrap();
+    let delivery = held("tap", 1);
+    reconcile(&output, std::slice::from_ref(&delivery));
+    output.dispatch(vec![delivery], 10, 0).unwrap();
+    assert!(requests.lock().unwrap().iter().any(|request| matches!(
+        request.command,
+        Command::DeliverGuarded { release_after_us: Counter(12_000), .. }
+    )));
 }
 
 #[test]

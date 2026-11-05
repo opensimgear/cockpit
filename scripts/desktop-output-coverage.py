@@ -157,8 +157,9 @@ def main():
     summary = {}
     # Native process entry, Win32 injection and receiver probes have a separate
     # interactive acceptance boundary. Coverage here cannot qualify that path.
-    modules = ["keys", "protocol", "reducer", "pointer_batch", "worker", "worker/pointer_batch",
-               "coordinator", "coordinator/journal", "coordinator/pointer_batch"]
+    modules = ["keys", "protocol", "reducer", "pointer_batch", "worker", "worker/pointer_batch", "worker/serve", "worker/wait",
+               "worker/release_guards", "coordinator", "coordinator/journal", "coordinator/pointer_batch",
+               "coordinator/guards", "coordinator/delivery"]
     if os.name == "nt":
         modules.append("windows/clock")
     for module in modules:

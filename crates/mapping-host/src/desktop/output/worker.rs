@@ -1,6 +1,6 @@
 use super::{Completion, Job, Reply, Setup, Shared, execute};
 use osg_desktop_output::Coordinator;
-use osg_mapping::engine::{RunToken, typed::Token};
+use osg_mapping::engine::{Counter, RunToken, typed::Token};
 use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
 
 const RENEW_INTERVAL: Duration = Duration::from_millis(100);
@@ -9,6 +9,7 @@ pub(super) struct Owner {
     output: Coordinator,
     shared: Arc<Shared>,
     armed: BTreeMap<String, Token>,
+    tap_durations: BTreeMap<String, Counter>,
     pub(super) last_renew: Option<Instant>,
     last_authorization: u64,
     failure_stopped: bool,
@@ -17,8 +18,8 @@ enum Work {
     Stop(Reply), Pause(RunToken), Setup(Setup), Data(Job), Renew(RunToken, u64), Fault,
 }
 impl Owner {
-    pub(super) fn new(output: Coordinator, shared: Arc<Shared>) -> Self {
-        Self { output, shared, armed: BTreeMap::new(), last_renew: None, last_authorization: 0, failure_stopped: false }
+    pub(super) fn new(output: Coordinator, shared: Arc<Shared>, tap_durations: BTreeMap<String, Counter>) -> Self {
+        Self { output, shared, armed: BTreeMap::new(), tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false }
     }
     pub(super) fn fail(&mut self, error: String) {
         let mut state = self.shared.lock();
@@ -73,7 +74,7 @@ impl Owner {
         let Some(work) = self.next() else { return false };
         match work {
             Work::Data(job) => {
-                let mut completion = execute::execute(&mut self.output, &self.shared, &mut self.armed, job);
+                let mut completion = execute::execute(&mut self.output, &self.shared, &mut self.armed, &self.tap_durations, job);
                 // A concurrent admission failure also terminates this ticket.
                 if completion.error.is_none() { completion.error = self.shared.lock().fault.clone(); }
                 let error = completion.error.clone();

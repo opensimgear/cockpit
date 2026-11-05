@@ -137,6 +137,25 @@ impl Reducer {
         *self = next;
         Ok(reduction)
     }
+    /// Clear only the contribution that scheduled an autonomous release. The
+    /// ordinary up operation must still advance the owner's original counter.
+    pub(crate) fn release_exact(&mut self, delivery: &Delivery) -> Result<Option<Vec<NativeEvent>>, String> {
+        if !matches!(&delivery.intent, Intent::Held { controls } if !controls.is_empty()) {
+            return Err("A desktop release guard requires a nonempty held delivery.".into());
+        }
+        let id = owner_id(&delivery.producer, &delivery.action_id);
+        let Some(owner) = self.owners.get(&id) else { return Ok(None) };
+        if owner.token != delivery.producer || owner.operation != delivery.operation_id.0 {
+            return Ok(None);
+        }
+        let before = self.combined();
+        self.owners.get_mut(&id).expect("owner was checked").controls.clear();
+        Ok(Some(self.changes(before)))
+    }
+    pub(crate) fn owns_exact(&self, delivery: &Delivery) -> bool {
+        self.owners.get(&owner_id(&delivery.producer, &delivery.action_id))
+            .is_some_and(|owner| owner.token == delivery.producer && owner.operation == delivery.operation_id.0)
+    }
     fn apply_delivery(&mut self, delivery: &Delivery, expired: bool) -> Result<Reduction, String> {
         let id = owner_id(&delivery.producer, &delivery.action_id);
         if (matches!(delivery.intent, Intent::Cleanup)
@@ -260,6 +279,10 @@ impl Reducer {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "reducer/release_guard_tests.rs"]
+mod release_guard_tests;
 
 /// Construct releases for a bounded explicit interrupted-session recovery.
 pub fn recovery_releases(controls: &[Control]) -> Result<Vec<NativeEvent>, String> {

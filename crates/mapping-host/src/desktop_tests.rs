@@ -205,6 +205,10 @@ pub(super) fn fixture(
     desktop.start_focused(&phase, true).unwrap();
     (desktop, phase, focused, events)
 }
+
+#[path = "desktop/tap_guard_tests.rs"]
+mod tap_guard_tests;
+
 #[test]
 fn returning_process_requires_new_neutral_input_before_rearming_held_bindings() {
     let (mut desktop,mut phase,_,events)=prepared_fixture(Action::KeyHold{key:Key(4)},false);

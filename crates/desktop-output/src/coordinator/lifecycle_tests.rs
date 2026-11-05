@@ -218,7 +218,7 @@ fn lifecycle_final_writes_remain_even_when_owners_are_unchanged() {
         |c| c.pause(run()),
         |c| c.stop_all(),
     ];
-    for (operation, expected_writes) in operations.into_iter().zip([3, 1, 1, 3, 3, 3]) {
+    for (operation, expected_writes) in operations.into_iter().zip([3, 1, 1, 2, 2, 3]) {
         let before = c.persist_attempts.get();
         operation(&mut c).unwrap();
         assert_eq!(c.persist_attempts.get() - before, expected_writes);
@@ -340,6 +340,7 @@ fn acknowledged_stop_is_idempotent_and_cannot_reuse_a_dead_worker() {
                 collision: false,
                 error: None,
                 held: vec![],
+                released_guards: vec![],
             })
         }
     }

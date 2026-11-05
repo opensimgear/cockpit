@@ -423,3 +423,6 @@ mod delivery_commit;
 
 #[path="coordinator/release_journal_tests.rs"]
 mod release_journal;
+
+#[path="coordinator/guard_tests.rs"]
+mod guard;

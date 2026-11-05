@@ -48,6 +48,8 @@ pub enum Command {
     Activate { run: RunToken, scope: Scope },
     Arm { producer: Token, action_id: String },
     Deliver { delivery: Delivery },
+    /// Native release may run while the parent commits the successful down ACK.
+    DeliverGuarded { delivery: Delivery, release_after_us: Counter },
     DeliverPointerBatch { deliveries: Vec<Delivery> },
     Renew { run: RunToken },
     Pause { run: RunToken },
@@ -77,6 +79,17 @@ pub struct Ack {
     pub collision: bool,
     pub error: Option<String>,
     pub held: Vec<Control>,
+    /// Exact channel sequences of release guards fired since the preceding ACK.
+    pub released_guards: Vec<Counter>,
+}
+
+impl Command {
+    pub(crate) fn delivery(&self) -> Option<&Delivery> {
+        match self {
+            Self::Deliver { delivery } | Self::DeliverGuarded { delivery, .. } => Some(delivery),
+            _ => None,
+        }
+    }
 }
 /// Exact ordered logical participants and the single physical vector they attest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
