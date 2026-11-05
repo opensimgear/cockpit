@@ -853,10 +853,11 @@ impl GatewayManager {
                     let Some(manager) = weak.upgrade() else {
                         break;
                     };
+                    let cycle_started = std::time::Instant::now();
                     manager.poll_vehicle_profile();
                     manager.poll_peripheral_profile();
                     manager.poll_automatic();
-                    let wait = manager.automatic_reconciliation_wait(std::time::Instant::now());
+                    let wait = manager.automatic_reconciliation_wait(cycle_started, std::time::Instant::now());
                     drop(manager);
                     if !closed.load(Ordering::Acquire) {
                         wake.wait_scheduled(observed, wait);
@@ -866,15 +867,12 @@ impl GatewayManager {
             .ok();
     }
 
-    fn automatic_reconciliation_wait(&self, now: std::time::Instant) -> Option<std::time::Duration> {
+    fn automatic_reconciliation_wait(&self, cycle_started: std::time::Instant, now: std::time::Instant) -> Option<std::time::Duration> {
         let (owner, needs_fallback) = {
             let session = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
             let owner = session.status().owner.as_ref()?;
-            (owner.clone(), session.needs_reconciliation_fallback(owner))
+            (owner.clone(), session.needs_peripheral_recheck(owner))
         };
-        if !needs_fallback {
-            return None;
-        }
         let state = self.profile_automatic.state.lock().unwrap_or_else(|p| p.into_inner());
         let vehicle = state.last_vehicle_attempt.as_ref()
             .filter(|(previous, _, _)| previous == &owner)
@@ -882,12 +880,13 @@ impl GatewayManager {
         let peripheral = state.last_peripheral_attempt.as_ref()
             .filter(|attempt| attempt.owner == owner)
             .and_then(|attempt| attempt.at.checked_add(peripheral_retry_delay(attempt.failures)));
-        // Keep the fallback scoped to runs that can need vehicle or peripheral
-        // restaging under transient admission or inventory contention.
-        Some([vehicle, peripheral].into_iter().flatten()
-            .filter(|deadline| *deadline > now)
-            .map(|deadline| deadline.duration_since(now))
-            .fold(std::time::Duration::from_millis(500), std::time::Duration::min))
+        // A deadline that elapsed during this cycle still needs a wake. The
+        // remaining fallback covers contended peripheral registry snapshots.
+        [vehicle, peripheral].into_iter().flatten()
+            .filter(|deadline| *deadline > cycle_started)
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .chain(needs_fallback.then_some(std::time::Duration::from_millis(500)))
+            .min()
     }
 }
 

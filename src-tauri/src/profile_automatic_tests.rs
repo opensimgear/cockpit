@@ -21,7 +21,8 @@ fn automatic_control_wakes_reconciliation_after_the_last_guard_exits() {
 fn idle_automatic_selection_waits_for_source_changes() {
     let fixture = Fixture::new();
     mode(&fixture.manager, "automatic");
-    assert_eq!(fixture.manager.automatic_reconciliation_wait(Instant::now()), None);
+    let now = Instant::now();
+    assert_eq!(fixture.manager.automatic_reconciliation_wait(now, now), None);
 }
 use crate::game_discovery::{Platform, ProcessIdentity};
 use std::{
@@ -412,14 +413,17 @@ fn vehicle_switch_failure_is_visible_and_retries_after_backoff_without_replaying
     manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()),"The immediate poll must honor retry backoff");
     let attempted_at = manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_ref().unwrap().2;
     let just_before_retry = attempted_at + VEHICLE_RETRY_DELAY - Duration::from_millis(40);
-    assert_eq!(manager.automatic_reconciliation_wait(just_before_retry), Some(Duration::from_millis(40)));
+    assert_eq!(manager.automatic_reconciliation_wait(attempted_at, attempted_at), Some(VEHICLE_RETRY_DELAY));
+    assert_eq!(manager.automatic_reconciliation_wait(just_before_retry, just_before_retry), Some(Duration::from_millis(40)));
+    assert_eq!(manager.automatic_reconciliation_wait(just_before_retry, attempted_at + VEHICLE_RETRY_DELAY), Some(Duration::ZERO));
     manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_mut().unwrap().2=Instant::now()-Duration::from_secs(6);
     manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();
     assert!(owner(manager).unwrap().generation>base.generation);
     let retried=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
     assert_eq!(retried["phase"],"succeeded");assert_ne!(retried["activationId"],failed["activationId"]);
     ok(manager,"profile_stop",json!({}));
-    assert_eq!(manager.automatic_reconciliation_wait(Instant::now()), None);
+    let now = Instant::now();
+    assert_eq!(manager.automatic_reconciliation_wait(now, now), None);
 }
 
 #[test]
@@ -522,7 +526,8 @@ fn automatic_apply_is_idempotent_and_editor_save_preserves_game_and_automatic_po
     let first = owner(manager).unwrap_or_else(|| panic!("{}",manager.profile_automatic.view()));
     assert_eq!(first.profile_id, id);
     assert_eq!(first.game_id.as_deref(), Some("dcs"));
-    assert_eq!(manager.automatic_reconciliation_wait(Instant::now()), None);
+    let now = Instant::now();
+    assert_eq!(manager.automatic_reconciliation_wait(now, now), None);
     for _ in 0..4 {
         manager.poll_automatic();
     }

@@ -1306,10 +1306,8 @@ impl Host for NativeProfileHost {
         })
     }
     fn supports_launch_hold(&self) -> bool { true }
-    fn needs_reconciliation_fallback(&self, owner: &RunOwner) -> bool {
-        self.prepared.get(&key(owner)).is_some_and(|state| {
-            !state.source_document.vehicle_tabs.is_empty() || !state.unavailable_peripherals.is_empty()
-        })
+    fn needs_peripheral_recheck(&self, owner: &RunOwner) -> bool {
+        self.prepared.get(&key(owner)).is_some_and(|state| !state.unavailable_peripherals.is_empty())
     }
     fn vehicle_change(&self, owner:&RunOwner) -> Option<String> {
         let state=self.prepared.get(&key(owner))?;
