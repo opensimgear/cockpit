@@ -35,16 +35,16 @@ every 34 ms. One latest pending projection and exact acknowledgements bound
 slow delivery. [Qualification and limits](../verification/2026-11-05-feedback-publication.md)
 record the remaining complete transport and physical acceptance matrices.
 
-CAN publication ownership uses sequenced gateway invalidations and exact lease
-deadlines. General gateway inventory still uses its snapshot cadence. Physical
-layout and CAN route acceptance remain in #199.
+CAN publication ownership and gateway inventory use sequenced gateway
+invalidations. Setup and lease deadlines are scheduled independently. Physical
+layout, inventory and CAN route acceptance remain in #199.
 
 ESP32 Wi-Fi and direct USB pairing now use terminal approval subscriptions
 instead of 400 ms status requests. The software receiver/bridge tests and actual
 Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
 Board compilation and physical transports remain unqualified; the recorded
-ESP-IDF toolchain is unavailable locally. General gateway inventory and the
-game's 100 ms process and telemetry maintenance remain original software work.
+ESP-IDF toolchain is unavailable locally. Pico Debug acquisition and the game's
+100 ms process and telemetry maintenance remain original software work.
 
 ## User-operated qualification stays in #199
 

@@ -60,6 +60,7 @@ impl GatewaySerial {
                     &mut panel,
                     &reader_support,
                     &mut ingress,
+                    || { if let Some(wake) = &reader_wake { wake(); } },
                 );
                 drop(ingress);
                 reader_ended.store(true, Ordering::Release);
@@ -136,6 +137,7 @@ pub(crate) fn receive(
     mut panel: impl FnMut(Record),
     supports_panel: &AtomicBool,
     publication: &mut Ingress,
+    mut publication_changed: impl FnMut(),
 ) -> Result<(), String> {
     let mut pending = Vec::new();
     let mut chunk = [0; 4096];
@@ -169,6 +171,7 @@ pub(crate) fn receive(
                     panel(decode(&value).ok_or("CAN gateway sent an invalid panel record.")?);
                 } else if value.get("publicationStream").is_some() {
                     publication.accept(&value)?;
+                    publication_changed();
                 } else {
                     reply(value)?;
                 }
@@ -217,6 +220,7 @@ mod tests {
             |event| panels.push(event),
             &supports_panel,
             &mut ingress,
+            || {},
         );
         assert_eq!(error.unwrap_err(), "CAN gateway was unplugged.");
         assert_eq!(replies, vec![serde_json::json!({"id":8,"ok":true})]);

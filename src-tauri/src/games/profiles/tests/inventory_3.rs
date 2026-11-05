@@ -168,6 +168,23 @@ fn inventory_schedule_distinguishes_idle_retries_and_freshness() {
 }
 
 #[test]
+fn native_current_can_stream_does_not_schedule_timestamp_expiry() {
+    let (mut sources, _temporary) = sources();
+    let now = Instant::now();
+    let mut gateway = can_state();
+    gateway["nativeSnapshotAtMs"] = json!(1);
+    gateway["nativeInventoryCurrent"] = json!(true);
+    sources.gateways = Arc::new(move || vec![("gateway".into(), gateway.clone())]);
+    assert!(sources.schedule(now, 10_000).project_at.is_none());
+
+    let mut gateway = can_state();
+    gateway["nativeSnapshotAtMs"] = json!(10_000);
+    gateway["nativeInventoryCurrent"] = json!(false);
+    sources.gateways = Arc::new(move || vec![("gateway".into(), gateway.clone())]);
+    assert!(sources.schedule(now, 10_000).project_at.is_none());
+}
+
+#[test]
 fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_gateway() {
     let (mut sources, _temporary) = sources();
     sources.native = true;

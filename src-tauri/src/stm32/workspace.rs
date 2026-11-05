@@ -3,12 +3,24 @@ use super::*;
 use std::{collections::BTreeMap, sync::Weak};
 
 const MAX_WATCHERS: usize = 8;
+pub(super) type Latest = (Value, Option<PublicationFence>);
+
+pub(super) fn native_view(mut state: Value, fence: Option<&PublicationFence>) -> Value {
+    if state["controllerPublicationOverride"].is_object() || fence.is_some() {
+        state["nativeInventoryCurrent"] = json!(fence.is_some_and(|fence| {
+            fence.is_current() && state["epoch"] == fence.epoch()
+        }));
+    }
+    state
+}
+
 struct Snapshot {
     state: Arc<Value>,
     visible: Arc<Value>,
     owners: BTreeMap<String, String>,
     wakes: Vec<Weak<osg_streams::NativeWake>>,
     inventory_wakes: Vec<Weak<osg_streams::NativeWake>>,
+    inventory: Option<PublicationFence>,
 }
 pub(crate) struct Cache {
     snapshot: Mutex<Snapshot>,
@@ -20,7 +32,7 @@ impl Cache {
         let state = public_state(state);
         let visible = visible_state(&state);
         Self { snapshot: Mutex::new(Snapshot { state: Arc::new(state), visible: Arc::new(visible),
-            owners: BTreeMap::new(), wakes: vec![], inventory_wakes: vec![] }), owned: AtomicBool::new(false),
+            owners: BTreeMap::new(), wakes: vec![], inventory_wakes: vec![], inventory: None }), owned: AtomicBool::new(false),
             publication: Default::default() }
     }
     pub(crate) fn watch(&self, wake: Arc<osg_streams::NativeWake>) {
@@ -50,14 +62,23 @@ impl Cache {
     pub(crate) fn set_owned(&self, owned: bool) { self.owned.store(owned, Ordering::Release); }
     pub(crate) fn owned(&self) -> bool { self.owned.load(Ordering::Acquire) }
     pub(crate) fn commit(&self, state: Value, owners: BTreeMap<String, String>) {
+        self.commit_inventory(state, owners, None);
+    }
+
+    fn commit_inventory(&self, state: Value, owners: BTreeMap<String, String>, inventory_proof: Option<PublicationFence>) {
         let state = public_state(state);
         let visible = visible_state(&state);
         let (wakes, inventory) = {
             let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
             let visible_changed = snapshot.visible.as_ref() != &visible;
             let changed = visible_changed || snapshot.owners != owners;
+            let evidence_changed = match (&snapshot.inventory, &inventory_proof) {
+                (Some(previous), Some(current)) => !previous.same_record(current),
+                (None, None) => false,
+                _ => true,
+            };
             let inventory = (!snapshot.inventory_wakes.is_empty() && (
-                visible_changed && inventory_changed(&snapshot.state, &state)
+                evidence_changed || visible_changed && inventory_changed(&snapshot.state, &state)
                     || state["connected"] == true && crate::profile_resource_sources::hid_publication::freshness_restored(
                         snapshot.state["nativeSnapshotAtMs"].as_u64(),
                         state["nativeSnapshotAtMs"].as_u64(),
@@ -67,6 +88,7 @@ impl Cache {
             if snapshot.state.as_ref() != &state { snapshot.state = Arc::new(state); }
             if visible_changed { snapshot.visible = Arc::new(visible); }
             snapshot.owners = owners;
+            snapshot.inventory = inventory_proof;
             snapshot.wakes.retain(|wake| wake.strong_count() > 0);
             let wakes = if changed { snapshot.wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>() } else { vec![] };
             (wakes, inventory)
@@ -85,7 +107,7 @@ fn public_state(mut state: Value) -> Value {
             Value::Object(object) => {
                 // Configuration owner integers and client UUIDs are authority;
                 // output receipts/capability metadata are already public values.
-                for key in ["clientId", "ownerClient", "owner", "token", "ownershipToken"] { object.remove(key); }
+                for key in ["clientId", "ownerClient", "owner", "token", "ownershipToken", "nativeInventoryCurrent"] { object.remove(key); }
                 for value in object.values_mut() { scrub(value); }
             }
             Value::Array(values) => for value in values { scrub(value); },
@@ -105,7 +127,11 @@ impl Stm32Service {
     pub(crate) fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) { self.workspace.watch_inventory(wake); }
     pub(crate) fn watch_workspace(&self, wake: Arc<osg_streams::NativeWake>) { self.workspace.watch(wake); }
     pub(crate) fn workspace_snapshot(&self) -> (Arc<Value>, BTreeMap<String, String>) { self.workspace.visible_snapshot() }
-    pub(crate) fn set_workspace_owned(&self, owned: bool) { self.workspace.set_owned(owned); }
+    pub(crate) fn set_workspace_owned(&self, owned: bool) {
+        let previous = self.workspace.owned();
+        self.workspace.set_owned(owned);
+        if previous != owned { let _ = self.sender.try_send(Message::OwnershipChanged); }
+    }
     pub(crate) fn renew_workspace_client(&self, client: &str) -> Result<Vec<String>, String> {
         if self.closed.load(Ordering::Acquire) { return Err(CLOSED.into()); }
         if !crate::protocol::identifier(client, 16, 80) { return Err("Invalid workspace client identity.".into()); }
@@ -125,13 +151,13 @@ impl Gateway {
         let mut ids = self.claims.iter().filter(|(_, claim)| claim.client == client).map(|(id, _)| id.clone()).collect::<Vec<_>>();
         ids.sort();Ok(ids)
     }
-    pub(super) fn cache_workspace(&self, latest: &Mutex<Value>, claims: &Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>, workspace: &Cache) {
+    pub(super) fn cache_workspace(&self, latest: &Mutex<Latest>, claims: &Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>, workspace: &Cache) {
         let state = self.decorated(None);
         let owners = self.claims.iter().filter(|(_, claim)| claim.seen.elapsed() <= self.timing.claim_timeout)
             .map(|(id, claim)| (id.clone(), claim.client.clone())).collect();
         *claims.lock().unwrap_or_else(|p| p.into_inner()) = self.configuration_claims();
-        *latest.lock().unwrap_or_else(|p| p.into_inner()) = state.clone();
-        workspace.commit(state, owners);
+        *latest.lock().unwrap_or_else(|p| p.into_inner()) = (state.clone(), self.inventory_hid_fence.clone());
+        workspace.commit_inventory(state, owners, self.inventory_fence.clone());
     }
 }
 

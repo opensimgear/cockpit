@@ -64,6 +64,18 @@ fn can_requires_actual_settled_disabled_publication_and_fresh_observation() {
     );
 }
 
+#[test]
+fn native_inventory_current_overrides_timestamp_and_fences_stale_streams() {
+    let mut state = can_state();
+    state["nativeSnapshotAtMs"] = json!(1);
+    state["nativeInventoryCurrent"] = json!(true);
+    assert_eq!(can_status(GATEWAY, &state, &state["modules"][0]), "disabled");
+
+    state["nativeSnapshotAtMs"] = json!(now_ms());
+    state["nativeInventoryCurrent"] = json!(false);
+    assert_eq!(can_status(GATEWAY, &state, &state["modules"][0]), "unknown");
+}
+
 pub(crate) fn usb() -> SlotSnapshot {
     use crate::{
         module_console::UsbIdentity,

@@ -116,6 +116,8 @@ def main():
                              'xplane/process_events/bridge/launch.rs'])
     module_names.extend(['stm32/publication_feed.rs', 'stm32_panel_serial.rs',
                          'stm32_publication.rs', 'profile_publication_actor.rs'])
+    module_names.extend(['stm32/inventory_service.rs', 'stm32/workspace.rs',
+                         'profile_hid_publication.rs', 'games/profiles/inventory_collection.rs'])
     parser.add_argument('--module', action='append', choices=module_names, help='Focused local coverage; CI measures every module.')
     parser.add_argument('--test-filter', action='append', default=[])
     parser.add_argument('--output-dir', type=Path,

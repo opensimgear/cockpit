@@ -107,20 +107,21 @@ fn gateway()->(Gateway,Context){
     (gateway,context)
 }
 
+struct DuplexFactory(Option<crate::transport::duplex::DuplexParts>);
+impl Factory for DuplexFactory {
+    fn gateway_duplex(&mut self, _: &PortInfo) -> Option<Result<crate::transport::duplex::DuplexParts, String>> {
+        self.0.take().map(Ok)
+    }
+    fn ports(&mut self) -> Result<Vec<PortInfo>, String> { Ok(vec![port()]) }
+    fn open(&mut self, _: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
+        panic!("native gateway fell back to request-only serial")
+    }
+}
+
 #[test]
 fn native_gateway_negotiates_and_delivers_panel_state_while_idle() {
-    use crate::transport::duplex::{tcp_fixture, DuplexParts};
+    use crate::transport::duplex::tcp_fixture;
     use std::io::{BufRead, BufReader};
-    struct DuplexFactory(Option<DuplexParts>);
-    impl Factory for DuplexFactory {
-        fn gateway_duplex(&mut self, _: &PortInfo) -> Option<Result<DuplexParts, String>> {
-            self.0.take().map(Ok)
-        }
-        fn ports(&mut self) -> Result<Vec<PortInfo>, String> { Ok(vec![port()]) }
-        fn open(&mut self, _: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
-            panic!("native gateway fell back to request-only serial")
-        }
-    }
     let (parts, mut peer) = tcp_fixture();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let device = thread::spawn(move || {
@@ -176,6 +177,110 @@ fn native_gateway_negotiates_and_delivers_panel_state_while_idle() {
     assert_eq!(sample.state.held[0], 1);
     assert_eq!(sample.route.source_node, 11);
     gateway.exchange("snapshot", Duration::from_secs(2)).unwrap();
+    device.join().unwrap();
+}
+
+#[test]
+fn inventory_reads_only_on_events_and_discards_superseded_readback() {
+    use crate::transport::duplex::tcp_fixture;
+    use std::io::{BufRead, BufReader};
+    let (parts, mut peer) = tcp_fixture();
+    let (step, steps) = mpsc::channel();
+    let (resume, resumed) = mpsc::channel();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let device = thread::spawn(move || {
+        let mut input = BufReader::new(peer.try_clone().unwrap());
+        let read_snapshot = |input: &mut BufReader<_>| {
+            let mut line = String::new();
+            input.read_line(&mut line).unwrap();
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 3);
+            assert_eq!((fields[0], fields[2]), ("cockpit", "snapshot"));
+            fields[1].parse::<u32>().unwrap()
+        };
+        let reply = |peer: &mut std::net::TcpStream, id, generation| {
+            let mut state = wire();
+            state["modules"][0]["configurationGeneration"] = json!(generation);
+            writeln!(peer, "{}", json!({"id":id,"ok":true,"state":state})).unwrap();
+        };
+        let event = |peer: &mut std::net::TcpStream, sequence: u64| {
+            writeln!(peer, "{}", json!({"publicationStream":"change","epoch":10,"sequence":sequence.to_string()})).unwrap();
+        };
+        reply(&mut peer, read_snapshot(&mut input), 2);
+        let mut opt_in = String::new();
+        input.read_line(&mut opt_in).unwrap();
+        assert_eq!(opt_in.trim_end(), "panel-stream");
+        step.send(0).unwrap();
+        resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+        event(&mut peer, 1);
+        reply(&mut peer, read_snapshot(&mut input), 2);
+        input.get_ref().set_read_timeout(Some(Duration::from_millis(130))).unwrap();
+        let quiet = input.read_line(&mut String::new()).unwrap_err();
+        assert!(matches!(quiet.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock));
+        input.get_ref().set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        step.send(1).unwrap();
+        resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+        event(&mut peer, 2);
+        let obsolete = read_snapshot(&mut input);
+        event(&mut peer, 3);
+        step.send(2).unwrap();
+        resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+        reply(&mut peer, obsolete, 3);
+        let current = read_snapshot(&mut input);
+        writeln!(peer, "{}", json!({"publicationStream":"inventory","epoch":10,"sequence":"4"})).unwrap();
+        reply(&mut peer, current, 4);
+        let diagnostic = read_snapshot(&mut input);
+        step.send(3).unwrap();
+        resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut state = wire();
+        state["modules"][0]["configurationGeneration"] = json!(4);
+        state["admissionFailure"] = json!({"identity":MODULE,"error":"capacity_exceeded"});
+        writeln!(peer, "{}", json!({"id":diagnostic,"ok":true,"state":state})).unwrap();
+        resumed.recv_timeout(Duration::from_secs(2)).unwrap();
+    });
+    let mut timing = Timing::default();
+    timing.heartbeat = Duration::from_millis(20);
+    timing.settle = Duration::ZERO;
+    let service = Stm32Service::with_factory(Box::new(DuplexFactory(Some(parts))), timing);
+    service.set_workspace_owned(true);
+    let connected = service.request(json!({"command":"connect","port":port().path,"clientId":"inventory-cockpit-test"}));
+    assert_eq!(connected["ok"], true, "{connected}");
+    assert_eq!(steps.recv_timeout(Duration::from_secs(2)).unwrap(), 0);
+    assert_eq!(service.cached_state()["nativeInventoryCurrent"], false);
+    resume.send(()).unwrap();
+    let wait_state = |expected: bool, generation: u32| {
+        let until = Instant::now() + Duration::from_secs(1);
+        loop {
+            let state = service.cached_state();
+            if state["nativeInventoryCurrent"] == expected && state["modules"][0]["configurationGeneration"] == generation {
+                break state;
+            }
+            assert!(Instant::now() < until, "{state}");
+            thread::sleep(Duration::from_millis(1));
+        }
+    };
+    assert_eq!(steps.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+    let baseline = wait_state(true, 2);
+    assert!(service.workspace_snapshot().0.get("nativeInventoryCurrent").is_none());
+    resume.send(()).unwrap();
+    assert_eq!(steps.recv_timeout(Duration::from_secs(2)).unwrap(), 2);
+    let stale = wait_state(false, 2);
+    assert_eq!(stale["nativeSnapshotAtMs"], baseline["nativeSnapshotAtMs"]);
+    resume.send(()).unwrap();
+    wait_state(true, 4);
+    let authority = service.publication_fence().unwrap();
+    assert_eq!(steps.recv_timeout(Duration::from_secs(2)).unwrap(), 3);
+    assert_eq!(service.cached_state()["nativeInventoryCurrent"], true);
+    assert!(authority.is_current());
+    resume.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while service.workspace_snapshot().0["admissionFailure"]["error"] != "capacity_exceeded" {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(authority.is_current());
+    service.shutdown();
+    resume.send(()).unwrap();
     device.join().unwrap();
 }
 #[test]

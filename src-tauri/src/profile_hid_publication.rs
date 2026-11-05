@@ -23,6 +23,29 @@ pub(crate) fn freshness_delay(value: Option<u64>, now: u64) -> Option<Duration> 
     (remaining > 0).then(|| Duration::from_millis(remaining))
 }
 
+/// A sequenced native CAN stream can prove that its cached snapshot is still
+/// current without relying on the snapshot's wall-clock timestamp. Legacy
+/// point-in-time snapshots keep the timestamp-based freshness rule.
+pub(crate) fn can_freshness_delay(
+    inventory_current: Option<bool>,
+    snapshot_at: Option<u64>,
+    now: u64,
+) -> Option<Duration> {
+    if inventory_current.is_some() {
+        None
+    } else {
+        freshness_delay(snapshot_at, now)
+    }
+}
+
+fn can_snapshot_fresh(state: &Value, now: u64) -> bool {
+    match state.get("nativeInventoryCurrent") {
+        Some(Value::Bool(current)) => *current,
+        Some(_) => false,
+        None => fresh(state["nativeSnapshotAtMs"].as_u64(), now),
+    }
+}
+
 pub(crate) fn freshness_restored(before: Option<u64>, after: Option<u64>, now: u64) -> bool {
     before != after && !fresh(before, now) && fresh(after, now)
 }
@@ -34,7 +57,7 @@ pub(crate) fn can_status(gateway: &str, state: &Value, module: &Value) -> &'stat
         || state["connected"] != true
         || state["canProtocol"] != 3
         || state["layoutPending"] != false
-        || !fresh(state["nativeSnapshotAtMs"].as_u64(), now_ms())
+        || !can_snapshot_fresh(state, now_ms())
         || module["online"] != true
         || module["boot"].as_u64().is_none_or(|n| n == 0)
         || module["configurationGeneration"]

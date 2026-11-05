@@ -7,11 +7,11 @@ fn native_workspace_owner_preserves_connection_but_not_expired_claims_or_output_
     assert_eq!(request(&mut gateway, "claim", json!({"moduleId":MODULE}))["ok"], true);
     gateway.claims.get_mut(MODULE).unwrap().seen = Instant::now() - gateway.timing.claim_timeout - Duration::from_millis(1);
     let abandoned = Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1);
-    gateway.heartbeat(abandoned);
+    gateway.maintain(abandoned, &mut Instant::now());
     assert!(gateway.connection.is_some());assert!(gateway.claims.is_empty());
     let output = request(&mut gateway, "action_invoke_owned", json!({"moduleId":MODULE,"actionId":"led.set_enabled","values":[true]}));
     assert_eq!(output["ok"], false);
-    cache.set_owned(false);gateway.heartbeat(abandoned);assert!(gateway.connection.is_none());
+    cache.set_owned(false);gateway.maintain(abandoned, &mut Instant::now());assert!(gateway.connection.is_none());
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn passive_snapshot_and_completion_do_not_renew_claims_and_expiry_changes_owners
     let (mut gateway, _context) = harness();assert_eq!(connect(&mut gateway)["ok"], true);
     assert_eq!(request(&mut gateway, "claim", json!({"moduleId":MODULE}))["ok"], true);
     let cache = workspace::Cache::new(empty_state());let wake = Arc::new(osg_streams::NativeWake::default());cache.watch(wake.clone());
-    let latest = Mutex::new(empty_state());let claims = Mutex::new(Vec::new());
+    let latest = Mutex::new((empty_state(), None));let claims = Mutex::new(Vec::new());
     gateway.cache_workspace(&latest, &claims, &cache);
     let seen = gateway.claims[MODULE].seen;let at = gateway.state["nativeSnapshotAtMs"].clone();
     for _ in 0..100 {let (state, owners) = cache.snapshot();assert_eq!(state["nativeSnapshotAtMs"], at);assert_eq!(owners[MODULE], CLIENT);}

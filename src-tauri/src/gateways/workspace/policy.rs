@@ -101,7 +101,7 @@ impl Entry {
     pub fn wire(&self, ports: &[Value]) -> Value {
         let mut state=if self.state["connected"]==true&&self.state["port"]!=self.port["path"]{Value::Null}else{self.state.as_ref().clone()};
         if let Some(object)=state.as_object_mut() {
-            object.remove("nativeSnapshotAtMs");object.insert("gatewayId".into(),json!(self.id));
+            object.remove("nativeSnapshotAtMs");object.remove("nativeInventoryCurrent");object.insert("gatewayId".into(),json!(self.id));
             object.insert("backend".into(),self.port["backend"].clone());
             object.insert("ports".into(),json!(ports));object.insert("claimedModules".into(),json!([]));
         }

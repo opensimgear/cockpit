@@ -12,7 +12,11 @@ impl Sources {
         let can_expiry = gateways.iter().map(|(_, state)| state)
             .filter(|state| state["connected"] == true && state["canProtocol"] == 3
                 && state["modules"].as_array().is_some_and(|modules| !modules.is_empty()))
-            .filter_map(|state| hid_publication::freshness_delay(state["nativeSnapshotAtMs"].as_u64(), wall_ms));
+            .filter_map(|state| hid_publication::can_freshness_delay(
+                state["nativeInventoryCurrent"].as_bool(),
+                state["nativeSnapshotAtMs"].as_u64(),
+                wall_ms,
+            ));
         let slots = self.usb.snapshots();
         let usb_expiry = slots.iter().filter(|slot| slot.present && slot.admissible
             && slot.snapshot.connected && slot.snapshot.config.is_some())

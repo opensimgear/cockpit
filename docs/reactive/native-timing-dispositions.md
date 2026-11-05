@@ -98,7 +98,7 @@ See [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events
 | `src-tauri/src/stm32_panel_serial.rs:91` | Serial command owner, wait for an exact reply | Keep the channel deadline. Serial tests cover parallel events and replies. |
 | `src-tauri/src/stm32.rs:1034,1040,1083,1123,1161,1206,1726,1764` | STM32 configuration owner, settle, apply, recover and read layout | Preserve hardware deadlines. Replace readiness checks with configuration and reconnect events. Physical recovery remains open. |
 | `src-tauri/src/stm32.rs:1337` | Action discovery, retry a failed route metadata or state request | Replace the 50 ms wait with a route-change wake. Keep the exact route fence and retry deadline. |
-| `src-tauri/src/stm32.rs:2357` | STM32 service, receive commands until heartbeat | Keep lease deadlines and separate periodic state acquisition. Verify physical gateway behavior. |
+| `src-tauri/src/stm32.rs:2357` | STM32 service, wait for commands, inventory events and local authority deadlines | CAN inventory refreshes from the sequenced gateway stream. Setup claim expiry and unowned connection inactivity keep separate deadlines. Pico Debug retains its existing snapshot cadence. Physical CAN gateway acceptance remains in #199. |
 | `src-tauri/src/stm32.rs:2932,2935` | Test-only serial stalls | Keep fixture delays. Tests cover cancellation and partial replies. |
 | `src-tauri/src/system_inventory.rs:248,254,279,287` | Test-only publication and pinned-page barriers | Keep fixture bounds. Tests cover passive reads and isolation from blocked capture. |
 

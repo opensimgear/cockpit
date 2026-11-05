@@ -27,6 +27,10 @@ impl PublicationFence {
         self.epoch == other.epoch && Arc::ptr_eq(&self.counter, &other.counter)
     }
 
+    pub(crate) fn same_record(&self, other: &Self) -> bool {
+        self.same_stream(other) && self.sequence == other.sequence
+    }
+
     pub(crate) fn epoch(&self) -> u32 {
         self.epoch
     }
@@ -40,9 +44,23 @@ impl PublicationFence {
 
 #[derive(Default)]
 struct State {
-    owner: Option<Arc<AtomicU64>>,
+    owner: Option<Arc<Owner>>,
     current: Option<PublicationFence>,
+    inventory: Option<PublicationFence>,
     watchers: Vec<Weak<NativeWake>>,
+}
+
+#[derive(Default)]
+struct Owner {
+    publication: Arc<AtomicU64>,
+    inventory: Arc<AtomicU64>,
+}
+
+impl Owner {
+    fn retire(&self) {
+        self.publication.store(0, Ordering::Release);
+        self.inventory.store(0, Ordering::Release);
+    }
 }
 
 impl State {
@@ -60,6 +78,11 @@ impl PublicationFeed {
         self.0.lock().unwrap_or_else(|p| p.into_inner()).current.clone()
     }
 
+    pub(crate) fn inventory_evidence(&self) -> (Option<PublicationFence>, Option<PublicationFence>) {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        (state.inventory.clone(), state.current.clone())
+    }
+
     pub(crate) fn watch(&self, wake: &Arc<NativeWake>) {
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         state.watchers.retain(|watch| watch.strong_count() > 0);
@@ -70,18 +93,19 @@ impl PublicationFeed {
     }
 
     pub(crate) fn attach(&self) -> Ingress {
-        let counter = Arc::new(AtomicU64::new(0));
+        let owner = Arc::new(Owner::default());
         let wakes = {
             let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(previous) = state.owner.replace(counter.clone()) {
-                previous.store(0, Ordering::Release);
+            if let Some(previous) = state.owner.replace(owner.clone()) {
+                previous.retire();
             }
             state.current = None;
+            state.inventory = None;
             state.wakes()
         };
         for wake in wakes { wake.notify(); }
         Ingress {
-            lifetime: Lifetime { feed: self.clone(), counter },
+            lifetime: Lifetime { feed: self.clone(), owner },
             last: None,
         }
     }
@@ -90,19 +114,20 @@ impl PublicationFeed {
 #[derive(Clone)]
 pub(crate) struct Lifetime {
     feed: PublicationFeed,
-    counter: Arc<AtomicU64>,
+    owner: Arc<Owner>,
 }
 
 impl Lifetime {
     pub(crate) fn close(&self) {
         let wakes = {
             let mut state = self.feed.0.lock().unwrap_or_else(|p| p.into_inner());
-            if !state.owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, &self.counter)) {
+            if !state.owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, &self.owner)) {
                 return;
             }
-            self.counter.store(0, Ordering::Release);
+            self.owner.retire();
             state.owner = None;
             state.current = None;
+            state.inventory = None;
             state.wakes()
         };
         for wake in wakes { wake.notify(); }
@@ -126,7 +151,12 @@ impl Ingress {
     }
 
     fn accept_change(&mut self, value: &Value) -> Result<(), String> {
-        if value["publicationStream"] != "change" || value.as_object().is_none_or(|row| row.len() != 3) {
+        let publication = match value["publicationStream"].as_str() {
+            Some("change") => true,
+            Some("inventory") if self.last.is_some() => false,
+            _ => return Err(INVALID.into()),
+        };
+        if value.as_object().is_none_or(|row| row.len() != 3) {
             return Err(INVALID.into());
         }
         let epoch = value["epoch"].as_u64().and_then(|epoch| u32::try_from(epoch).ok())
@@ -143,13 +173,19 @@ impl Ingress {
 
         let wakes = {
             let mut state = self.lifetime.feed.0.lock().unwrap_or_else(|p| p.into_inner());
-            let counter = &self.lifetime.counter;
-            if !state.owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, counter)) {
+            let owner = &self.lifetime.owner;
+            if !state.owner.as_ref().is_some_and(|current| Arc::ptr_eq(current, owner)) {
                 return Err("CAN gateway publication stream was retired.".into());
             }
-            counter.store(sequence, Ordering::Release);
-            state.current = Some(PublicationFence { counter: counter.clone(), sequence, epoch });
-            state.wakes()
+            if publication { owner.publication.store(sequence, Ordering::Release); }
+            owner.inventory.store(sequence, Ordering::Release);
+            state.inventory = Some(PublicationFence { counter: owner.inventory.clone(), sequence, epoch });
+            if publication {
+                state.current = Some(PublicationFence { counter: owner.publication.clone(), sequence, epoch });
+                state.wakes()
+            } else {
+                Vec::new()
+            }
         };
         self.last = Some((epoch, sequence));
         for wake in wakes { wake.notify(); }

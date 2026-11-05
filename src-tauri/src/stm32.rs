@@ -34,6 +34,7 @@ pub(crate) use publication::{PublicationOperation, PublicationReply, Publication
 pub(crate) mod publication_feed;
 pub(crate) use publication_feed::{PublicationFence, PUBLICATION_EVIDENCE_CHANGED};
 pub(crate) mod workspace;
+mod inventory_service;
 
 #[derive(Clone)]
 struct Timing {
@@ -592,6 +593,9 @@ struct Gateway {
     workspace: Option<Arc<workspace::Cache>>,
     reader_wake: Option<Arc<dyn Fn() + Send + Sync>>,
     publication_reconnect: bool,
+    inventory_fence: Option<PublicationFence>,
+    inventory_hid_fence: Option<PublicationFence>,
+    inventory_attempted: Option<PublicationFence>,
 }
 impl Gateway {
     fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
@@ -640,6 +644,9 @@ impl Gateway {
             workspace: None,
             reader_wake: None,
             publication_reconnect: false,
+            inventory_fence: None,
+            inventory_hid_fence: None,
+            inventory_attempted: None,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -666,6 +673,9 @@ impl Gateway {
         Ok(ports)
     }
     fn close(&mut self) {
+        self.inventory_fence = None;
+        self.inventory_hid_fence = None;
+        self.inventory_attempted = None;
         // Best effort release never retries a settings commit. Firmware also
         // expires its writer lease if USB or this process disappears.
         if let Some(connection) = self.connection.as_mut() {
@@ -804,6 +814,11 @@ impl Gateway {
         if fence.is_some_and(|fence| !fence.is_current()) {
             return Err(PUBLICATION_EVIDENCE_CHANGED.into());
         }
+        let (inventory_fence, inventory_hid_fence) = if self.role == Role::Can {
+            self.workspace.as_ref().map(|cache| cache.publication.inventory_evidence()).unwrap_or_default()
+        } else {
+            (None, None)
+        };
         let result = (|| {
             let connection = match self.connection.as_mut().unwrap() {
                 GatewayConnection::Parked(connection) => {
@@ -873,9 +888,23 @@ impl Gateway {
         })();
         match result {
             Ok(value) => {
+                if command == "snapshot" && fence.is_some_and(|fence| !fence.is_current()) {
+                    return Err(PUBLICATION_EVIDENCE_CHANGED.into());
+                }
+                let previous_diagnostic = (command == "snapshot" && fence.is_some()
+                    && inventory_fence.as_ref().is_some_and(|fence| !fence.is_current()))
+                    .then(|| (self.state["admissionFailure"].clone(), self.state["rejectedAnnouncements"].clone()));
                 if let Err(error) = self.accept(&value["state"]) {
                     self.close();
                     return Err(error);
+                }
+                if let Some((warning, count)) = previous_diagnostic {
+                    self.state["admissionFailure"] = warning;
+                    self.state["rejectedAnnouncements"] = count;
+                }
+                if let Some(fence) = inventory_fence {
+                    self.inventory_fence = Some(fence);
+                    self.inventory_hid_fence = inventory_hid_fence;
                 }
                 if self.role == Role::PicoDebug {
                     match debug_snapshot(&value["debug"]) {
@@ -1295,7 +1324,7 @@ impl Gateway {
     }
     fn expire_claims(&mut self, client: Option<&str>) {
         self.claims.retain(|_, claim| {
-            if claim.seen.elapsed() > self.timing.claim_timeout {
+            if claim.seen.elapsed() >= self.timing.claim_timeout {
                 return false;
             }
             if client == Some(claim.client.as_str()) {
@@ -2269,25 +2298,11 @@ impl Gateway {
             Err(error) => json!({"ok":false,"error":error,"state":self.decorated(client)}),
         }
     }
-    fn heartbeat(&mut self, seen: Instant) {
-        if self.connection.is_none() {
-            return;
-        }
-        if !self.workspace.as_ref().is_some_and(|cache| cache.owned()) && seen.elapsed() > self.timing.ui_timeout {
-            self.close();
-            return;
-        }
-        self.expire_claims(None);
-        if self.automatic() {
-            let _ = self.automatic_snapshot();
-        } else {
-            let _ = self.exchange("snapshot", self.timing.command);
-        }
-    }
 }
 
 enum Message {
     SerialWake,
+    OwnershipChanged,
     Request(Value, mpsc::Sender<Value>),
     Publication(PublicationRequest,mpsc::Sender<Result<PublicationReply,String>>),
     RenewWorkspace(String, mpsc::SyncSender<Result<Vec<String>, String>>),
@@ -2296,7 +2311,7 @@ enum Message {
 pub struct Stm32Service {
     sender: mpsc::SyncSender<Message>,
     closed: Arc<AtomicBool>,
-    state: Arc<Mutex<Value>>,
+    state: Arc<Mutex<workspace::Latest>>,
     configuration_claims: Arc<Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>>,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     workspace: Arc<workspace::Cache>,
@@ -2321,7 +2336,8 @@ impl Stm32Service {
             .filter(|(expires,_)|*expires > Instant::now()).map(|(_,pin)|pin.clone()).collect()
     }
     pub(crate) fn cached_state(&self) -> Value {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        workspace::native_view(state.0.clone(), state.1.as_ref())
     }
 
     pub fn new() -> Self {
@@ -2353,7 +2369,7 @@ impl Stm32Service {
         if role == Role::PicoDebug {
             initial["backend"] = json!("pico");
         }
-        let state = Arc::new(Mutex::new(initial));
+        let state = Arc::new(Mutex::new((initial, None)));
         let latest = state.clone();
         let configuration_claims = Arc::new(Mutex::new(Vec::new()));
         let latest_claims = configuration_claims.clone();
@@ -2361,15 +2377,21 @@ impl Stm32Service {
         let panels = Arc::<PanelHub>::default();
         let worker_panels = panels.clone();
         let reader_sender = sender.clone();
+        let serial_wake_pending = Arc::new(AtomicBool::new(false));
+        let reader_pending = serial_wake_pending.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
                 gateway.panels = worker_panels;
                 gateway.workspace = Some(workspace_latest.clone());
-                gateway.reader_wake = Some(Arc::new(move || { let _ = reader_sender.try_send(Message::SerialWake); }));
+                gateway.reader_wake = Some(Arc::new(move || {
+                    if !reader_pending.swap(true, Ordering::AcqRel) && reader_sender.try_send(Message::SerialWake).is_err() {
+                        reader_pending.store(false, Ordering::Release);
+                    }
+                }));
                 let mut seen = Instant::now();
-                let mut heartbeat = Instant::now() + gateway.timing.heartbeat;
+                let mut debug_poll = Instant::now() + gateway.timing.heartbeat;
                 while !cancel.load(Ordering::Acquire) {
                     let recover_publication = std::mem::take(&mut gateway.publication_reconnect);
                     if recover_publication || matches!(&gateway.connection, Some(GatewayConnection::Parked(serial)) if serial.ended()) {
@@ -2380,8 +2402,21 @@ impl Stm32Service {
                         }
                         gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                     }
-                    match receiver.recv_timeout(heartbeat.saturating_duration_since(Instant::now()))
-                    {
+                    let maintained = gateway.maintain(seen, &mut debug_poll);
+                    let pending = receiver.try_recv();
+                    let refreshed = matches!(pending, Err(mpsc::TryRecvError::Empty)) && gateway.refresh_inventory();
+                    if refreshed || maintained {
+                        gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
+                    }
+                    let message = match pending {
+                        Ok(message) => Ok(message),
+                        Err(mpsc::TryRecvError::Disconnected) => Err(mpsc::RecvTimeoutError::Disconnected),
+                        Err(mpsc::TryRecvError::Empty) => match gateway.maintenance_deadline(seen, debug_poll) {
+                            Some(deadline) => receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+                            None => receiver.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                        },
+                    };
+                    match message {
                         Ok(Message::Request(request, response)) => {
                             seen = Instant::now();
                             let result = gateway.request(request);
@@ -2399,13 +2434,10 @@ impl Stm32Service {
                             gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                             let _ = response.try_send(result);
                         }
-                        Ok(Message::SerialWake) => {}
+                        Ok(Message::SerialWake) => serial_wake_pending.store(false, Ordering::Release),
+                        Ok(Message::OwnershipChanged) => {}
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            gateway.heartbeat(seen);
-                            heartbeat = Instant::now() + gateway.timing.heartbeat;
-                            gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
-                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                 }
                 gateway.close();
@@ -2415,7 +2447,7 @@ impl Stm32Service {
                         Message::Request(_,response)=>{let _=response.send(json!({"ok":false,"error":CLOSED,"state":gateway.decorated(None)}));}
                         Message::Publication(_,response)=>{let _=response.send(Err(CLOSED.into()));}
                         Message::RenewWorkspace(_, response)=>{let _=response.try_send(Err(CLOSED.into()));}
-                        Message::Shutdown | Message::SerialWake=>{}
+                        Message::Shutdown | Message::SerialWake | Message::OwnershipChanged=>{}
                     }
                 }
             })
@@ -2432,7 +2464,7 @@ impl Stm32Service {
         }
     }
     pub fn request(&self, request: Value) -> Value {
-        let error = |message: &str| json!({"ok":false,"error":message,"state":self.state.lock().unwrap_or_else(|p|p.into_inner()).clone()});
+        let error = |message: &str| json!({"ok":false,"error":message,"state":self.state.lock().unwrap_or_else(|p|p.into_inner()).0.clone()});
         if self.closed.load(Ordering::Acquire) {
             return error(CLOSED);
         }
@@ -4486,7 +4518,7 @@ mod tests {
         context.lock().unwrap().state["modules"][0]["online"] = json!(true);
         other["command"] = json!("claim");
         assert_eq!(gateway.request(other)["ok"], true);
-        gateway.heartbeat(Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1));
+        gateway.maintain(Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1), &mut Instant::now());
         assert!(gateway.connection.is_none());
         assert!(gateway.claims.is_empty());
         assert_eq!(context.lock().unwrap().state["running"], true);
