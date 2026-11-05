@@ -402,3 +402,25 @@ fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
     wait_setup(&runtime);
     runtime.shutdown();
 }
+
+#[test]
+fn assetto_setup_cancellation_wakes_a_parked_probe() {
+    use std::time::Duration;
+    let scratch = Scratch::new();
+    let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    *runtime.inner.assetto_setup_wake.lock().unwrap() = Some(wake.clone());
+    let (ready_tx, ready) = std::sync::mpsc::sync_channel(1);
+    let (finished_tx, finished) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        wake.bind_thread(std::thread::current()).unwrap();
+        let observed = wake.observed();
+        ready_tx.send(()).unwrap();
+        wake.wait(observed, Duration::from_secs(3));
+        finished_tx.send(wake.observed()).unwrap();
+    });
+    ready.recv_timeout(Duration::from_secs(1)).unwrap();
+    runtime.inner.cancel().unwrap();
+    assert_eq!(finished.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
+    worker.join().unwrap();
+}

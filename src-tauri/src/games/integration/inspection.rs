@@ -11,10 +11,17 @@ impl Inner {
         if let Some(publication) = publication {
             publication.cancel()?;
         }
-        self.cancel.store(true, Ordering::Release);
+        self.wake_cancelled_setup();
         self.job_progress("cancelling", "Cancelling integration setup", None);
         Ok(())
     }
+    pub(super) fn wake_cancelled_setup(&self) {
+        self.cancel.store(true, Ordering::Release);
+        if let Some(wake) = self.assetto_setup_wake.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+            wake.notify();
+        }
+    }
+
     pub(super) fn decorate_removal(&self, id: &str, status: &mut Value) {
         status["installed"] = json!(false);
         status["removable"] = json!(false);

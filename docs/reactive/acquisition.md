@@ -118,7 +118,7 @@ Physical controller acquisition is outside this exception.
 | Assetto timing owner | Disposition | Verification |
 | --- | --- | --- |
 | Shared capture worker, 2 ms sampling and 50 ms read-error retry | Approved native mapping acquisition and bounded recovery. A failed process lease retires the worker. | Ordered and latest-reader fixtures, mapping generation tests and failed-lease replacement regression |
-| Manual setup verification, 100 ms wait between journal reads | Replace with a wake on journal publication, setup cancellation or the existing verification deadline. | Authored setup fixture must still distinguish waiting, lease loss and qualification |
+| Manual setup verification | Journal publication, cancellation or the existing verification deadline wakes the probe. | Native tests cover cancellation and outcome handling. Live permission denial and Stop passed. Authorized simulator delivery remains in #199. |
 | Global game activation observer, 500 ms catalogue process scan | Replace with a process-event owner for registered executable identities and initial inventory. | Verify launch, competing processes, process replacement, missed notifications and idle behavior |
 
 [Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6640472899)

@@ -532,19 +532,21 @@ fn probe_acquired(
         }
         let telemetry_game = Game::from_id(game["id"].as_str().unwrap_or("assetto-corsa-rally"))?;
         let mut verifier = Verifier::new_for_game(&process, telemetry_game)?;
+        if !platform.alive(&process)? {
+            return Ok(result(fingerprint,"process-exited",vec!["The selected Assetto process exited. Recheck after relaunch to attach its new identity.".into()]));
+        }
         let mut last_error = None;
+        let mut last_progress = None;
         loop {
             if check() {
                 return Err("Assetto integration verification was cancelled.".into());
             }
-            if !platform.alive(&process)? {
-                return Ok(result(fingerprint,"process-exited",vec!["The selected Assetto process exited. Recheck after relaunch to attach its new identity.".into()]));
-            }
+
             let now = clock();
-            progress(
-                "Checking native Assetto telemetry",
-                (15 + now.min(PROBE_MS) * 75 / PROBE_MS) as u8,
-            );
+            let percent = (15 + now.min(PROBE_MS) * 75 / PROBE_MS) as u8;
+            if last_progress.replace(percent) != Some(percent) {
+                progress("Checking native Assetto telemetry", percent);
+            }
             match attached.source.poll() {
                 Ok(Some(sample)) => match verifier.observe(&sample, now) {
                     Ok(snapshot) => {
@@ -615,6 +617,7 @@ fn probe_acquired(
 pub(crate) fn probe(
     game: &Value,
     platform: &dyn Platform,
+    wake: std::sync::Arc<osg_streams::NativeWake>,
     check: impl Fn() -> bool,
     progress: impl Fn(&str, u8),
 ) -> Result<Value, String> {
@@ -631,7 +634,10 @@ pub(crate) fn probe(
     if !cfg!(windows) {
         return Ok(result(&fingerprint,"unsupported-platform",vec!["Native Assetto shared-memory verification requires Windows. Synthetic sources retain their separate capability.".into()]));
     }
-    let mut start = None;
+    wake.bind_thread(std::thread::current()).map_err(|_| "Assetto setup wake is already bound.")?;
+    let start = std::cell::Cell::new(None::<Instant>);
+    let observed = std::cell::Cell::new(wake.observed());
+    let mut publication_watch = None;
     let mut proof = probe_acquired(
         game,
         platform,
@@ -641,6 +647,7 @@ pub(crate) fn probe(
         |process| {
             // This is the sole acquisition boundary allowed to establish native evidence.
             let source = crate::acr_windows::SharedSource::open_latest(process, telemetry_game)?;
+            publication_watch = source.watch(wake.clone())?;
             let image = Some(process.path.clone());
             Ok(AttachedSource {
                 source: Box::new(source),
@@ -648,9 +655,24 @@ pub(crate) fn probe(
             })
         },
         |pid| competing_processes_for_game(pid, telemetry_game),
-        || start.get_or_insert_with(Instant::now).elapsed().as_millis() as u64,
-        || std::thread::sleep(Duration::from_millis(100)),
+        || {
+            observed.set(wake.observed());
+            let began = start.get().unwrap_or_else(|| {
+                let now = Instant::now();
+                start.set(Some(now));
+                now
+            });
+            began.elapsed().as_millis() as u64
+        },
+        || {
+            let deadline = Duration::from_millis(PROBE_MS);
+            let remaining = deadline.saturating_sub(start.get().expect("clock sampled before waiting").elapsed());
+            if !check() && !remaining.is_zero() {
+                wake.wait(observed.get(), remaining);
+            }
+        },
     )?;
+    drop(publication_watch);
     if proof["compatible"] == true {
         proof["nativeVerified"] = json!(true);
         progress("Native Assetto telemetry verified", 100);

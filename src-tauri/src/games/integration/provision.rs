@@ -41,7 +41,7 @@ impl GameIntegrationSetup {
         let run = self.inner.publish_start(game, json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
         let inner = self.inner.clone();
         let game = game.clone();
-        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut worker = self.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(previous) = worker.take() {
             let _ = previous.join();
         }
@@ -106,7 +106,7 @@ impl GameIntegrationSetup {
             return Err("Find the Assetto installation before setting up telemetry.".into());
         }
         let previous =
-            self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"][&id].clone();
+            self.inner.saved.lock().unwrap_or_else(std::sync::PoisonError::into_inner)["games"][&id].clone();
         let mut connection = if previous["connection"].is_object() {
             previous["connection"].clone()
         } else {
@@ -146,11 +146,11 @@ impl GameIntegrationSetup {
             .inner
             .ac_cars_publication
             .lock()
-            .unwrap_or_else(|p| p.into_inner()) = publication.clone();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = publication.clone();
         let run = self.inner.publish_start(game, json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
         let inner = self.inner.clone();
         let game = game.clone();
-        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut worker = self.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(previous_worker) = worker.take() {
             let _ = previous_worker.join();
         }
@@ -159,7 +159,7 @@ impl GameIntegrationSetup {
                 let identity = inner
                     .fingerprints
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .inspect(&executable, telemetry_game, true)?;
                 if inner.cancel.load(Ordering::Acquire) {
                     return Err("Assetto telemetry check was cancelled.".into());
@@ -200,7 +200,7 @@ impl GameIntegrationSetup {
                 if let Some((entered, release)) = inner
                     .native_probe_pause
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take()
                 {
                     entered.send(()).unwrap();
@@ -208,14 +208,19 @@ impl GameIntegrationSetup {
                         .recv_timeout(std::time::Duration::from_secs(15))
                         .unwrap();
                 }
+                let wake = Arc::new(osg_streams::NativeWake::default());
+                *inner.assetto_setup_wake.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(wake.clone());
                 let proof = crate::acr_setup::probe(
                     &game,
                     platform.as_ref(),
+                    wake,
                     || inner.cancel.load(Ordering::Acquire),
                     |message, percent| {
                         inner.publish_progress(&game, message, Some(percent));
                     },
-                )?;
+                );
+                inner.assetto_setup_wake.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+                let proof = proof?;
                 inner.accept_assetto_proof(&id, &proof)?;
                 inner.publish_progress(&game, "Finalizing native telemetry verification", None);
                 if let Some(cars) = cars {
@@ -226,7 +231,7 @@ impl GameIntegrationSetup {
                     if let Some((entered, release)) = inner
                         .ac_cars_publication_pause
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .take()
                     {
                         entered

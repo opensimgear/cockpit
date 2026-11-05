@@ -313,7 +313,7 @@ fn cancellation_does_not_construct_a_native_source_or_change_game_files() {
     let path = scratch.executable();
     let bytes = fs::read(&path).unwrap();
     let game = json!({"executable":path});
-    assert!(probe(&game, &FakePlatform, || true, |_, _| {})
+    assert!(probe(&game, &FakePlatform, Default::default(), || true, |_, _| {})
         .unwrap_err()
         .contains("cancelled"));
     assert_eq!(fs::read(path).unwrap(), bytes);
@@ -324,7 +324,7 @@ fn non_windows_and_synthetic_fixtures_cannot_report_native_verification() {
     let scratch = Scratch::new();
     let path = scratch.executable();
     let game = json!({"executable":path});
-    let status = probe(&game, &FakePlatform, || false, |_, _| {}).unwrap();
+    let status = probe(&game, &FakePlatform, Default::default(), || false, |_, _| {}).unwrap();
     assert_eq!(status["status"], "unsupported-platform");
     assert_eq!(status["nativeVerified"], false);
     assert!(status["fingerprint"]["fingerprint"].as_str().is_some());
@@ -604,7 +604,7 @@ fn cancelled_exited_or_failed_lifetime_queries_close_the_acquisition() {
     assert!(closed.load(Ordering::Acquire));
     for lifetime in [
         vec![Ok(false)],
-        vec![Ok(true), Ok(true), Ok(false)],
+        vec![Ok(true), Ok(false)],
         vec![Err("Cannot query process lifetime".into())],
     ] {
         let platform = ProbePlatform::running(harness.process.clone());
@@ -775,6 +775,7 @@ fn running_game_passes_native_setup_probe() {
     let proof = probe(
         &game,
         &crate::game_discovery::NativePlatform,
+        Default::default(),
         || false,
         |_, _| {},
     )

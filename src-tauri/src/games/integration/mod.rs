@@ -44,6 +44,7 @@ struct Inner {
     catalogue_stamp_pause:
         Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     cancel: AtomicBool,
+    assetto_setup_wake: Mutex<Option<Arc<osg_streams::NativeWake>>>,
     busy: AtomicBool,
     closed: AtomicBool,
     recovery_needed: AtomicBool,
@@ -118,6 +119,7 @@ impl GameIntegrationSetup {
                 dcs_discovery_watched: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
+                assetto_setup_wake: Mutex::new(None),
                 busy: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
                 changes: OnceLock::new(),
@@ -293,7 +295,7 @@ impl GameIntegrationSetup {
         // Closing always stops further work; an already reserved durable commit
         // finishes before the existing worker join returns.
         let _ = self.inner.cancel();
-        self.inner.cancel.store(true, Ordering::Release);
+        self.inner.wake_cancelled_setup();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
