@@ -253,11 +253,19 @@ impl Broker {
         if let Ok(epoch) = self.begin_observation() {
             self.observation_commits.insert(id.into(), epoch);
         }
+        let mut changed = false;
         if let Some(record) = self.games.get_mut(id) {
+            changed = record.token.is_some()
+                || record.preparation.is_some()
+                || record.observation.process.is_some()
+                || record.observation.error.as_deref() != Some(reason.as_str());
             record.token = None;
             record.preparation = None;
             record.observation.process = None;
             record.observation.error = Some(reason);
+        }
+        if changed {
+            self.changed();
         }
     }
     /// A late reader/preflight failure only retires its own still-current

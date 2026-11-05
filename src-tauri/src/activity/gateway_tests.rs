@@ -1,8 +1,8 @@
 use super::*;
 
-struct Discovery(Arc<Mutex<Result<Vec<PortInfo>,String>>>);
+struct Discovery(Arc<Mutex<Result<Vec<PortInfo>,String>>>,Arc<std::sync::atomic::AtomicUsize>);
 impl Provider for Discovery {
-    fn ports(&self)->Result<Vec<PortInfo>,String>{self.0.lock().unwrap().clone()}
+    fn ports(&self)->Result<Vec<PortInfo>,String>{self.1.fetch_add(1,std::sync::atomic::Ordering::SeqCst);self.0.lock().unwrap().clone()}
     fn adapter(&self,_:&str)->Arc<dyn Adapter>{panic!("Activity discovery cannot open hardware")}
 }
 struct Cached(Mutex<Value>);
@@ -18,10 +18,13 @@ fn page(manager:&GatewayManager,kind:&str)->Value{manager.activity.request(&json
 fn background_collector_logs_discovery_cached_presence_and_profile_changes_without_ui() {
     let root=crate::test_directory();let anchor=root.path().join("config.json");
     let discovery=Arc::new(Mutex::new(Ok(vec![])));
-    let manager=GatewayManager::with_options_at(Arc::new(Discovery(discovery.clone())),false,Some(anchor.clone()));
+    let enumerations=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let manager=GatewayManager::with_options_at(Arc::new(Discovery(discovery.clone(),enumerations.clone())),false,Some(anchor.clone()));
     manager.start_activity();manager.activity.flush().unwrap();
     assert_eq!(page(&manager,"cockpit_started")["total"],1);
+    assert_eq!(enumerations.load(std::sync::atomic::Ordering::SeqCst),0,"Activity must not enumerate native ports");
     *discovery.lock().unwrap()=Ok(vec![port()]);
+    manager.serial_topology.refresh(manager.provider.as_ref()).unwrap();
     assert_eq!(page(&manager,"gateway_discovered")["events"][0]["entityName"],"Gateway");
     let id="pico:OSG-PICO-AABBCCDD";
     let cached=Arc::new(Cached(Mutex::new(json!({"connected":true,"running":true,"modules":[{"id":"module-a","name":"Panel Module","connected":true}]}))));
@@ -33,8 +36,11 @@ fn background_collector_logs_discovery_cached_presence_and_profile_changes_witho
     assert_eq!(page(&manager,"profile_created")["total"],1,"Unchanged reads/polls cannot add duplicate changes");
     cached.0.lock().unwrap()["connected"]=json!(false);cached.0.lock().unwrap()["modules"][0]["connected"]=json!(false);
     assert_eq!(page(&manager,"gateway_offline")["total"],1);assert_eq!(page(&manager,"module_offline")["total"],1);
-    *discovery.lock().unwrap()=Err("Transient serial discovery failure".into());manager.controllers.shutdown();manager.companion_host.shutdown();manager.activity.flush().unwrap();
+    *discovery.lock().unwrap()=Err("Transient serial discovery failure".into());
+    manager.serial_topology.refresh(manager.provider.as_ref()).unwrap_err();
+    manager.controllers.shutdown();manager.companion_host.shutdown();manager.activity.flush().unwrap();
     assert_eq!(page(&manager,"gateway_offline")["total"],1,"An observation error must preserve known gateway state");
+    assert_eq!(enumerations.load(std::sync::atomic::Ordering::SeqCst),2,"Only the two explicit native discovery commits enumerate ports");
     manager.record_external_change("set_autostart",None,None,&json!({"enabled":false}),&json!({"enabled":true}),None,"cockpit");
     manager.record_external_change("mcp_settings_update",None,None,&Value::Null,&Value::Null,Some("Port 3000 is already in use."),"mcp");
     assert_eq!(page(&manager,"set_autostart")["total"],1);assert_eq!(page(&manager,"mcp_settings_update_failed")["events"][0]["source"],"mcp");

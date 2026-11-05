@@ -69,6 +69,55 @@ fn explicit_current_invalidation_fences_inflight_results_but_allows_fresh_eviden
     assert!(broker.validate(&token).is_err());
     assert!(broker.token("dcs").is_ok());
 }
+
+#[test]
+fn invalidation_wakes_only_when_a_visible_game_record_changes() {
+    let mut broker = Broker::default();
+    let changes = std::sync::Arc::new(crate::game_read_models::signals::Signal::default());
+    let activity = std::sync::Arc::new(osg_streams::NativeWake::default());
+    let resources = std::sync::Arc::new(osg_streams::NativeWake::default());
+    changes.watch_activity(&activity);
+    changes.watch_resources(&resources);
+    broker.watch_changes(changes.clone());
+
+    let activity_before_unknown = activity.observed();
+    let resources_before_unknown = resources.observed();
+    let initial_epoch = broker.observation_epoch;
+    broker.invalidate("unknown-game", "Process exited".into());
+    assert_eq!(activity.observed(), activity_before_unknown);
+    assert_eq!(resources.observed(), resources_before_unknown);
+    assert_eq!(broker.observation_epoch, initial_epoch + 1);
+    assert_eq!(broker.observation_commits.get("unknown-game"), Some(&broker.observation_epoch));
+
+    observe(&mut broker, "dcs", observed()).unwrap();
+    let activity_before = activity.observed();
+    let resources_before = resources.observed();
+    let epoch_before = broker.observation_epoch;
+    broker.invalidate("dcs", "Process exited".into());
+    assert_ne!(activity.observed(), activity_before);
+    assert_ne!(resources.observed(), resources_before);
+    assert_eq!(broker.observation_epoch, epoch_before + 1);
+    assert_eq!(broker.observation_commits.get("dcs"), Some(&broker.observation_epoch));
+
+    let activity_after_change = activity.observed();
+    let resources_after_change = resources.observed();
+    let epoch_after_change = broker.observation_epoch;
+    broker.invalidate("dcs", "Process exited".into());
+    assert_eq!(activity.observed(), activity_after_change);
+    assert_eq!(resources.observed(), resources_after_change);
+    assert_eq!(broker.observation_epoch, epoch_after_change + 1);
+
+    observe(&mut broker, "dcs", observed()).unwrap();
+    let proof = broker.preparation("dcs").unwrap().unwrap();
+    let activity_before_preparation = activity.observed();
+    let resources_before_preparation = resources.observed();
+    let epoch_before_preparation = broker.observation_epoch;
+    assert!(broker.invalidate_preparation(&proof, "Preparation failed".into()));
+    assert_ne!(activity.observed(), activity_before_preparation);
+    assert_ne!(resources.observed(), resources_before_preparation);
+    assert_eq!(broker.observation_epoch, epoch_before_preparation + 1);
+}
+
 #[test]
 fn invalid_or_exhausted_observation_tickets_cannot_grant_or_restore_authority() {
     let mut broker = Broker::default();

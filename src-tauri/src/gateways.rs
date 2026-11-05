@@ -437,6 +437,11 @@ impl GatewayManager {
         });
         let profile_closed = Arc::new(AtomicBool::new(false));
         let activity = crate::activity::Runtime::new(&anchor);
+        let activity_devices = activity.metadata_wake(crate::activity::metadata::Group::Devices);
+        system_inventory.watch_activity(&activity_devices);
+        serial_topology.watch_activity(&activity_devices);
+        games.read_model_signal().watch_activity(&activity.metadata_wake(crate::activity::metadata::Group::Games));
+        companion_host.watch_activity(&activity.metadata_wake(crate::activity::metadata::Group::Companions));
         let activity_session = activity.session_observer();
         activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(profile_session.lock().unwrap_or_else(|p|p.into_inner()).status());
         let profile_worker = native.then(|| {
@@ -480,6 +485,11 @@ impl GatewayManager {
         let usb_system_inventory = system_inventory.clone();
         if let Err(error) = module_usb.observe_inventory(&observations, native.then(|| profile_resources.projection_wake()), move || usb_system_inventory.changed()) {
             eprintln!("Cannot start USB inventory observations: {error}");
+        }
+        if native {
+            if let Err(error) = companion_host.hydrate_retained_metadata() {
+                eprintln!("Retained companion metadata unavailable: {error}");
+            }
         }
         if let Err(error) = companion_host.observe_presence(&observations) {
             eprintln!("Cannot start companion presence observations: {error}");
@@ -579,9 +589,11 @@ impl GatewayManager {
         }
         let library_observer = manager.profile_read_models.library_observer();
         let wake = manager.profile_automatic.wake.clone();
+        let activity_profiles = manager.activity.metadata_wake(crate::activity::metadata::Group::Profiles);
         manager.profiles.lock().unwrap_or_else(|p| p.into_inner()).observe_read_model(Arc::new(move |snapshot| {
             library_observer(snapshot);
             wake.notify();
+            activity_profiles.notify();
         }));
         let native_observer = manager.profile_read_models.native_observer();
         let wake = manager.profile_automatic.wake.clone();

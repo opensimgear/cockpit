@@ -1,7 +1,7 @@
 //! Supplemental system observation. No profile, acquisition or mutation is needed.
 use osg_virtual_controller::vjoy::{Slot, Status};
 use serde_json::{json, Value};
-use std::{sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::{SystemTime, UNIX_EPOCH}};
+use std::{sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::{SystemTime, UNIX_EPOCH}};
 
 const TOPIC: &str = "system.inventory";
 #[path = "system_inventory_associations.rs"]
@@ -16,6 +16,7 @@ pub(crate) struct Runtime {
     capture_gate: Mutex<()>,
     stopped: Arc<AtomicBool>,
     wake: Arc<osg_streams::NativeWake>,
+    activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     publisher: Mutex<Option<(crate::observations::Runtime, osg_streams::Publisher)>>,
 }
@@ -25,7 +26,7 @@ struct Snapshot {
 impl Runtime {
     pub(crate) fn new(native: bool) -> Self {
         Self { native, snapshot: Mutex::new(None), capture_gate: Mutex::new(()),
-            stopped: Arc::default(), wake: Arc::default(),
+            stopped: Arc::default(), wake: Arc::default(), activity_wake: Mutex::default(),
             worker: Mutex::new(None), publisher: Mutex::new(None) }
     }
     pub(crate) fn start(&self, capture: impl Fn() -> bool + Send + 'static) -> Result<(), String> {
@@ -64,7 +65,17 @@ impl Runtime {
     }
     pub(crate) fn changed(&self) {
         self.wake.notify();
+        self.notify_activity();
         if !self.native { self.publish(); }
+    }
+    pub(crate) fn watch_activity(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        wake.notify();
+    }
+    fn notify_activity(&self) {
+        if let Some(wake) = self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
     }
     pub(crate) fn wake(&self) -> &Arc<osg_streams::NativeWake> { &self.wake }
     fn publish(&self) {
@@ -147,6 +158,9 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) { self.shutdown(); }
 }
+#[cfg(test)]
+#[path = "system_inventory_activity_tests.rs"]
+mod activity_tests;
 fn page(value:&Value,offset:usize,limit:usize)->Result<Value,String> {
     let devices=value["hiddenDevices"].as_array().ok_or("Invalid native system inventory snapshot.")?;
     let associations=value["controllerAssociations"].as_array().cloned().unwrap_or_default();

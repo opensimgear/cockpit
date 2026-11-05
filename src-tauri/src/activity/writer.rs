@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 pub(super) fn persist(storage: &Result<Database,String>, pending: &mut VecDeque<NewActivityEvent>) -> Result<(),String> {
     let storage = storage.as_ref().map_err(Clone::clone)?;
@@ -12,11 +12,11 @@ pub(super) fn persist(storage: &Result<Database,String>, pending: &mut VecDeque<
 }
 pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Message>, lifecycle: mpsc::Receiver<observations::Batch>, registry:Arc<Mutex<reconcile::Reconciler>>, revision: &revision::Revision, wake: Arc<osg_streams::NativeWake>) {
     let _ = wake.bind_thread(std::thread::current());
-    let mut observe: Option<Observe> = None;
-    let mut previous = None;
+    let mut sources = BTreeMap::new();
     let mut pending = VecDeque::new();
     let mut last_prune = std::time::Instant::now();
-    let mut last_observation = std::time::Instant::now();
+    let mut retry_due: Option<std::time::Instant> = None;
+    let mut persistence_error = None;
     loop {
         // Observe the epoch before draining both queues. A producer racing the
         // drain advances it, so wait_scheduled refuses to sleep past that work.
@@ -24,6 +24,7 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
         let mut acknowledgements = vec![];
         let mut stop = false;
         let mut changed = false;
+        let mut changed_groups = 0;
         let mut drained = 0;
         while drained < 256 {
             let message = match receiver.try_recv() {
@@ -35,29 +36,37 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
             match message {
                 Message::Event(event) => {
                     changed=true;
+                    if let Some(group) = metadata::Group::for_event(&event.event_type) { changed_groups |= group.bit(); }
                     pending.push_back(event);
                 },
-                Message::Observe(source) => {let started=std::time::Instant::now();let snapshot=source();pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).observe(observations::Batch::events(capture::initial(&snapshot),&snapshot,started)));previous=Some(snapshot);observe=Some(source);},
+                Message::Observe(mut source) => {
+                    if let Some(batch) = source.take(true) {
+                        pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).observe(batch));
+                    }
+                    sources.insert(source.group, source);
+                },
                 Message::Flush(done) => acknowledgements.push(done),
                 Message::Stop => stop = true,
             }
         }
         for batch in lifecycle.try_iter(){pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).observe(batch));}
         pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).ready());
-        if changed || !acknowledgements.is_empty() || last_observation.elapsed() >= Duration::from_millis(750) {
-            if let Some(source) = &observe {
-                let started=std::time::Instant::now();
-                let mut snapshot = source();
-                if let Some(before)=&previous { snapshot.preserve_unavailable(before); }
-                if let Some(before) = previous.replace(snapshot.clone()) {
-                    let batch=observations::Batch::poll(&before,&snapshot,started);
-                    pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).observe(batch));
-                }
+        for source in sources.values_mut() {
+            let force = !acknowledgements.is_empty() || source.group.map_or(changed, |group| changed_groups & group.bit() != 0);
+            if let Some(batch) = source.take(force) {
+                pending.extend(registry.lock().unwrap_or_else(|p|p.into_inner()).observe(batch));
             }
-            last_observation = std::time::Instant::now();
         }
         let queued = pending.len();
-        let outcome = persist(&storage,&mut pending);
+        let now = std::time::Instant::now();
+        let outcome = if stop || !acknowledgements.is_empty() || retry_due.is_none_or(|due| now >= due) {
+            let outcome = persist(&storage,&mut pending);
+            persistence_error = outcome.as_ref().err().cloned();
+            // Retry only outstanding persistence. This deadline never captures
+            // metadata and cannot turn into a replacement acquisition timer.
+            retry_due = (outcome.is_err() && !pending.is_empty()).then(|| now + Duration::from_millis(750));
+            outcome
+        } else { Err(persistence_error.clone().expect("scheduled persistence retry has an error")) };
         if pending.len() < queued { revision.changed(); }
         for done in acknowledgements { let _ = done.send(outcome.clone()); }
         if last_prune.elapsed() >= Duration::from_secs(3600) {
@@ -73,9 +82,8 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
         // Do not park when the bounded main-channel drain may have left work.
         if drained < 256 {
             let now=std::time::Instant::now();
-            let observation_due=last_observation+Duration::from_millis(750);
             let prune_due=last_prune+Duration::from_secs(3600);
-            let deadline=observation_due.min(prune_due);
+            let deadline=retry_due.map_or(prune_due, |due| due.min(prune_due));
             wake.wait_scheduled(observed,Some(deadline.saturating_duration_since(now)));
         }
     }

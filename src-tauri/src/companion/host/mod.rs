@@ -55,6 +55,7 @@ pub struct Runtime {
     stopped: AtomicBool,
     provider: Arc<CompanionProvider>,
     metadata: OnceLock<Metadata>,
+    retained_metadata_ready: AtomicBool,
     metadata_init: Mutex<()>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
@@ -64,6 +65,7 @@ pub struct Runtime {
     detection: detection::Detection,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     resource_inventory_wake: Mutex<Weak<osg_streams::NativeWake>>,
+    activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
 }
@@ -89,6 +91,7 @@ impl Runtime {
             stopped: AtomicBool::new(false),
             provider,
             metadata: OnceLock::new(),
+            retained_metadata_ready: AtomicBool::new(false),
             metadata_init: Mutex::new(()),
             services: OnceLock::new(),
             upload: Mutex::new(None),
@@ -98,6 +101,7 @@ impl Runtime {
             detection: detection::Detection::default(),
             panel_operation_wakes: Mutex::new(Vec::new()),
             resource_inventory_wake: Mutex::default(),
+            activity_wake: Mutex::default(),
             #[cfg(test)]
             profile_wire_fixture: false,
         }
@@ -109,6 +113,13 @@ impl Runtime {
         let Some(database)=osg_persistence::Database::existing_for_namespace(&path.join("companion-host-state.dpapi"))? else{return Ok(None)};
         if database.read("secrets","companion-host")?.is_none()&&database.read("companion","publications")?.is_none(){return Ok(None);}
         self.metadata(false).map(Some)
+    }
+    /// Startup owns retained-state I/O; Activity only reads the resulting cache.
+    pub(crate) fn hydrate_retained_metadata(&self) -> Result<(), String> {
+        self.existing_metadata()?;
+        self.retained_metadata_ready.store(true, Ordering::SeqCst);
+        self.notify_activity();
+        Ok(())
     }
     fn metadata(&self, create: bool) -> Result<&Metadata, String> {
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
@@ -130,7 +141,33 @@ impl Runtime {
         self.register_panel_operation_wakes(&metadata.hub);
         self.register_presence_wake(&metadata.hub);
         self.register_resource_inventory_wake(&metadata.hub);
+        self.register_activity_wake(&metadata.hub);
+        self.notify_activity();
         Ok(metadata)
+    }
+    pub(crate) fn watch_activity(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        if let Some(metadata) = self.metadata.get() {
+            self.register_activity_wake(&metadata.hub);
+        }
+        wake.notify();
+    }
+    fn register_activity_wake(&self, hub: &Hub) {
+        let wake = {
+            let mut watch = self.activity_wake.lock().unwrap_or_else(|p| p.into_inner());
+            let wake = watch.upgrade();
+            if wake.is_none() { *watch = Weak::new(); }
+            wake
+        };
+        if let Some(wake) = wake {
+            hub.observe_presence(wake.clone());
+            hub.observe_record_changes(wake);
+        }
+    }
+    fn notify_activity(&self) {
+        if let Some(wake) = self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
     }
     pub(crate) fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.resource_inventory_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
@@ -369,6 +406,13 @@ impl Runtime {
     }
     pub(crate) fn resource_companions(&self) -> Result<Vec<osg_companion_service::ResourceCompanion>,String> {
         Ok(self.existing_metadata()?.map_or_else(Vec::new,|metadata|metadata.hub.resource_companions()))
+    }
+    /// Unavailable until startup has inspected retained state. Never initializes
+    /// metadata or touches storage, including when the successful result is empty.
+    pub(crate) fn cached_resource_companions(&self) -> Option<Vec<osg_companion_service::ResourceCompanion>> {
+        if self.stopped.load(Ordering::SeqCst) { return None; }
+        if let Some(metadata) = self.metadata.get() { return Some(metadata.hub.resource_companions()); }
+        self.retained_metadata_ready.load(Ordering::SeqCst).then(Vec::new)
     }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
         self.metadata.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?

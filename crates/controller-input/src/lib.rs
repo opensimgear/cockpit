@@ -1,6 +1,7 @@
 //! Native input service shared by desktop and browser development transports.
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod capture;
+mod cached_sources;
 pub mod inventory;
 #[cfg(target_os = "linux")]
 mod linux;

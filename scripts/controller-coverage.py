@@ -49,6 +49,7 @@ def main():
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
     sources = [root / 'crates/controller-input/src/lib.rs', root / 'crates/controller-input/src/registry.rs']
+    sources.append(root / 'crates/controller-input/src/cached_sources.rs')
     # Keep each extracted production module individually accountable; tests are
     # excluded rather than allowed to dilute the per-module coverage floor.
     sources.extend(path for path in sorted((root / 'crates/controller-input/src/registry').rglob('*.rs'))

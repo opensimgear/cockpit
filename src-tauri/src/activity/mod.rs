@@ -6,6 +6,7 @@ mod diagnostics;
 mod messages;
 mod capture;
 mod writer;
+pub(crate) mod metadata;
 mod revision;
 mod session;
 mod inventory;
@@ -27,7 +28,7 @@ use serde_json::{json, Value};
 use std::{path::Path, sync::{mpsc, Arc, Mutex}, thread::JoinHandle, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 type Observe = Box<dyn Fn() -> Snapshot + Send>;
-enum Message { Event(NewActivityEvent), Observe(Observe), Flush(mpsc::Sender<Result<(),String>>), Stop }
+enum Message { Event(NewActivityEvent), Observe(metadata::Source), Flush(mpsc::Sender<Result<(),String>>), Stop }
 struct MainSender { sender: mpsc::SyncSender<Message>, wake: Arc<osg_streams::NativeWake> }
 impl MainSender {
     fn send(&self,message:Message)->Result<(),mpsc::SendError<Message>> {let result=self.sender.send(message);if result.is_ok(){self.wake.notify();}result}
@@ -49,6 +50,7 @@ pub(crate) struct Runtime {
     registry:Arc<Mutex<reconcile::Reconciler>>,
     revision: Arc<revision::Revision>,
     wake: Arc<osg_streams::NativeWake>,
+    metadata_wakes: metadata::Signals,
 }
 pub(crate) fn event(category: &str, kind: &str, level: &str, message: String, id: Option<String>, name: Option<String>) -> NewActivityEvent {
     NewActivityEvent { event_key:uuid::Uuid::new_v4().to_string(),occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64,
@@ -70,15 +72,27 @@ impl Runtime {
         let writer_revision = revision.clone();
         let writer_wake=wake.clone();
         let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry,&writer_revision,writer_wake)).expect("start native activity worker");
-        Self { database, sender:MainSender{sender,wake:wake.clone()}, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision,wake }
+        let metadata_wakes = metadata::Signals::new(wake.clone());
+        Self { database, sender:MainSender{sender,wake:wake.clone()}, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision,wake,metadata_wakes }
     }
     pub(crate) fn observe_revision(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
         self.database.as_ref().map_err(Clone::clone)?;
         self.revision.observe(observations)
     }
+    pub(crate) fn metadata_wake(&self, group: metadata::Group) -> Arc<osg_streams::NativeWake> {
+        self.metadata_wakes.get(group).clone()
+    }
+    pub(crate) fn notify_metadata(&self, group: metadata::Group) { self.metadata_wakes.get(group).notify(); }
+    pub(crate) fn observe_group(&self, group: metadata::Group, source: impl Fn() -> Snapshot + Send + 'static) {
+        self.register_source(metadata::Source::new(Some(group), self.metadata_wake(group), Box::new(source)));
+    }
+    #[cfg(test)]
     pub(crate) fn observe(&self, source: impl Fn() -> Snapshot + Send + 'static) {
+        self.register_source(metadata::Source::new(None, Arc::new(osg_streams::NativeWake::child(self.wake.clone())), Box::new(source)));
+    }
+    fn register_source(&self, source: metadata::Source) {
         if !self.started.swap(true,std::sync::atomic::Ordering::AcqRel) {let _=self.sender.send(Message::Event(event("system","cockpit_started","info","Cockpit native services started.".into(),None,Some("Cockpit".into()))));}
-        let _ = self.sender.send(Message::Observe(Box::new(source)));
+        let _ = self.sender.send(Message::Observe(source));
     }
     #[cfg(test)]
     pub(crate) fn audit(&self, request: &Value, response: &Value) -> bool {

@@ -9,6 +9,7 @@ pub(super) struct SerialTopology {
     refresh_gate: Mutex<()>,
     current: Mutex<Option<Ports>>,
     inventory_wake: Mutex<Weak<NativeWake>>,
+    activity_wake: Mutex<Weak<NativeWake>>,
 }
 
 #[cfg(test)]
@@ -16,6 +17,49 @@ mod tests {
     use super::*;
     use crate::gateways::Adapter;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn activity_and_inventory_observe_only_changed_cached_results_with_weak_lifetimes() {
+        struct SerialProvider(Mutex<Ports>);
+        impl Provider for SerialProvider {
+            fn ports(&self) -> Ports { self.0.lock().unwrap().clone() }
+            fn adapter(&self, _: &str) -> Arc<dyn Adapter> {
+                panic!("Metadata observation cannot open a gateway");
+            }
+        }
+        let topology = SerialTopology::default();
+        let provider = SerialProvider(Mutex::new(Ok(vec![])));
+        let inventory = Arc::new(NativeWake::default());
+        let activity = Arc::new(NativeWake::default());
+        topology.watch_inventory(&inventory);
+        topology.watch_activity(&activity);
+        assert_eq!((inventory.observed(), activity.observed()), (1, 1));
+        assert_eq!(Arc::strong_count(&activity), 1);
+        assert!(topology.cached().is_err());
+        topology.refresh(&provider).unwrap();
+        assert_eq!((inventory.observed(), activity.observed()), (2, 2));
+        topology.refresh(&provider).unwrap();
+        assert_eq!((inventory.observed(), activity.observed()), (2, 2));
+        *provider.0.lock().unwrap() = Err("unavailable".into());
+        assert!(topology.refresh(&provider).is_err());
+        assert_eq!(topology.cached().unwrap_err(), "unavailable");
+        assert_eq!((inventory.observed(), activity.observed()), (3, 3));
+        assert!(topology.refresh(&provider).is_err());
+        assert_eq!((inventory.observed(), activity.observed()), (3, 3));
+        *provider.0.lock().unwrap() = Err("different failure".into());
+        assert!(topology.refresh(&provider).is_err());
+        assert_eq!((inventory.observed(), activity.observed()), (4, 4));
+        let replacement = Arc::new(NativeWake::default());
+        topology.watch_activity(&replacement);
+        *provider.0.lock().unwrap() = Ok(vec![]);
+        topology.refresh(&provider).unwrap();
+        assert_eq!((inventory.observed(), activity.observed(), replacement.observed()), (5, 4, 2));
+        drop(replacement);
+        *provider.0.lock().unwrap() = Err("gone".into());
+        assert!(topology.refresh(&provider).is_err());
+        assert!(topology.activity_wake.lock().unwrap().upgrade().is_none());
+        assert_eq!(inventory.observed(), 6);
+    }
 
     #[test]
     fn usb_inventory_reuses_discovery_and_observes_failure_and_recovery() {
@@ -71,6 +115,11 @@ mod tests {
 }
 
 impl SerialTopology {
+    pub(super) fn watch_activity(&self, wake: &Arc<NativeWake>) {
+        *self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        wake.notify();
+    }
+
     pub(super) fn watch_inventory(&self, wake: &Arc<NativeWake>) {
         *self.inventory_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
         wake.notify();
@@ -87,6 +136,9 @@ impl SerialTopology {
             *current = Some(result.clone());
             drop(current);
             if let Some(wake) = self.inventory_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+                wake.notify();
+            }
+            if let Some(wake) = self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
                 wake.notify();
             }
         }
