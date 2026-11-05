@@ -65,3 +65,24 @@ fn watcher_registry_is_weak_deduplicated_and_bounded() {
     assert_eq!(watchers[MAX_WATCHERS].observed(), 0);
     assert_eq!(cache.snapshot.lock().unwrap().wakes.len(), MAX_WATCHERS);
 }
+
+#[test]
+fn resource_wake_tracks_publication_identity_without_following_renewals() {
+    let mut state = json!({
+        "connected": true, "publication": {"phase": "owned", "leaseId": 7, "expiresAtMs": 5000},
+        "modules": [{"id": "panel", "hasInput": false}]
+    });
+    let cache = Cache::new(state.clone());
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    cache.watch_inventory(&wake);
+
+    state["publication"]["expiresAtMs"] = json!(6000);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 0);
+    state["publication"]["leaseId"] = json!(8);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 1);
+    state["modules"][0]["hasInput"] = json!(true);
+    cache.commit(state, BTreeMap::new());
+    assert_eq!(wake.observed(), 2);
+}

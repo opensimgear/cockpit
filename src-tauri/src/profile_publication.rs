@@ -376,6 +376,7 @@ fn open_receipt(receipt: &Receipt, owner: &RunOwner) -> Result<Cleanup, String> 
     Ok(value)
 }
 trait Io: Send + Sync {
+    fn watch_inventory(&self, _gateway: &str, _wake: &Arc<osg_streams::NativeWake>) {}
     fn cached(&self, gateway: &str) -> Result<Value, String>;
     fn request(
         &self,
@@ -388,6 +389,9 @@ struct NativeIo {
     control_epoch: Option<(Arc<AtomicU64>, u64)>,
 }
 impl Io for NativeIo {
+    fn watch_inventory(&self, gateway: &str, wake: &Arc<osg_streams::NativeWake>) {
+        self.panels.watch_publication_inventory(&[gateway].into(), wake);
+    }
     fn cached(&self, g: &str) -> Result<Value, String> {
         self.panels.can_snapshot(g)
     }
@@ -414,7 +418,7 @@ pub(crate) struct Status {
     pub error: Option<String>,
 }
 struct Shared {
-    wake: osg_streams::NativeWake,
+    wake: Arc<osg_streams::NativeWake>,
     start: AtomicBool,
     withdrawn: AtomicBool,
     authority: Arc<AtomicBool>,
@@ -424,7 +428,7 @@ struct Shared {
 }
 fn shared(recovery: bool) -> Arc<Shared> {
     Arc::new(Shared {
-        wake: osg_streams::NativeWake::default(),
+        wake: Arc::default(),
         start: AtomicBool::new(false),
         withdrawn: AtomicBool::new(false),
         authority: Arc::new(AtomicBool::new(false)),
@@ -894,6 +898,7 @@ fn drive(
         }
         shared.wake.wait_scheduled(observed, None);
     }
+    io.watch_inventory(&value.gateway, &shared.wake);
     let mut error = None;
     let mut state = io.cached(&value.gateway).unwrap_or(Value::Null);
     let mut released = false;

@@ -8,7 +8,8 @@ pub(super) fn inventory_changed(before: &Value, after: &Value) -> bool {
         "canProtocol", "panelStreamSupported", "layoutPending", "publicationRevision",
         "controllerPublicationOverride",
     ]) || fields_changed(&before["publication"], &after["publication"], &[
-        "phase", "outcome", "expectedReconnect",
+        "phase", "outcome", "leaseId", "transition", "claimRevision", "targetMask",
+        "enabledMask", "expectedReconnect",
     ]) {
         return true;
     }
@@ -18,7 +19,7 @@ pub(super) fn inventory_changed(before: &Value, after: &Value) -> bool {
                 || before_modules.iter().zip(after_modules).any(|(old, new)| {
                     fields_changed(old, new, &[
                         "id", "name", "node", "sourceNode", "lease", "boot", "online",
-                        "canConfigure", "configurationGeneration", "buttonCount", "axisCount",
+                        "canConfigure", "configurationGeneration", "buttonCount", "axisCount", "hasInput",
                         "neutral", "profile", "directUsb", "published", "publicationSlot",
                         "publicationReportId", "configuredEnabled", "configuredDescriptorIndex",
                     ]) || new["id"].as_str().is_some_and(|id| {
