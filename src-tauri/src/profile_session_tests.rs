@@ -125,9 +125,9 @@ impl Host for Fake {
     fn service_interval(&self, _: &OwnedRun) -> Option<std::time::Duration> {
         (!self.0.lock().unwrap().internal).then_some(std::time::Duration::from_millis(5))
     }
-    fn peripheral_change(&self,owner:&RunOwner)->Option<String> {
+    fn peripheral_change(&self,owner:&RunOwner)->Result<Option<String>, ()> {
         let probe=self.0.lock().unwrap();
-        (probe.owner.as_ref()==Some(owner)).then(||probe.returned_peripheral.clone()).flatten()
+        Ok((probe.owner.as_ref()==Some(owner)).then(||probe.returned_peripheral.clone()).flatten())
     }
     fn discard_preparation(&mut self, owner: &RunOwner) {
         let mut probe=self.0.lock().unwrap();

@@ -134,7 +134,7 @@ fn reconnect_trigger_requires_the_assigned_native_identity_and_contract_and_is_s
     let owner = RunOwner { session: uuid::Uuid::new_v4().to_string(), generation: 1, profile_id: candidate.document.id.clone(), profile_revision: candidate.document.revision, game_id: None };
     let prepared = fresh.prepare(&candidate, &owner).unwrap();
     assert!(prepared.admission.optional_unavailable.is_empty());
-    assert!(fresh.peripheral_change(&owner).is_none(), "A freshly admitted run must not repeatedly reclaim the same peripheral");
+    assert!(fresh.peripheral_change(&owner) == Ok(None), "A freshly admitted run must not repeatedly reclaim the same peripheral");
     fresh.discard_preparation(&owner);
     coordinator.stop().unwrap();
 }

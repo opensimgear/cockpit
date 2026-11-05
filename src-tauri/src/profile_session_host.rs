@@ -1306,9 +1306,6 @@ impl Host for NativeProfileHost {
         })
     }
     fn supports_launch_hold(&self) -> bool { true }
-    fn needs_peripheral_recheck(&self, owner: &RunOwner) -> bool {
-        self.prepared.get(&key(owner)).is_some_and(|state| !state.unavailable_peripherals.is_empty())
-    }
     fn vehicle_change(&self, owner:&RunOwner) -> Option<String> {
         let state=self.prepared.get(&key(owner))?;
         if state.source_document.vehicle_tabs.is_empty(){return None;}
@@ -1320,12 +1317,16 @@ impl Host for NativeProfileHost {
             .find(|tab|tab.game_id==game_id&&tab.vehicle_id==vehicle_id).map(|tab|tab.id.clone());
         (selection!=state.vehicle_selection || state.vehicle_paused).then(||selection.unwrap_or_else(||"base".into()))
     }
-    fn peripheral_change(&self, owner: &RunOwner) -> Option<String> {
-        let state = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner)?;
-        if state.unavailable_peripherals.is_empty() || state.vehicle_paused { return None; }
+    fn peripheral_change(&self, owner: &RunOwner) -> Result<Option<String>, ()> {
+        let Some(state) = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner) else { return Ok(None); };
+        if state.unavailable_peripherals.is_empty() || state.vehicle_paused { return Ok(None); }
         let assignments = state.assignments.iter().filter(|assignment| state.unavailable_peripherals.contains_key(&assignment.resource_id)).cloned().collect::<Vec<_>>();
-        let (snapshot, preparations) = self.resources.try_snapshot_for_preparation(assignments).ok()??;
-        if snapshot.read_only { return None; }
+        let (snapshot, preparations) = match self.resources.try_snapshot_for_preparation(assignments) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return Err(()),
+            Err(_) => return Ok(None),
+        };
+        if snapshot.read_only { return Ok(None); }
         let mut returned = vec![];
         for assignment in &snapshot.assignments {
             if state.unavailable_peripherals.get(&assignment.resource_id) != Some(&assignment.source_id) { continue; }
@@ -1352,11 +1353,11 @@ impl Host for NativeProfileHost {
             returned.push(json!([assignment.resource_id,assignment.source_id,resource.summary.generation,resource.summary.capability_revision,
                 resource.summary.connections.iter().map(|connection|(&connection.route.id,&connection.route.provider_generation)).collect::<Vec<_>>(),assignment.ports]));
         }
-        if returned.is_empty() { return None; }
+        if returned.is_empty() { return Ok(None); }
         // Only stable identity/capability/route generations participate. Fresh
         // pin nonces and global discovery revisions never trigger a takeover.
         use sha2::{Digest, Sha256};
-        Some(format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(&returned).ok()?)))
+        Ok(serde_json::to_vec(&returned).ok().map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes))))
     }
     fn vehicle_switch_failed(&mut self,owner:&RunOwner,message:&str) {
         if let Some(state)=self.prepared.get_mut(&key(owner)){state.vehicle_error=Some(message.into());}

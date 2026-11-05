@@ -205,8 +205,7 @@ pub(crate) trait Host: Send {
     fn vehicle_switch_failed(&mut self, _: &RunOwner, _: &str) {}
     /// A stable native identity/readiness change can rebind a peripheral that
     /// was absent at activation. Ordinary inventory revisions are not triggers.
-    fn peripheral_change(&self, _: &RunOwner) -> Option<String> { None }
-    fn needs_peripheral_recheck(&self, _: &RunOwner) -> bool { false }
+    fn peripheral_change(&self, _: &RunOwner) -> Result<Option<String>, ()> { Ok(None) }
     fn supports_launch_hold(&self) -> bool { false }
     fn hold_health(&mut self, _: &OwnedRun) -> Result<Health, String> {
         Err("This native adapter cannot renew a pending game launch.".into())
@@ -347,11 +346,13 @@ impl<H: Host> Coordinator<H> {
         Ok(candidate)
     }
     pub(crate) fn peripheral_change(&self) -> Option<(RunOwner,String)> {
-        let owner=self.status.owner.as_ref().filter(|_|matches!(self.status.state,State::Running|State::Degraded))?;
-        self.host.peripheral_change(owner).map(|change|(owner.clone(),change))
+        self.probe_peripheral_change().ok().flatten()
     }
-    pub(crate) fn needs_peripheral_recheck(&self, owner: &RunOwner) -> bool {
-        self.validates(owner) && self.host.needs_peripheral_recheck(owner)
+    pub(crate) fn probe_peripheral_change(&self) -> Result<Option<(RunOwner,String)>, ()> {
+        let Some(owner) = self.status.owner.as_ref().filter(|owner| self.validates(owner)) else {
+            return Ok(None);
+        };
+        self.host.peripheral_change(owner).map(|change| change.map(|change| (owner.clone(), change)))
     }
     pub(crate) fn peripheral_candidate(&self,owner:&RunOwner,epoch:u64)->Result<Candidate,String> {
         if !self.validates(owner){return Err("The active profile changed before reconnecting peripherals.".into());}

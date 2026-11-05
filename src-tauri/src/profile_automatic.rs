@@ -324,26 +324,33 @@ impl GatewayManager {
     /// Only peripherals captured as absent may request a native rebind. The
     /// running source stays immutable; fresh ownership and baselines use the
     /// same staged handoff as Apply and vehicle changes.
-    fn poll_peripheral_profile(&self) {
-        if self.closed.load(Ordering::Acquire)||self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return;}
-        let changed=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).peripheral_change();
-        let Some((owner,fingerprint))=changed else{return;};
+    fn poll_peripheral_profile(&self) -> bool {
+        if self.closed.load(Ordering::Acquire)||self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return false;}
+        let changed=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).probe_peripheral_change();
+        let (owner, fingerprint) = match changed {
+            Ok(Some(change)) => change,
+            Ok(None) => return false,
+            Err(()) => return true,
+        };
         {
             let state=self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner());
-            if peripheral_retry_blocked(state.last_peripheral_attempt.as_ref(), &owner, std::time::Instant::now()) {return;}
+            if peripheral_retry_blocked(state.last_peripheral_attempt.as_ref(), &owner, std::time::Instant::now()) {return false;}
         }
         let previous=self.profile_pending.fetch_add(1,Ordering::AcqRel);
         let _pending=PendingProfileApply(&self.profile_pending);
-        if previous!=0{return;}
+        if previous!=0{return false;}
+        let mut registry_busy = false;
         let captured=(|| {
             let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
             if self.closed.load(Ordering::Acquire)||self.profile_pending.load(Ordering::Acquire)!=1||self.profile_automatic.pending(){return Err("Peripheral reconnection was cancelled by a newer native control.".to_owned());}
             let coordinator=self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
-            if coordinator.peripheral_change()!=Some((owner.clone(),fingerprint.clone())){return Err("Peripheral readiness changed before reconnection.".into());}
+            let readiness = coordinator.probe_peripheral_change();
+            registry_busy = readiness.is_err();
+            if readiness != Ok(Some((owner.clone(),fingerprint.clone()))){return Err("Peripheral readiness changed before reconnection.".into());}
             let epoch=self.profile_admission_epoch.load(Ordering::Acquire);
             coordinator.peripheral_candidate(&owner,epoch)
         })();
-        let Ok(candidate)=captured else{return;};
+        let Ok(candidate)=captured else{return registry_busy;};
         let epoch=candidate.admission_epoch.unwrap();
         let activation_id=std::cell::RefCell::new(None);
         let result=crate::profile_session::apply_staged_admitted_checked(
@@ -368,6 +375,7 @@ impl GatewayManager {
             &result,
             std::time::Instant::now(),
         );
+        false
     }
     /// Vehicle selection follows the running profile in both Manual and
     /// Automatic mode. Reuse the same guarded, one-use handoff as a saved edit.
@@ -855,9 +863,9 @@ impl GatewayManager {
                     };
                     let cycle_started = std::time::Instant::now();
                     manager.poll_vehicle_profile();
-                    manager.poll_peripheral_profile();
+                    let registry_busy = manager.poll_peripheral_profile();
                     manager.poll_automatic();
-                    let wait = manager.automatic_reconciliation_wait(cycle_started, std::time::Instant::now());
+                    let wait = manager.automatic_reconciliation_wait(cycle_started, std::time::Instant::now(), registry_busy);
                     drop(manager);
                     if !closed.load(Ordering::Acquire) {
                         wake.wait_scheduled(observed, wait);
@@ -867,12 +875,8 @@ impl GatewayManager {
             .ok();
     }
 
-    fn automatic_reconciliation_wait(&self, cycle_started: std::time::Instant, now: std::time::Instant) -> Option<std::time::Duration> {
-        let (owner, needs_fallback) = {
-            let session = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
-            let owner = session.status().owner.as_ref()?;
-            (owner.clone(), session.needs_peripheral_recheck(owner))
-        };
+    fn automatic_reconciliation_wait(&self, cycle_started: std::time::Instant, now: std::time::Instant, registry_busy: bool) -> Option<std::time::Duration> {
+        let owner = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status().owner.clone()?;
         let state = self.profile_automatic.state.lock().unwrap_or_else(|p| p.into_inner());
         let vehicle = state.last_vehicle_attempt.as_ref()
             .filter(|(previous, _, _)| previous == &owner)
@@ -885,7 +889,7 @@ impl GatewayManager {
         [vehicle, peripheral].into_iter().flatten()
             .filter(|deadline| *deadline > cycle_started)
             .map(|deadline| deadline.saturating_duration_since(now))
-            .chain(needs_fallback.then_some(std::time::Duration::from_millis(500)))
+            .chain(registry_busy.then_some(std::time::Duration::from_millis(500)))
             .min()
     }
 }
