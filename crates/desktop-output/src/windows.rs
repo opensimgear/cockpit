@@ -9,7 +9,7 @@ use windows_sys::Win32::{
         GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
         TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
     },
-    System::{StationsAndDesktops::*, SystemInformation::GetTickCount64, Threading::*},
+    System::{StationsAndDesktops::*, Threading::*},
     UI::{
         Input::KeyboardAndMouse::*,
         WindowsAndMessaging::{
@@ -28,9 +28,9 @@ impl Drop for Handle {
 fn failure(context: &str) -> String {
     format!("{context}: {}", std::io::Error::last_os_error())
 }
-pub fn now_us() -> u64 {
-    unsafe { GetTickCount64().saturating_mul(1000) }
-}
+#[path = "windows/clock.rs"]
+mod clock;
+pub use clock::now_us;
 fn open(pid: u32) -> Result<Handle, String> {
     let h = unsafe {
         OpenProcess(
