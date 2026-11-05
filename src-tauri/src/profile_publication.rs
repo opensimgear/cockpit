@@ -414,6 +414,7 @@ pub(crate) struct Status {
     pub error: Option<String>,
 }
 struct Shared {
+    wake: osg_streams::NativeWake,
     start: AtomicBool,
     withdrawn: AtomicBool,
     authority: Arc<AtomicBool>,
@@ -423,6 +424,7 @@ struct Shared {
 }
 fn shared(recovery: bool) -> Arc<Shared> {
     Arc::new(Shared {
+        wake: osg_streams::NativeWake::default(),
         start: AtomicBool::new(false),
         withdrawn: AtomicBool::new(false),
         authority: Arc::new(AtomicBool::new(false)),
@@ -639,6 +641,7 @@ impl Overrides {
         for slot in &self.slots {
             slot.shared.authority.store(true, Ordering::Release);
             slot.shared.start.store(true, Ordering::Release);
+            slot.shared.wake.notify();
         }
         Ok(())
     }
@@ -688,6 +691,7 @@ impl Overrides {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .active = false;
+            slot.shared.wake.notify();
         }
     }
     pub(crate) fn stop(&mut self) -> Result<Status, String> {
@@ -714,6 +718,7 @@ impl Overrides {
             }
             slot.shared.authority.store(false, Ordering::Release);
             slot.shared.stop.store(true, Ordering::Release);
+            slot.shared.wake.notify();
             // A prepared actor with no dispatched worker cannot own any effect.
             // Changed hardware must not make discarding that inert preparation
             // invent cleanup authority or block unrelated restoration.
@@ -737,6 +742,7 @@ impl Drop for Overrides {
         for slot in &self.slots {
             slot.shared.authority.store(false, Ordering::Release);
             slot.shared.stop.store(true, Ordering::Release);
+            slot.shared.wake.notify();
         }
     }
 }
@@ -880,8 +886,13 @@ fn drive(
     recovery: bool,
     update: impl Fn(Status),
 ) -> Status {
-    while !shared.start.load(Ordering::Acquire) && !shared.stop.load(Ordering::Acquire) {
-        thread::sleep(Duration::from_millis(5));
+    shared.wake.bind_thread(thread::current()).expect("A publication slot owns one worker");
+    loop {
+        let observed = shared.wake.observed();
+        if shared.start.load(Ordering::Acquire) || shared.stop.load(Ordering::Acquire) {
+            break;
+        }
+        shared.wake.wait_scheduled(observed, None);
     }
     let mut error = None;
     let mut state = io.cached(&value.gateway).unwrap_or(Value::Null);
@@ -918,6 +929,7 @@ fn drive(
     let mut active = false;
     let mut delivery_lease: Option<Vec<Value>> = None;
     loop {
+        let observed = shared.wake.observed();
         match request(
             io.as_ref(),
             &value,
@@ -1113,7 +1125,7 @@ fn drive(
             cleanup_complete: false,
             error: error.clone(),
         });
-        thread::sleep(Duration::from_millis(20));
+        shared.wake.wait(observed, Duration::from_millis(20));
     }
 }
 
