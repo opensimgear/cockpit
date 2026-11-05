@@ -61,6 +61,9 @@ def main():
     module_names.extend(['activity/mod.rs', 'activity/capture.rs', 'activity/audit.rs', 'activity/changes.rs', 'activity/context.rs', 'activity/messages.rs', 'activity/diagnostics.rs', 'activity/gateway.rs', 'activity/writer.rs', 'activity/session.rs', 'activity/inventory.rs', 'activity/games.rs', 'activity/integration.rs', 'activity/effects.rs', 'activity/observations.rs', 'activity/reconcile.rs', 'activity/scopes.rs'])
     module_names.extend(['activity/metadata.rs', 'activity/sources.rs', 'system_inventory.rs',
                          'gateways/serial_topology.rs', 'gateways/workspace/publisher.rs', 'companion/host/mod.rs'])
+    module_names.extend(['profile_session/companion_scheduling.rs', 'profile_session/companion_feedback.rs',
+                         'profile_session/companion_pending.rs', 'profile_session/companion_rebind.rs',
+                         'profile_session_companions.rs', 'profile_session_companion_host.rs'])
     module_names.extend(['dcs_physics.rs', 'dcs_physics/parser.rs', 'dcs_physics/session.rs', 'dcs_physics/source.rs', 'dcs_physics/retained.rs'])
     module_names.extend(['dcs_bios/transport.rs'])
     module_names.append('game_telemetry/capture.rs')

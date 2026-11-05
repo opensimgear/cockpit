@@ -1,6 +1,8 @@
 //! Native profile subscriptions reuse the retained companion feed and its loss,
 //! bounded queue and generation rules. They do not create legacy mapping roles.
 use super::*;
+#[path = "companion_native/scheduling.rs"]
+mod scheduling;
 
 #[derive(Clone, Debug)]
 pub struct NativeSelection {
@@ -158,7 +160,7 @@ impl NativeFeed {
         if !neutral { return Ok(None); }
         let mut frames = vec![];
         for id in ids {
-            let instance = &state.instances[&id];
+            let instance = state.instances.get(&id).ok_or("The companion source was removed.")?;
             let (generation, seen, values) = (instance.generation, instance.last_seen_us, instance.values.clone());
             let queue = state.subscriptions.get_mut(&self.feed.subscription).unwrap().sources.get_mut(&id).unwrap();
             queue.frames.clear(); queue.loss = None; queue.sequence = 1;
@@ -189,20 +191,7 @@ impl NativeFeed {
     pub fn baseline_audited(&mut self) -> Result<Vec<NativeFrame>, String> {
         let frames = self.feed.initial_audited()?;
         self.feed.require_live_ready()?;
-        let state = self
-            .feed
-            .provider
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some(subscription) = state.subscriptions.get(&self.feed.subscription) {
-            for id in subscription.sources.keys() {
-                let instance = &state.instances[id];
-                self.refreshed
-                    .insert(id.clone(), (instance.generation, instance.last_seen_us));
-            }
-        }
-        Ok(frames)
+        self.accept_baseline(frames)
     }
     pub fn poll(&mut self) -> Result<Vec<Frame>, String> {
         Ok(self
@@ -213,6 +202,7 @@ impl NativeFeed {
     }
     pub fn poll_audited(&mut self) -> Result<Vec<NativeFrame>, String> {
         let mut frames = self.feed.drain_audited();
+        let now = self.feed.provider.now();
         let mut state = self
             .feed
             .provider
@@ -228,6 +218,32 @@ impl NativeFeed {
             .cloned()
             .collect::<Vec<_>>();
         for id in ids {
+            // Unregister queues a loss before removing the descriptor. Deliver
+            // that loss, then fail clearly on later attempts without fabricating
+            // a replacement baseline.
+            if !state.instances.contains_key(&id) {
+                let delivered_loss = frames.iter().any(|frame| {
+                    frame.frame.source.id == id
+                        && frame.frame.reason == osg_mapping::engine::Reason::Disconnect
+                });
+                if delivered_loss {
+                    continue;
+                }
+                return Err("The companion source was removed.".into());
+            }
+            let clock_exhausted = state.instances.get(&id).is_some_and(|instance| {
+                instance.owner.is_some()
+                    && instance.last_seen_us.checked_add(super::LEASE_US).is_none()
+            });
+            if clock_exhausted {
+                lose(
+                    &mut state,
+                    &id,
+                    now,
+                    "Companion native lease clock exhausted; acquire a fresh baseline.",
+                );
+                return Err("Companion native lease clock exhausted; acquire a fresh baseline.".into());
+            }
             let instance = &state.instances[&id];
             let marker = (instance.generation, instance.last_seen_us);
             if instance.owner.is_none() || self.refreshed.get(&id) == Some(&marker) {

@@ -68,7 +68,7 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     state.document.eligibility.game_ids.clear();
     state.document.resources.push(osg_profiles::Resource { id:"companion".into(),name:"Companion".into(),
         kind:osg_profiles::ResourceKind::Companion, required:false,ports:vec![] });
-    assert!(!document_supported(&state.document));
+    assert!(document_supported(&state.document), "Companion declarations still require a live notification-qualified adapter");
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }

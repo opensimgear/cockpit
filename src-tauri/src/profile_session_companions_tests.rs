@@ -7,6 +7,8 @@ use osg_mapping::{
 use osg_profiles::compiler_models::{BackendCapabilities, CompileSnapshot, SinkPlan, SourcePlan};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[path = "profile_session/companion_scheduling_tests.rs"]
+mod scheduling;
 
 fn empty() -> ExecutionPlan {
     osg_profiles::compiler::compile(
@@ -61,11 +63,18 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_wake(None)
+    }
+    fn with_wake(wake: Option<Arc<osg_streams::NativeWake>>) -> Self {
         let clock = Arc::new(AtomicU64::new(100));
         let captured = clock.clone();
-        let provider = Arc::new(CompanionProvider::new(Arc::new(move || {
+        let clock_fn: Arc<dyn Fn() -> u64 + Send + Sync> = Arc::new(move || {
             captured.load(Ordering::Acquire)
-        })));
+        });
+        let provider = Arc::new(match wake {
+            Some(wake) => CompanionProvider::with_wake(clock_fn, Arc::new(move || wake.notify())),
+            None => CompanionProvider::new(clock_fn),
+        });
         let hub = Hub::new("adapter-host".into(), provider.clone());
         let secret = pair(&hub);
         let upload: PublicationUpload = serde_json::from_str(include_str!(

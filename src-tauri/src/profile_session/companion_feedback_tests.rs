@@ -9,6 +9,57 @@ fn finished<T: Send + 'static>(worker: &mut Worker<T>) -> T {
     }
 }
 
+fn completion_wake(wake: &osg_streams::NativeWake, observed: u64) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while wake.observed() == observed {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "Feedback completion did not wake its consumer");
+        wake.wait(observed, remaining);
+    }
+}
+
+#[test]
+fn retained_completion_wake_exposes_success_and_disconnected_channel() {
+    for panics in [false, true] {
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current()).unwrap();
+        let mut worker = Worker::default();
+        worker.set_wake(Some(wake.clone()));
+        let observed = wake.observed();
+        worker.start(move |_| { if panics { panic!("Injected completion panic"); } 42 }).unwrap();
+        completion_wake(&wake, observed);
+        let result = worker.poll().expect("Wake preceded final channel state");
+        if panics { assert!(result.unwrap_err().contains("ended")); }
+        else { assert_eq!(result.unwrap(), 42); }
+        assert!(!worker.busy());
+    }
+}
+
+#[test]
+fn cancelled_blocked_slot_remains_owned_until_completion_wakes() {
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let mut worker = Worker::default();
+    worker.set_wake(Some(wake.clone()));
+    let observed = wake.observed();
+    let (entered, waiting) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    worker.start(move |cancelled| {
+        entered.send(()).unwrap();
+        held.recv_timeout(Duration::from_secs(2)).unwrap();
+        cancelled.load(Ordering::Acquire)
+    }).unwrap();
+    waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+    worker.cancel();
+    assert!(worker.busy());
+    assert_eq!(wake.observed(), observed);
+    assert!(!worker.start(|_| false).unwrap());
+    release.send(()).unwrap();
+    completion_wake(&wake, observed);
+    assert!(worker.poll().expect("Completion wake left channel pending").unwrap());
+    assert!(!worker.busy());
+}
+
 #[test]
 fn blocked_worker_is_nonblocking_and_coalesces_all_new_snapshots() {
     let mut worker = Worker::default();

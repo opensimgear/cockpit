@@ -217,6 +217,7 @@ impl NativeProfileHost {
     }
     pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
         self.resources.watch_routing_catalogue(&wake);
+        self.companions.watch_routing(&wake);
         self.native_wake = Some(wake);
         self
     }
@@ -909,6 +910,10 @@ impl Host for NativeProfileHost {
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         game.set_wake(self.native_wake.clone());
+        let mut companions = companions;
+        companions.set_wake(self.native_wake.clone());
+        let mut companion_rebind = companion::rebind::Preparation::default();
+        companion_rebind.set_wake(self.native_wake.clone());
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
         panels.set_wake(self.native_wake.clone());
         let visibility=visibility.bind(owner)?;
@@ -924,7 +929,7 @@ impl Host for NativeProfileHost {
             debug_inputs: crate::profile_debug_controller::DebugInputs::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, game_retry: None, game_resume: None, game_publication: Default::default(), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
-            companions, companion_catalogues, companion_rebind: Default::default(), companion_initial_operations:BTreeMap::new(), visibility,
+            companions, companion_catalogues, companion_rebind, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
             admission_degradation: prepared.admission.optional_unavailable.clone(), unavailable_peripherals,
@@ -1200,7 +1205,9 @@ impl Host for NativeProfileHost {
     fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner))?;
         let pending = [state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()),
-            state.desktop.as_ref().and_then(|desktop| desktop.next_deadline_us())]
+            state.desktop.as_ref().and_then(|desktop| desktop.next_deadline_us()),
+            state.companions.next_deadline_us().map(Counter),
+            state.companions.needs_delivery_retry().then(|| state.companion_rebind.next_deadline_us()).flatten().map(Counter)]
             .into_iter().flatten().min_by_key(|deadline| deadline.0);
         let routing = pending.map(|deadline| {
             // Sampling Instant first favors an early wake after preemption.
@@ -1208,7 +1215,7 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
-        [routing, state.scripts.next_deadline(), state.output.as_ref().and_then(|output|
+        [routing, state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
             host_scheduling::output_deadline(output.cursor(), state.recording.cursor(), output.renewal_deadline()))]
             .into_iter().flatten().min()
     }

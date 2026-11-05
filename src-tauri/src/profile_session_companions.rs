@@ -4,6 +4,8 @@
 mod feedback;
 #[path = "profile_session/companion_pending.rs"]
 mod pending;
+#[path = "profile_session/companion_scheduling.rs"]
+mod scheduling;
 use osg_companion_service::{
     profile::{AssignmentReceipt, Preparation},
     FeedbackBinding, FeedbackDescriptor, FeedbackKind, FeedbackMode, FeedbackProvenance,
@@ -69,6 +71,7 @@ struct Instance {
     at: u64,
     ready: bool,
     metadata_paused: bool,
+    validation_pending: bool,
     feedback_at: Option<Instant>,
     feedback_live: bool,
     feedback_clear_pending: bool,
@@ -81,6 +84,8 @@ pub(crate) struct CompanionSources {
     stopped: bool,
     run: Option<RunToken>,
     feedback_worker: feedback::Worker<Vec<feedback::Completion>>,
+    wake: Option<Arc<osg_streams::NativeWake>>,
+    retry_at: Option<u64>,
 }
 #[derive(Default)]
 pub(crate) struct CompanionPoll {
@@ -258,6 +263,7 @@ impl CompanionSources {
                 at: 0,
                 ready: false,
                 metadata_paused: false,
+                validation_pending: false,
                 feedback_at: None,
                 feedback_live: false,
                 feedback_clear_pending: false,
@@ -294,6 +300,8 @@ impl CompanionSources {
             stopped: false,
             run: None,
             feedback_worker: feedback::Worker::default(),
+            wake: None,
+            retry_at: None,
         })
     }
     pub(crate) fn is_empty(&self) -> bool {

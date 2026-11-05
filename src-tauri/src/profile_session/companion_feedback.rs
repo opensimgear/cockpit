@@ -13,14 +13,20 @@ pub(super) fn revocation() -> Arc<AtomicBool> { Arc::new(AtomicBool::new(false))
 pub(super) struct Worker<T> {
     pending: Option<mpsc::Receiver<T>>,
     cancelled: Arc<AtomicBool>,
+    wake: Option<Arc<osg_streams::NativeWake>>,
 }
 impl<T> Default for Worker<T> {
-    fn default() -> Self { Self { pending: None, cancelled: revocation() } }
+    fn default() -> Self { Self { pending: None, cancelled: revocation(), wake: None } }
+}
+struct CompletionWake(Option<Arc<osg_streams::NativeWake>>);
+impl Drop for CompletionWake {
+    fn drop(&mut self) { if let Some(wake) = &self.0 { wake.notify(); } }
 }
 impl<T> Drop for Worker<T> {
     fn drop(&mut self) { self.cancelled.store(true, Ordering::Release); }
 }
 impl<T: Send + 'static> Worker<T> {
+    pub(super) fn set_wake(&mut self, wake: Option<Arc<osg_streams::NativeWake>>) { self.wake = wake; }
     pub(super) fn busy(&self) -> bool { self.pending.is_some() }
     fn cancel(&mut self) {
         self.cancelled.store(true, Ordering::Release);
@@ -41,8 +47,13 @@ impl<T: Send + 'static> Worker<T> {
     fn start(&mut self, work: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static) -> Result<bool, String> {
         if self.pending.is_some() { return Ok(false); }
         let cancelled = self.cancelled.clone();
+        let wake = self.wake.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::Builder::new().name("profile-feedback".into()).spawn(move || {
+            // Declare the sender after the guard so unwinding disconnects the
+            // channel before notifying a parked consumer.
+            let _completion = CompletionWake(wake);
+            let sender = sender;
             let _ = sender.send(work(cancelled));
         }).map_err(|error| format!("Cannot start the companion feedback worker: {error}"))?;
         self.pending = Some(receiver);

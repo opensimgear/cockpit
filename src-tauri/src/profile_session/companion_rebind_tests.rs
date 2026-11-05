@@ -26,6 +26,48 @@ fn finished(
 }
 
 #[test]
+fn retained_completion_wake_exposes_result_or_panic_and_anchors_retry() {
+    for panics in [false, true] {
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current()).unwrap();
+        let mut preparation = Preparation::default();
+        preparation.set_wake(Some(wake.clone()));
+        assert_eq!(preparation.next_deadline_us(), None);
+        let owner = owner();
+        let hash = Some("program".into());
+        let (release, held) = mpsc::channel();
+        let observed = wake.observed();
+        assert!(preparation.start(123, owner.clone(), hash.clone(), move || {
+            held.recv_timeout(Duration::from_secs(2)).unwrap();
+            if panics { panic!("Injected capture panic"); }
+            Ok(42)
+        }));
+        assert_eq!(preparation.next_deadline_us(), None, "Pending work waits for completion");
+        assert!(!preparation.start(500_000, owner.clone(), hash.clone(), || Ok(73)));
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while wake.observed() == observed {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "Capture completion did not wake its consumer");
+            wake.wait(observed, remaining);
+        }
+        let result = preparation.poll(&owner, &hash).expect("Wake preceded final channel state");
+        if panics { assert!(result.unwrap_err().contains("worker ended")); }
+        else { assert_eq!(result.unwrap(), 42); }
+        assert_eq!(preparation.next_deadline_us(), Some(100_123));
+        assert_eq!(preparation.next_deadline_us(), Some(100_123), "Inspection moved retry");
+        assert!(!preparation.ready(100_122));
+        assert!(preparation.ready(100_123));
+    }
+}
+
+#[test]
+fn retry_deadline_saturates_at_clock_limit() {
+    let preparation = Preparation::<usize> { attempted: Some(u64::MAX - 1), ..Default::default() };
+    assert_eq!(preparation.next_deadline_us(), Some(u64::MAX));
+}
+
+#[test]
 fn blocked_capture_and_compilation_never_block_health_or_spawn_duplicate_workers() {
     let mut preparation = Preparation::default();
     let owner = owner();

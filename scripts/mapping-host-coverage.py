@@ -71,7 +71,7 @@ def main():
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
     sources = [root / f'crates/mapping-host/src/{module}.rs' for module in [
         'learn', 'router', 'service', 'settings', 'panels', 'game', 'companions',
-        'companion_native', 'companion_runs', 'typed_sources', 'desktop',
+        'companion_native', 'companion_native/scheduling', 'companion_runs', 'typed_sources', 'desktop',
         'desktop/dispatch', 'desktop/deadlines', 'desktop/lifecycle',
         'desktop/output', 'desktop/output/worker', 'desktop/output/execute',
         'desktop/focus', 'desktop/output/focus', 'desktop/helper_scope', 'desktop/output/child']]

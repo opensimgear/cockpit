@@ -66,11 +66,13 @@ impl CompanionSources {
         if !self.acquired || self.stopped { return poll; }
         for instance in &mut self.instances {
             instance.flush_feedback_clear(hub);
+            instance.validation_pending = false;
             let was_ready = instance.ready;
             let outcome = (|| {
                 instance.validate_binding_identity()?;
                 let owner = hub.try_validate_profile_assignment(instance.receipt.as_ref().ok_or("The companion assignment is not acquired.")?)?;
                 if !instance.live_tokens(&validate)? || owner.is_none() {
+                    instance.validation_pending = true;
                     instance.pending_wire()?;
                     poll.frames.extend(instance.pause_inputs(now)?);
                     poll.diagnostics.push(format!("{}: Waiting for current companion inventory validation.", instance.logical));

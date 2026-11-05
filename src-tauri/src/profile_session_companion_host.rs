@@ -484,6 +484,7 @@ impl NativeProfileHost {
                 Ok(rebind::Captured { delivery, allowed })
             });
         }
+        state.companions.scheduled_poll_complete(now);
         poll
     }
 }

@@ -840,7 +840,7 @@ impl Feed {
             .get(&self.subscription)
             .ok_or("Companion subscription ended.")?;
         for (id, queue) in &subscription.sources {
-            let instance = &state.instances[id];
+            let instance = state.instances.get(id).ok_or("The companion source was removed.")?;
             if !queue.started
                 || queue.restart_required
                 || instance
@@ -883,7 +883,7 @@ impl Feed {
             .collect::<Vec<_>>();
         let mut frames = Vec::new();
         for id in ids {
-            let instance = &state.instances[&id];
+            let instance = state.instances.get(&id).ok_or("The companion source was removed.")?;
             let generation = instance.generation;
             let values = instance.owner.as_ref().map(|_| instance.values.clone());
             let publication_hash = instance.definition.publication_hash.clone();

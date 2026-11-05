@@ -5,8 +5,10 @@ import {createRequire} from 'node:module';
 import {randomUUID,createHash,X509Certificate} from 'node:crypto';
 import {connect} from 'node:tls';
 import {readFile} from 'node:fs/promises';
+import {setTimeout as delay} from 'node:timers/promises';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
-test('compiled browser input reaches the profile and returns host feedback', {timeout:90000}, async()=>{
+test('compiled browser input reaches the profile and returns host feedback', {timeout:90000}, async(t)=>{
+  const qualifyHostWake=process.env.OSG_COMPANION_HOST_WAKE_NATIVE==='1';
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
   const request=async(command,params={})=>{
@@ -18,11 +20,26 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
   const id='reactive-'+randomUUID();
   const publication=JSON.parse(await readFile(new URL('../../scripts/fixtures/compiled-flight-publication.json',import.meta.url)));
   const {chromium}=createRequire(import.meta.url)(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-  let browser, peer, profile;
+  let browser, peer, profile, desktopPreferences;
+  const desktop=async()=>(await request('profile_desktop_status')).desktop;
+  const assertHostWake=async phase=>{
+   const status=await desktop();
+   assert.equal(status.runtime.serviceIntervalMs,null,`${phase}: companion routing must use retained wakes and deadlines`);
+   assert.deepEqual(status.runtime.backend.held,[],`${phase}: neutral desktop binding must hold no keys`);
+   assert.equal(status.runtime.backend.uncertain,false,`${phase}: desktop delivery must remain certain`);
+   assert.equal(status.runtime.helperScope.live,true,`${phase}: quiet host authorization must remain live`);
+   t.diagnostic(JSON.stringify({qualification:'companion-host-wake',phase,
+    appHash:process.env.OSG_COMPANION_HOST_WAKE_APP_HASH??null,authoredNonNeutralDesktopInput:false,
+    latencyPercentilesQualified:false,runtime:status.runtime}));
+  };
   try {
    const initial=await companion('companion_status');
    assert.equal(initial.listener?.enabled,true,'Enable the isolated companion listener first');
    assert.equal((await request('profile_status')).profiles.profileSession.state,'stopped');
+   if(qualifyHostWake){
+    desktopPreferences=await desktop();
+    await request('profile_desktop_configure',{enabled:true,scope:desktopPreferences.scope});
+   }
    const existing=new Set(initial.host.clients.map(row=>row.companionId));
    const offer=await companion('companion_pair_offer',{kind:'browser'});
    const url=new URL(offer.pairing.browserUrl);
@@ -70,12 +87,27 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    document.resources.push({id:'browser-panel',name:'Compiled browser panel',kind:'companion',required:true,ports});
    document.companionAssignments.push({resourceId:'browser-panel',publicationHash:publication.publicationHash});
    document.bindings.push({id:'button-lamp',from:{nodeId:'browser-panel',portId:'button'},to:{nodeId:'browser-panel',portId:'lamp'}});
+   if(qualifyHostWake){
+    const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
+    const port=(id,direction)=>({id,name:id,direction,contract});
+    (document.processingNodes??=[]).push({id:'neutral',name:'Neutral',operation:{kind:'constant',value:false},inputs:[],outputs:[port('out','output')]});
+    (document.desktopOutputs??=[]).push({id:'keyboard',name:'Keyboard',required:true,scope:{kind:'desktop-wide'},
+     ports:[port('hold','input')],actions:[{portId:'hold',action:{kind:'key-hold',key:4}}]});
+    document.bindings.push({id:'neutral',from:{nodeId:'neutral',portId:'out'},to:{nodeId:'keyboard',portId:'hold'}});
+   }
    const assignments=[{resourceId:'browser-panel',sourceId:row.id,ports:selected.map((p,i)=>({profilePortId:ports[i].id,observedPortId:p.descriptor.id,expectedContractHash:p.contractHash}))}];
    profile=(await request('profile_editor_save',{document,assignments,expectedRevision:document.revision})).profiles.document;
    const applied=await request('profile_apply',{id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null,activationId:randomUUID()});
    assert.equal(applied.profiles.profileSession.state,'running');
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    const owner=applied.profiles.profileSession.owner;
+   if(qualifyHostWake){
+    await assertHostWake('applied');
+    // Browser heartbeats continue; no gateway reads or authored input during
+    // this interval, which spans several desktop output lease periods.
+    await delay(1100);
+    await assertHostWake('quiet-1100ms');
+   }
    await page.getByRole('button',{name:'probe: press',exact:true}).click();
    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'
@@ -93,14 +125,29 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
     return profileInspection.ports.every(port=>port.sample.value?.value===false);
    },Boolean,10000);
+   if(qualifyHostWake)await assertHostWake('reloaded-neutral-recovery');
    const stopped=await request('profile_stop');
    assert.equal(stopped.profiles.profileSession.state,'stopped');
    assert.equal(stopped.profiles.profileSession.owner,null);
   } finally {
-   if(profile){await request('profile_stop').catch(()=>{});await request('profile_delete',{id:profile.id,expectedRevision:profile.revision}).catch(()=>{});}
-   if(peer)await companion('companion_unassign',{instanceId:id}).catch(()=>{});
-   if(peer)await companion('companion_revoke',{companionId:peer.companionId}).catch(()=>{});
-   await browser?.close();cockpit.close();
+   const cleanupErrors=[];
+   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake)cleanupErrors.push(error);}};
+   let stopped=false;
+   if(profile||desktopPreferences)await cleanup(async()=>{
+    const result=await request('profile_stop');
+    assert.equal(result.profiles.profileSession.state,'stopped');
+    assert.equal(result.profiles.profileSession.owner,null);
+    stopped=true;
+   });
+   if(profile)await cleanup(()=>request('profile_delete',{id:profile.id,expectedRevision:profile.revision}));
+   if(desktopPreferences)await cleanup(async()=>{
+    assert.equal(stopped,true,'Stop must finish before restoring desktop settings');
+    await request('profile_desktop_configure',{enabled:desktopPreferences.enabled,scope:desktopPreferences.scope});
+   });
+   if(peer)await cleanup(()=>companion('companion_unassign',{instanceId:id}));
+   if(peer)await cleanup(()=>companion('companion_revoke',{companionId:peer.companionId}));
+   try{await browser?.close();}finally{cockpit.close();}
+   if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'Companion host wake qualification cleanup failed');
   }
 
 });

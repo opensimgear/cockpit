@@ -3,7 +3,7 @@ use crate::profile_session::RunOwner;
 use osg_profiles::compiler_models::ExecutionPlan;
 use std::{
     collections::BTreeSet,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{Arc, mpsc::{self, Receiver, TryRecvError}},
 };
 
 pub(crate) struct Captured {
@@ -18,16 +18,26 @@ struct Pending<T> {
 pub(crate) struct Preparation<T = Captured> {
     pending: Option<Pending<T>>,
     attempted: Option<u64>,
+    wake: Option<Arc<osg_streams::NativeWake>>,
+}
+struct CompletionWake(Option<Arc<osg_streams::NativeWake>>);
+impl Drop for CompletionWake {
+    fn drop(&mut self) { if let Some(wake) = &self.0 { wake.notify(); } }
 }
 impl<T> Default for Preparation<T> {
     fn default() -> Self {
         Self {
             pending: None,
             attempted: None,
+            wake: None,
         }
     }
 }
 impl<T: Send + 'static> Preparation<T> {
+    pub fn set_wake(&mut self, wake: Option<Arc<osg_streams::NativeWake>>) { self.wake = wake; }
+    pub fn next_deadline_us(&self) -> Option<u64> {
+        if self.pending.is_some() { None } else { self.attempted.map(|last| last.saturating_add(100_000)) }
+    }
     pub fn ready(&self, now: u64) -> bool {
         self.pending.is_none()
             && self
@@ -45,8 +55,12 @@ impl<T: Send + 'static> Preparation<T> {
             return false;
         }
         self.attempted = Some(now);
+        let wake = self.wake.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
+            // Sender must disconnect before the completion wake on unwind.
+            let _completion = CompletionWake(wake);
+            let sender = sender;
             let _ = sender.send(capture());
         });
         self.pending = Some(Pending {

@@ -324,7 +324,7 @@ impl GatewayManager {
         let profile_wake = Arc::new(ProfileWake::default());
         let companion_wake = profile_wake.clone();
         let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::with_wake(
-            Arc::new(move || companion_clock.stream_page("", 0).captured_us),
+            Arc::new(move || companion_clock.monotonic_us()),
             Arc::new(move || companion_wake.notify()),
         ));
         let companion_host = Arc::new(crate::companion_host::Runtime::new(

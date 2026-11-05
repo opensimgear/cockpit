@@ -66,6 +66,7 @@ pub struct Runtime {
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     resource_inventory_wake: Mutex<Weak<osg_streams::NativeWake>>,
     activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
+    routing_wake: Mutex<Weak<osg_streams::NativeWake>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
 }
@@ -102,6 +103,7 @@ impl Runtime {
             panel_operation_wakes: Mutex::new(Vec::new()),
             resource_inventory_wake: Mutex::default(),
             activity_wake: Mutex::default(),
+            routing_wake: Mutex::default(),
             #[cfg(test)]
             profile_wire_fixture: false,
         }
@@ -142,6 +144,7 @@ impl Runtime {
         self.register_presence_wake(&metadata.hub);
         self.register_resource_inventory_wake(&metadata.hub);
         self.register_activity_wake(&metadata.hub);
+        self.register_routing_wake(&metadata.hub);
         self.notify_activity();
         Ok(metadata)
     }
@@ -166,6 +169,17 @@ impl Runtime {
     }
     fn notify_activity(&self) {
         if let Some(wake) = self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
+    }
+    pub(crate) fn watch_routing(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        if let Some(metadata) = self.metadata.get() { self.register_routing_wake(&metadata.hub); }
+    }
+    fn register_routing_wake(&self, hub: &Hub) {
+        if let Some(wake) = self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            hub.observe_presence(wake.clone());
+            hub.observe_record_changes(wake.clone());
             wake.notify();
         }
     }
