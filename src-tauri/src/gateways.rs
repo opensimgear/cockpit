@@ -404,6 +404,7 @@ impl GatewayManager {
             serial_topology.watch_inventory(profile_resources.inventory_wake());
             companion_host.watch_resource_inventory(profile_resources.projection_wake());
             games.read_model_signal().watch_resources(profile_resources.projection_wake());
+            games.read_model_signal().watch_vehicle_routing(&profile_wake);
             controllers.watch_resource_inventory(&host_inventory_wake)
                 .expect("profile inventory owns the controller resource watch");
             let controller_system_inventory = system_inventory.clone();

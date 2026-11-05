@@ -175,10 +175,13 @@ impl Tracker {
         }
         if entry.published != visible {
             let vehicle_changed = entry.published.current != visible.current;
+            let context_changed = entry.published.current.as_ref().and_then(|vehicle| vehicle["id"].as_str())
+                != visible.current.as_ref().and_then(|vehicle| vehicle["id"].as_str());
             entry.published = visible;
             self.changed();
-            if vehicle_changed {
-                if let Some(changes) = &self.changes { changes.mark_resources(); }
+            if let Some(changes) = &self.changes {
+                if context_changed { changes.mark_vehicle_context(); }
+                if vehicle_changed { changes.mark_resources(); }
             }
         }
         let deadline = self.view_deadline();
