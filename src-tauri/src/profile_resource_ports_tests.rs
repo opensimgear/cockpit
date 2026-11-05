@@ -8,8 +8,8 @@ fn native_can_port_contract_matches_validated_journal_metadata() {
         "selectorButtons":[],"axisCount":1,"axes":[9],"axisNeutral":[32768],"axisUsage":[48],
         "axisAvailable":[true],"sampledAtMs":1});
     assert_eq!(native_can_inputs(&module).unwrap(), events(&journal).unwrap());
-    assert_eq!(can_stream_generation(&json!({"panelStreamSupported":true}), &module, "panel"), 6);
-    assert_eq!(can_stream_generation(&json!({"moduleEvents":{"panel":journal}}), &module, "panel"), 6);
+    assert_eq!(can_stream_generation(&json!({"panelStreamSupported":true}), &module), 6);
+    assert_eq!(can_stream_generation(&json!({"moduleEvents":{"panel":journal}}), &module), Value::Null);
     for invalid in [
         json!({"buttonCount":129,"axisCount":0,"neutral":[]}),
         json!({"buttonCount":0,"axisCount":9,"neutral":[]}),

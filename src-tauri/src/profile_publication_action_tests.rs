@@ -172,6 +172,7 @@ impl ActionDevice {
 }
 pub(super) fn cached(io: &FakeIo, actions: Option<&ActionDevice>) -> Value {
     let mut state = io.cached(GATEWAY).unwrap();
+    state["panelStreamSupported"] = json!(true);
     if let Some(actions) = actions {
         state["backend"] = json!("stm32");
         let module = state["modules"][0].clone();

@@ -119,11 +119,11 @@ pub(crate) fn native_can_inputs(module: &Value) -> Result<Vec<PortDescriptor>, S
     Ok(panel_inputs(buttons, neutral.iter().map(Value::as_u64)))
 }
 
-pub(crate) fn can_stream_generation(state: &Value, module: &Value, id: &str) -> Value {
+pub(crate) fn can_stream_generation(state: &Value, module: &Value) -> Value {
     if state["panelStreamSupported"] == true {
         module["configurationGeneration"].clone()
     } else {
-        state["moduleEvents"][id]["stream"].clone()
+        Value::Null
     }
 }
 

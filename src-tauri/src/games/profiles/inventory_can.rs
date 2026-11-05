@@ -125,7 +125,7 @@ impl Sources {
                         module["boot"],
                         module["lease"],
                         module["configurationGeneration"],
-                        ports::can_stream_generation(state, module, id)
+                        ports::can_stream_generation(state, module)
                     ])
                     .to_string(),
                     attributes: route_attributes,

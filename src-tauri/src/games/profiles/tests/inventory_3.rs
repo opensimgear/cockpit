@@ -262,14 +262,14 @@ fn can_action_only_capabilities_publish_without_inventing_an_event_baseline() {
         .reconcile(batch("gateway", "session", 1, vec![item]))
         .unwrap();
     let id = registry.list(0, 32).unwrap().resources[0].id.clone();
-    assert!(registry.token(&id, "action:led", Access::Invoke).is_ok());
+    let action = registry.token(&id, "action:led", Access::Invoke).unwrap();
     assert!(registry.token(&id, "button:0", Access::Read).is_err());
     state["moduleEvents"][MODULE]["configurationGeneration"] = json!(0);
-    assert_eq!(sources
-        .can_observations("gateway", &state, &BTreeMap::new())
-        .unwrap()[0]
-        .ports
-        .as_ref().unwrap().ports.len(), 1);
+    state["moduleEvents"][MODULE]["stream"] = json!(8);
+    let refreshed = sources.can_observations("gateway", &state, &BTreeMap::new()).unwrap();
+    assert_eq!(refreshed[0].ports.as_ref().unwrap().ports.len(), 1);
+    registry.reconcile(batch("gateway", "session", 2, refreshed)).unwrap();
+    assert!(registry.validate_token(&action, "action:led", Access::Invoke).is_ok());
 }
 #[test]
 fn known_negative_can_components_are_not_reprobed_until_their_route_or_configuration_changes() {

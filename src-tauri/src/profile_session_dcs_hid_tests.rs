@@ -32,7 +32,7 @@ fn fixture() -> (ExecutionPlan, CompileSnapshot, Vec<(String, Value)>) {
     let route = Route {
         id: format!("can:{GATEWAY}:{MODULE}"),
         transport: Transport::Can,
-        provider_generation: "[1,2,3,4,5]".into(),
+        provider_generation: "[1,2,3,4,4]".into(),
         attributes: BTreeMap::from([
             ("moduleId".into(), MODULE.into()),
             ("gatewayId".into(), GATEWAY.into()),
@@ -119,10 +119,9 @@ fn fixture() -> (ExecutionPlan, CompileSnapshot, Vec<(String, Value)>) {
         required: true,
         readiness: PlanReadiness::Ready,
     });
-    let state = json!({"gatewaySerial":"0123456789abcdef01234567","connected":true,"canProtocol":3,"epoch":1,"layoutPending":false,
+    let state = json!({"gatewaySerial":"0123456789abcdef01234567","connected":true,"canProtocol":3,"panelStreamSupported":true,"epoch":1,"layoutPending":false,
         "nativeSnapshotAtMs":hid_publication::now_ms(),"publication":{"phase":"idle","outcome":"no_change"},
-        "modules":[{"id":MODULE,"online":true,"directUsb":false,"published":false,"boot":2,"lease":3,"configurationGeneration":4}],
-        "moduleEvents":{MODULE:{"stream":5}}});
+        "modules":[{"id":MODULE,"online":true,"directUsb":false,"published":false,"boot":2,"lease":3,"configurationGeneration":4}]});
     (plan, snapshot, vec![(GATEWAY.into(), state)])
 }
 
