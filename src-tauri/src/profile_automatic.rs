@@ -825,6 +825,7 @@ impl GatewayManager {
         let closed = self.profile_closed.clone();
         let wake = self.profile_automatic_wake.clone();
         self.games.read_model_signal().watch_automatic(&wake);
+        self.profile_resources.watch_reconnect_catalogue(&wake);
         *worker = std::thread::Builder::new()
             .name("profile-automatic-selection".into())
             .spawn(move || {
@@ -840,7 +841,7 @@ impl GatewayManager {
                     manager.poll_peripheral_profile();
                     manager.poll_automatic();
                     drop(manager);
-                    // Vehicle and peripheral reconciliation still need the fallback.
+                    // Reconciliation still needs the fallback for retries.
                     if !closed.load(Ordering::Acquire) {
                         wake.wait(observed, std::time::Duration::from_millis(500));
                     }

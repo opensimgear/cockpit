@@ -16,6 +16,10 @@ fn capture(state: &live_validation::StateMutex) -> Value {
 }
 
 impl Runtime {
+    pub(crate) fn watch_reconnect_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.state.reconnect_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+
     pub(crate) fn watch_learning_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.state.learning_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
     }
@@ -45,6 +49,11 @@ impl Runtime {
                 let observed = wake.observed();
                 let next = capture(&state);
                 if next != previous {
+                    // Readiness uses a nonblocking registry snapshot. Signal only
+                    // after capture releases the writer's registry lock.
+                    if let Some(wake) = state.reconnect_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+                        wake.notify();
+                    }
                     let at = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
                     if let Err(error) = active.publish_latest_state(active.generation(), next.clone(), at, CLOCK) {
                         eprintln!("Profile resource observation failed: {error}");

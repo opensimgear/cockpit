@@ -100,6 +100,25 @@ fn offline_commit_revokes_cached_route_before_state_unlock() {
 }
 
 #[test]
+fn reconnect_wakes_after_catalogue_commit_releases_the_registry() {
+    let (runtime, assignment) = fixture();
+    let observations = crate::observations::Runtime::new();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    runtime.watch_reconnect_catalogue(&wake);
+    runtime.observe_catalogue(&observations.broker()).unwrap();
+    let before = wake.observed();
+    let mut writer = runtime.state.lock().unwrap();
+    writer.registry.reconcile(ProviderBatch { scope: "host-controllers".into(),
+        session: "health-fixture".into(), revision: 2, complete: true, observations: vec![] }).unwrap();
+    assert_eq!(wake.observed(), before);
+    drop(writer);
+    assert!(wake.wait(before, Duration::from_secs(2)));
+    assert!(runtime.try_snapshot_for_preparation(vec![assignment]).unwrap().is_some());
+    runtime.shutdown();
+}
+
+#[test]
 fn changed_provider_generation_revokes_the_exact_old_token_at_commit() {
     let (runtime, token) = delivery();
     let mut route = runtime.validate_delivery(&token).unwrap();

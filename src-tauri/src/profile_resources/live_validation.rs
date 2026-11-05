@@ -21,6 +21,7 @@ pub(super) struct StateMutex {
     state: Mutex<State>,
     confirmed: Mutex<Confirmed>,
     pub(super) learning_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
+    pub(super) reconnect_wake: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     pub(super) catalogue_wake: Arc<osg_streams::NativeWake>,
 }
 
@@ -32,7 +33,7 @@ pub(super) struct StateGuard<'a> {
 
 impl StateMutex {
     pub(super) fn new(state: State) -> Self {
-        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), learning_wake: Mutex::default() }
+        Self { state: Mutex::new(state), confirmed: Mutex::new(Confirmed::default()), catalogue_wake: Arc::default(), learning_wake: Mutex::default(), reconnect_wake: Mutex::default() }
     }
     fn guard<'a>(&'a self, state: MutexGuard<'a, State>) -> StateGuard<'a> {
         StateGuard { owner: self, state, dirty: false }
