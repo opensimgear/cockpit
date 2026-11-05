@@ -7,20 +7,24 @@ import {fileURLToPath} from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const check = process.argv.includes('--check');
 const committed = process.argv.includes('--committed');
-const filesFromGit = cwd => execFileSync('git', committed
-  ? ['ls-tree', '-r', '--name-only', '-z', 'HEAD']
+const revisionAt = cwd => committed
+  ? execFileSync('git', ['rev-parse', 'HEAD'], {cwd, encoding:'utf8'}).trim()
+  : undefined;
+const filesFromGit = (cwd, revision) => execFileSync('git', revision
+  ? ['ls-tree', '-r', '--name-only', '-z', revision]
   : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
 {cwd, encoding:'utf8'}).split('\0');
-const sourceAt = (cwd, file) => committed
-  ? execFileSync('git', ['show', `HEAD:${file}`], {cwd, encoding:'utf8'})
+const sourceAt = (cwd, file, revision) => revision
+  ? execFileSync('git', ['show', `${revision}:${file}`], {cwd, encoding:'utf8'})
   : readFileSync(resolve(cwd, file), 'utf8');
 
 if (process.argv.includes('--check-ui-timers')) {
   const { checkUiTimers } = await import('./ui-timers.mjs');
-  const files = [...new Set(filesFromGit(root))].filter(file =>
+  const revision = revisionAt(root);
+  const files = [...new Set(filesFromGit(root, revision))].filter(file =>
     /^(?:src|apps|packages)\//.test(file) && /\.(?:[cm]?[jt]s|[jt]sx|svelte)$/.test(file)
     && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|(?:^|\/)test-fixtures?\.|[._-](?:tests?|fixtures)\./.test(file));
-  checkUiTimers(files.map(file => [file, sourceAt(root, file)]));
+  checkUiTimers(files.map(file => [file, sourceAt(root, file, revision)]));
   console.log('Frontend timers match their documented owners.');
   process.exit(0);
 }
@@ -30,19 +34,22 @@ const trees = ['src/', 'src-tauri/src/', 'crates/', 'apps/', 'packages/', 'scrip
 const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simulation)(?:\/|$)|(?:[._-](?:tests?|fixtures)\.|\/tests?\.rs$)/;
 const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
 const sites = [];
+const revisions = [];
 for (const repository of ['.', '../device-gateway', '../device-template', '../firmware-common']) {
   const cwd = resolve(root, repository);
-  let files;
+  let files, revision;
   try {
-    files = filesFromGit(cwd);
+    revision = revisionAt(cwd);
+    files = filesFromGit(cwd, revision);
   } catch (error) {
     throw new Error(`Cannot inventory ${cwd}: ${error.message}`);
   }
+  if (revision) revisions.push(`${repository} ${revision}`);
   for (const file of [...new Set(files)].sort()) {
     if (!/\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) || excluded.test(file)) continue;
     if (repository === '.' && !trees.some(tree => file.startsWith(tree))) continue;
     const path = resolve(cwd, file);
-    const source = sourceAt(cwd, file);
+    const source = sourceAt(cwd, file, revision);
     const lines = source.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
@@ -61,3 +68,4 @@ if (check) {
   }
 } else writeFileSync(output, text);
 console.log(`${sites.length} timing sites inventoried across Cockpit and firmware repositories.`);
+for (const revision of revisions) console.log(revision);
