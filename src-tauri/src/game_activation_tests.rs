@@ -66,6 +66,8 @@ fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
         assert!(observer.wait_for_process(&identity, &process, Duration::from_secs(1)));
     });
     assert!(!observer.wait_for_process(&identity, &running(2), Duration::ZERO));
+    assert_eq!(observer.wait_for_started_identity(&identity, None, Duration::ZERO), Some(process.clone()));
+    assert!(observer.wait_for_started_identity(&identity, Some(&process), Duration::ZERO).is_none());
     assert_eq!(platform.scans.load(Ordering::Relaxed), 2);
 }
 

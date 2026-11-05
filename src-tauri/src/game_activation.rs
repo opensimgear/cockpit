@@ -57,6 +57,13 @@ impl State {
         )
     }
 
+    fn started_process(&self, identity: &GameIdentity, previous: Option<&ProcessIdentity>) -> Option<&ProcessIdentity> {
+        if !self.fresh() { return None; }
+        self.entries.get(&identity.game_id)?.confirmed.as_ref()
+            .filter(|proof| &proof.identity == identity && Some(&proof.process) != previous)
+            .map(|proof| &proof.process)
+    }
+
     fn exact_proof(&self, identity: &GameIdentity, process: &ProcessIdentity) -> Option<&Proof> {
         if !self.fresh() {
             return None;
@@ -306,6 +313,20 @@ impl Observer {
         }).unwrap_or_else(|p| p.into_inner());
         state.exact_proof(identity, process).is_some()
     }
+
+    pub(crate) fn wait_for_started_identity(
+        &self,
+        identity: &GameIdentity,
+        previous: Option<&ProcessIdentity>,
+        budget: Duration,
+    ) -> Option<ProcessIdentity> {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let (state, _) = self.2.wait_timeout_while(state, budget, |state| {
+            state.started_process(identity, previous).is_none()
+        }).unwrap_or_else(|p| p.into_inner());
+        state.started_process(identity, previous).cloned()
+    }
+
 
     pub(crate) fn confirmed_process(
         &self,
