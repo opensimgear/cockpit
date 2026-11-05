@@ -42,6 +42,10 @@ pub(crate) fn candidate(port: &PortInfo) -> bool {
 #[derive(Clone)]
 struct SharedFactory(Arc<Mutex<Box<dyn Factory>>>);
 impl Factory for SharedFactory {
+    fn gateway_duplex(&mut self, port: &PortInfo) -> Option<Result<crate::transport::duplex::DuplexParts, String>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).gateway_duplex(port)
+    }
+
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
         self.0.lock().unwrap_or_else(|p| p.into_inner()).ports()
     }

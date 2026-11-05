@@ -35,6 +35,9 @@ pub(crate) mod publication_feed;
 pub(crate) use publication_feed::{PublicationFence, PUBLICATION_EVIDENCE_CHANGED};
 pub(crate) mod workspace;
 mod inventory_service;
+#[cfg(test)]
+#[path = "stm32/pico_inventory_tests.rs"]
+mod pico_inventory_tests;
 
 #[derive(Clone)]
 struct Timing {
@@ -178,6 +181,7 @@ fn role_snapshot(wire: &Value, expected: Option<&str>, role: Role) -> Result<Val
     state["backend"] = json!("pico");
     state["gatewayType"] = json!("pico-debug-gateway");
     state["gatewaySerial"] = json!(serial);
+    state["debugInventoryStream"] = wire["debugInventoryStream"].clone();
     for module in state["modules"].as_array_mut().unwrap() {
         module["usbSerialNumber"] = json!(serial);
     }
@@ -596,6 +600,7 @@ struct Gateway {
     inventory_fence: Option<PublicationFence>,
     inventory_hid_fence: Option<PublicationFence>,
     inventory_attempted: Option<PublicationFence>,
+    debug_watchdog: Option<Instant>,
 }
 impl Gateway {
     fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
@@ -644,6 +649,7 @@ impl Gateway {
             workspace: None,
             reader_wake: None,
             publication_reconnect: false,
+            debug_watchdog: None,
             inventory_fence: None,
             inventory_hid_fence: None,
             inventory_attempted: None,
@@ -673,6 +679,7 @@ impl Gateway {
         Ok(ports)
     }
     fn close(&mut self) {
+        self.debug_watchdog = None;
         self.inventory_fence = None;
         self.inventory_hid_fence = None;
         self.inventory_attempted = None;
@@ -814,11 +821,9 @@ impl Gateway {
         if fence.is_some_and(|fence| !fence.is_current()) {
             return Err(PUBLICATION_EVIDENCE_CHANGED.into());
         }
-        let (inventory_fence, inventory_hid_fence) = if self.role == Role::Can {
-            self.workspace.as_ref().map(|cache| cache.publication.inventory_evidence()).unwrap_or_default()
-        } else {
-            (None, None)
-        };
+        let (inventory_fence, inventory_hid_fence) = self.workspace.as_ref()
+            .map(|cache| cache.publication.inventory_evidence()).unwrap_or_default();
+        let dispatched_at = Instant::now();
         let result = (|| {
             let connection = match self.connection.as_mut().unwrap() {
                 GatewayConnection::Parked(connection) => {
@@ -888,10 +893,13 @@ impl Gateway {
         })();
         match result {
             Ok(value) => {
+                if self.debug_watchdog.is_some() && inventory_hid_fence.is_some() {
+                    self.debug_watchdog = Some(dispatched_at + self.timing.heartbeat);
+                }
                 if command == "snapshot" && fence.is_some_and(|fence| !fence.is_current()) {
                     return Err(PUBLICATION_EVIDENCE_CHANGED.into());
                 }
-                let previous_diagnostic = (command == "snapshot" && fence.is_some()
+                let previous_diagnostic = (self.role == Role::Can && command == "snapshot" && fence.is_some()
                     && inventory_fence.as_ref().is_some_and(|fence| !fence.is_current()))
                     .then(|| (self.state["admissionFailure"].clone(), self.state["rejectedAnnouncements"].clone()));
                 if let Err(error) = self.accept(&value["state"]) {
@@ -904,7 +912,7 @@ impl Gateway {
                 }
                 if let Some(fence) = inventory_fence {
                     self.inventory_fence = Some(fence);
-                    self.inventory_hid_fence = inventory_hid_fence;
+                    self.inventory_hid_fence = if self.role == Role::Can { inventory_hid_fence } else { None };
                 }
                 if self.role == Role::PicoDebug {
                     match debug_snapshot(&value["debug"]) {
@@ -1040,7 +1048,10 @@ impl Gateway {
             info: info.clone(),
             uid: expected,
         });
-        let duplex = (self.role == Role::Can).then(|| self.factory.gateway_duplex(&info)).flatten();
+        let duplex = self.factory.gateway_duplex(&info);
+        if self.role == Role::PicoDebug && duplex.is_none() {
+            return Err("Pico Debug requires a streaming serial connection.".into());
+        }
         self.connection = Some(match duplex {
             Some(parts) => {
                 let panels = self.panels.clone();
@@ -1063,15 +1074,21 @@ impl Gateway {
                 .saturating_duration_since(Instant::now())
                 .min(self.timing.command),
         )?;
+        let debug_stream = self.role == Role::PicoDebug;
+        if debug_stream && self.state["debugInventoryStream"] != 1 {
+            self.close();
+            return Err("Update Pico Debug firmware to use the inventory stream.".into());
+        }
         let publication_events = self.state["controllerPublicationOverride"] == publication::capability();
         if let Some(GatewayConnection::Parked(connection)) = self.connection.as_mut() {
-            if connection.supports_panel() || publication_events {
+            if connection.supports_panel() || publication_events || debug_stream {
                 if let Err(error) = connection.send(b"panel-stream\n", deadline) {
                     self.close();
                     return Err(error);
                 }
             }
         }
+        if debug_stream { self.debug_watchdog = Some(Instant::now() + self.timing.heartbeat); }
         Ok(())
     }
     fn sleep(&self, duration: Duration) -> Result<(), String> {
@@ -2391,7 +2408,6 @@ impl Stm32Service {
                     }
                 }));
                 let mut seen = Instant::now();
-                let mut debug_poll = Instant::now() + gateway.timing.heartbeat;
                 while !cancel.load(Ordering::Acquire) {
                     let recover_publication = std::mem::take(&mut gateway.publication_reconnect);
                     if recover_publication || matches!(&gateway.connection, Some(GatewayConnection::Parked(serial)) if serial.ended()) {
@@ -2402,7 +2418,7 @@ impl Stm32Service {
                         }
                         gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                     }
-                    let maintained = gateway.maintain(seen, &mut debug_poll);
+                    let maintained = gateway.maintain(seen);
                     let pending = receiver.try_recv();
                     let refreshed = matches!(pending, Err(mpsc::TryRecvError::Empty)) && gateway.refresh_inventory();
                     if refreshed || maintained {
@@ -2411,7 +2427,7 @@ impl Stm32Service {
                     let message = match pending {
                         Ok(message) => Ok(message),
                         Err(mpsc::TryRecvError::Disconnected) => Err(mpsc::RecvTimeoutError::Disconnected),
-                        Err(mpsc::TryRecvError::Empty) => match gateway.maintenance_deadline(seen, debug_poll) {
+                        Err(mpsc::TryRecvError::Empty) => match gateway.maintenance_deadline(seen) {
                             Some(deadline) => receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())),
                             None => receiver.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
                         },
@@ -2545,17 +2561,18 @@ mod tests {
         wire
     }
 
-    fn pico_state() -> Value {
+    pub(super) fn pico_state() -> Value {
         let mut wire = automatic_state();
         wire["gatewayType"] = json!("pico-debug-gateway");
         wire["identity"] = json!("000000000123456789abcdef");
         wire["serial"] = json!("OSG-PICO-0123456789abcdef");
         wire["debug"] = json!(1);
         wire["maxVirtual"] = json!(8);
+        wire["debugInventoryStream"] = json!(1);
         wire["modules"][0]["boot"] = json!(100);
         wire
     }
-    fn debug_state() -> Value {
+    pub(super) fn debug_state() -> Value {
         json!({"maxDevices":8,"presets":["radio-panel","master-caution"],"devices":[{
             "id":MODULE,"preset":"radio-panel","online":true,"boot":100,"directUsb":false,
             "contacts":[],"axes":[0,0,0,0,0,0,0,0],"expansionMask":0,
@@ -3329,12 +3346,10 @@ mod tests {
             mock.ports[0].vendor_id = Some("cafe".into());
             mock.ports[0].product_id = Some("4010".into());
         }
-        let connected = request(
-            &mut gateway,
-            "connect",
-            json!({"port":PATH,"gatewayId":"pico:OSG-PICO-0123456789abcdef"}),
-        );
-        assert_eq!(connected["ok"], true, "{connected}");
+        let port = gateway.ports().unwrap().pop().unwrap();
+        gateway.connection = Some(GatewayConnection::RequestReply(gateway.factory.open(&port, gateway.timing.poll).unwrap()));
+        gateway.exchange("snapshot", gateway.timing.command).unwrap();
+        let connected = json!({"state":gateway.state});
         assert_eq!(connected["state"]["debug"]["devices"][0]["id"], MODULE);
         assert_eq!(connected["state"]["modules"][0]["name"], "Radio panel");
         assert_eq!(
@@ -4518,7 +4533,7 @@ mod tests {
         context.lock().unwrap().state["modules"][0]["online"] = json!(true);
         other["command"] = json!("claim");
         assert_eq!(gateway.request(other)["ok"], true);
-        gateway.maintain(Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1), &mut Instant::now());
+        gateway.maintain(Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1));
         assert!(gateway.connection.is_none());
         assert!(gateway.claims.is_empty());
         assert_eq!(context.lock().unwrap().state["running"], true);

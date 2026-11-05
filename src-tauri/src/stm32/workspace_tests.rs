@@ -7,11 +7,11 @@ fn native_workspace_owner_preserves_connection_but_not_expired_claims_or_output_
     assert_eq!(request(&mut gateway, "claim", json!({"moduleId":MODULE}))["ok"], true);
     gateway.claims.get_mut(MODULE).unwrap().seen = Instant::now() - gateway.timing.claim_timeout - Duration::from_millis(1);
     let abandoned = Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1);
-    gateway.maintain(abandoned, &mut Instant::now());
+    gateway.maintain(abandoned);
     assert!(gateway.connection.is_some());assert!(gateway.claims.is_empty());
     let output = request(&mut gateway, "action_invoke_owned", json!({"moduleId":MODULE,"actionId":"led.set_enabled","values":[true]}));
     assert_eq!(output["ok"], false);
-    cache.set_owned(false);gateway.maintain(abandoned, &mut Instant::now());assert!(gateway.connection.is_none());
+    cache.set_owned(false);gateway.maintain(abandoned);assert!(gateway.connection.is_none());
 }
 
 #[test]

@@ -43,8 +43,9 @@ ESP32 Wi-Fi and direct USB pairing now use terminal approval subscriptions
 instead of 400 ms status requests. The software receiver/bridge tests and actual
 Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
 Board compilation and physical transports remain unqualified; the recorded
-ESP-IDF toolchain is unavailable locally. Pico Debug acquisition and the game's
-100 ms process and telemetry maintenance remain original software work.
+ESP-IDF toolchain is unavailable locally. Pico Debug inventory is event-driven
+with an independent watchdog renewal. The older Pico protocol-1 adapter and the
+game's 100 ms process and telemetry maintenance remain original software work.
 
 ## User-operated qualification stays in #199
 
