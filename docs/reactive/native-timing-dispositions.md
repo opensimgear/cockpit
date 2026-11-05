@@ -36,7 +36,7 @@ ledger exactly once.
 
 | Ledger site | Owner and trigger | Disposition and verification |
 | --- | --- | --- |
-| `crates/controller-input/src/capture.rs:325` | Linux and macOS capture worker, 4 ms raw-device read and a separate 500 ms inventory check | Replace each with its native input or topology event adapter. Windows uses a separate capture path. Linux and macOS live latency qualification remains open. |
+| `crates/controller-input/src/capture.rs:325` | Opt-in Linux and macOS qualification probe, 4 ms raw-device read and a separate 500 ms inventory check | Ordinary Cockpit startup does not enable this capture path. Keep the probe acquisition unaccepted until native report and topology events are qualified. |
 | `crates/mapping-host/src/service.rs:123` | Mapping-host service worker, read input cursors and flush output every 2 ms | Use publication wakes and output deadlines if this path gains a Cockpit production caller. No current Cockpit constructor call found. Service tests cover the crate path. |
 | `crates/mapping-host/src/companion_runs.rs:1190` | Mapping-host companion route worker, read input and flush while a route owns a token | Replace its 2 ms cadence with producer and cancellation wakes. Companion-run tests cover token retirement. |
 | `crates/desktop-output/src/worker.rs:431` | Desktop feeder worker, wait for command or the next lease check | Preserve authority deadlines. Replace any idle periodic check with the next actual deadline. Worker tests cover release. |

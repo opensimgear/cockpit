@@ -19,6 +19,22 @@ without requesting input state. [CAN verification](https://github.com/opensimgea
 records the software evidence. Physical module and gateway acceptance remains
 in [#199](https://github.com/opensimgear/cockpit/issues/199).
 
+## R2 native input transport gate
+
+This disposition covers input acquisition. Physical latency, held-input
+and loss qualification remain in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+| Transport | Current acquisition owner | Gate disposition |
+| --- | --- | --- |
+| Windows host controllers | The Raw Input worker blocks on Windows messages and its shutdown event. Startup and device-change notifications own enumeration. Profiles, preview and MCP consume the committed report journal. | The production report and enumeration loops have no periodic state query. |
+| Direct USB modules | The blocking CDC duplex owner receives unsolicited input frames and separates them from configuration replies. The module capture feeds profile admission and passive readers. | The production input path has no periodic state query. Explicit configuration commands use their own reply deadlines. |
+| CAN panel input | The gateway forwards module panel-stream frames. The native serial owner demultiplexes events and replies, and profile and preview consumers subscribe to the committed gateway capture. | The production input path has no periodic state query. The polled CAN fixture compiles only in tests. Gateways without panel streaming are excluded from profile and preview input admission. |
+| Linux and macOS host controllers | The shared polling worker runs only from the explicit qualification probe. Ordinary Cockpit startup does not start native capture on these platforms. | Acquisition remains unaccepted until report and topology event adapters replace the probe polling and pass platform qualification. |
+
+Gateway catalogue and temporary publication checks have a separate scope.
+The remaining CAN publication fallback discovers firmware ownership and layout
+changes. It does not read panel values or feed the input journal.
+
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. Changes in the serial topology cache,
 including enumeration failure and recovery, wake the aggregate resource worker.
