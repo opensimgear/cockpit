@@ -98,3 +98,34 @@ fn old_reader_completion_and_dropped_owner_have_no_authority() {
     publication.start(|_, _| Ok(true)).unwrap();
     assert!(completion(&mut publication, &("dcs".into(), "incoming-reader".into())).is_none());
 }
+
+#[test]
+fn returning_reader_releases_its_temporary_watch_after_a_fresh_source_reply() {
+    let (mut reader, address, _catalogue) = crate::profile_session_games::test_baseline_reader();
+    let directory = crate::test_directory();
+    let games = crate::games::GamesRuntime::test_runtime(
+        Arc::new(|_| serde_json::json!({})),
+        crate::games::Paths::in_directory(directory.path()),
+        Arc::new(crate::game_discovery::NativePlatform),
+    );
+    let old = Arc::new(osg_streams::NativeWake::default());
+    reader.set_wake(Some(old.clone()));
+    let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let finished = Arc::new(AtomicBool::new(false));
+    let producer_finished = finished.clone();
+    let producer = std::thread::spawn(move || {
+        for counter in 1..=50 {
+            if producer_finished.load(Ordering::Acquire) { break; }
+            sender.send_to(&crate::profile_session_games::test_baseline_export(counter, true), address).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let result = resume_batch(&mut reader, &games, 10_000);
+    finished.store(true, Ordering::Release);
+    let error = result.unwrap_err();
+    producer.join().unwrap();
+    // The authored decoder has no selected simulator proof, so it cannot
+    // produce a real reader publication even after receiving a fresh baseline.
+    assert_eq!(error, "The returning game has no complete reader publication.");
+    assert!(Arc::ptr_eq(&reader.notification_wake().unwrap(), &old));
+}

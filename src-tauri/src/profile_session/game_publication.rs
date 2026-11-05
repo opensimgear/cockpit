@@ -112,24 +112,35 @@ pub(super) fn resume_batch(game: &mut crate::profile_session_games::GameSources,
     games: &crate::games::GamesRuntime, now_us: u64) -> Result<Option<ProviderBatch>, String> {
     if !game.requires_baseline() { return Ok(None); }
     let started = std::time::Instant::now();
+    let deadline = started + std::time::Duration::from_secs(3);
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current())
+        .map_err(|_| "Cannot bind the returning game baseline waiter.")?;
+    let previous_wake = game.notification_wake();
+    game.set_wake(Some(wake.clone()));
     let clock = || now_us.saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
-    let mut first = true;
-    loop {
-        let sample = if first { game.baseline(games, clock) } else { game.poll_baseline(games, clock) };
-        first = false;
-        if sample.context_lost { return Err(sample.diagnostics.join("; ")); }
-        if sample.fresh {
-            let batch = game.delivery_batch().ok_or("The returning game has no complete reader publication.")?;
-            // Handoff consumes fresh telemetry again on the owner. The worker's
-            // read can install metadata, never replay frames or grant commands.
-            game.pending(clock(), "Waiting for returning reader publication.".into());
-            return Ok(Some(batch));
+    let result = (|| {
+        let mut first = true;
+        loop {
+            let observed = wake.observed();
+            let sample = if first { game.baseline(games, clock) } else { game.poll_baseline(games, clock) };
+            first = false;
+            if sample.context_lost { return Err(sample.diagnostics.join("; ")); }
+            if sample.fresh {
+                let batch = game.delivery_batch().ok_or("The returning game has no complete reader publication.")?;
+                // Handoff consumes fresh telemetry again on the owner. The worker's
+                // read can install metadata, never replay frames or grant commands.
+                game.pending(clock(), "Waiting for returning reader publication.".into());
+                return Ok(Some(batch));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("The returning game did not supply a fresh baseline before reader admission.".into());
+            }
+            wake.wait(observed, game.baseline_wait_until(deadline).saturating_duration_since(std::time::Instant::now()));
         }
-        if started.elapsed() >= std::time::Duration::from_secs(3) {
-            return Err("The returning game did not supply a fresh baseline before reader admission.".into());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    })();
+    game.set_wake(previous_wake);
+    result
 }
 
 #[cfg(test)]
