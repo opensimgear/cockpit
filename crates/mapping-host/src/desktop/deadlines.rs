@@ -5,8 +5,10 @@ impl Desktop {
     /// and the action scheduler share the native admission clock, but can be
     /// earlier than the canonical reducer's next deadline.
     pub fn next_deadline_us(&self) -> Option<Counter> {
-        if !self.started || !self.focused { return None; }
-        [self.scheduler.next_deadline_us(), self.shadow.as_ref().and_then(Phase::next_deadline_us)]
+        if !self.started { return None; }
+        [self.focused.then(|| self.scheduler.next_deadline_us()).flatten(),
+            self.focused.then(|| self.shadow.as_ref().and_then(Phase::next_deadline_us)).flatten(),
+            self.authorization_deadline]
             .into_iter().flatten().min_by_key(|deadline| deadline.0)
     }
 }

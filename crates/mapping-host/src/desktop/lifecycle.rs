@@ -7,8 +7,13 @@ impl Desktop {
                 "A running desktop scope is immutable; reactivate the profile to change it.".into(),
             );
         }
-        self.output.bind_scope_before_activate(&self.run,&scope)?;
+        self.retire_scope_watch();
         self.scope = Some(scope);
+        self.register_scope_watch()?;
+        if let Err(error) = self.output.bind_scope_before_activate(&self.run,self.scope.as_ref().unwrap()) {
+            self.retire_scope_watch();
+            return Err(error);
+        }
         Ok(())
     }
     pub(super) fn flush(&mut self, now: u64) -> Result<(), String> {
@@ -41,14 +46,16 @@ impl Desktop {
                 scope.ok_or("Choose an exact application scope before starting desktop output.")?,
             );
         }
-        let focused = eligible(self.scope.as_ref().unwrap())?;
-        self.start_focused(reducer, focused)
+        let notice = self.register_scope_watch()?;
+        self.scope_error = notice.error.clone();
+        self.start_focused(reducer, notice.eligible && notice.error.is_none())
     }
     /// A replacement process never inherits actions held before it existed.
     /// Register its verified scope without replaying the current baseline;
     /// the usual focus-return path then requires fresh neutral observations.
     pub fn start_waiting_for_neutral(&mut self) -> Result<(), String> {
         let scope = self.scope.clone().ok_or("A verified desktop scope is required before rearming.")?;
+        self.register_scope_watch()?;
         self.output.activate(self.run.clone(), scope)?;
         self.registered = true;
         self.started = true;
@@ -63,6 +70,7 @@ impl Desktop {
         self.registered = true;
         self.started = true;
         self.focused = focused;
+        self.authorization_deadline = focused.then(|| Counter(reducer.at_us().0.saturating_add(100_000)));
         self.baseline(&shadow)?;
         self.audit_shadow = osg_desktop_output::audit::next_id().unwrap_or(0);
         self.shadow = Some(shadow);

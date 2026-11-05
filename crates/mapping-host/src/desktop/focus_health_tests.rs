@@ -53,6 +53,8 @@ fn fixture() -> (Desktop, Phase) {
         rearm_evidence: BTreeMap::new(),
         shadow: None,
         audit_shadow: 0,
+        focus_watch: Default::default(),
+        authorization_deadline: None,
     };
     desktop.start_focused(&phase, true).unwrap();
     (desktop, phase)

@@ -7,12 +7,15 @@ impl Coordinator {
         next.arm(producer.clone(), action_id.clone())?;
         self.send_with_commit(Command::Arm { producer: producer.clone(), action_id: action_id.clone() },
             None, next.held(), |coordinator, ack| {
-                if !ack.released_guards.is_empty() {
+                if ack.skipped {
+                    next = coordinator.reducer.clone();
+                    next.pause(&producer.run);
+                } else if !ack.released_guards.is_empty() {
                     next = coordinator.reducer.clone();
                     next.arm(producer, action_id)?;
                 }
                 coordinator.reducer = next;
-                coordinator.snapshot.phase = "active".into();
+                coordinator.snapshot.phase = if ack.skipped { "paused" } else { "active" }.into();
                 coordinator.update_owners();
                 Ok(true)
             })?;

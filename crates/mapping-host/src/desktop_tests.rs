@@ -189,6 +189,8 @@ fn prepared_program_fixture(
         rearm_evidence: BTreeMap::new(),
         shadow: None,
         audit_shadow: 0,
+        focus_watch: Default::default(),
+        authorization_deadline: None,
     };
     (desktop, phase, focused, events)
 }

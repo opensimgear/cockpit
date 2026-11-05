@@ -17,17 +17,6 @@ pub struct Outcome {
     pub delivery: osg_mapping::desktop::Delivery,
     pub acknowledgement: osg_desktop_output::protocol::Ack,
 }
-fn eligible(scope: &Scope) -> Result<bool, String> {
-    #[cfg(windows)]
-    {
-        osg_desktop_output::windows::eligible_scope(scope)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = scope;
-        Ok(false)
-    }
-}
 fn tap_durations(program: &Program) -> BTreeMap<String, Counter> {
     program.sinks.iter().filter_map(|sink| {
         let SinkKind::Desktop { action } = &sink.kind else { return None };
@@ -57,6 +46,8 @@ pub struct Desktop {
     rearm_evidence: BTreeMap<String, (Token, Vec<Observation>)>,
     shadow: Option<Phase>,
     audit_shadow: u64,
+    focus_watch: focus::FocusWatch,
+    authorization_deadline: Option<Counter>,
 }
 impl Desktop {
     pub fn acquire(
@@ -95,6 +86,8 @@ impl Desktop {
             rearm_evidence: BTreeMap::new(),
             shadow: None,
             audit_shadow: 0,
+            focus_watch: Default::default(),
+            authorization_deadline: None,
         })
     }
     pub fn scope(&self) -> Option<&Scope> {
@@ -134,8 +127,7 @@ impl Desktop {
         }
     }
     pub fn poll(&mut self, admissions: &[Admission], reducer: &Phase) -> Result<Vec<String>, String> {
-        let eligibility = self.scope.as_ref().map_or(Ok(false), eligible);
-        self.poll_admissions_checked(admissions, reducer, eligibility)
+        self.poll_scope(admissions, reducer)
     }
     #[cfg(test)]
     fn poll_checked(
@@ -185,7 +177,10 @@ impl Desktop {
         if !self.started {
             return Ok(vec![]);
         }
+        // A healthy parent also keeps a paused registration alive. Renewal
+        // never arms an action; the fresh-neutral path still controls input.
         self.output.renew(self.run.clone())?;
+        self.authorization_deadline = Some(Counter(reducer.at_us().0.saturating_add(100_000)));
         if !focused {
             if self.focused {
                 self.scheduler
@@ -368,6 +363,8 @@ impl Desktop {
         }
     }
     pub fn stop(&mut self) -> Result<(), String> {
+        self.retire_scope_watch();
+        self.authorization_deadline = None;
         self.scheduler.stop();
         for delivery in self.scheduler.drain() { self.audit_drop(&delivery, 3); }
         self.shadow = None;
@@ -401,6 +398,7 @@ impl Desktop {
             "dispatchPending":self.output.pending(),
             "outcomes":self.outcomes,"droppedOutcomes":self.dropped_outcomes,
             "scopeError":self.scope_error,"waitingNeutral":self.waiting_neutral,"focusBoundaryUs":self.focus_boundary,
+            "scopeNotifications":self.scope_notifications(),
             "nativeSubmission":"SendInput count is recorded separately from application observations."})
     }
 }
@@ -447,3 +445,5 @@ mod focus_health_tests;
 mod output;
 #[path = "desktop/lifecycle.rs"]
 mod lifecycle;
+#[path = "desktop/focus.rs"]
+mod focus;

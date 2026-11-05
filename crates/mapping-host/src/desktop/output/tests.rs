@@ -239,3 +239,5 @@ fn bounds_and_second_outstanding_batch_fail_closed_explicitly() {
 
 #[path = "threaded_tests.rs"]
 mod threaded_tests;
+#[path = "focus_tests.rs"]
+mod focus_tests;

@@ -138,6 +138,8 @@ fn flush_preserves_pointer_and_key_barriers_then_batches_adjacent_motion() {
         rearm_evidence: BTreeMap::new(),
         shadow: None,
         audit_shadow: 0,
+            focus_watch: Default::default(),
+            authorization_deadline: None,
     };
     { let admitted_frame = Frame {
             source: "source".into(),
@@ -338,6 +340,8 @@ fn large_valid_tokens_split_before_transport_limit_without_losing_motion() {
             rearm_evidence: BTreeMap::new(),
             shadow: None,
             audit_shadow: 0,
+        focus_watch: Default::default(),
+        authorization_deadline: None,
         };
         for (index, token) in tokens.iter().enumerate() {
             desktop

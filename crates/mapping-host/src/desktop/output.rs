@@ -7,6 +7,9 @@ use std::{collections::BTreeMap, sync::{Arc, Condvar, Mutex, MutexGuard, mpsc}, 
 mod execute;
 #[path = "output/worker.rs"]
 mod worker;
+#[path = "output/focus.rs"]
+mod focus;
+pub(super) use focus::{ScopeNotice, ScopeRevoker};
 use worker::Owner;
 #[cfg(test)]
 pub(in crate::desktop) use execute::{effective_source_now, same_pointer_batch};
@@ -64,6 +67,7 @@ struct State {
     setup: Option<Setup>,
     authorization: Option<(RunToken, Instant, u64)>,
     authorization_id: u64,
+    scope_watch: Option<focus::ScopeAuthorization>,
 }
 struct Shared {
     state: Mutex<State>,
@@ -91,11 +95,15 @@ impl Shared {
         let state = self.lock();
         let valid = |delivery: &Delivery| {
             state.fault.is_none() && !state.closed && !state.shutdown
-                && state.epoch == state.executing_epoch && Self::current(&state, delivery)
+                && state.epoch == state.executing_epoch && focus::permitted(&state)
+                && Self::current(&state, delivery)
         };
         match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => valid(delivery),
             Command::DeliverPointerBatch { deliveries } => deliveries.iter().all(valid),
+            Command::Arm { producer, action_id } => state.fault.is_none() && !state.closed
+                && !state.shutdown && state.epoch == state.executing_epoch && focus::permitted(&state)
+                && ((state.allow_empty && state.current.is_empty()) || state.current.get(action_id) == Some(producer)),
             _ => true,
         }
     }
@@ -117,6 +125,7 @@ impl Output {
                 epoch: 0, executing_epoch: 0, fault: None, closed: false, shutdown: false,
                 busy: false, busy_shadow: 0, control_active: false, completion: None, job: None,
                 pause: None, stop: None, setup: None, authorization: None, authorization_id: 0,
+                scope_watch: None,
             }),
             changed: Condvar::new(), wake,
         });
@@ -185,12 +194,15 @@ impl Output {
         self.setup(|reply| Setup::Bind(run.clone(), scope.clone(), reply))
     }
     pub(super) fn activate(&self, run: RunToken, scope: Scope) -> Result<(), String> {
-        self.setup(|reply| Setup::Activate(run, scope, reply))
+        self.setup(|reply| Setup::Activate(run.clone(), scope, reply))?;
+        self.activate_scope_watch(run);
+        Ok(())
     }
     pub(super) fn renew(&self, run: RunToken) -> Result<(), String> {
         {
             let mut state = self.shared.lock();
             Self::check(&state)?;
+            if !focus::renewable(&state) { return Ok(()); }
             state.authorization_id = state.authorization_id.wrapping_add(1);
             state.authorization = Some((run, Instant::now(), state.authorization_id));
         }

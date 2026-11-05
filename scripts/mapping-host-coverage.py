@@ -73,7 +73,8 @@ def main():
         'learn', 'router', 'service', 'settings', 'panels', 'game', 'companions',
         'companion_native', 'companion_runs', 'typed_sources', 'desktop',
         'desktop/dispatch', 'desktop/deadlines', 'desktop/lifecycle',
-        'desktop/output', 'desktop/output/worker', 'desktop/output/execute']]
+        'desktop/output', 'desktop/output/worker', 'desktop/output/execute',
+        'desktop/focus', 'desktop/output/focus']]
     summary = {}
     for source in sources:
         result, annotated = measure_module(source, lambda path: run([

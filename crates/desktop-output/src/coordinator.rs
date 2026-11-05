@@ -271,7 +271,7 @@ impl Coordinator {
         let revocable = match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => !matches!(&delivery.intent, Intent::Cleanup)
                 && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),
-            Command::DeliverPointerBatch { .. } => true,
+            Command::DeliverPointerBatch { .. } | Command::Arm { .. } => true,
             _ => false,
         };
         if revocable && self.dispatch_gate.as_ref().is_some_and(|gate| !gate(&request)) {

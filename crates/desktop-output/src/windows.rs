@@ -31,6 +31,8 @@ fn failure(context: &str) -> String {
 #[path = "windows/clock.rs"]
 mod clock;
 pub use clock::now_us;
+#[path = "windows/focus/mod.rs"]
+pub mod focus;
 fn open(pid: u32) -> Result<Handle, String> {
     let h = unsafe {
         OpenProcess(

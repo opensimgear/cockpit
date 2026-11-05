@@ -189,7 +189,6 @@ fn lifecycle_commands_ignore_denial() {
     coordinator.submit(held(1, vec![key(4)]), 0).unwrap();
     coordinator.set_dispatch_gate(Arc::new(|_| panic!("lifecycle must bypass gate")));
     coordinator.renew(run()).unwrap();
-    coordinator.arm(token("key"), "action".into()).unwrap();
     let other = RunToken {
         generation: Counter(2),
         ..run()
@@ -201,6 +200,31 @@ fn lifecycle_commands_ignore_denial() {
     coordinator.stop_all().unwrap();
     assert_eq!(coordinator.snapshot().phase, "stopped");
     assert_key_event(record.events.lock().unwrap().last().unwrap(), 4, false);
+}
+
+#[test]
+fn revoking_an_arm_after_evidence_validation_pauses_without_rearming() {
+    let (mut coordinator, record, requests) = setup();
+    coordinator.submit(held(1, vec![key(4)]), 0).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate_calls = calls.clone();
+    coordinator.set_dispatch_gate(Arc::new(move |request| {
+        assert!(matches!(request.command, Command::Arm { .. }));
+        gate_calls.fetch_add(1, Ordering::SeqCst);
+        false
+    }));
+    coordinator.arm(token("replacement"), "action".into()).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(requests.lock().unwrap().last().unwrap().deadline_us, Some(Counter(0)));
+    assert_eq!(coordinator.snapshot().phase, "paused");
+    assert!(coordinator.snapshot().held.is_empty());
+    assert!(coordinator.snapshot().owners.is_empty());
+    assert_key_event(record.events.lock().unwrap().last().unwrap(), 4, false);
+    coordinator.set_dispatch_gate(Arc::new(|_| true));
+    let value = delivery("replacement", 1, Intent::Held { controls: vec![key(5)] });
+    assert!(coordinator.submit(value, 0).is_err());
+    assert_eq!(record.events.lock().unwrap().len(), 2);
+    coordinator.stop_all().unwrap();
 }
 
 #[test]

@@ -241,11 +241,20 @@ impl<A: Adapter> Worker<A> {
                         .iter_mut()
                         .find(|r| r.token == producer.run)
                         .ok_or("Unknown desktop run.")?;
-                    if !self.adapter.eligible(&run.scope).unwrap_or(false) {
-                        return Err("Application scope is not foreground; wait for a fresh neutral baseline.".into());
+                    if request.deadline_us.is_some_and(|deadline| now >= deadline.0) {
+                        // A scope callback may revoke an arm while its retained
+                        // journal evidence is being checked. Preserve channel
+                        // order, but never authorize that old neutral baseline.
+                        run.paused = true;
+                        events = self.reducer.pause(&producer.run);
+                        ack.skipped = true;
+                    } else {
+                        if !self.adapter.eligible(&run.scope).unwrap_or(false) {
+                            return Err("Application scope is not foreground; wait for a fresh neutral baseline.".into());
+                        }
+                        run.paused = false;
+                        events = self.reducer.arm(producer, action_id)?;
                     }
-                    run.paused = false;
-                    events = self.reducer.arm(producer, action_id)?;
                 }
                 Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => {
                     ack.operation_id = Some(delivery.operation_id);

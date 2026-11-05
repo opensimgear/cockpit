@@ -21,7 +21,7 @@ fn short_tap_wakes_at_its_exact_release_and_queries_do_not_dispatch() {
     assert!(events.lock().unwrap().len() > submitted, "The due release must reach the worker");
     assert_eq!(desktop.next_deadline_us(), Some(Counter(2002)), "The final up dwell must also retire on time");
     desktop.poll_focused(&[], &phase, false).unwrap();
-    assert_eq!(desktop.next_deadline_us(), None, "Focus loss withdraws action and shadow deadlines");
+    assert_eq!(desktop.next_deadline_us(), Some(Counter(101002)), "Focus loss withdraws actions but preserves the paused run lease");
     desktop.stop().unwrap();
     assert_eq!(desktop.next_deadline_us(), None);
 }
@@ -32,7 +32,23 @@ fn isolated_shadow_deadline_survives_a_later_canonical_liveness_update() {
     let isolated = desktop.shadow.as_ref().unwrap().next_deadline_us().unwrap();
     phase.observe_liveness("source", Counter(7), Counter(20_000)).unwrap();
     assert!(phase.next_deadline_us().unwrap().0 > isolated.0);
-    assert_eq!(desktop.next_deadline_us(), Some(isolated));
+    assert_eq!(desktop.next_deadline_us(), Some(isolated.min(desktop.authorization_deadline.unwrap())));
     desktop.stop().unwrap();
     assert_eq!(desktop.next_deadline_us(), None);
+}
+
+#[test]
+fn authorization_deadline_uses_the_last_parent_admission_clock_and_queries_do_not_extend_it() {
+    let (mut desktop, mut phase, _, _) = fixture(Action::KeyHold { key: Key(4) }, false);
+    assert_eq!(desktop.authorization_deadline, Some(Counter(100_001)));
+    let deadline = desktop.authorization_deadline;
+    desktop.next_deadline_us();
+    desktop.keep_alive().unwrap();
+    assert_eq!(desktop.authorization_deadline, deadline);
+    phase.advance(Counter(30_000)).unwrap();
+    desktop.poll_focused(&[], &phase, true).unwrap();
+    assert_eq!(desktop.authorization_deadline, Some(Counter(130_000)));
+    desktop.poll_focused(&[], &phase, false).unwrap();
+    assert_eq!(desktop.authorization_deadline, Some(Counter(130_000)));
+    assert_eq!(desktop.next_deadline_us(), Some(Counter(130_000)));
 }

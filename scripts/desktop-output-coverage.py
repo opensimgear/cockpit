@@ -161,7 +161,7 @@ def main():
                "worker/release_guards", "coordinator", "coordinator/journal", "coordinator/pointer_batch",
                "coordinator/guards", "coordinator/delivery"]
     if os.name == "nt":
-        modules.append("windows/clock")
+        modules.extend(["windows/clock", "windows/focus/mod", "windows/focus/state", "windows/focus/native"])
     for module in modules:
         source = root / f"crates/desktop-output/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",

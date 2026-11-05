@@ -27,7 +27,8 @@ fn reason(shared: &Shared, job: &Job, armed: &BTreeMap<String, Token>, cancelled
     if !cleanup(delivery) && cancelled.contains(&delivery.action_id) { return Some(2); }
     let state = shared.lock();
     if state.closed || state.shutdown || state.pause.is_some() { return Some(4); }
-    if !cleanup(delivery) && (state.epoch != job.epoch || state.fault.is_some() || !Shared::current(&state, delivery)) {
+    if !cleanup(delivery) && (state.epoch != job.epoch || state.fault.is_some()
+        || !super::focus::permitted(&state) || !Shared::current(&state, delivery)) {
         return Some(4);
     }
     None
@@ -75,7 +76,10 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
             }
             // Arming can block on IPC/journal. The coordinator gate rechecks the
             // complete group afterwards, including producers already armed here.
-            for delivery in &group { arm(output, armed, delivery)?; }
+            for delivery in &group {
+                if reason(shared, &job, armed, &cancelled, delivery).is_some() { break; }
+                arm(output, armed, delivery)?;
+            }
             if group.iter().any(|delivery| reason(shared, &job, armed, &cancelled, delivery).is_some()) {
                 // A motion vector is one physical operation. Revoking any member
                 // rejects the whole vector, including still-current members.
