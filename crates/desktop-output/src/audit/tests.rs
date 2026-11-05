@@ -1,4 +1,8 @@
 use super::*;
+
+#[cfg(all(windows, debug_assertions))]
+#[path = "native_process_tests.rs"]
+mod native_process;
 use std::io;
 
 #[derive(Clone, Default)]

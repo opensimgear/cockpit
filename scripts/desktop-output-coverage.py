@@ -139,7 +139,7 @@ def main():
     temporary.mkdir(exist_ok=True)
     env = dict(os.environ, CARGO_TARGET_DIR=str(output / "target"),
                RUSTFLAGS="-C instrument-coverage", TEMP=str(temporary), TMP=str(temporary),
-               LLVM_PROFILE_FILE=str(profiles / "%m-%p.profraw"))
+               LLVM_PROFILE_FILE=str(profiles / "%m-%p.profraw"), OSG_DEV_DESKTOP_INPUT="1")
     artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json",
                      "--manifest-path", root / "crates/desktop-output/Cargo.toml"], root, env)
     binaries = [entry["executable"] for line in artifacts.splitlines()
@@ -159,9 +159,11 @@ def main():
     # interactive acceptance boundary. Coverage here cannot qualify that path.
     modules = ["keys", "protocol", "reducer", "pointer_batch", "worker", "worker/pointer_batch", "worker/serve", "worker/wait",
                "worker/release_guards", "coordinator", "coordinator/journal", "coordinator/pointer_batch",
-               "coordinator/guards", "coordinator/delivery"]
+               "coordinator/guards", "coordinator/delivery", "audit/collector",
+               "audit/collector/capacity", "audit/collector/writer"]
     if os.name == "nt":
-        modules.extend(["windows/clock", "windows/focus/mod", "windows/focus/state", "windows/focus/native"])
+        modules.extend(["windows/clock", "windows/focus/mod", "windows/focus/state", "windows/focus/native",
+                        "audit/collector/native"])
     for module in modules:
         source = root / f"crates/desktop-output/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",

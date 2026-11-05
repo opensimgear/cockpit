@@ -22,6 +22,12 @@ use std::{
     time::Instant,
 };
 
+#[path = "collector/capacity.rs"]
+mod capacity;
+#[path = "collector/writer.rs"]
+mod writer;
+use capacity::CapacityWake;
+
 #[derive(Clone)]
 struct Context {
     run: String,
@@ -188,6 +194,7 @@ enum Message {
 struct Engine {
     context: Context,
     sender: SyncSender<Message>,
+    capacity: Arc<CapacityWake>,
     stats: Arc<Stats>,
     gate: Mutex<Gate>,
     clock: Arc<dyn Fn() -> Option<u64> + Send + Sync>,
@@ -242,53 +249,17 @@ impl Engine {
         write_line(&mut writer, &header, &mut bytes_written, limits.bytes)?;
         writer.flush().map_err(|_| Fault::Io)?;
         let (sender, receiver) = mpsc::sync_channel(limits.queue);
+        let capacity = Arc::new(CapacityWake::default());
+        let worker_capacity = capacity.clone();
         let worker_stats = stats.clone();
-        thread::Builder::new().name("desktop-qpc-audit".into()).spawn(move || {
-            let mut failed = false;
-            for message in receiver {
-                match message {
-                    Message::Event(event) => {
-                        worker_stats.queued.fetch_sub(1, Ordering::AcqRel);
-                        if failed { continue; }
-                        let fields: Vec<String> = event.fields[..event.len].iter().map(u64::to_string).collect();
-                        let result = line(&serde_json::json!({"type":"event","sequence":event.sequence.to_string(),
-                            "qpc":event.at.qpc.to_string(),"kind":format!("{:?}",event.kind),"fields":fields}))
-                            .and_then(|bytes| {
-                                if bytes.len() > 512 { return Err(Fault::Serialization); }
-                                write_line(&mut writer, &bytes, &mut bytes_written, limits.bytes)
-                            });
-                        if let Err(error) = result { worker_stats.fault(error); failed = true; }
-                        else { worker_stats.bump(Stat::Written); worker_stats.max(Stat::LastWritten, event.sequence); }
-                    }
-                    Message::Barrier { through, finish, reason, deadline, reply } => {
-                        if Instant::now() >= deadline { worker_stats.fault(Fault::FlushTimeout); }
-                        if writer.flush().is_err() { worker_stats.fault(Fault::Io); failed = true; }
-                        if Instant::now() >= deadline { worker_stats.fault(Fault::FlushTimeout); }
-                        let complete = !failed && worker_stats.get(Stat::LastWritten) >= through;
-                        let mut report = worker_stats.report(through, complete, finish && complete);
-                        let control = line(&serde_json::json!({"type":if finish {"footer"}else{"checkpoint"},"reason":reason,"report":report}));
-                        // The event buffer was flushed above. Direct control writes
-                        // cannot be retried later by BufWriter with stale counters.
-                        let result = control.and_then(|bytes| write_line(writer.get_mut(), &bytes, &mut bytes_written, limits.bytes));
-                        if let Err(error) = result { worker_stats.fault(error); failed = true; }
-                        if Instant::now() >= deadline { worker_stats.fault(Fault::FlushTimeout); }
-                        report = worker_stats.report(through, complete && !failed, finish && complete && !failed);
-                        if finish {
-                            // Prior records were flushed and the footer was written before
-                            // the caller can receive completion. No protocol pipe is used.
-                            drop(writer);
-                            worker_stats.finished.store(report.complete, Ordering::Release);
-                            let _ = reply.try_send(report);
-                            return;
-                        }
-                        let _ = reply.try_send(report);
-                    }
-                }
-            }
-        }).map_err(|_| Fault::Io)?;
+        thread::Builder::new()
+            .name("desktop-qpc-audit".into())
+            .spawn(move || writer::run(writer, receiver, worker_capacity, worker_stats, limits, bytes_written))
+            .map_err(|_| Fault::Io)?;
         Ok(Self {
             context,
             sender,
+            capacity,
             stats,
             gate: Mutex::new(Gate {
                 next_id: 1,
@@ -408,6 +379,11 @@ impl Engine {
             .unwrap_or_else(Instant::now);
         let (reply, receive) = mpsc::sync_channel(1);
         loop {
+            // Hold the wake predicate across try_send. If the writer dequeues
+            // between a Full result and the wait, its notification cannot be
+            // lost because it must acquire this same mutex.
+            let wake = self.capacity.lock();
+            let generation = wake.generation();
             let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
             if gate.closed {
                 let finished = self.stats.finished.load(Ordering::Acquire);
@@ -429,10 +405,16 @@ impl Engine {
                         gate.closed = true;
                     }
                     drop(gate);
+                    drop(wake);
+                    drop(reply);
                     match receive.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                         Ok(report) => return report,
-                        Err(_) => {
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
                             self.stats.fault(Fault::FlushTimeout);
+                            return self.stats.report(through, false, false);
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            self.stats.fault(Fault::Io);
                             return self.stats.report(through, false, false);
                         }
                     }
@@ -443,225 +425,24 @@ impl Engine {
                 }
                 Err(TrySendError::Full(_)) => {
                     drop(gate);
+                    wake.wait_until(generation, deadline);
                 }
             }
+            // The Full path waits on the captured generation; successful sends
+            // release the guard before waiting for the writer reply.
             if Instant::now() >= deadline {
                 self.stats.fault(Fault::FlushTimeout);
                 return self
                     .stats
                     .report(self.stats.get(Stat::LastEnqueued), false, false);
             }
-            thread::sleep(Duration::from_millis(1));
         }
     }
 }
 
 #[cfg(all(windows, debug_assertions))]
-mod native {
-    use super::*;
-    use std::{fs::OpenOptions, path::PathBuf, sync::OnceLock};
-    use windows_sys::Win32::System::Performance::{
-        QueryPerformanceCounter, QueryPerformanceFrequency,
-    };
-    struct Global {
-        engine: Option<Engine>,
-        stats: Arc<Stats>,
-        configured: bool,
-        directory: Option<PathBuf>,
-        run: Option<String>,
-    }
-    static GLOBAL: OnceLock<Global> = OnceLock::new();
-    fn qpc() -> Option<u64> {
-        let mut value = 0;
-        (unsafe { QueryPerformanceCounter(&mut value) } != 0 && value > 0).then_some(value as u64)
-    }
-    fn positive(name: &str) -> Result<u64, Fault> {
-        let value = std::env::var(name).map_err(|_| Fault::Context)?;
-        let parsed = value.parse::<u64>().map_err(|_| Fault::Context)?;
-        if parsed == 0 || parsed.to_string() != value {
-            return Err(Fault::Context);
-        }
-        Ok(parsed)
-    }
-    pub(crate) fn initialize(role: Role) {
-        GLOBAL.get_or_init(|| {
-            let stats = Arc::new(Stats::default());
-            let directory = std::env::var_os(ENV_DIRECTORY).map(PathBuf::from);
-            let run = std::env::var(ENV_RUN).ok();
-            let configured = directory.is_some() || std::env::var_os(ENV_RUN).is_some();
-            let mut global = Global {
-                engine: None,
-                stats: stats.clone(),
-                configured,
-                directory: directory.clone(),
-                run: run.clone(),
-            };
-            if option_env!("OSG_DEV_DESKTOP_INPUT") != Some("1") || !configured {
-                return global;
-            }
-            let result = (|| {
-                let directory = directory.ok_or(Fault::Context)?;
-                if !directory.is_absolute() || !directory.is_dir() {
-                    return Err(Fault::Context);
-                }
-                let run = run.ok_or(Fault::Context)?;
-                if !(8..=64).contains(&run.len())
-                    || !run.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                {
-                    return Err(Fault::Context);
-                }
-                let mut frequency = 0;
-                if unsafe { QueryPerformanceFrequency(&mut frequency) } == 0 || frequency <= 0 {
-                    return Err(Fault::Clock);
-                }
-                let instance = qpc().ok_or(Fault::Clock)?;
-                let (parent_pid, parent_instance, channel) = match role {
-                    Role::Parent => {
-                        if [ENV_PARENT_PID, ENV_PARENT_INSTANCE, ENV_CHANNEL]
-                            .iter()
-                            .any(|name| std::env::var_os(name).is_some())
-                        {
-                            return Err(Fault::Context);
-                        }
-                        (None, None, None)
-                    }
-                    Role::Worker => {
-                        let pid = positive(ENV_PARENT_PID)?;
-                        if pid > u32::MAX as u64 || pid == std::process::id() as u64 {
-                            return Err(Fault::Context);
-                        }
-                        (
-                            Some(pid),
-                            Some(positive(ENV_PARENT_INSTANCE)?),
-                            Some(positive(ENV_CHANNEL)?),
-                        )
-                    }
-                };
-                let context = Context {
-                    run: run.clone(),
-                    role,
-                    pid: std::process::id() as u64,
-                    instance,
-                    parent_pid,
-                    parent_instance,
-                    channel,
-                };
-                let file = directory.join(format!("audit-{run}-{}-{instance}.jsonl", context.pid));
-                let writer = OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(file)
-                    .map_err(|_| Fault::Io)?;
-                Engine::new(
-                    writer,
-                    context,
-                    frequency as u64,
-                    Arc::new(qpc),
-                    Limits::default(),
-                    stats.clone(),
-                )
-            })();
-            match result {
-                Ok(engine) => global.engine = Some(engine),
-                Err(error) => stats.fault(error),
-            }
-            global
-        });
-    }
-    fn engine() -> Option<&'static Engine> {
-        GLOBAL.get().and_then(|state| state.engine.as_ref())
-    }
-    pub(crate) fn enabled() -> bool {
-        engine().is_some()
-    }
-    pub(crate) fn stamp() -> Option<Stamp> {
-        engine()?.stamp()
-    }
-    pub(crate) fn next_id() -> Option<Id> {
-        engine()?.next_id()
-    }
-    pub(crate) fn alias(kind: AliasKind, key: &[u8]) -> Option<Id> {
-        engine()?.alias(kind, key)
-    }
-    pub(crate) fn record_at(at: Stamp, kind: Kind, fields: &[u64]) {
-        if let Some(engine) = engine() {
-            engine.record_at(at, kind, fields);
-        }
-    }
-    pub(crate) fn fault(reason: Fault) {
-        if let Some(state) = GLOBAL.get() {
-            state.stats.fault(reason);
-        }
-    }
-    pub(crate) fn process_instance() -> Option<Id> {
-        Some(engine()?.context.instance)
-    }
-    pub(crate) fn parent_instance() -> Option<Id> {
-        engine()?.context.parent_instance
-    }
-    pub(crate) fn parent_pid() -> Option<u64> {
-        engine()?.context.parent_pid
-    }
-    pub(crate) fn channel() -> Option<Id> {
-        engine()?.context.channel
-    }
-    pub(crate) fn configure_child(command: &mut Command, channel: Id) {
-        if let (Some(engine), Some(state)) = (engine(), GLOBAL.get()) {
-            if channel == 0 {
-                state.stats.fault(Fault::Context);
-                return;
-            }
-            if let (Some(directory), Some(run)) = (&state.directory, &state.run) {
-                command
-                    .env(ENV_DIRECTORY, directory)
-                    .env(ENV_RUN, run)
-                    .env(ENV_PARENT_PID, engine.context.pid.to_string())
-                    .env(ENV_PARENT_INSTANCE, engine.context.instance.to_string())
-                    .env(ENV_CHANNEL, channel.to_string());
-            }
-        }
-    }
-    fn unavailable() -> FlushReport {
-        GLOBAL
-            .get()
-            .map(|state| FlushReport {
-                configured: state.configured,
-                counters: state.stats.snapshot(),
-                ..FlushReport::default()
-            })
-            .unwrap_or_default()
-    }
-    pub(crate) fn checkpoint(reason: Checkpoint, timeout: Duration) -> FlushReport {
-        engine()
-            .map(|engine| {
-                engine.barrier(
-                    false,
-                    match reason {
-                        Checkpoint::Stopped => "stopped",
-                        Checkpoint::Manual => "manual",
-                        Checkpoint::RunComplete => "run-complete",
-                    },
-                    timeout,
-                )
-            })
-            .unwrap_or_else(unavailable)
-    }
-    pub(crate) fn finish(reason: ExitReason, timeout: Duration) -> FlushReport {
-        engine()
-            .map(|engine| {
-                engine.barrier(
-                    true,
-                    match reason {
-                        ExitReason::Normal => "normal",
-                        ExitReason::Stop => "stop",
-                        ExitReason::Error => "error",
-                    },
-                    timeout,
-                )
-            })
-            .unwrap_or_else(unavailable)
-    }
-}
+#[path = "collector/native.rs"]
+mod native;
 #[cfg(all(windows, debug_assertions))]
 pub(super) use native::*;
 
