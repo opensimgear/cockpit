@@ -203,6 +203,7 @@ impl Observer {
         }).collect::<Vec<_>>();
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let previous=state.entries.clone();
+        let was_fresh = state.fresh();
         let same_source = match (&state.continuity, &continuity) {
             (None, None) => true,
             (Some(old), Some(new)) => Arc::ptr_eq(old, new),
@@ -267,7 +268,7 @@ impl Observer {
             }
         }
         state.at = Some(Instant::now());
-        let changed=state.entries!=previous;drop(state);
+        let changed=state.entries!=previous || state.fresh()!=was_fresh;drop(state);
         if changed {
             self.2.notify_all();
         }

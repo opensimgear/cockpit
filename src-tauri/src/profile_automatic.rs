@@ -859,15 +859,13 @@ impl GatewayManager {
 
     fn automatic_reconciliation_wait(&self, now: std::time::Instant) -> Option<std::time::Duration> {
         let owner = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).status().owner.clone();
+        let owner = owner?;
         let state = self.profile_automatic.state.lock().unwrap_or_else(|p| p.into_inner());
-        if owner.is_none() && state.settings.mode == SelectionMode::Manual {
-            return None;
-        }
         let vehicle = state.last_vehicle_attempt.as_ref()
-            .filter(|(previous, _, _)| Some(previous) == owner.as_ref())
+            .filter(|(previous, _, _)| previous == &owner)
             .and_then(|(_, _, at)| at.checked_add(VEHICLE_RETRY_DELAY));
         let peripheral = state.last_peripheral_attempt.as_ref()
-            .filter(|attempt| Some(&attempt.owner) == owner.as_ref())
+            .filter(|attempt| attempt.owner == owner)
             .and_then(|attempt| attempt.at.checked_add(peripheral_retry_delay(attempt.failures)));
         // An active run can still encounter transient admission or inventory
         // contention. Keep its recovery fallback while those paths are wired.

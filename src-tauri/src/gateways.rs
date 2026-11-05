@@ -571,8 +571,18 @@ impl GatewayManager {
         if let Err(error) = manager.refresh_saved_panel_references() {
             eprintln!("Saved panel reference bootstrap failed: {error}");
         }
-        manager.profiles.lock().unwrap_or_else(|p| p.into_inner()).observe_read_model(manager.profile_read_models.library_observer());
-        manager.profile_session.lock().unwrap_or_else(|p| p.into_inner()).observe_status(manager.profile_read_models.native_observer());
+        let library_observer = manager.profile_read_models.library_observer();
+        let wake = manager.profile_automatic.wake.clone();
+        manager.profiles.lock().unwrap_or_else(|p| p.into_inner()).observe_read_model(Arc::new(move |snapshot| {
+            library_observer(snapshot);
+            wake.notify();
+        }));
+        let native_observer = manager.profile_read_models.native_observer();
+        let wake = manager.profile_automatic.wake.clone();
+        manager.profile_session.lock().unwrap_or_else(|p| p.into_inner()).observe_status(Arc::new(move |snapshot| {
+            native_observer(snapshot);
+            wake.notify();
+        }));
         manager.profile_automatic.observe_read_model(manager.profile_read_models.automatic_observer());
         if let Err(error) = manager.profile_read_models.start() {
             eprintln!("Profile observation topics unavailable: {error}");

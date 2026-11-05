@@ -56,6 +56,7 @@ impl Signal {
         self.mark(Domain::Library);
         self.context_wake.notify();
         self.activation_wake.notify();
+        self.wake_automatic();
         self.mark_resources();
     }
     pub(crate) fn watch_automatic(&self, wake: &Arc<osg_streams::NativeWake>) {

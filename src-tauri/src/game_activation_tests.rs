@@ -279,6 +279,25 @@ fn replacement_exit_ambiguity_and_executable_change_revoke_without_replay() {
     wrong["executable"] = json!("C:\\other.exe");
     assert!(identity(&platform, &wrong).is_err());
 }
+
+#[test]
+fn unchanged_process_inventory_wakes_selection_when_freshness_returns() {
+    let platform = fake();
+    let observer = Observer::default();
+    let changes = Arc::new(crate::game_read_models::signals::Signal::default());
+    let automatic = Arc::new(osg_streams::NativeWake::default());
+    changes.watch_automatic(&automatic);
+    observer.watch_changes(changes);
+    observer.observe(&platform, &[]);
+    let fresh = automatic.observed();
+    observer.observe(&platform, &[]);
+    assert_eq!(automatic.observed(), fresh);
+    observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE - Duration::from_secs(1));
+    assert!(observer.snapshot().is_err());
+    observer.observe(&platform, &[]);
+    assert!(observer.snapshot().unwrap().is_empty());
+    assert_ne!(automatic.observed(), fresh);
+}
 #[test]
 fn stale_unsupported_malformed_and_duplicate_catalogues_never_grant_authority() {
     let platform = fake();

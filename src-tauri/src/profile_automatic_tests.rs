@@ -16,6 +16,13 @@ fn automatic_control_wakes_reconciliation_after_the_last_guard_exits() {
     policy.retry_event();
     assert_ne!(policy.wake.observed(), finished);
 }
+
+#[test]
+fn idle_automatic_selection_waits_for_source_changes() {
+    let fixture = Fixture::new();
+    mode(&fixture.manager, "automatic");
+    assert_eq!(fixture.manager.automatic_reconciliation_wait(Instant::now()), None);
+}
 use crate::game_discovery::{Platform, ProcessIdentity};
 use std::{
     collections::BTreeMap,
