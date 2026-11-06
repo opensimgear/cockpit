@@ -160,6 +160,7 @@ its own active profile; the MCP draft-only save is deliberately separate.
 | Games and companions | `games_list`, `game_vehicles_list`, `game_telemetry_inspect`, `game_aircraft_resource`, `companions_list`, `companion_panels_list`, `companion_inspect` |
 | Widget designs | `widgets_list`, `widget_get`, `widget_save` |
 | Prepared changes | `profile_prepare_changes`, `compilation_inspect`, `profile_save_prepared` |
+| Desktop recording | `profile_desktop_preview` |
 | Applied runtime | `profile_apply`, `activation_current`, `activation_status`, `activation_cancel`, `profile_stop`, `profile_recover`, `applied_ports_inspect`, `applied_topology_inspect` |
 | Gateway/CAN setup | `gateways_list`, `gateway_inspect`, `gateway_session`, `gateway_config_read`, `gateway_config_change` |
 | Direct USB setup | `usb_modules_list`, `usb_module_inspect`, `usb_module_session`, `usb_module_config_read`, `usb_module_config_change` |

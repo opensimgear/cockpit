@@ -509,6 +509,9 @@ impl Tools {
                 };
                 Ok(summary)
             }
+            "profile_desktop_preview" => forward(
+                name, &["compilationId", "frames", "advances"], Some("profileDesktopPreview"),
+            ),
             "profile_debug_controller_status" => forward("profile_debug_controller_status", &["owner","nodeId"],Some("debugController")),
             "profile_debug_controller_input" => forward("profile_debug_controller_input", &["owner","nodeId","streamId","sequence","changes"],Some("debugController")),
             "applied_ports_inspect" => forward(

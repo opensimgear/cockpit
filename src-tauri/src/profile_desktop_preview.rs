@@ -9,9 +9,9 @@ use osg_mapping::{
     program::{Program, SinkKind},
 };
 use serde_json::{json, Value};
-const MAX_FRAMES: usize = 256;
-const MAX_CHANGES: usize = 4096;
-const MAX_ADVANCES: usize = 2048;
+pub(crate) const MAX_FRAMES: usize = 256;
+pub(crate) const MAX_CHANGES: usize = 4096;
+pub(crate) const MAX_ADVANCES: usize = 2048;
 const MAX_DURATION_US: u64 = 60_000_000;
 const MAX_REPLY_BYTES: usize = 1_900_000;
 

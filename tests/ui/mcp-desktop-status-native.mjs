@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { nativePage, until } from '../../scripts/reactive/cdp.mjs';
 
-test('desktop status matches MCP and committed settings update the portal', {
+test('desktop status, recording and settings agree across MCP and the portal', {
   skip: process.env.OSG_MCP_DESKTOP_STATUS_NATIVE !== '1', timeout: 60000,
 }, async () => {
   const page = await nativePage();
@@ -14,8 +14,8 @@ test('desktop status matches MCP and committed settings update the portal', {
   const invoke = (command, args = {}) => page.evaluate(
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
   );
-  const native = async command => {
-    const result = await invoke('gateway_request', {request:{command,clientId:'desktop-status-parity'}});
+  const native = async (command, fields = {}) => {
+    const result = await invoke('gateway_request', {request:{command,clientId:'desktop-status-parity',...fields}});
     assert.equal(result.ok,true,result.error);
     return result.state;
   };
@@ -46,10 +46,14 @@ test('desktop status matches MCP and committed settings update the portal', {
       requestInit:{headers:{Authorization:`Bearer ${credential.token}`}},
     });
     await client.connect(transport);
-    const descriptor = (await client.listTools()).tools.find(tool => tool.name === 'profile_desktop_status');
+    const {tools} = await client.listTools();
+    const descriptor = tools.find(tool => tool.name === 'profile_desktop_status');
     assert.ok(descriptor,'Tool must be discoverable with a read credential');
     assert.equal(descriptor.inputSchema.additionalProperties,false);
     assert.equal(descriptor.annotations.readOnlyHint,true);
+    const recorder = tools.find(tool => tool.name === 'profile_desktop_preview');
+    assert.equal(recorder?.annotations.readOnlyHint,true);
+    assert.equal(recorder.inputSchema.properties.frames.maxItems,256);
     const before = await native('profile_status');
     const {desktop} = await native('profile_desktop_status');
     const reply = await client.callTool({name:'profile_desktop_status',arguments:{}});
@@ -87,6 +91,38 @@ test('desktop status matches MCP and committed settings update the portal', {
     await writer.connect(new StreamableHTTPClientTransport(new URL(status.endpoint), {
       requestInit:{headers:{Authorization:`Bearer ${writeCredential.token}`}},
     }));
+    const seed = await call(writer,'profile_prepare_changes',{name:'Temporary desktop recording',expectedRevision:null});
+    const document = await page.evaluate(`(async()=>{
+      const {desktopPreset}=await import('/src/lib/profile-desktop.ts');
+      const document=${JSON.stringify(seed.document)};
+      const {output}=desktopPreset('key-hold','recording-key');
+      const port=output.ports[0];
+      document.desktopOutputs=[output];
+      document.resources=[{id:'recording-source',name:'Synthetic source',kind:'device',required:false,
+        ports:[{...port,id:'button',name:'Button',direction:'output'}]}];
+      document.bindings=[{id:'recorded-hold',from:{nodeId:'recording-source',portId:'button'},to:{nodeId:output.id,portId:port.id}}];
+      return document;
+    })()`);
+    const prepared = await call(writer,'profile_prepare_changes',{document,assignments:[],expectedRevision:null});
+    assert.equal(prepared.validation.valid,true,JSON.stringify(prepared.validation));
+    const compilationId = prepared.compilation.compilationId;
+    const {items:sources} = await call(client,'compilation_inspect',{compilationId,section:'sources'});
+    assert.equal(sources.length,1);
+    const samples = await page.evaluate(`(async()=>{
+      const {desktopPreviewFrames,previewSourceKey}=await import('/src/lib/profile-desktop-preview.ts');
+      const sources=${JSON.stringify(sources)};
+      return desktopPreviewFrames(sources,previewSourceKey(sources[0].endpoint),true);
+    })()`);
+    const recordingArgs = {compilationId,...samples};
+    const recorded = await call(client,'profile_desktop_preview',recordingArgs);
+    assert.deepEqual(recorded,(await native('profile_desktop_preview',recordingArgs)).profileDesktopPreview);
+    assert.equal(recorded.nativeSubmission,false);
+    const events = recorded.operations.flatMap(operation=>operation.events);
+    assert.ok(events.some(event=>event.kind==='key'&&event.down===true));
+    assert.ok(events.some(event=>event.kind==='key'&&event.down===false));
+    const missing = await client.callTool({name:'profile_desktop_preview',arguments:{compilationId:randomUUID()}});
+    assert.ok(missing.isError);
+    assert.equal((await native('profile_status')).profiles.profileSession.owner,null);
     const baseline = await desktopSettings();
     assert.equal(baseline.settings.enabled,desktop.enabled);
     await page.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Cockpit')?.click()`);
