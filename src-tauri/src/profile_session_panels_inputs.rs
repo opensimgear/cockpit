@@ -174,7 +174,17 @@ pub(crate) struct PanelInputs {
     bound: bool,
 }
 impl PanelInputs {
-    pub(crate) fn is_empty(&self) -> bool { self.specs.is_empty() }
+    pub(crate) fn hold_uses_notifications(&self) -> bool {
+        if self.specs.is_empty() {
+            return true;
+        }
+        #[cfg(test)]
+        if self.io.uses_polled_test_fixture() {
+            return false;
+        }
+        self.bound && !self.revoked.load(Ordering::Acquire)
+            && self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).wake.is_some()
+    }
 
     pub(crate) fn watch_baseline(&self, wake: &Arc<NativeWake>) {
         self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).baseline_wake = Arc::downgrade(wake);

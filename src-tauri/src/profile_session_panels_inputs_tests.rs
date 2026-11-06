@@ -10,7 +10,7 @@ use std::sync::Condvar;
 fn poisoned_panel_mailbox_still_wakes_subscribers_and_revokes_on_stop() {
     let (plan, io) = fixture(true, 1);
     let mut inputs = PanelInputs::prepare_io(&plan, io).unwrap();
-    assert!(!inputs.is_empty());
+    assert!(!inputs.specs.is_empty());
     let mailbox = inputs.mailbox.clone();
     assert!(thread::spawn(move || {
         let _guard = mailbox.lock().unwrap();
@@ -31,6 +31,7 @@ fn poisoned_panel_mailbox_still_wakes_subscribers_and_revokes_on_stop() {
     assert!(!frames.is_empty());
     assert!(baseline.observed() > baseline_before);
     assert!(runtime.observed() > runtime_before);
+    assert!(!inputs.hold_uses_notifications(), "The polled fixture cannot park the host");
     inputs.start().unwrap();
     assert!(inputs.active.load(Ordering::Acquire));
     assert!(inputs.start().is_err(), "An active reader cannot be admitted twice");

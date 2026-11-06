@@ -43,11 +43,12 @@ closed reply pipe wakes the profile host, and output leases retain their own
 renewal deadline. Qualified game and desktop adapters also use retained wakes.
 Mixed adapter combinations and missing watches can still require bounded service.
 
-A pending Windows game launch with only notified HID inputs and a neutral
-virtual feeder can wait for retained wakes, feeder renewal, or launch expiry.
-The same scheduling applies when the hold has no inputs or outputs. A hold
-that owns panel, companion, desktop, visibility, action, or publication work
-keeps bounded service. The hold stays disarmed until Start.
+A pending Windows game launch with notified HID or native panel inputs and
+an optional neutral virtual feeder can wait for retained wakes, feeder renewal,
+or launch expiry. Native panels require a bound baseline and a registered host
+wake. The same scheduling applies to holds without inputs or outputs. Companion,
+desktop, visibility, action, and publication work keeps bounded service.
+The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline
 selection. Foreground, desktop and session changes notify the parent and helper
