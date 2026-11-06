@@ -43,6 +43,7 @@ struct Entry {
 #[derive(Default)]
 struct State {
     at: Option<Instant>,
+    tracks_processes: bool,
     continuity: Option<Arc<ProcessContinuity>>,
     entries: BTreeMap<String, Entry>,
 }
@@ -52,7 +53,7 @@ pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::si
 impl State {
     fn fresh(&self) -> bool {
         self.continuity.as_ref().map_or_else(
-            || self.at.is_some_and(|at| self.entries.is_empty() || at.elapsed() <= MAX_AGE),
+            || self.at.is_some_and(|at| !self.tracks_processes || at.elapsed() <= MAX_AGE),
             |live| live.is_live(),
         )
     }
@@ -82,8 +83,12 @@ pub(crate) enum CurrentProcessObservation {
     Observed(Option<ProcessIdentity>),
 }
 
+pub(crate) fn process_candidate(game: &Value) -> bool {
+    game["installed"] == true && game["processMonitoringSupported"] == true
+}
+
 pub(crate) fn identity(platform: &dyn Platform, game: &Value) -> Result<GameIdentity, String> {
-    if game["installed"] != true || game["processMonitoringSupported"] != true {
+    if !process_candidate(game) {
         return Err("The selected installation has no native process monitoring support.".into());
     }
     let identity = GameIdentity {
@@ -280,6 +285,7 @@ impl Observer {
                 }
             }
         }
+        state.tracks_processes = games.iter().any(process_candidate);
         state.at = Some(Instant::now());
         let changed=state.entries!=previous || state.fresh()!=was_fresh;drop(state);
         if let Some(signal)=self.1.get() {

@@ -220,6 +220,18 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
     }
     thread::sleep(Duration::from_millis(2100));
     assert_eq!(platform.0.load(Ordering::Acquire), 1, "Empty catalogue must leave the worker parked");
+    runtime.inner.settings.lock().unwrap().catalogue.extend([
+        json!({"id":"missing-game","installed":false,"processMonitoringSupported":true}),
+        json!({"id":"unsupported-game","installed":true,"processMonitoringSupported":false}),
+    ]);
+    runtime.inner.changes.mark_library_commit();
+    let quiet_deadline = Instant::now() + Duration::from_secs(3);
+    while platform.0.load(Ordering::Acquire) < 2 {
+        assert!(Instant::now() < quiet_deadline, "Library commit did not wake the worker");
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(2100));
+    assert_eq!(platform.0.load(Ordering::Acquire), 2, "Catalogue without monitorable games must leave the worker parked");
     assert!(runtime.profile_activation_observations().unwrap().is_empty());
     runtime.inner.settings.lock().unwrap().catalogue.push(json!({"id":"first-discovered-game","name":"First discovered game","installed":true,"processMonitoringSupported":true,"executable":"C:/Games/First.exe","integrationKey":null,"provider":null}));
     runtime.inner.changes.mark_library_commit();
