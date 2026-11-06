@@ -166,6 +166,16 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     return profileInspection.ports.every(port=>port.sample.value?.value===false);
    },Boolean,10000);
    if(qualifyHostWake)await assertHostWake('reloaded-neutral-recovery');
+   assert.deepEqual((await request('profile_status')).profiles.profileSession.owner,owner,
+    'Reloading the browser must retain the applied owner');
+   assert.equal(await page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
+    value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),false,
+    'The reloaded browser must not receive the previous held feedback as fresh');
+   await page.getByRole('button',{name:'probe: press',exact:true}).click();
+   await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
+    value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),Boolean,7000);
+   const rearmed=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
+   assert.deepEqual(rearmed.profileInspection.ports.map(port=>port.sample.value.value),[true,true]);
    const stopped=await request('profile_stop');
    assert.equal(stopped.profiles.profileSession.state,'stopped');
    assert.equal(stopped.profiles.profileSession.owner,null);
