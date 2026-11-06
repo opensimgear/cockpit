@@ -1,4 +1,4 @@
-// Opt-in acceptance against the running native Cockpit; no IPC is intercepted.
+// Opt-in acceptance against the running Cockpit and its real native gateway.
 // Executables contain harmless text bytes and are never launched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,25 +6,36 @@ import {createRequire} from 'node:module';
 import {mkdir,writeFile,rename,rm} from 'node:fs/promises';
 import {resolve,relative,isAbsolute} from 'node:path';
 
-const enabled=process.platform==='win32'&&process.env.OSG_GAME_DISCOVERY_NATIVE==='1';
+const browserUrl=process.env.OSG_GAME_DISCOVERY_BROWSER_URL;
+const transport=browserUrl?'browser-dev':'native';
+const enabled=process.platform==='win32'&&(browserUrl||process.env.OSG_GAME_DISCOVERY_NATIVE==='1');
 const normalize=value=>(value??'').replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
 const display=value=>(value??'').replace(/^\\\\\?\\/,'').replaceAll('/','\\');
 const within=(parent,path)=>{const child=relative(parent,path);return child!==''&&!child.startsWith('..')&&!isAbsolute(child);};
 
-test('native discovery reviews libraries, installation copies, moves and explicit removals',{skip:!enabled,timeout:300_000},async()=>{
+test(transport+' discovery reviews libraries, installation copies, moves and explicit removals',{skip:!enabled,timeout:300_000},async()=>{
   const require=createRequire(import.meta.url),module=process.env.OSG_PLAYWRIGHT_MODULE??'playwright';
   const {chromium}=require(module),{expect}=require(module+'/test');
-  const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
-  const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/127\.0\.0\.1:142[01]|tauri\.localhost/.test(page.url())&&!page.url().includes('profile-activation-window'));
-  assert.ok(page,'Start the native dev Cockpit with CDP before this test.');page.setDefaultTimeout(25_000);
-  const artifacts=resolve('.research/game-discovery-native'),fixtures=resolve(artifacts,'fixtures-'+Date.now());
+  const browser=browserUrl
+    ?await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL})
+    :await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
+  const page=browserUrl
+    ?await browser.newPage()
+    :browser.contexts().flatMap(context=>context.pages()).find(page=>/127\.0\.0\.1:142[01]|tauri\.localhost/.test(page.url())&&!page.url().includes('profile-activation-window'));
+  assert.ok(page,'Start the dev Cockpit before this test.');page.setDefaultTimeout(25_000);
+  const artifacts=resolve('.research/game-discovery-'+transport),fixtures=resolve(artifacts,'fixtures-'+Date.now());
   await mkdir(fixtures,{recursive:true});
   const dcsA=resolve(fixtures,'DCS-copy-a'),dcsB=resolve(fixtures,'DCS-copy-b'),moved=resolve(fixtures,'DCS-copy-a-moved'),foo=resolve(fixtures,'Foo');
-  const errors=[],evidence={actualNativeCockpit:true,gameLaunches:false,fixtureBytes:'Harmless discovery fixture; not executable.',checks:[],snapshots:{},commands:[]};
+  const errors=[],evidence={transport,actualNativeGateway:true,gameLaunches:false,fixtureBytes:'Harmless discovery fixture; not executable.',checks:[],snapshots:{},commands:[]};
   const onError=error=>errors.push(error.message);page.on('pageerror',onError);
   const native=async request=>{
     evidence.commands.push(request.command);
-    const reply=await page.evaluate(request=>window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{...request,clientId:'game-discovery-native-acceptance'}}),request);
+    const reply=await page.evaluate(async ({request, browser})=>{
+      const payload={...request,clientId:'game-discovery-acceptance'};
+      if(!browser)return window.__TAURI_INTERNALS__.invoke('gateway_request',{request:payload});
+      const response=await fetch('/api/gateway/',{method:'POST',headers:{'Content-Type':'application/json','x-osg-client':'1'},body:JSON.stringify(payload)});
+      return response.json();
+    },{request,browser:!!browserUrl});
     assert.equal(reply.ok,true,request.command+': '+reply.error);return reply.state;
   };
   const games=async()=>(await native({command:'game_get_state'})).games;
@@ -46,8 +57,19 @@ test('native discovery reviews libraries, installation copies, moves and explici
     const back=page.getByRole('button',{name:'All games',exact:true});if(await back.isVisible().catch(()=>false))await back.click();
   };
   const openReview=async()=>{
-    await uiGames();const previousScanId=(await games()).discovery?.scanId;await page.getByRole('button',{name:'Rescan',exact:true}).click();
-    await expect(page.getByRole('heading',{name:'Discover games',exact:true})).toBeVisible();
+    await uiGames();
+    const current=(await games()).discovery;
+    const heading=page.getByRole('heading',{name:'Discover games',exact:true});
+    if(current?.firstStart&&current.status==='ready'){
+      const results=page.getByRole('button',{name:'View results',exact:true});
+      await expect(heading.or(results).first()).toBeVisible();
+      if(await results.isVisible())await results.click();
+      await expect(heading).toBeVisible();
+      return ready(undefined,current.scanId);
+    }
+    const previousScanId=current?.scanId;
+    await page.getByRole('button',{name:'Rescan',exact:true}).click();
+    await expect(heading).toBeVisible();
     return ready(previousScanId);
   };
   const applyUi=async(state,selectedIds)=>{
@@ -63,16 +85,20 @@ test('native discovery reviews libraries, installation copies, moves and explici
   const screenshot=name=>page.screenshot({path:resolve(artifacts,name+'.png'),fullPage:true});
   let original,originalDcs,createdGenericId;
   try{
-    assert.equal(await page.evaluate(()=>!!window.__TAURI_INTERNALS__?.invoke),true);
+    if(browserUrl){
+      await page.goto(browserUrl);
+      await page.getByRole('navigation',{name:'Main navigation'}).waitFor();
+    }
+    assert.equal(await page.evaluate(()=>!!window.__TAURI_INTERNALS__?.invoke),!browserUrl);
     await page.evaluate(async()=>{
       const {observeGameJobs}=await import('/src/lib/game-read-models/shared.ts');
       const probe=window.__discoveryAcceptance={state:null};
       probe.stop=observeGameJobs(state=>{probe.state=state;});
     });
     await expect.poll(async()=>await page.evaluate(()=>window.__discoveryAcceptance?.state?.status)).toBe('ready');
-    const currentJob=await job();
-    if(currentJob?.phase==='scanning')await ready(undefined,currentJob.run);
-    original=await games();originalDcs=original.catalogue.find(game=>game.id==='dcs');
+    original=await games();
+    if(original.discovery?.status==='scanning')original=await ready(undefined,original.discovery.scanId);
+    originalDcs=original.catalogue.find(game=>game.id==='dcs');
     for(const directory of [resolve(dcsA,'bin'),resolve(dcsB,'bin'),foo])await mkdir(directory,{recursive:true});
     for(const path of [resolve(dcsA,'bin/DCS.exe'),resolve(dcsB,'bin/DCS.exe'),resolve(foo,'Game.exe'),resolve(foo,'AGame.exe'),resolve(foo,'Foo.exe')])await writeFile(path,evidence.fixtureBytes);
 

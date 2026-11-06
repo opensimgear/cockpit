@@ -33,4 +33,11 @@ view is closed, one committed-only read on each of three reopens, and bounded
 search requests. The native AI settings fixture covers committed edits and a
 quiet idle interval.
 
+The discovery fixture runs against native Cockpit with
+`OSG_GAME_DISCOVERY_NATIVE=1` or browser development with
+`OSG_GAME_DISCOVERY_BROWSER_URL`. Both wait for the exact committed
+`games.jobs` run before fetching review data. The same UI checks two copies
+of a known title, a generic executable, same-volume relocation, and explicit
+removal. The browser fixture also covers the first-start results banner.
+
 The matrix still needs proof for other external device and filesystem changes, nested consumer teardown and browser parity on native-only settings surfaces. Windows process acquisition retains the documented access-denied fallback. The browser and native companion apps and firmware lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md) and [remaining acceptance](remaining-acceptance.md) track those boundaries.
