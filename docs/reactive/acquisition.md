@@ -194,9 +194,9 @@ Preserve companion authenticated publication/owner fences, native subscription
 limits and release/backpressure behavior. Inventory/storage/discovery must not
 block active output dispatch, revocation, Stop or lease maintenance.
 
-Run `node scripts/reactive/audit.mjs --committed` to inventory the checked-out
+Run `node scripts/reactive/audit.mjs --committed --output=.research/reactive/current-refresh-sites.json` to inventory the checked-out
 commits across Cockpit and the sibling firmware repositories. Omit `--committed`
-to include worktree changes. Use `--check` with the same mode to verify the ledger.
+to include worktree changes. Create the output directory first. Reuse the same output path and add `--check` to verify the generated snapshot. The checked-in ledger is the pinned baseline for `--check-dispositions`.
 The scanner includes all tracked production source trees and sibling firmware
 repositories. It also records native deadline waits such as `park_timeout` and
 `sleep_until`. The generated list includes legitimate timing and some inline

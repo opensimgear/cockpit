@@ -42,7 +42,7 @@ See [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events
 | `src-tauri/src/game_activation_runtime.rs:64` | Global activation observer, scan the game process catalogue | Replaced in `ebf1aa78` by a native event owner and initial exact inventory. Windows access denial still uses a 500 ms discovery fallback. The authored start/exit fixture passed through that fallback. |
 | `src-tauri/src/game_metadata_api.rs:171`, `src-tauri/src/games/integration/catalogues.rs:42`, `src-tauri/src/games/integration/provision.rs:208,236`, `src-tauri/src/games/integration/settings.rs:26`, `src-tauri/src/games/integration/setup_cache.rs:181`, `src-tauri/src/games/prepared_sources/mod.rs:142`, `src-tauri/src/games/storage/car_catalogue.rs:160` | Test-only barriers during metadata, setup or catalogue publication | Keep bounded test waits. These fixtures verify publication, cancellation and persistence without deadlocks. |
 | `src-tauri/src/games/context_sdk_watch.rs:110,118` | Test-only waits for an SDK file notification or quiet interval | Keep test bounds. The file-watch fixture covers native wake and cache refresh. |
-| `src-tauri/src/games/discovery/launch.rs:226` | Explicit launch confirmation, wait up to 45 seconds for the selected process | Replace the repeated process check with the process-event owner and retain the launch deadline. Launch helper tests cover timeout. External launch and handoff need live qualification. |
+| `src-tauri/src/games/discovery/launch.rs:226` | Historical synchronous launch helper | The synchronous helper is exercised only by tests. Production launch uses `spawn_process` and `wait_profile_launch`, which wait on activation notifications and the startup deadline while the activation worker is live. The worker can use the 500 ms inventory fallback when event coverage is unavailable. With no live worker, launch uses a scoped 100 ms fallback until the startup deadline. External launch and handoff still need live qualification. |
 | `src-tauri/src/games/metadata/network.rs:58` | Metadata worker, retry after a failed Wikidata lookup within its budget | Keep bounded backoff. Offline and budget tests cover the worker behavior. |
 | `src-tauri/src/games/telemetry/windows_source/mod.rs:172` | Opt-in simulator test, wait for the next fresh sample | Test-only. Real publisher qualification remains in #199. |
 | `src-tauri/src/games/telemetry/windows_source/shared.rs:168` | Assetto native capture owner, sample shared memory or retry after read failure | Keep the approved acquisition cadence. Reader tests cover order, mapping generation and lease-loss replacement. |
@@ -52,6 +52,23 @@ See [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events
 | `src-tauri/src/xplane/owner/worker.rs:269` | X-Plane source worker, retry unsubscribing while draining | Keep bounded protocol cleanup. Owner tests cover loss and shutdown. |
 | `src-tauri/src/xplane/process_events/bridge.rs:139`, `src-tauri/src/xplane/process_events/windows.rs:213` | Native process monitor, bounded helper or direct startup | Keep startup deadlines. Native tests cover cancellation and lost readiness. User-operated Windows consent remains in #199. |
 
+
+## 2026-11-06 committed scan
+
+The Cockpit scan at `c69befcb` found 265 timing matches across Cockpit,
+device-gateway `e761e4d6`, device-template `c545788` and firmware-common
+`64025cce`. The original 247-site ledger stays pinned for historical
+dispositions. The following review covers files with a net increase in matches
+by file and primitive. The complete current acquisition gate remains open.
+
+| Added matches | Owner and trigger |
+| --- | --- |
+| Controller report-cost example | Authored pacing in the standalone measurement example. |
+| Desktop audit capacity and game command worker | One desktop audit condition-variable wait for the caller's capture deadline. Other added matches in these files are inline test barriers and simulated delays. |
+| Desktop focus lifetime and native focus | Wait for the previous scope owner to exit or for the new owner to start. Cleanup waits once for its completion after posting quit. |
+| Desktop feeder serve and wait, mapping-host desktop output worker | Bounded feeder completion, pending-command notifications and exact deadlines, and output lease renewal. The feeder wait file also contains a test delay. |
+| Gateway and process exit watch | Inline regression barriers and an authored test process exit delay. |
+| Controller observations | One frame callback declaration and one render callback scheduled when a new sample arrives. |
 ## Native crate timing sites
 
 | Ledger site | Owner and trigger | Disposition and verification |

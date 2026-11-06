@@ -29,9 +29,11 @@ if (process.argv.includes('--check-ui-timers')) {
   process.exit(0);
 }
 
-const output = resolve(root, 'docs/reactive/refresh-sites.json');
+const pinnedInventory = resolve(root, 'docs/reactive/refresh-sites.json');
+const outputOption = process.argv.find(arg => arg.startsWith('--output='));
+const output = outputOption ? resolve(root, outputOption.slice('--output='.length)) : pinnedInventory;
 if (process.argv.includes('--check-dispositions')) {
-  const sites = JSON.parse(readFileSync(output, 'utf8'));
+  const sites = JSON.parse(readFileSync(pinnedInventory, 'utf8'));
   const pending = new Set(sites.map(site => `${site.file}:${site.line}`));
   if (pending.size !== sites.length) throw new Error('Duplicate sites in the pinned timing inventory.');
   const classified = new Set();
@@ -89,7 +91,7 @@ sites.sort((a,b) => a.file.localeCompare(b.file, 'en') || a.line - b.line);
 const text = '[\n' + sites.map(site => '  ' + JSON.stringify(site)).join(',\n') + '\n]\n';
 if (check) {
   if (readFileSync(output, 'utf8').replaceAll('\r\n','\n') !== text) {
-    throw new Error(`Timing-site inventory changed. Run node scripts/reactive/audit.mjs${committed ? ' --committed' : ''} and classify the diff.`);
+    throw new Error(`Timing-site inventory changed. Run node scripts/reactive/audit.mjs${committed ? ' --committed' : ''}${outputOption ? ` ${outputOption}` : ''} and classify the diff.`);
   }
 } else writeFileSync(output, text);
 console.log(`${sites.length} timing sites inventoried across Cockpit and firmware repositories.`);
