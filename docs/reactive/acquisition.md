@@ -81,8 +81,11 @@ view even during a detached read. Assetto readers drain on capture notifications
 Their first native page timestamp determines the exact local freshness deadline, which
 expires the decoder without another read from the source. Other admitted
 readers still use the separate 100 ms process qualification pass. Configured
-integrations still use the 500 ms
-process pass. For a watched DCS installation, native changes to the selected
+integrations still use the 500 ms process pass. The existing Windows process
+inventory subscription also wakes the game-context worker on lifecycle events.
+A context pass batches eligible integrations into one native inventory while
+keeping each game's installation and runtime checks. For a watched DCS
+installation, native changes to the selected
 export, BIOS, catalogue and aircraft files trigger setup reinspection. The
 Saved Games root watch also observes direct DCS profile directory creation,
 removal and rename. Startup and native setup, removal and recovery operations

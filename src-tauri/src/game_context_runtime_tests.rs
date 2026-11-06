@@ -65,6 +65,12 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     thread::sleep(Duration::from_millis(650));
     assert!(checked.lock().unwrap().is_none(), "Idle context worker ran a timed refresh");
 
+    let library = runtime.inner.changes.context_wake.observed();
+    runtime.inner.changes.context_process_wake.notify();
+    wait_for_setup();
+    assert_eq!(runtime.inner.changes.context_wake.observed(), library, "Process events do not invalidate the library scope");
+    *checked.lock().unwrap() = None;
+
     runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
     wait_for_setup();
     runtime.shutdown();

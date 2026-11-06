@@ -71,7 +71,7 @@ impl GamesRuntime {
                     {
                         if watched_library != Some(library) {
                             if events.as_ref().is_none_or(|events| events.is_finished()) {
-                                events = inner.platform.watch_activation_processes(&games, wake.clone());
+                                events = inner.platform.watch_activation_processes(&games, [wake.clone(), inner.changes.context_process_wake.clone()]);
                                 watched_library = Some(library);
                             } else if let Some(events) = &events {
                                 events.retire();

@@ -18,7 +18,7 @@ pub(crate) trait Platform: Send + Sync {
     fn watch_activation_processes(
         &self,
         _games: &[Value],
-        _wake: std::sync::Arc<osg_streams::NativeWake>,
+        _wakes: [std::sync::Arc<osg_streams::NativeWake>; 2],
     ) -> Option<crate::xplane::process_events::InventoryEvents> {
         None
     }
@@ -40,6 +40,9 @@ pub(crate) trait Platform: Send + Sync {
     /// Driving telemetry requires its producer, independently of the game menu.
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         self.find(game)
+    }
+    fn integration_processes(&self, games: &[&Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+        games.iter().map(|game| self.integration_process(game)).collect()
     }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String>;
 }

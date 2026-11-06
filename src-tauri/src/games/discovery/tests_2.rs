@@ -100,3 +100,16 @@ fn removed_and_unavailable_selected_installations_never_change_the_launch_target
     assert_eq!(games[0]["installations"][0]["available"],true);
     assert_eq!(games[0]["installations"][1]["available"],false);
 }
+    #[cfg(windows)]
+    #[test]
+    fn integration_inventory_keeps_results_ordered_and_invalid_paths_local() {
+        let path = std::env::current_exe().unwrap();
+        let first = json!({"id":"first","executable":path});
+        let invalid = json!({"id":"invalid"});
+        let second = json!({"id":"second","executable":path});
+        let results = NativePlatform.integration_processes(&[&first, &invalid, &second]);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap().as_ref().unwrap().pid, std::process::id());
+        assert!(results[1].is_err());
+        assert_eq!(results[0], results[2]);
+    }

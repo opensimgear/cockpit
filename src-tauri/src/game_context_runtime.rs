@@ -199,13 +199,16 @@ impl GamesRuntime {
                 }
             });
             let context_wake = &inner.changes.context_wake;
+            let process_wake = &inner.changes.context_process_wake;
             let _ = context_wake.bind_thread(thread::current());
+            let _ = process_wake.bind_thread(thread::current());
             let mut last_library = context_wake.observed();
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             let mut dcs_watch = context_dcs_watch::DcsWatch::default();
             while !inner.closed.load(Ordering::Acquire) {
                 let library = context_wake.observed();
+                let processes = process_wake.observed();
                 let sdk_changed = sdk_watches.refresh(&inner);
                 assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
@@ -213,7 +216,9 @@ impl GamesRuntime {
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;
                 if inner.closed.load(Ordering::Acquire) { break; }
-                context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner));
+                if processes == process_wake.observed() {
+                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner));
+                }
             }
             polling_closed.store(true, Ordering::Release);
             capture_wake.notify();
@@ -417,38 +422,41 @@ impl Inner {
         }
         drop(checked);
         self.setup.decorate_source(&mut games);
-        for game in games {
-            let Some(id) = game["id"].as_str() else {
-                continue;
-            };
-            let Some(integration) = crate::game_discovery::integration_key(&game) else {
-                continue;
-            };
-            let revision = self.setup.provider_setup_revision(integration);
+        let admission: Vec<_> = games.iter().map(|game| {
             let supported = self.platform.integration_setup_supported()
                 && game["processMonitoringSupported"]
                     .as_bool()
                     .unwrap_or(game["launchSupported"] == true);
-            let process: Result<Option<crate::game_discovery::ProcessIdentity>, String> = (|| {
-                if let Err(error) = &installation_metadata {
-                    return Err(error.clone());
-                }
+            let eligible: Result<bool, String> = (|| {
+                installation_metadata.as_ref().map_err(Clone::clone)?;
                 if !supported || game["installed"] != true {
-                    return Ok(None);
+                    return Ok(false);
                 }
                 self.platform.validate(
-                    id,
+                    game["id"].as_str().ok_or("Choose a game identity.")?,
                     game["executable"]
                         .as_str()
                         .ok_or("Choose a game executable before process verification.")?,
                 )?;
-                let process = self.platform.integration_process(&game)?;
+                Ok(true)
+            })();
+            (supported, eligible)
+        }).collect();
+        let selected: Vec<_> = games.iter().zip(&admission)
+            .filter_map(|(game, (_, eligible))| matches!(eligible, Ok(true)).then_some(game)).collect();
+        let mut processes = self.platform.integration_processes(&selected).into_iter();
+        for (game, (supported, eligible)) in games.iter().zip(admission) {
+            let process = eligible.and_then(|eligible| {
+                if !eligible { return Ok(None); }
+                let process = processes.next().ok_or("Game process inventory was incomplete.")??;
                 match process {
                     Some(process) if self.platform.alive(&process)? => Ok(Some(process)),
                     _ => Ok(None),
                 }
-            })(
-            );
+            });
+            let Some(id) = game["id"].as_str() else { continue; };
+            let Some(integration) = crate::game_discovery::integration_key(game) else { continue; };
+            let revision = self.setup.provider_setup_revision(integration);
             let vehicle_process = process.as_ref().ok().cloned().flatten();
             let error = process.as_ref().err().cloned();
             let connection = self

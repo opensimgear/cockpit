@@ -214,7 +214,7 @@ impl Platform for NativePlatform {
     fn watch_activation_processes(
         &self,
         games: &[Value],
-        wake: std::sync::Arc<osg_streams::NativeWake>,
+        wakes: [std::sync::Arc<osg_streams::NativeWake>; 2],
     ) -> Option<crate::xplane::process_events::InventoryEvents> {
         if games.len() > osg_profiles::activation::MAX_GAMES {
             return None;
@@ -222,7 +222,7 @@ impl Platform for NativePlatform {
         let monitored: Vec<_> = games.iter()
             .filter(|game| game["installed"] == true && game["processMonitoringSupported"] == true)
             .cloned().collect();
-        crate::xplane::process_events::InventoryEvents::start(&activation_process_paths(&monitored), wake)
+        crate::xplane::process_events::InventoryEvents::start(&activation_process_paths(&monitored), wakes)
             .ok().flatten()
     }
     fn integration_setup_supported(&self) -> bool {
@@ -277,6 +277,17 @@ impl Platform for NativePlatform {
     }
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         find_game_process(game, true, native::find)
+    }
+    fn integration_processes(&self, games: &[&Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+        let paths: Vec<_> = games.iter().map(|game| process_paths(game)).collect();
+        let mut seen = BTreeSet::new();
+        let wanted = paths.iter().filter_map(|paths| paths.as_ref().ok()).flatten()
+            .filter(|path| seen.insert(normalized_path(path))).cloned().collect::<Vec<_>>();
+        let inventory = native::inventory(&wanted);
+        paths.into_iter().map(|paths| {
+            let paths = paths?;
+            inventory.as_ref().map_err(Clone::clone)?.inspect(&paths, false)
+        }).collect()
     }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
         native::alive(identity)

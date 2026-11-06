@@ -14,7 +14,7 @@ pub(crate) struct InventoryEvents {
 }
 
 impl InventoryEvents {
-    pub(crate) fn start(paths: &[String], wake: Arc<NativeWake>) -> Result<Option<Self>, String> {
+    pub(crate) fn start(paths: &[String], wakes: [Arc<NativeWake>; 2]) -> Result<Option<Self>, String> {
         let queries = queries(paths)?;
         if queries.is_empty() {
             return Ok(None);
@@ -28,7 +28,7 @@ impl InventoryEvents {
         let worker = std::thread::Builder::new()
             .name("game-process-inventory-events".into())
             .spawn(move || {
-                let _ = run(&queries, &worker_stop, &worker_cancelled, &worker_ready, &wake);
+                let _ = run(&queries, &worker_stop, &worker_cancelled, &worker_ready, &wakes);
             })
             .map_err(|error| format!("Cannot start game process notifications: {error}"))?;
         Ok(Some(Self { stop, cancelled, worker, ready }))
@@ -81,15 +81,15 @@ fn queries(paths: &[String]) -> Result<Vec<String>, String> {
     Ok(queries)
 }
 
-struct Withdraw<'a>(&'a ProcessContinuity, &'a NativeWake);
+struct Withdraw<'a>(&'a ProcessContinuity, &'a [Arc<NativeWake>; 2]);
 impl Drop for Withdraw<'_> {
     fn drop(&mut self) {
         self.0.retire();
-        self.1.notify();
+        for wake in self.1 { wake.notify(); }
     }
 }
 
-fn run(queries: &[String], stop: &Handle, cancelled: &AtomicBool, ready: &Arc<ProcessContinuity>, wake: &NativeWake) -> Result<(), String> {
+fn run(queries: &[String], stop: &Handle, cancelled: &AtomicBool, ready: &Arc<ProcessContinuity>, wakes: &[Arc<NativeWake>; 2]) -> Result<(), String> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
         .map_err(|error| format!("Cannot initialize process monitor COM apartment: {error}"))?;
     let _apartment = Apartment;
@@ -102,15 +102,15 @@ fn run(queries: &[String], stop: &Handle, cancelled: &AtomicBool, ready: &Arc<Pr
         wake: Handle::event()?,
     });
     let _subscription = unsafe { subscribe_com(inbox.clone(), cancelled, queries) }?;
-    let _withdraw = Withdraw(ready, wake);
+    let _withdraw = Withdraw(ready, wakes);
     check_cancelled(cancelled)?;
     drain(&inbox, &receiver)?;
     // Capture an inventory after subscription so starts racing bootstrap are covered.
     if !ready.begin() { return Ok(()); }
-    wake.notify();
+    for wake in wakes { wake.notify(); }
     while native::wait_events(stop, &inbox.wake)? {
         drain(&inbox, &receiver)?;
-        wake.notify();
+        for wake in wakes { wake.notify(); }
     }
     Ok(())
 }
@@ -134,6 +134,17 @@ fn drain(inbox: &Inbox, receiver: &Receiver<Event>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuity_loss_wakes_activation_and_game_context() {
+        let live = ProcessContinuity::default();
+        assert!(live.begin());
+        let wakes = [Arc::new(NativeWake::default()), Arc::new(NativeWake::default())];
+        let before = wakes.each_ref().map(|wake| wake.observed());
+        drop(Withdraw(&live, &wakes));
+        assert!(!live.is_live());
+        assert!(wakes.iter().zip(before).all(|(wake, old)| wake.observed() != old));
+    }
 
     #[test]
     fn lifecycle_queries_filter_and_deduplicate_registered_basenames() {
