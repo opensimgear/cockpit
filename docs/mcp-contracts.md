@@ -41,6 +41,24 @@ and draft identities. Reconnecting with the same credential preserves those
 identities for the running server object's lifetime. Restart requires native
 state reconciliation before fresh operation IDs are issued.
 
+## Reactive observation parity
+
+The [read-model source matrix](reactive/read-model-sources.md) identifies the producer for each observation family. The [URI admission rules](../src-tauri/src/mcp/server/observation_uri.rs) define the public subset. Availability still depends on the producer and the exact route or applied owner.
+
+| Portal workflow | MCP command or observation |
+| --- | --- |
+| Edit a profile and track the saved revision | `profile_prepare_changes` and `profile_save_prepared`, then observe `profiles.library`. The expected revision fences competing edits. |
+| Follow activation, cancellation or recovery | Observe `profiles.activation`, `profiles.runtime` and `profiles.retired-recovery`. Use the exact activation ID for `activation_cancel`, or the retained recovery tools for a recovery action. |
+| Learn input and inspect the applied graph | `profile_input_learn_start`, `profile_input_learn_status` and `profile_input_learn_cancel` share `profiles.learning` with the editor. Use `profiles.samples.<digest>` for a node of the exact applied owner. |
+| Inspect devices and assigned input | Observe `system.inventory`, `controllers.inventory`, `controllers.input.<id>`, `usb.inventory`, `usb.inputs.<route>`, `usb.metadata.<route>` or `can.inputs.<gateway>.<module>`. Read configuration through its exact route command. |
+| Follow discovery, integration setup and telemetry | Observe `games.jobs`, `games.detail.<id>` and `games.telemetry`. Match the job ID before cancelling. Telemetry invalidation is followed by an exact bounded inspection read. |
+| Follow companion readiness and firmware | Observe `companion.listener`, `companion.presence` and `companion.firmware`. Listener and device operations retain their own revision and route checks. |
+| Follow desktop readiness, UI preferences and backup operations | Observe `profiles.desktop`, `settings.desktop`, `preferences.<key>` and `storage.backups`. The portal's `settings.mcp` invalidation is local-only. MCP settings and credential tools use their own revision guard. |
+
+The `2025-11-25` handshake offers bounded reads. With `2026-07-28`, discover fixed topics through `resources/list` and use `resources/templates/list` for the exact topic URI template. `subscriptions/listen` accepts up to eight requested resource URIs. Its acknowledgement precedes resource updates and does not establish that a producer has delivered a baseline. Wait for the exact topic's snapshot and handle unavailable topics and reader limits. Closing the HTTP stream or revoking its credential releases the readers. Reconnecting or receiving a loss requires a current baseline. A cursor on `resources/read` reports continuity against the current snapshot.
+
+Native transport tests cover negotiation, baselines, unavailable and saturated readers, cursor validation and credential revocation. The live SDK suite verifies an MCP commit reaches the open editor, that dirty drafts remain intact, and that a stale save fails. Physical endpoint and broader lifecycle evidence remain tracked under [#197](https://github.com/opensimgear/cockpit/issues/197) and [#199](https://github.com/opensimgear/cockpit/issues/199).
+
 ## Tools to native commands
 
 `page` below means optional `offset`/`limit` arguments, generally bounded to
