@@ -244,6 +244,26 @@ bundles. Its running native installer gateway reported both board profiles
 available at `2026.10.22.7`, and the read-only check observed no flash state
 change. This exercised development bundle discovery and version reporting.
 
+## November 6 VKB Devices preview checkpoint
+
+The running Windows dev Cockpit displayed the attached VKBsim Gladiator EVO R
+with 137 controls. Two ten-second passive runs observed 125 consecutive
+reports each. The controller was left stationary. Native report intervals
+were about 80 ms median in both runs, with no skipped report sequences.
+
+| Trace | Journal to DOM p50 / p95 / p99 | Journal to next frame opportunity p95 | Clock bracket |
+| --- | --- | --- | --- |
+| Normal | 10.78 / 12.77 / 14.22 ms | 18.98 ms | ±2.25 ms |
+| IPC tracing enabled | 10.19 / 13.11 / 13.71 ms | 18.25 ms | ±2.50 ms |
+
+The native build used the production recovery changes in `7f3beaf1`.
+Its SHA-256 was `436A8B8971E031BF6911211D37D83EE0495BF5BF754A3FC5A40DCBA555E608E3`.
+Raw logs are `.research/reactive/controller-preview-latency.json` and
+`controller-preview-latency-ipc.json` in the same directory. These figures
+start at the journal commit and end at the Devices inspector. Profile-inspector
+axis timing during a deliberate sweep, physical display latency and physical
+input-to-virtual receipt remain in #199.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
