@@ -46,12 +46,26 @@ fn workspace_hydration_preserves_claim_and_protocol_guards() {
     Arc::make_mut(&mut row.state)["modules"][0]["directUsb"]=json!(true);
     assert_eq!(row.plan(Instant::now()),None);
     Arc::make_mut(&mut row.state)["backend"]=json!("pico");
-    assert_eq!(row.plan(Instant::now()),Some(Action::Start));
+    assert_eq!(row.plan(Instant::now()),None);
     row.owners.insert("m1".into(),"private-client".into());
     assert_eq!(row.plan(Instant::now()),None);
     row.owners.clear();
     Arc::make_mut(&mut row.state)["needsReconnect"]=json!(true);
     assert_eq!(row.plan(Instant::now()),None);
+}
+
+#[test]
+fn unsupported_pico_firmware_parks_auto_connect_until_topology_changes() {
+    let mut row=entry(Value::Null);
+    row.port["backend"]=json!("pico");
+    let mut completion=begin(&mut row,1);
+    completion.error=Some(crate::pico::FIRMWARE_REQUIRED.into());
+    row.complete(&completion).unwrap();
+    assert_eq!(row.plan(Instant::now()+Duration::from_secs(60)),None);
+    assert_eq!(row.deadline(),None);
+    row.present=false;
+    row.port(&row.port.clone()).unwrap();
+    assert_eq!(row.plan(Instant::now()),Some(Action::Connect));
 }
 
 #[test]
@@ -87,7 +101,7 @@ fn workspace_wire_hashes_owners_hides_receipts_and_withdraws_wrong_port_state() 
 
 #[test]
 fn workspace_background_requests_never_claim_or_renew_configuration() {
-    for action in [Action::Connect,Action::Start,Action::Config("m1".into()),Action::Actions("m1".into())] {
+    for action in [Action::Connect,Action::Config("m1".into()),Action::Actions("m1".into())] {
         let request=action.request(ID,&port());
         assert_eq!(request["clientId"],policy::CLIENT);
         assert_eq!(request["gatewayId"],ID);

@@ -155,7 +155,7 @@ worker and explicit launch and setup checks are separate.
 
 | Boundary | Current behavior | Remaining gate |
 | --- | --- | --- |
-| Legacy Pico protocol 1 | A disconnected `LegacyPicoService` parks. Claim expiry and unowned inactivity have their own local deadlines. A connected legacy board still uses a two-second `status` snapshot. Pico Debug selects a different service with sequenced inventory events. | Establish a legacy firmware event path or record an explicit sampling decision. |
+| Retired Pico protocol 1 | Cockpit rejects the old handshake before creating a gateway worker. Automatic connection parks on the upgrade error until the endpoint changes or an operator reconnects. Current Pico Debug requires the protocol-3 inventory stream. | Physical protocol-3 board qualification remains in #199. |
 | Windows process observation | Native process notifications are preferred. Global game activation parks when the catalogue has no installed game with process monitoring support and wakes on a library commit. After a live catalogue watcher exits, the owner attempts one replacement per library revision. The 500 ms discovery fallback applies when a monitorable installation exists and event coverage is unavailable. Initial access denial does not restart the watcher. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | The Windows regression checks the recovery limit and its reset on a library commit. Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
 | File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
@@ -292,14 +292,10 @@ source is included even though the gateway repository stores it under
 | Native companion peers and local gateway | Peer presence uses a direct wake and a reconnect deadline. Pairing waits for the offer's expiry or its terminal event. Windows serial and socket waits select I/O readiness or the current operation deadline. Local gateway socket timeouts bound individual request reads and writes. |
 | Desktop dispatch and process handles | The dispatch worker waits on command, scope and deadline handles. The audit collector bounds capacity waits by the caller's deadline. Zero-time process handle checks validate identity or exit during an owned operation. The long-running X-Plane process waits also select shutdown. |
 | ESP32 | UART provisioning blocks on a driver queue. Display notification waits also handle explicit expiry and render retry. Touch and connected network maintenance retain the cadences described above. |
-| STM32 module, STM32 gateway and Pico Debug | TinyUSB service runs inside the device loop and owns USB progress. Pico Debug also advances virtual lifecycle and publishes queued inventory; its firmware loop is separate from the host's protocol-1 status checks. |
+| STM32 module, STM32 gateway and Pico Debug | TinyUSB service runs inside the device loop and owns USB progress. Pico Debug also advances virtual lifecycle and publishes queued inventory. |
 
-The legacy Pico compatibility parser handles `hello` and `status` as requests
-and writes replies with the request ID. No unsolicited inventory path is
-defined for the supported protocol-1 images. The current protocol-3 debug
-target has a separate sequenced inventory producer. The legacy adapter still
-needs an event-capable upgrade or a sampling decision. See the [Pico firmware
-guide](https://github.com/opensimgear/device-gateway/blob/e761e4d685324f9d7b13a3c2c2527d750fbbd854/simulation/pico/README.md).
+The protocol-1 firmware cannot publish inventory events. Cockpit now requires
+protocol 3 and parks automatic connection after identifying protocol 1.
 
 ### Native readiness primitives
 

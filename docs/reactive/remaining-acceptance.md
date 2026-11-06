@@ -84,8 +84,9 @@ instead of 400 ms status requests. The software receiver/bridge tests and actual
 Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
 Board compilation and physical transports remain unqualified; the recorded
 ESP-IDF toolchain is unavailable locally. Pico Debug inventory is event-driven
-with an independent watchdog renewal. The older Pico protocol-1 adapter and the
-game's 100 ms process and telemetry maintenance remain original software work.
+with an independent watchdog renewal. Cockpit retires the older Pico protocol-1
+adapter by operator decision. The game's 100 ms process and telemetry
+maintenance remain original software work.
 
 The mixed-stream recovery criterion in #193 is checked. The reducer tests
 cover loss before timers, fresh baselines without replay and generation

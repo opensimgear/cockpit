@@ -5,13 +5,12 @@ pub(super) const MAX_JOBS: usize = 4;
 pub(super) const CLIENT: &str = "workspace-native-automation";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Action { Connect, Start, Config(String), Actions(String) }
+pub(super) enum Action { Connect, Config(String), Actions(String) }
 impl Action {
     pub fn request(&self, id: &str, port: &Value) -> Value {
         let mut request = json!({"gatewayId":id,"clientId":CLIENT});
         match self {
             Self::Connect => { request["command"]=json!("connect");request["port"]=port["path"].clone();request["backend"]=port["backend"].clone();request["background"]=json!(true); },
-            Self::Start => {request["command"]=json!("start");request["background"]=json!(true);},
             Self::Config(id) => {request["command"]=json!("config_read");request["moduleId"]=json!(id);},
             Self::Actions(id) => {request["command"]=json!("action_describe");request["moduleId"]=json!(id);},
         }
@@ -25,13 +24,13 @@ pub(super) struct Entry {
     pub state: Arc<Value>, pub owners: BTreeMap<String,String>,
     pub error: String, pub version: u64, pub job: Option<(u64,String)>,
     pub job_source:Option<Arc<Value>>,
-    failures: u8, retry: Option<Instant>, start_failed: bool,
+    failures: u8, retry: Option<Instant>,
 }
 impl Entry {
     pub fn new(id: String, port: Value) -> Self {
         Self { id, port, present:true, paused:false, session:uuid::Uuid::new_v4().to_string(),
             adapter:None,state:Arc::new(Value::Null),owners:BTreeMap::new(),error:String::new(),
-            version:1,job:None,job_source:None,failures:0,retry:None,start_failed:false }
+            version:1,job:None,job_source:None,failures:0,retry:None }
     }
     pub fn touch(&mut self) -> Result<(),String> {
         self.version=self.version.checked_add(1).ok_or("Workspace revision exhausted. Reopen Cockpit.")?;Ok(())
@@ -44,7 +43,7 @@ impl Entry {
         if !self.present {self.present=true;self.reset();self.touch()?;}
         Ok(())
     }
-    pub fn reset(&mut self) {self.retry=None;self.failures=0;self.start_failed=false;self.error.clear();}
+    pub fn reset(&mut self) {self.retry=None;self.failures=0;self.error.clear();}
     pub fn accept(&mut self, adapter: Arc<dyn Adapter>, state: Arc<Value>, owners: BTreeMap<String,String>) -> Result<(),String> {
         if self.adapter.as_ref().is_none_or(|old| !Arc::ptr_eq(old,&adapter)) {
             if self.adapter.is_some(){self.session=uuid::Uuid::new_v4().to_string();}
@@ -59,14 +58,11 @@ impl Entry {
         if self.paused || self.job.is_some() || self.retry.is_some_and(|at|at>now) {return None;}
         let state=&self.state;
         if state["connected"]!=true || state["port"]!=self.port["path"] {
-            return self.present.then_some(Action::Connect);
+            return (self.present && self.error != crate::pico::FIRMWARE_REQUIRED).then_some(Action::Connect);
         }
         if state["reconnecting"]==true || state["layoutPending"]==true {return None;}
         let modules=state["modules"].as_array()?;
         let contracts=state["backend"]=="stm32" || state["protocolVersion"]==3 && state["canProtocol"]==3;
-        if !contracts && state["backend"]=="pico" && self.owners.is_empty() && !self.start_failed
-            && state["running"]!=true && state["needsReconnect"]!=true
-            && modules.iter().any(|m|m["online"]==true&&m["registered"]==true) {return Some(Action::Start);}
         if !contracts {return None;}
         if self.owners.is_empty() {
             if let Some(id)=modules.iter().find(|m|m["online"]==true&&m["canConfigure"]==true&&m["directUsb"]!=true
@@ -88,9 +84,12 @@ impl Entry {
             None => {self.retry=None;self.failures=0;self.error.clear();},
             Some(error) => {
                 self.error=error.chars().take(1024).collect();
+                if completion.action == Action::Connect && error == crate::pico::FIRMWARE_REQUIRED {
+                    self.retry = None;
+                    return Ok(());
+                }
                 self.failures=self.failures.saturating_add(1);
                 self.retry=Some(Instant::now()+Duration::from_secs((1u64<<self.failures.saturating_sub(1).min(5)).min(30)));
-                if completion.action==Action::Start {self.start_failed=true;}
             },
         }
         Ok(())

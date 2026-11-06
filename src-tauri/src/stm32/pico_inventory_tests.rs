@@ -1,29 +1,6 @@
 use super::*;
-use crate::transport::duplex::{tcp_fixture, DuplexParts};
+use crate::transport::duplex::tcp_fixture;
 use std::io::{BufRead, BufReader, Write};
-
-struct PicoFactory(Option<DuplexParts>);
-
-impl Factory for PicoFactory {
-    fn gateway_duplex(&mut self, _: &PortInfo) -> Option<Result<DuplexParts, String>> {
-        self.0.take().map(Ok)
-    }
-
-    fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
-        Ok(self.0.is_some().then(|| PortInfo {
-            path: "COM42".into(),
-            serial_number: Some("OSG-PICO-0123456789abcdef".into()),
-            vendor_id: Some("cafe".into()),
-            product_id: Some("4010".into()),
-            manufacturer: Some("OpenSimGear".into()),
-            friendly_name: Some("Pico Debug".into()),
-        }).into_iter().collect())
-    }
-
-    fn open(&mut self, _: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
-        panic!("Pico Debug opened a request-only transport")
-    }
-}
 
 #[test]
 fn pico_inventory_wakes_on_change_and_renews_watchdog_without_reading_state() {
@@ -66,18 +43,27 @@ fn pico_inventory_wakes_on_change_and_renews_watchdog_without_reading_state() {
         changed.send(()).unwrap();
         inspect.recv_timeout(Duration::from_secs(3)).unwrap();
     });
-    let timing = Timing { heartbeat: Duration::from_millis(250), ..Timing::default() };
-    let service = Stm32Service::with_role(Box::new(PicoFactory(Some(parts))), timing, Role::PicoDebug);
+    let service = crate::pico::stream_fixture(parts);
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    service.watch_workspace(wake.clone());
     service.set_workspace_owned(true);
+    let before_connect = wake.observed();
     let connected = service.request(json!({"command":"connect","port":"COM42","clientId":"pico-inventory-test"}));
     assert_eq!(connected["ok"], true, "{connected}");
-    change.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_eq!(connected["state"]["protocolVersion"], 3);
+    assert!(wake.observed() > before_connect);
+    change.recv_timeout(Duration::from_secs(10)).unwrap();
     let until = Instant::now() + Duration::from_secs(2);
     loop {
-        if service.cached_state()["debug"]["devices"][0]["axes"][0] == 2048 { break; }
+        if service.workspace_snapshot().0["debug"]["devices"][0]["axes"][0] == 2048 { break; }
         assert!(Instant::now() < until, "Pico workspace never received the changed axis");
         thread::sleep(Duration::from_millis(2));
     }
+    assert_eq!(service.try_cached_state().unwrap()["protocolVersion"], 3);
+    assert!(service.renew_workspace_client("pico-inventory-test").unwrap().is_empty());
+    let disconnected = service.request(json!({"command":"disconnect","clientId":"pico-inventory-test"}));
+    assert_eq!(disconnected["ok"], true, "{disconnected}");
+    assert_eq!(service.workspace_snapshot().0["connected"], false);
     inspected.send(()).unwrap();
     device.join().unwrap();
 }
