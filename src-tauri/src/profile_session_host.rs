@@ -1225,7 +1225,8 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
-        [routing, state.game.validation_deadline(), state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
+        [routing, state.game.validation_deadline(), state.game.assetto_capture_deadline(),
+            state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
             host_scheduling::output_deadline(output.cursor(), state.recording.cursor(), output.renewal_deadline()))]
             .into_iter().flatten().min()
     }

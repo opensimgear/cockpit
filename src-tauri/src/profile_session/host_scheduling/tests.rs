@@ -37,7 +37,7 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     let owner = RunOwner {session:uuid::Uuid::new_v4().to_string(), generation:1,
         profile_id:candidate.document.id.clone(),profile_revision:candidate.document.revision,game_id:None};
     let prepared = host.prepare(&candidate, &owner).unwrap();
-    let run = OwnedRun { owner:owner.clone(),
+    let mut run = OwnedRun { owner:owner.clone(),
         snapshot:osg_profiles::session::AppliedSnapshot::capture(&candidate.document).unwrap().summary().clone(),
         program_hash:prepared.program_hash.clone(),capture_fingerprint:prepared.capture_fingerprint.clone(),
         receipts:vec![],attempted:vec![] };
@@ -55,7 +55,7 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
         "id":"keyboard","name":"Keyboard","required":true,"scope":{"kind":"desktop-wide"},
         "ports":[],"actions":[]
     }])).unwrap();
-    assert!(document_supported(&state.document), "Desktop documents can qualify with retained native scope wakes");
+    assert!(document_supported(&state.document, false), "Desktop documents can qualify with retained native scope wakes");
     assert!(!desktop_notifications(state), "A declared desktop adapter without a live subscription cannot opt out of service");
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     host.run(&owner).unwrap().document.desktop_outputs.clear();
@@ -63,12 +63,32 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     let state = host.run(&owner).unwrap();
     state.document.eligibility.game_ids.push("dcs".into());
-    assert!(!document_supported(&state.document));
-    assert!(document_supported(&state.source_document));
+    assert!(!document_supported(&state.document, false));
+    assert!(document_supported(&state.source_document, false));
+    state.document.resources.push(osg_profiles::Resource { id:"game".into(),name:"Game".into(),
+        kind:osg_profiles::ResourceKind::Game, required:false,ports:vec![] });
+    assert!(document_supported(&state.document, true), "A watched game can qualify its telemetry resource");
+    assert!(!document_supported(&state.document, false));
+    state.document.resources.clear();
     state.document.eligibility.game_ids.clear();
     state.document.resources.push(osg_profiles::Resource { id:"companion".into(),name:"Companion".into(),
         kind:osg_profiles::ResourceKind::Companion, required:false,ports:vec![] });
-    assert!(document_supported(&state.document), "Companion declarations still require a live notification-qualified adapter");
+    assert!(document_supported(&state.document, false), "Companion declarations still require a live notification-qualified adapter");
+    let (game, proof, close) = crate::profile_session_games::watched_assetto_scheduling_fixture(
+        &prepared.plan, host.native_wake.clone().unwrap(),
+    );
+    host.input_wake = Some(Arc::new(|| {}));
+    run.owner.game_id = Some(proof.proof.game_id.clone());
+    let state = host.run(&owner).unwrap();
+    state.owner.game_id = run.owner.game_id.clone();
+    state.game_preparation = Some(proof);
+    state.game = game;
+    assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+    host.prepared.get_mut(&key(&owner)).unwrap().game_publication.deferred = true;
+    assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
+    host.prepared.get_mut(&key(&owner)).unwrap().game_publication.deferred = false;
+    close();
+    assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }

@@ -263,6 +263,8 @@ pub(crate) fn test_baseline_export(counter: u8, on: bool) -> Vec<u8> {
 #[cfg(test)]
 #[path = "profile_session_games_tests.rs"]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::watched_assetto_scheduling_fixture;
 
 #[cfg(test)]
 #[path = "games/profiles/native_admission_tests.rs"]

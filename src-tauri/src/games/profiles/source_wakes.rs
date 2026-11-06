@@ -25,6 +25,10 @@ impl SourceWakes {
     }
 }
 impl GameSources {
+    #[cfg(test)]
+    pub(super) fn install_assetto_watch_fixture(&mut self, watch: crate::acr_windows::Watch) {
+        self.notifications.assetto = Some(watch);
+    }
     pub(crate) fn set_wake(&mut self, signal: Option<Arc<NativeWake>>) {
         let same = match (&self.notifications.signal, &signal) {
             (Some(old), Some(next)) => Arc::ptr_eq(old, next),
@@ -45,6 +49,18 @@ impl GameSources {
     pub(crate) fn validation_deadline(&self) -> Option<Instant> {
         [self.validation.next_deadline(), self.catalogue_validation.next_deadline()]
             .into_iter().flatten().min()
+    }
+    pub(crate) fn watched_assetto(&self) -> bool {
+        self.acquired && !self.lost && self.validation.started()
+            && matches!(self.reader, Some(Reader::Acr { source: Some(_), .. }))
+            && self.notifications.assetto.as_ref().is_some_and(|watch| !watch.is_closed())
+    }
+    pub(crate) fn assetto_capture_deadline(&self) -> Option<Instant> {
+        if !self.fresh { return None; }
+        match &self.reader {
+            Some(Reader::Acr { decoder, .. }) => decoder.capture_deadline(),
+            _ => None,
+        }
     }
     pub(crate) fn baseline_wait_until(&self, deadline: Instant) -> Instant {
         let watched = match self.reader.as_ref() {

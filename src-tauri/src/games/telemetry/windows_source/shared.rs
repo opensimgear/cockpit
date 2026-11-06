@@ -49,6 +49,12 @@ type Reader = NativeSubscription<Frame, Frame>;
 
 pub(crate) struct Watch(osg_streams::NativeWatch<Frame, Frame>, Option<Weak<crate::xplane::process_events::Monitor>>);
 impl Watch {
+    #[cfg(test)]
+    pub(crate) fn fixture(wake: Arc<osg_streams::NativeWake>) -> (Self, impl FnOnce()) {
+        let stream = Stream::new(1, Frame::Waiting, 0, "assetto-test", LIMITS).unwrap();
+        let watch = Self(stream.watch(wake).unwrap(), None);
+        (watch, move || stream.close())
+    }
     pub(crate) fn is_closed(&self) -> bool {
         self.0.is_closed()
     }

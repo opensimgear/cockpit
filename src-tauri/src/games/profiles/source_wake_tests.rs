@@ -12,6 +12,49 @@ fn wake_test_games(folder: &Path) -> GamesRuntime {
 }
 
 #[test]
+fn assetto_service_needs_live_watch_and_validation_and_reverts_on_close() {
+    let (mut source, _, _folder) = baseline_reader();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    source.set_wake(Some(wake.clone()));
+    source.reader = Some(Reader::Acr {
+        source: Some(Box::new(crate::game_telemetry::FixtureSource::new_for_game(crate::game_telemetry::Game::Corsa))),
+        decoder: crate::game_telemetry::Session::new_for_game(100, crate::game_telemetry::Game::Corsa).unwrap(),
+        outputs: vec![],
+    });
+    source.acquired = true;
+    assert!(!source.watched_assetto());
+    let (watch, close) = crate::acr_windows::Watch::fixture(wake.clone());
+    source.install_assetto_watch_fixture(watch);
+    assert!(!source.watched_assetto(), "A producer watch cannot substitute for native proof");
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    assert!(source.watched_assetto());
+    assert!(source.assetto_capture_deadline().is_none(), "A waiting decoder has no capture to expire");
+    close();
+    assert!(!source.watched_assetto(), "A retired watch restores bounded service");
+}
+
+pub(crate) fn watched_assetto_scheduling_fixture(
+    plan: &ExecutionPlan,
+    wake: Arc<osg_streams::NativeWake>,
+) -> (GameSources, PreparedGame, impl FnOnce()) {
+    let game = crate::game_telemetry::Game::Corsa;
+    let prepared = prepared(game.id(), json!({"source":"shared-memory","freshnessMs":100}),
+        crate::game_telemetry::catalogue_for_game(game.id()));
+    let mut source = authored_sources(plan, Some(prepared.clone())).unwrap();
+    source.reader = Some(Reader::Acr {
+        source: Some(Box::new(crate::game_telemetry::FixtureSource::new_for_game(game))),
+        decoder: crate::game_telemetry::Session::new_for_game(100, game).unwrap(),
+        outputs: vec![],
+    });
+    source.acquired = true;
+    source.set_wake(Some(wake.clone()));
+    let (watch, close) = crate::acr_windows::Watch::fixture(wake.clone());
+    source.install_assetto_watch_fixture(watch);
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    (source, prepared, close)
+}
+
+#[test]
 fn passive_physics_api_cannot_acquire_an_unobserved_process_or_manufacture_a_wake() {
     let folder = crate::test_directory();
     let games = wake_test_games(folder.path());
