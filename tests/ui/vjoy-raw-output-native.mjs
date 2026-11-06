@@ -114,11 +114,18 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const exited=new Promise((resolve,reject)=>{probe.once('error',reject);probe.once('close',resolve);});
     await Promise.race([ready,exited.then(()=>{throw Error('Raw Input probe ended before registering');})]);
     const streamId=randomUUID();
-    for(const [index,value] of [true,false,true].entries()){
+    const burst=process.env.OSG_VJOY_RAW_BURST==='1';
+    const levels=Array.from({length:burst?65:3},(_,index)=>index%2===0);
+    const intervalMs=burst?8:250;
+    const startedAt=performance.now();
+    for(const [index,value] of levels.entries()){
+      const remaining=startedAt+index*intervalMs-performance.now();
+      if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
       await request({command:'profile_debug_controller_input',owner:started.owner,nodeId:'debug',streamId,sequence:String(index+1),changes:[{portId:'button-1',value}]});
       await observation?.sample(value);
-      await new Promise(resolve=>setTimeout(resolve,250));
     }
+    const authoredSpanMs=performance.now()-startedAt;
+    if(!burst)await new Promise(resolve=>setTimeout(resolve,intervalMs));
     // Hold for several renewals and more than one complete 250 ms feeder
     // lease. The final release must come from Stop, not the input fixture.
     const heldMs=750;
@@ -147,11 +154,12 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const events=report.buttonEvents.filter(event=>event.report===slot.slot);
     assert.ok(events.every(event=>event.status===0x00110000),'HID button decoding must succeed');
     assert.equal(new Set(events.map(event=>event.device)).size,1,'The exact slot must appear on one Raw Input device');
-    assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false]);
+    assert.deepEqual(events.map(event=>event.pressed),[...levels,false]);
     await mkdir('.research/reactive',{recursive:true});
-    const resultFile=faultApp?'vjoy-feeder-loss-result.json':'vjoy-raw-output-result.json';
+    const resultFile=faultApp?'vjoy-feeder-loss-result.json':burst?'vjoy-raw-burst-result.json':'vjoy-raw-output-result.json';
     await writeFile('.research/reactive/'+resultFile,JSON.stringify({
       slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,
+      authoredTransitions:levels.length,requestedIntervalMs:intervalMs,authoredSpanMs,
       releasedAfter:faultApp?'feeder-loss':'stop',...report,
     },null,2));
   } finally {
