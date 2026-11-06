@@ -239,6 +239,11 @@ commit, board identity, offsets and segment hashes. Both version `2026.10.22.7`
 bundles passed Cockpit's local manifest validator and native installer image
 validator. The bundles are local qualification artifacts.
 
+A separate development Cockpit built from clean `554a6611` embedded both
+bundles. Its running native installer gateway reported both board profiles
+available at `2026.10.22.7`, and the read-only check observed no flash state
+change. This exercised development bundle discovery and version reporting.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
