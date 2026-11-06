@@ -14,6 +14,7 @@ import { companionScenarios } from './mcp-companion-scenarios.mjs';
 import { uiPreferenceScenarios } from './mcp-ui-preference-scenarios.mjs';
 import { integrationObservation } from './mcp-integration-observation.mjs';
 import { controlParity } from './mcp-control-parity.mjs';
+import { profileEditorObservation } from './mcp-profile-editor-observation.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(operation, description, timeout = 20000) {
@@ -183,61 +184,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       profiles.add(saved.document.id);
       await until(async () => (await library())?.value?.profiles.some(profile => profile.name === mcpName),
         'Native library observer did not receive the MCP commit');
-      const clickProfileButton = label => page.evaluate(label => {
-        const button = [...document.querySelectorAll('main button')].find(button =>
-          button.getAttribute('aria-label') === label || button.textContent.trim() === label);
-        if (!button || button.disabled) return false;
-        button.click();
-        return true;
-      }, label);
-      const editorName = () => page.evaluate(() => document.querySelector('button[aria-label="Edit profile name"] span')?.textContent);
-      await until(() => page.evaluate(() => {
-        const button = document.querySelector('nav[aria-label="Main navigation"] button[title="Profiles"]');
-        button?.click();
-        return !!button;
-      }), 'Profiles navigation did not open');
-      await until(() => clickProfileButton(`Edit ${mcpName}`), 'Temporary profile did not appear in the list');
-      await until(async () => await editorName() === mcpName, 'Clean profile editor did not open');
-      let revision = saved.document.revision;
-      let latestName;
-      for (const suffix of ['first edit', 'latest edit']) {
-        latestName = `${mcpName} ${suffix}`;
-        const draft = await ok(writer, 'profile_prepare_changes', {
-          profileId: saved.document.id, expectedRevision: revision, edits: [{kind: 'set_name', name: latestName}],
-        });
-        await ok(writer, 'profile_save_prepared', mutation({draftId: draft.draftId}));
-        revision = (await ok(writer, 'profile_get', {id: saved.document.id})).document.revision;
-        await until(async () => await editorName() === latestName, 'The open editor missed a committed MCP rename');
-      }
-      await until(() => clickProfileButton('Back to Profiles'), 'Clean editor did not close');
-      await until(() => clickProfileButton(`Edit ${latestName}`), 'Latest profile was absent from the list');
-      await until(async () => await editorName() === latestName, 'Reopened editor restored a stale name');
-      const localDraft = `${mcpName} local draft`;
-      const remoteName = `${mcpName} remote edit`;
-      await until(() => clickProfileButton('Edit profile name'), 'Profile rename control was unavailable');
-      await page.evaluate(name => {
-        const input = document.querySelector('input[aria-label="Profile name"]');
-        input.value = name;
-        input.dispatchEvent(new Event('input', {bubbles: true}));
-        input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
-      }, localDraft);
-      await until(async () => await editorName() === localDraft, 'The local draft rename did not apply');
-      const remoteDraft = await ok(writer, 'profile_prepare_changes', {
-        profileId: saved.document.id, expectedRevision: revision, edits: [{kind: 'set_name', name: remoteName}],
-      });
-      await ok(writer, 'profile_save_prepared', mutation({draftId: remoteDraft.draftId}));
-      await until(async () => (await library())?.value?.profiles.some(profile => profile.name === remoteName), 'Library missed the remote rename');
-      assert.equal(await editorName(), localDraft, 'A remote commit overwrote the dirty editor');
-      await until(() => clickProfileButton('Save'), 'Dirty editor save was unavailable');
-      await until(() => page.evaluate(() => /revision|changed/i.test(document.querySelector('.workspace-error[role="alert"]')?.textContent ?? '')), 'Stale save did not show a revision conflict');
-      assert.equal((await ok(writer, 'profile_get', {id: saved.document.id})).document.name, remoteName);
-      await until(() => clickProfileButton('Back to Profiles'), 'Reopened editor did not close');
-      await until(() => clickProfileButton('Discard and continue'), 'Dirty draft discard was unavailable');
-      await until(() => clickProfileButton(`Edit ${remoteName}`), 'Committed MCP profile was absent after discarding');
-      await until(async () => await editorName() === remoteName, 'Discard did not restore the committed name');
-      await until(() => clickProfileButton('Back to Profiles'), 'Recovered editor did not close');
+      await profileEditorObservation({page, writer, ok, mutation, until, library, saved, mcpName, nextObservation, observationUri});
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
-        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true };
+        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true, observedEditorCommitInMcp: true };
       if (observeController) {
         const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
         assert.ok(source, 'A connected host controller is required for this optional check');
