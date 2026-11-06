@@ -22,6 +22,11 @@ test('compact native controller snapshots restore exact values and require a fre
   ]);
   assert.deepEqual(restored.frame.payload.source, {sequence:'9'});
   assert.equal(restored.frame.payload.cursor, '9');
+  restored.frame.payload.controls[0].capability.id = 'changed after expansion';
+  restored.frame.payload.identity.path = 'changed after expansion';
+  const next = expand(compact).frame.payload;
+  assert.equal(next.controls[0].capability.id, 'axis');
+  assert.equal(next.identity.path, 'usb');
   assert.throws(() => expand({...compact,frame:{...compact.frame,generation:'2'}}), /Invalid compact controller snapshot/);
   assert.throws(() => expand({...compact,frame:{...compact.frame,payload:{...compact.frame.payload,
     controllerSamples:[['invalid',0],null]}}}), /Invalid compact controller sample/);
