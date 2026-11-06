@@ -28,11 +28,18 @@ test('native discovery reviews libraries, installation copies, moves and explici
     assert.equal(reply.ok,true,request.command+': '+reply.error);return reply.state;
   };
   const games=async()=>(await native({command:'game_get_state'})).games;
-  const ready=async previousScanId=>{
-    await expect.poll(async()=>{const discovery=(await games()).discovery;return discovery?.scanId!==previousScanId&&discovery?.status==='ready';},{timeout:90_000}).toBe(true);
+  const job=()=>page.evaluate(()=>window.__discoveryAcceptance?.state?.value?.jobs.find(job=>job.key==='discovery'));
+  const ready=async(previousScanId,scanId)=>{
+    await expect.poll(async()=>{
+      const current=await job();
+      return !!current && current.phase==='ready' && current.run!==previousScanId && (!scanId || current.run===scanId);
+    },{timeout:90_000}).toBe(true);
     return games();
   };
-  const scan=async paths=>{await native({command:'game_discovery_start',...(paths?{paths}:{})});return ready();};
+  const scan=async paths=>{
+    const started=(await native({command:'game_discovery_start',...(paths?{paths}:{})})).games;
+    return ready(undefined,started.discovery.scanId);
+  };
   const row=entry=>page.locator('[data-entry-id="'+entry.id+'"]');
   const uiGames=async()=>{
     await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Games',exact:true}).click();
@@ -57,7 +64,14 @@ test('native discovery reviews libraries, installation copies, moves and explici
   let original,originalDcs,createdGenericId;
   try{
     assert.equal(await page.evaluate(()=>!!window.__TAURI_INTERNALS__?.invoke),true);
-    await expect.poll(async()=>(await games()).discovery?.status!=='scanning',{timeout:90_000}).toBe(true);
+    await page.evaluate(async()=>{
+      const {observeGameJobs}=await import('/src/lib/game-read-models/shared.ts');
+      const probe=window.__discoveryAcceptance={state:null};
+      probe.stop=observeGameJobs(state=>{probe.state=state;});
+    });
+    await expect.poll(async()=>await page.evaluate(()=>window.__discoveryAcceptance?.state?.status)).toBe('ready');
+    const currentJob=await job();
+    if(currentJob?.phase==='scanning')await ready(undefined,currentJob.run);
     original=await games();originalDcs=original.catalogue.find(game=>game.id==='dcs');
     for(const directory of [resolve(dcsA,'bin'),resolve(dcsB,'bin'),foo])await mkdir(directory,{recursive:true});
     for(const path of [resolve(dcsA,'bin/DCS.exe'),resolve(dcsB,'bin/DCS.exe'),resolve(foo,'Game.exe'),resolve(foo,'AGame.exe'),resolve(foo,'Foo.exe')])await writeFile(path,evidence.fixtureBytes);
@@ -66,7 +80,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     const started=(await native({command:'game_discovery_start',paths:[fixtures]})).games;
     assert.ok(['scanning','ready'].includes(started.discovery.status));
     const expectedLibraries=started.discovery.libraries.map(library=>library.id);assert.ok(expectedLibraries.includes('disk'));assert.equal(new Set(expectedLibraries).size,expectedLibraries.length);
-    let state=await ready();evidence.snapshots.nativeScan=state.discovery;
+    let state=await ready(undefined,started.discovery.scanId);evidence.snapshots.nativeScan=state.discovery;
     assert.deepEqual([...state.discovery.libraries.map(library=>library.id)].sort(),[...expectedLibraries].sort());
     assert.ok(state.discovery.libraries.every(library=>!['queued','scanning'].includes(library.status)));
     for(const entry of state.discovery.entries)assert.equal(entry.selected,entry.action!=='remove');
@@ -88,7 +102,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     await expect(row(generic).getByRole('combobox',{name:generic.name+' executable',exact:true}).locator('option').filter({hasText:/^Foo\.exe$/})).toHaveAttribute('value',generic.executable);
     for(const entry of state.discovery.entries){const checkbox=row(entry).getByRole('checkbox');if(entry.action==='remove')await expect(checkbox).not.toBeChecked();else await expect(checkbox).toBeChecked();}
     const accordion=page.locator('.libraries > details.library').first();await accordion.locator(':scope > summary').click();await expect(accordion).not.toHaveAttribute('open','');await page.waitForTimeout(2500);await expect(accordion).not.toHaveAttribute('open','');await accordion.locator(':scope > summary').click();
-    evidence.checks.push('A manually closed library accordion stays closed after progress polling completes.');
+    evidence.checks.push('A manually closed library accordion stays closed after observation-driven discovery completes.');
     for(const entry of state.discovery.entries){
       if(entry.name==='ARC Raiders')assert.ok(entry.executable.endsWith('PioneerGame.exe'),'A web helper cannot be the default ARC Raiders executable.');
       if(entry.name.startsWith('Diablo II: Resurrected'))assert.ok(entry.executable.endsWith('D2R.exe'),'Roman sequel initials must beat an error reporter.');
@@ -150,7 +164,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
   finally{
     try{
       for(const path of [dcsA,dcsB,moved,foo])await removeFixtureDirectory(path);
-      const current=await games();if(current.discovery?.status==='scanning')await ready();
+      const current=await games();if(current.discovery?.status==='scanning')await ready(undefined,current.discovery.scanId);
       const cleanup=await scan([fixtures]);
       await native({command:'game_discovery_apply',scanId:cleanup.discovery.scanId,actions:cleanup.discovery.entries.map(entry=>({id:entry.id,selected:entry.action==='remove'&&fixtureEntry(entry)}))});
       if(originalDcs?.selectedInstallationId)await native({command:'game_installation_select',gameId:originalDcs.id,installationId:originalDcs.selectedInstallationId});
@@ -159,6 +173,6 @@ test('native discovery reviews libraries, installation copies, moves and explici
       for(const game of original?.catalogue??[])for(const old of game.installations??[])assert.ok(after.catalogue.find(item=>item.id===game.id)?.installations.some(item=>item.id===old.id),'Cleanup must preserve all original installations.');
       evidence.cleanup='All fixture installations removed through discovery review; original installations retained.';
     }catch(error){evidence.cleanupFailure=String(error);throw error;}
-    finally{page.off('pageerror',onError);evidence.pageErrors=errors;await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');await browser.close();}
+    finally{await page.evaluate(()=>{window.__discoveryAcceptance?.stop();delete window.__discoveryAcceptance;});page.off('pageerror',onError);evidence.pageErrors=errors;await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');await browser.close();}
   }
 });
