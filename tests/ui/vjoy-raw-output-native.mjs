@@ -112,6 +112,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       previewBefore=await until(()=>page.evaluate(`(()=>{const s=window.__vjoySlowPreview;
         return s.held===1?s.fast:null;})()`));
     }
+    const beforeProbe=process.hrtime.bigint();
     probe=spawn(probeExecutable,['--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const trace=[];
@@ -120,16 +121,18 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     lines.on('line',line=>{if(line==='ready')markReady();else trace.push(line);});
     const exited=new Promise((resolve,reject)=>{probe.once('error',reject);probe.once('close',resolve);});
     await Promise.race([ready,exited.then(()=>{throw Error('Raw Input probe ended before registering');})]);
+    const afterReady=process.hrtime.bigint();
     const streamId=randomUUID();
     const burst=process.env.OSG_VJOY_RAW_BURST==='1';
     const levels=Array.from({length:burst?65:3},(_,index)=>index%2===0);
     const intervalMs=burst?8:250;
-    const startedAt=performance.now(), submissions=[], gatewayRoundTrips=[];
+    const startedAt=performance.now(), submissions=[], submittedNs=[], gatewayRoundTrips=[];
     for(const [index,value] of levels.entries()){
       const remaining=startedAt+index*intervalMs-performance.now();
       if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
       const submitted=performance.now();
       submissions.push(submitted);
+      submittedNs.push(process.hrtime.bigint());
       await request({command:'profile_debug_controller_input',owner:started.owner,nodeId:'debug',streamId,sequence:String(index+1),changes:[{portId:'button-1',value}]});
       gatewayRoundTrips.push(performance.now()-submitted);
       await observation?.sample(value);
@@ -169,18 +172,29 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       'Rebuild RawInputProbe from the current source to collect receiver timing');
     assert.ok(events.every((event,index) => Number.isSafeInteger(event.receivedTicks)
       && event.receivedTicks >= 0 && (index === 0 || event.receivedTicks >= events[index-1].receivedTicks)));
+    assert.match(report.receiverStartedTicks,/^[0-9]+$/,'Rebuild RawInputProbe with the absolute receiver start stamp');
+    // On Windows libuv hrtime and high-resolution Stopwatch use QPC.
+    // Refuse to join clocks if the receiver start falls outside its launch bracket.
+    const startTicks=BigInt(report.receiverStartedTicks), hz=BigInt(report.receiverTickHz);
+    const qpcNs=ticks=>ticks*1_000_000_000n/hz;
+    assert.ok(qpcNs(startTicks)>=beforeProbe&&qpcNs(startTicks)<=afterReady,
+      'Raw Input and Node must share the Windows performance counter');
     const intervals = values => values.slice(1).map((value,index) => value - values[index]);
     const receiverMs = events.slice(0,-1).map(event => event.receivedTicks * 1000 / report.receiverTickHz);
+    const submissionToReceiverMs=events.slice(0,-1).map((event,index)=>
+      Number(qpcNs(startTicks+BigInt(event.receivedTicks))-submittedNs[index])/1e6);
     const timing = {
       submissionIntervalsMs: summarizeMilliseconds(intervals(submissions)),
       gatewayRoundTripMs: summarizeMilliseconds(gatewayRoundTrips),
       receiverIntervalsMs: summarizeMilliseconds(intervals(receiverMs)),
+      submissionToReceiverMs: summarizeMilliseconds(submissionToReceiverMs),
     };
     await mkdir('.research/reactive',{recursive:true});
     const resultFile=faultApp?'vjoy-feeder-loss-result.json':burst?'vjoy-raw-burst-result.json':'vjoy-raw-output-result.json';
     await writeFile('.research/reactive/'+resultFile,JSON.stringify({
       slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,
-      authoredTransitions:levels.length,requestedIntervalMs:intervalMs,authoredSpanMs,timing,
+      authoredTransitions:levels.length,requestedIntervalMs:intervalMs,authoredSpanMs,timing,submissionToReceiverMs,
+      timingClock:{source:'Windows QPC',libuv:process.versions.uv,launchBracketMs:Number(afterReady-beforeProbe)/1e6},
       releasedAfter:faultApp?'feeder-loss':'stop',...report,
     },null,2));
   } finally {

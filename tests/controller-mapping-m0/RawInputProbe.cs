@@ -229,7 +229,8 @@ class RawInputProbe {
             }
             var serializer = new JavaScriptSerializer();
             if (observeVjoy) {
-                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons, receiverTickHz=Stopwatch.Frequency}));
+                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons,
+                    receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString()}));
             } else {
                 Console.WriteLine(serializer.Serialize(new {
                     devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,

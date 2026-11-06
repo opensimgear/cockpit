@@ -164,6 +164,28 @@ preview received ten further reports during the hold. Local artifacts are
 under `.research/reactive/`. Integrated load, physical latency and actual
 simulator confirmation remain open.
 
+### Authored vJoy submission-to-receipt timing
+
+The November 6 fixture now records the Node submission timestamp and the
+Windows Raw Input receiver timestamp on the same performance counter. It
+checks the receiver's absolute start against the launch bracket before
+joining events by exact slot and ordered button transition. Submission
+cadence, gateway round trips and receiver cadence remain separate. [libuv Windows clock](https://github.com/libuv/libuv/blob/v1.52.1/src/win/util.c) · [Windows performance counters](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)
+
+The running dev Cockpit (SHA-256
+`63F25B8DDEEDEB71F22B47A074D35ABE4F1E92E602038C5307B36AF5B7D39779`)
+delivered 195 authored edges across three independently applied 65-edge
+bursts. Each run held a preview receipt and stalled an MCP reader. Pooled
+submission-to-receipt p50/p95/p99 were 1.25/1.55/7.99 ms. The first edge of
+each burst took 8.27/7.93/7.99 ms. The first-edge delay is reproducible in
+this fixture and its stage has yet to be isolated. The separately verified
+Stop releases are excluded from these percentiles.
+
+The measurement starts just before the test submits an authored debug
+input over the WebView bridge and ends at the Raw Input callback. Physical
+HID acquisition and display presentation are separate measurements. Raw
+samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
