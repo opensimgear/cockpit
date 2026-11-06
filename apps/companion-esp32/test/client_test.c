@@ -531,6 +531,11 @@ int main(int argc,char **argv){
     setup();state=AUTH;assigned_now=false;
     osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     advance();assert(state==WAIT_ASSIGNMENT&&strcmp(primary_connection,"wifi-primary")==0);
+    next_feedback_connect=fake_ms+300;
+    assert(network_wait()==pdMS_TO_TICKS(300));
+    mock_pairing_running=true;
+    assert(network_wait()==pdMS_TO_TICKS(2000));
+    mock_pairing_running=false;
     int idle_opened=socket_opens,idle_closed=socket_closes;
     fake_ms=next_request;advance();
     assert(state==WAIT_ASSIGNMENT&&!strcmp(requested_type,"ping")&&socket_opens==idle_opened&&socket_closes==idle_closed);
@@ -541,6 +546,7 @@ int main(int argc,char **argv){
     setup();state=AUTH;assigned_now=false;settings.direct=true;mock_serial_assignments=true;
     osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     advance();assert(state==WAIT_ASSIGNMENT&&serial_assignments);
+    assert(network_wait()==pdMS_TO_TICKS(2000));
     fake_ms=next_request;advance();assert(!strcmp(requested_type,"ping"));
     connection.direct=true;osg_copy(connection.link,sizeof(connection.link),"test-link");
     char assignment_record[512];

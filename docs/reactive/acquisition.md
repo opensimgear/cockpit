@@ -174,7 +174,10 @@ Pending pairing waits for approval, transport termination, UART activity
 or its existing offer expiry. Panel preparation wakes when the renderer
 finishes the current candidate, on UART activity, or at the existing heartbeat
 deadline. Panel error also waits for UART activity or its heartbeat deadline.
-Live input and other connected states retain the 10 ms maintenance wake.
+Assignment waiting wakes on UART or Wi-Fi stream notifications and uses the
+earlier of the host ping and the Wi-Fi stream reconnect deadlines. A legacy
+direct link without assignment push retains its existing reauthentication
+deadline. Live input and other connected states retain the 10 ms maintenance wake.
 Non-UART builds retain that wake for console acquisition.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 

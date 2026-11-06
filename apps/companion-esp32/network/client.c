@@ -791,9 +791,11 @@ static void update_screen(void){
 static unsigned network_wait(void){
     if(osg_serial_has_wake()){
         if(state==OFF||state==FAULT)return portMAX_DELAY;
-        if(state==PAIR_WAIT||state==PREPARING||state==PANEL_ERROR){
+        if(state==PAIR_WAIT||state==WAIT_ASSIGNMENT||state==PREPARING||state==PANEL_ERROR){
             const uint64_t now=millis();
-            const uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
+            uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
+            if(state==WAIT_ASSIGNMENT&&!connection.direct&&connection.ws&&primary_connection[0]&&
+                !osg_wifi_feedback_running()&&next_feedback_connect<deadline)deadline=next_feedback_connect;
             if(now>=deadline)return 0;
             const unsigned ticks=pdMS_TO_TICKS(deadline-now);
             return ticks?ticks:1;
