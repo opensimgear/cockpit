@@ -65,7 +65,22 @@ test('desktop status matches MCP and committed settings update the portal', {
     if (desktop.runtime === null) assert.equal(result.data.runtime,null);
     assert.deepEqual((await native('profile_status')).profiles.profileSession.owner,before.profiles.profileSession.owner);
     assert.equal(before.profiles.profileSession.owner,null,'The settings mutation requires an idle dev profile');
-    assert.ok((await client.listResources()).resources.some(resource => resource.uri==='cockpit://observations/settings.desktop'));
+    const {resources} = await client.listResources();
+    assert.ok(resources.some(resource => resource.uri==='cockpit://observations/settings.desktop'));
+    assert.ok(resources.some(resource => resource.uri==='cockpit://observations/profiles.desktop'));
+    await page.evaluate(`(async()=>{
+      const {SharedObservations}=await import('/src/lib/streams/shared.ts');
+      const observations=new SharedObservations();
+      window.__desktopReadinessFixture={observations,state:null};
+      observations.subscribe('profiles.desktop',state=>{window.__desktopReadinessFixture.state=state;});
+    })()`);
+    const readiness=await until(()=>page.evaluate('window.__desktopReadinessFixture.state'),state=>state?.status==='ready');
+    assert.deepEqual(readiness.frame.payload,{state:desktop.state});
+    await until(()=>page.evaluate(`(()=>{const button=[...document.querySelectorAll('nav[aria-label="Main navigation"] button')].find(item=>item.textContent.trim()==='Debug');if(!button)return false;button.click();return true;})()`));
+    await until(()=>page.evaluate(`(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(item=>item.textContent.trim()==='Runtime & recovery');if(!tab)return false;tab.click();return true;})()`));
+    const desktopDetails = '[...document.querySelectorAll("details")].find(item=>item.querySelector("summary")?.textContent.trim()==="Native runtime and desktop output details")';
+    await until(()=>page.evaluate(`(()=>{const details=${desktopDetails};if(!details)return null;details.open=true;return details.querySelector('strong')?.textContent;})()`),
+      state=>state===desktop.state);
     writeCredential = await invoke('mcp_credential_create', {
       name:'Temporary desktop settings writer',scope:'write',expectedSettingsRevision:(await settings()).settingsRevision,
     });
@@ -105,7 +120,10 @@ test('desktop status matches MCP and committed settings update the portal', {
       }
     } finally {
       try { if (enabledByFixture) await configure(initial.enabled, initial.port); }
-      finally { page.close(); }
+      finally {
+        await page.evaluate('window.__desktopReadinessFixture?.observations.close();delete window.__desktopReadinessFixture;').catch(()=>{});
+        page.close();
+      }
     }
   }
 });

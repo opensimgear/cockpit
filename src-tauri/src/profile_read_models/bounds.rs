@@ -16,6 +16,7 @@ fn target(value: &Target) -> usize {
 }
 pub(super) fn event(event: &Event) -> usize {
     std::mem::size_of::<Event>() + match event {
+        Event::Desktop(_) => 0,
         Event::Library(value) => {
             value.profiles.iter().map(|row| std::mem::size_of_val(row)
                 + row.id.len() + row.name.len() + row.semantic_hash.len() + strings(&row.game_ids)).sum::<usize>()

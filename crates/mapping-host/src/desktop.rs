@@ -381,23 +381,25 @@ impl Desktop {
         self.last_error = result.as_ref().err().cloned();
         result
     }
+    fn readiness_with_fault(&self, faulted: bool) -> Readiness {
+        if faulted || self.last_error.is_some() {
+            Readiness::Faulted
+        } else if !self.started {
+            Readiness::Stopped
+        } else if self.focused && !self.waiting_neutral.is_empty() {
+            Readiness::Waiting
+        } else if self.focused {
+            Readiness::Active
+        } else {
+            Readiness::Paused
+        }
+    }
+    pub fn readiness(&self) -> Readiness {
+        self.readiness_with_fault(self.output.faulted())
+    }
     pub fn status(&self) -> Value {
         let backend = self.output.snapshot();
-        let faulted = backend.uncertain
-            || !backend.cleanup_complete
-            || backend.error.is_some()
-            || self.last_error.is_some();
-        let state = if faulted {
-            "faulted"
-        } else if !self.started {
-            "stopped"
-        } else if self.focused && !self.waiting_neutral.is_empty() {
-            "waiting"
-        } else if self.focused {
-            "active"
-        } else {
-            "paused"
-        };
+        let state = self.readiness_with_fault(backend.uncertain || !backend.cleanup_complete || backend.error.is_some());
         let error = self.last_error.clone().or_else(|| backend.error.clone());
         json!({"state":state,
             "scope":self.scope,"backend":backend,"scheduler":self.scheduler.decisions(),"error":error,
@@ -408,6 +410,17 @@ impl Desktop {
             "helperScope":if self.started { self.output.child_scope() } else { None },
             "nativeSubmission":"SendInput count is recorded separately from application observations."})
     }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Readiness {
+    #[default]
+    Stopped,
+    Waiting,
+    Active,
+    Paused,
+    Faulted,
+    RecoveryNeeded,
 }
 fn neutral(sample: &osg_mapping::program::SignalSample) -> bool {
     matches!(

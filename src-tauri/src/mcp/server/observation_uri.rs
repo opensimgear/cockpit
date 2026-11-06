@@ -4,10 +4,11 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 20] = [
+const FIXED_TOPICS: [(&str, &str); 21] = [
     ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
+    ("profiles.desktop", "Keyboard and mouse output readiness"),
     ("profiles.activation", "Profile activation progress"),
     ("profiles.learning", "Physical input learning revision"),
     ("profiles.debug-inputs", "Applied debug controller input revision"),

@@ -135,6 +135,11 @@ impl Desktop {
     }
     pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.inner.as_mut().map_or(Ok(()),|inner|inner.keep_alive())}
     pub(crate) fn stop(&mut self)->Result<(),String>{self.started=false;self.inner.as_mut().map_or(Ok(()),|inner|inner.stop())}
+    pub(crate) fn readiness(&self) -> osg_mapping_host::desktop::Readiness {
+        use osg_mapping_host::desktop::Readiness;
+        if self.started && self.scope.is_none() { return Readiness::Waiting; }
+        self.inner.as_ref().map_or(Readiness::Stopped, |inner| inner.readiness())
+    }
     pub(crate) fn status(&self)->Value{
         let mut status=self.inner.as_ref().map_or(serde_json::json!({"state":"stopped"}),|inner|inner.status());
         if self.started&&self.scope.is_none(){status["state"]=serde_json::json!("waiting");status["scopeError"]=serde_json::json!("Waiting for the profile's game to open.");}
@@ -154,6 +159,7 @@ mod tests{
         assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
         assert!(desktop.next_deadline_us().is_none());
         assert_eq!(desktop.status()["state"],"waiting");
+        assert_eq!(desktop.readiness(), osg_mapping_host::desktop::Readiness::Waiting);
         assert_eq!(desktop.status()["scopeError"],"Waiting for the profile's game to open.");
         assert!(desktop.inner.is_none(),"Waiting must not construct or activate an output adapter");
         desktop.started=false;

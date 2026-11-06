@@ -183,6 +183,11 @@ impl Output {
         }
         snapshot
     }
+    pub(super) fn faulted(&self) -> bool {
+        let state = self.shared.lock();
+        state.fault.is_some() || state.snapshot.error.is_some()
+            || state.snapshot.uncertain || !state.snapshot.cleanup_complete
+    }
     fn check(state: &State) -> Result<(), String> {
         if let Some(error) = &state.fault { return Err(error.clone()); }
         if state.shutdown { return Err("Desktop output owner exited.".into()); }

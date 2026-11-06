@@ -5,13 +5,14 @@ pub(crate) use emergency::Emergency;
 // Event-driven projections of committed profile owners. Transport encoding and
 // Broker publication happen only on this worker, never on an authority lock.
 use crate::{observations, profile_session::Status};
+use osg_mapping_host::desktop::Readiness;
 use osg_profiles::{activation::{Rule, Target}, service::read_model::Snapshot, session::SelectionMode};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{collections::VecDeque, sync::{Arc, Condvar, Mutex}, thread::JoinHandle};
 
 const CAPACITY: usize = 256;
-const TOPICS: [&str; 2] = ["profiles.library", "profiles.runtime"];
+const TOPICS: [&str; 3] = ["profiles.library", "profiles.runtime", "profiles.desktop"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,17 +36,19 @@ pub(crate) enum AutomaticChange { Snapshot(AutomaticSnapshot), Emergency { revis
 pub(crate) type AutomaticObserver = Arc<dyn Fn(AutomaticChange) + Send + Sync>;
 
 #[derive(Clone)]
-enum Event { Library(Snapshot), Native(Status), Automatic(AutomaticChange) }
+enum Event { Library(Snapshot), Native(Status), Automatic(AutomaticChange), Desktop(Readiness) }
 #[derive(Clone, Default)]
 struct Captured {
     library: Option<Snapshot>,
     native: Option<Status>,
     automatic: Option<AutomaticSnapshot>,
     emergency: Option<(u64, bool)>,
+    desktop: Readiness,
 }
 impl Captured {
     fn apply(&mut self, event: Event) {
         match event {
+            Event::Desktop(snapshot) => self.desktop = snapshot,
             Event::Library(snapshot) => self.library = Some(snapshot),
             Event::Native(snapshot) => self.native = Some(snapshot),
             Event::Automatic(AutomaticChange::Snapshot(snapshot)) => self.automatic = Some(snapshot),
@@ -55,7 +58,7 @@ impl Captured {
         }
     }
     fn complete(&self) -> bool { self.library.is_some() && self.native.is_some() && self.automatic.is_some() && self.emergency.is_some() }
-    fn payloads(&self, rules: &Value) -> [Value; 2] {
+    fn payloads(&self, rules: &Value) -> [Value; 3] {
         let library = self.library.as_ref().expect("registered library source");
         let native = self.native.as_ref().expect("registered native source");
         let mut session = serde_json::to_value(&library.session).expect("typed session");
@@ -71,7 +74,7 @@ impl Captured {
             "session":session,"diagnostics":library.diagnostics,"readOnly":library.read_only,
             "profileSession":native,"automatic":automatic,
             "preferredProfiles":self.automatic.as_ref().expect("registered automatic source").preferred_profiles,
-        })]
+        }), json!({"state":self.desktop})]
     }
     fn generation(&self) -> u64 { self.library.as_ref().expect("registered library").generation }
 }
@@ -147,12 +150,16 @@ impl Runtime {
         let inner = self.inner.clone();
         Arc::new(move |snapshot| inner.capture(Event::Native(snapshot)))
     }
+    pub(crate) fn desktop_observer(&self) -> Arc<dyn Fn(Readiness) + Send + Sync> {
+        let inner = self.inner.clone();
+        Arc::new(move |snapshot| inner.capture(Event::Desktop(snapshot)))
+    }
     pub(crate) fn automatic_observer(&self) -> AutomaticObserver {
         let inner = self.inner.clone();
         Arc::new(move |snapshot| inner.capture(Event::Automatic(snapshot)))
     }
     /// Source registration/capture precedes this call. Readiness means both
-    /// topics have a snapshot; the Gateway cannot expose a half-bound reader.
+    /// profile topics have a snapshot; the Gateway cannot expose a half-bound reader.
     pub(crate) fn start(&self) -> Result<(), String> {
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
         if worker.is_none() {
@@ -201,7 +208,7 @@ fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages:
     let clock = format!("profiles:{}", uuid::Uuid::new_v4());
     let mut captured = Captured::default();
     let mut publishers = Vec::<osg_streams::Publisher>::new();
-    let mut previous = None::<[Value; 2]>;
+    let mut previous = None::<[Value; 3]>;
     let mut source_generation = 0;
     let mut previous_inventory_owner = None;
     let mut rules = pages::PreparedRules::default();

@@ -355,6 +355,7 @@ Several other topics carry a revision and leave the exact read to a tool.
 | `profiles.retired-recovery` | `profile_retired_recovery_status` for retained output and provisioning cleanup state. |
 | `system.inventory` | `system_inventory` for the bounded inventory, or `controller_visibility_status` with a physical source ID. |
 | `settings.desktop` | Committed desktop output enablement, scope and qualification. Use `profile_desktop_status` for an explicit runtime readiness snapshot. |
+| `profiles.desktop` | Current keyboard and mouse readiness. Use `profile_desktop_status` for detailed recovery diagnostics. |
 
 For retained cleanup, pass the exact inspected `reference` to
 `profile_retired_recovery_recover`,

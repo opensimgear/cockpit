@@ -29,11 +29,11 @@
   let saved=$state.raw<{document:ProfileDocument;assignments:ProfileLocalAssignment[]}|null>(null),loading=$state(false),error=$state(''),epoch=0;
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),signature=$state(''),environment=$state(''),busy=$state(false);
   let diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),offset=$state(0),offsets=$state([0]);
-  let desktop=$state.raw<unknown>(null);
+  let desktop=$state.raw<unknown>(null),desktopReadiness=$state.raw<{state:'stopped'|'active'|'paused'|'waiting'|'faulted'|'recovery-needed'}|null>(null);
   let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false;
   const debugId=$props.id();
   const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
-  let section=$state<'telemetry'|'profile'|'runtime'>('telemetry'),mounted=$state(false),desktopRead=false;
+  let section=$state<'telemetry'|'profile'|'runtime'>('telemetry'),mounted=$state(false);
   const draft=$derived(source==='draft'?editor:saved);
   const graphSignature=$derived(JSON.stringify(draft?{document:draft.document,assignments:draft.assignments}:null));
   const inventorySignature=$derived(`${inventoryRevision}/${graphInventorySignature(inventory)}`);
@@ -46,11 +46,26 @@
   $effect(()=>{if(!source&&profiles.length)source=runtimeState.status?.owner?.profileId??profiles[0].id;});
   $effect(()=>{if(mounted&&active&&section==='profile'&&source&&source!=='draft'&&!saved&&!loading&&!error)untrack(()=>void read());});
   $effect(()=>{
-    if(!mounted||!active||section!=='runtime')return;
-    const refresh=()=>{if(!document.hidden&&!desktopRead){desktopRead=true;void readDesktop();}};
-    refresh();
-    document.addEventListener('visibilitychange',refresh);
-    return()=>document.removeEventListener('visibilitychange',refresh);
+    if(!mounted||!active||section!=='runtime'){desktopReadiness=null;return;}
+    let observations:SharedObservations|undefined;
+    const stop=()=>{observations?.close();observations=undefined;desktopReadiness=null;};
+    const syncVisibility=()=>{
+      if(document.hidden){stop();return;}
+      if(observations)return;
+      const current=new SharedObservations();observations=current;
+      current.subscribe('profiles.desktop',state=>{
+        if(observations!==current)return;
+        untrack(()=>{
+          if(state.status!=='ready'||state.frame?.source!=='profiles'){desktopReadiness=null;return;}
+          const payload=state.frame.payload as {state?:unknown}|null;
+          const values=['stopped','active','paused','waiting','faulted','recovery-needed'];
+          desktopReadiness=typeof payload?.state==='string'&&values.includes(payload.state)
+            ?{state:payload.state as 'stopped'|'active'|'paused'|'waiting'|'faulted'|'recovery-needed'}:null;
+        });
+      });
+    };
+    syncVisibility();document.addEventListener('visibilitychange',syncVisibility);
+    return()=>{document.removeEventListener('visibilitychange',syncVisibility);stop();};
   });
   $effect(()=>{
     if(!mounted||!active||section!=='runtime'||!companionDetailsOpen)return;
@@ -109,7 +124,7 @@
   </div>
   <div id={`${debugId}-runtime-panel`} role="tabpanel" aria-labelledby={`${debugId}-runtime-tab`} hidden={section!=='runtime'}>
   {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} active={active&&section==='runtime'} onState={onRuntimeState}/>{/if}
-  <details class="panel native-details"><summary>Native runtime and desktop output details</summary><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
+  <details class="panel native-details"><summary>Native runtime and desktop output details</summary><p>Desktop readiness: <strong>{desktopReadiness?.state??'Unavailable'}</strong></p><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
   <details class="panel native-details" ontoggle={event=>companionDetailsOpen=event.currentTarget.open}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
   <ProfileRetiredRecovery active={active&&section==='runtime'}/>
   </div>

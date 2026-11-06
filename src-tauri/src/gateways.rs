@@ -599,6 +599,8 @@ impl GatewayManager {
         if let Err(error) = manager.refresh_saved_panel_references() {
             eprintln!("Saved panel reference bootstrap failed: {error}");
         }
+        manager.profile_session.lock().unwrap_or_else(|p| p.into_inner())
+            .observe_desktop(manager.profile_read_models.desktop_observer());
         let library_observer = manager.profile_read_models.library_observer();
         let wake = manager.profile_automatic.wake.clone();
         let activity_profiles = manager.activity.metadata_wake(crate::activity::metadata::Group::Profiles);

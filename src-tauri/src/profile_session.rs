@@ -163,6 +163,7 @@ pub(crate) trait Host: Send {
     fn set_cleanup_progress(&mut self, _: Option<u64>) {}
     fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
+    fn desktop_readiness(&self) -> osg_mapping_host::desktop::Readiness { Default::default() }
     fn debug_controller(&mut self,_:&OwnedRun,_:&crate::profile_debug_controller::Request)->Result<Value,String> { Err("This profile host has no debug controllers.".into()) }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
@@ -262,6 +263,8 @@ pub(crate) struct Coordinator<H: Host> {
     active_candidate: Option<Candidate>,
     launch: Option<launch::Held>,
     status_observer: Option<std::sync::Arc<dyn Fn(Status) + Send + Sync>>,
+    desktop_observer: Option<std::sync::Arc<dyn Fn(osg_mapping_host::desktop::Readiness) + Send + Sync>>,
+    observed_desktop: Option<osg_mapping_host::desktop::Readiness>,
     observed_status: Option<Status>,
 }
 
@@ -286,6 +289,8 @@ impl<H: Host> Coordinator<H> {
             active_candidate: None,
             launch: None,
             status_observer: None,
+            desktop_observer: None,
+            observed_desktop: None,
             observed_status: None,
         }
     }
@@ -295,11 +300,27 @@ impl<H: Host> Coordinator<H> {
         self.notify_status();
     }
     fn notify_status(&mut self) {
+        if let Some(observer) = &self.desktop_observer {
+            let readiness = if self.desktop_recovery_needed() {
+                osg_mapping_host::desktop::Readiness::RecoveryNeeded
+            } else {
+                self.host.desktop_readiness()
+            };
+            if self.observed_desktop != Some(readiness) {
+                self.observed_desktop = Some(readiness);
+                observer(readiness);
+            }
+        }
         if self.observed_status.as_ref() == Some(&self.status) { return; }
         if let Some(observer) = &self.status_observer {
             self.observed_status = Some(self.status.clone());
             observer(self.status.clone());
         }
+    }
+    pub(crate) fn observe_desktop(&mut self, observer: std::sync::Arc<dyn Fn(osg_mapping_host::desktop::Readiness) + Send + Sync>) {
+        self.desktop_observer = Some(observer);
+        self.observed_desktop = None;
+        self.notify_status();
     }
     pub(crate) fn status(&self) -> &Status {
         &self.status
@@ -321,13 +342,17 @@ impl<H: Host> Coordinator<H> {
         if status.is_object() {
             status["serviceIntervalMs"] = serde_json::json!(self.service_interval().map(|interval| interval.as_millis()));
         }
-        let desktop_pending=self.manifest.active.iter().chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
-            .any(|run|run.receipts.iter().any(|receipt|receipt.kind=="desktop-output"));
-        if desktop_pending && matches!(self.status.state,State::RecoveryNeeded|State::Faulted) {
+        if self.desktop_recovery_needed() {
             if !status.is_object(){status=serde_json::json!({});}
             status["state"]=serde_json::json!("recovery-needed");status["error"]=serde_json::json!(self.status.fault);
         }
         status
+    }
+    fn desktop_recovery_needed(&self) -> bool {
+        matches!(self.status.state,State::RecoveryNeeded|State::Faulted)
+            && self.manifest.active.iter()
+                .chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
+                .any(|run|run.receipts.iter().any(|receipt|receipt.kind=="desktop-output"))
     }
     pub(crate) fn debug_controller(&mut self,request:&crate::profile_debug_controller::Request)->Result<Value,String> {
         if !self.validates(&request.owner) {return Err("The requested debug controller owner expired; inspect the current running revision.".into());}

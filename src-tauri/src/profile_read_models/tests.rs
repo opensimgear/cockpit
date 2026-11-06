@@ -33,6 +33,27 @@ fn next(reader: &mut osg_streams::Reader) -> osg_streams::WireFrame {
 }
 
 #[test]
+fn desktop_readiness_changes_reach_both_audiences_without_republishing_profile_runtime() {
+    let (runtime, _) = fixture();
+    let broker = runtime.observations.broker();
+    let mut ui = broker.subscribe("desktop-ui", "ui", TOPICS[2]).unwrap();
+    let mut mcp = broker.subscribe("desktop-mcp", "mcp", TOPICS[2]).unwrap();
+    let mut profile = broker.subscribe("profile-ui", "ui", TOPICS[1]).unwrap();
+    assert_eq!(next(&mut ui).payload, Some(json!({"state":"stopped"})));
+    next(&mut mcp);
+    next(&mut profile);
+    let commit = runtime.desktop_observer();
+    for (state, label) in [(Readiness::Waiting, "waiting"), (Readiness::Active, "active"),
+        (Readiness::Paused, "paused"), (Readiness::RecoveryNeeded, "recovery-needed")] {
+        commit(state);
+        let frame = next(&mut ui);
+        assert_eq!(frame.payload, Some(json!({"state":label})));
+        assert_eq!(frame, next(&mut mcp));
+    }
+    assert!(profile.try_recv().unwrap().is_none());
+}
+
+#[test]
 fn committed_second_client_changes_arrive_and_new_readers_start_current() {
     let (runtime, mut service) = fixture();
     let broker = runtime.observations.broker();

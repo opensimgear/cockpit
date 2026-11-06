@@ -859,6 +859,13 @@ impl Host for NativeProfileHost {
         self.authority.as_ref().and_then(|owner| self.prepared.get(&key(owner)))
             .and_then(|state| state.desktop.as_ref()).map_or_else(||self.last_desktop_status.clone(), |desktop| desktop.status())
     }
+    fn desktop_readiness(&self) -> osg_mapping_host::desktop::Readiness {
+        use osg_mapping_host::desktop::Readiness;
+        self.authority.as_ref().and_then(|owner| self.prepared.get(&key(owner)))
+            .and_then(|state| state.desktop.as_ref()).map_or_else(|| {
+                if self.last_desktop_status["state"] == "faulted" { Readiness::Faulted } else { Readiness::Stopped }
+            }, |desktop| desktop.readiness())
+    }
     fn output_handoff(&mut self, run: &OwnedRun, admission_epoch: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> {
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         self.fence(&run.owner)?;
