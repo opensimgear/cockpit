@@ -42,6 +42,10 @@ impl GameSources {
     pub(crate) fn notification_wake(&self) -> Option<Arc<NativeWake>> {
         self.notifications.signal.clone()
     }
+    pub(crate) fn validation_deadline(&self) -> Option<Instant> {
+        [self.validation.next_deadline(), self.catalogue_validation.next_deadline()]
+            .into_iter().flatten().min()
+    }
     pub(crate) fn baseline_wait_until(&self, deadline: Instant) -> Instant {
         let watched = match self.reader.as_ref() {
             Some(Reader::Dcs { transport, physics_outputs, .. }) => {

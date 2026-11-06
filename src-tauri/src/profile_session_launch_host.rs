@@ -304,6 +304,7 @@ impl NativeProfileHost {
                         .into(),
                 );
             }
+            let deadline = game.validation_deadline().map_or(deadline, |proof| proof.min(deadline));
             let wait = game.baseline_wait_until(deadline).saturating_duration_since(Instant::now());
             wake.wait(observed, wait);
         }

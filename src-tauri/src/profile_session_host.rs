@@ -486,6 +486,7 @@ impl NativeProfileHost {
                 let (sender,receiver)=std::sync::mpsc::channel();
                 let resume_clock = clock.clone();
                 let resume_native_clock = native_clock;
+                let wake = state.game.notification_wake().as_ref().map(Arc::downgrade);
                 let games=games.clone();let resources=resources.clone();
                 let document=state.document.clone();let assignments=state.assignments.clone();let backend=state.backend.clone();
                 let companion_catalogues=state.companion_catalogues.clone();
@@ -507,7 +508,9 @@ impl NativeProfileHost {
                         let batch = game_publication::resume_batch(&mut game, &games, resume_clock())?;
                         Ok(Some(NativeGameResume{game,proof,plan,batch,previous}))
                     })();
-                    let _=sender.send(result);
+                    if sender.send(result).is_ok() {
+                        if let Some(wake) = wake.and_then(|wake| wake.upgrade()) { wake.notify(); }
+                    }
                 });
                 state.game_resume=Some(receiver);
             }
@@ -928,7 +931,7 @@ impl Host for NativeProfileHost {
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             debug_inputs: crate::profile_debug_controller::DebugInputs::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
-            child_game_owner: None, game_retry: None, game_resume: None, game_publication: Default::default(), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
+            child_game_owner: None, game_retry: None, game_resume: None, game_publication: game_publication::Publication::with_wake(self.native_wake.as_ref()), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_rebind, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
@@ -1215,7 +1218,7 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
-        [routing, state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
+        [routing, state.game.validation_deadline(), state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
             host_scheduling::output_deadline(output.cursor(), state.recording.cursor(), output.renewal_deadline()))]
             .into_iter().flatten().min()
     }

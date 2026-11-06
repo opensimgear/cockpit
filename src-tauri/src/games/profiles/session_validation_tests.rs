@@ -87,13 +87,16 @@ fn refresh_is_bounded_and_process_capture_still_expires_at_100ms() {
     let mut validation = Validation { verified: Some(began), worker: Some(Worker {
         requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: false, wake: Default::default(),
     }), ..Validation::default() };
+    assert_eq!(validation.next_deadline(), Some(began + REFRESH));
     assert!(validation.poll_at(began + REFRESH - Duration::from_nanos(1)).unwrap());
     assert!(incoming.try_recv().is_err());
     assert!(validation.poll_at(began + REFRESH).unwrap());
+    assert_eq!(validation.next_deadline(), Some(began + FRESH));
     incoming.try_recv().unwrap();
     assert!(validation.poll_at(began + FRESH - Duration::from_nanos(1)).unwrap());
     assert!(incoming.try_recv().is_err());
     assert!(!validation.poll_at(began + FRESH).unwrap());
+    assert_eq!(validation.next_deadline(), None, "Expiry is consumed once while the request is pending");
 }
 
 #[test]

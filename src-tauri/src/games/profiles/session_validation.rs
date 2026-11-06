@@ -75,6 +75,14 @@ impl Validation {
         }
     }
 
+    /// Once a request is in flight, completion supplies the next wake. Keep
+    /// the previous proof's expiry until the consumer has processed it.
+    pub(super) fn next_deadline(&self) -> Option<Instant> {
+        let worker = self.worker.as_ref()?;
+        let verified = self.verified?;
+        Some(verified + if worker.pending { self.policy.fresh } else { self.policy.refresh })
+    }
+
     #[cfg(test)]
     fn poll(&mut self) -> Result<bool, String> {
         self.poll_at(Instant::now())
@@ -108,7 +116,10 @@ impl Validation {
             worker.requests.send(()).map_err(|_| "The native game validation worker stopped.".to_owned())?;
             worker.pending = true;
         }
-        Ok(self.verified.is_some_and(|began| now.saturating_duration_since(began) < self.policy.fresh))
+        if self.verified.is_some_and(|began| now.saturating_duration_since(began) >= self.policy.fresh) {
+            self.verified = None;
+        }
+        Ok(self.verified.is_some())
     }
 
     pub(super) fn cancel(&mut self) {

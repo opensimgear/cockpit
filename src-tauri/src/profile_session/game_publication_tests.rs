@@ -16,6 +16,23 @@ fn completion(publication: &mut Publication, identity: &Identity) -> Option<Resu
 }
 
 #[test]
+fn publication_wakes_host_after_queueing_completion() {
+    let wake = Arc::new(NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let mut publication = Publication::with_wake(Some(&wake));
+    publication.publish(batch(1));
+    let observed = wake.observed();
+    publication.start(|_, _| Ok(true)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while wake.observed() == observed {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "Publication did not wake the host");
+        wake.wait(observed, remaining);
+    }
+    assert!(publication.poll(Some(&("dcs".into(), "reader".into()))).unwrap().unwrap());
+}
+
+#[test]
 fn blocked_publication_never_blocks_poll_or_spawns_more_than_one_worker() {
     let identity = ("dcs".into(), "reader".into());
     let mut publication = Publication::default();

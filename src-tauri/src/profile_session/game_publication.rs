@@ -1,7 +1,8 @@
 //! One owned inventory writer. Live polling only queues/coalesces immutable
 //! reader batches; inventory adoption and withdrawal run off the heartbeat.
 use osg_profiles::resources::ProviderBatch;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
+use osg_streams::NativeWake;
+use std::sync::{Arc, Weak, atomic::{AtomicBool, Ordering}, mpsc};
 
 type Identity = (String, String);
 enum Change {
@@ -28,6 +29,7 @@ struct Pending {
 }
 #[derive(Default)]
 pub(super) struct Publication {
+    wake: Option<Weak<NativeWake>>,
     pending: Option<Pending>,
     queued: Option<Change>,
     pub(super) deferred: bool,
@@ -37,6 +39,11 @@ impl Drop for Publication {
     fn drop(&mut self) { self.cancel(); }
 }
 impl Publication {
+    pub(super) fn with_wake(wake: Option<&Arc<NativeWake>>) -> Self {
+        let mut publication = Self::default();
+        publication.wake = wake.map(Arc::downgrade);
+        publication
+    }
     pub(super) fn cancel(&mut self) {
         if let Some(pending) = &self.pending { pending.cancelled.store(true, Ordering::Release); }
         self.queued = None;
@@ -99,9 +106,12 @@ impl Publication {
         let replacing = change.replacing();
         let cancelled = Arc::new(AtomicBool::new(false));
         let captured = cancelled.clone();
+        let wake = self.wake.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::Builder::new().name("profile-game-inventory".into()).spawn(move || {
-            let _ = sender.send(work(change, captured));
+            if sender.send(work(change, captured)).is_ok() {
+                if let Some(wake) = wake.and_then(|wake| wake.upgrade()) { wake.notify(); }
+            }
         }).map_err(|error| format!("Cannot start the native game inventory worker: {error}"))?;
         self.pending = Some(Pending { identity, publishing, replacing, cancelled, receiver });
         Ok(())
