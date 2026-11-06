@@ -6,6 +6,7 @@ import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
+const browserOpenId = ({ connectionId, requestId }) => JSON.stringify([connectionId, requestId]);
 const endpoints = new Map([
   ['/observation_subscribe','subscribe'],
   ['/observation_unsubscribe','unsubscribe'],
@@ -27,6 +28,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const baselines = new Map();
   const errors = [];
   const retired = new Set();
+  const abortedOpens = new Map();
   let companionReads = 0;
   const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
@@ -57,7 +59,13 @@ test(`${transport} main view navigation retires observation readers without dupl
       if (entry.status !== 200 || method === 'Network.loadingFailed') {
         const detail = [entry.operation, entry.body.topic, entry.status, params.errorText].filter(Boolean).join(' ');
         if (method === 'Network.loadingFailed') {
-          errors.push(detail);
+          // Browser disposal aborts the open HTTP request and sends its exact
+          // cancellation separately. Require that cancellation below.
+          if (browserUrl && entry.operation === 'subscribe' && params.canceled) {
+            abortedOpens.set(browserOpenId(entry.body), detail);
+          } else {
+            errors.push(detail);
+          }
           pending.delete(params.requestId);
         } else {
           void page.call('Network.getResponseBody', {requestId:params.requestId})
@@ -71,7 +79,7 @@ test(`${transport} main view navigation retires observation readers without dupl
           assert.equal(typeof token, 'string');
           // Bridge cancellation identifies the opening request. Baselines
           // still acknowledge the resulting native subscription token.
-          const id = browserUrl ? entry.body.requestId : token;
+          const id = browserUrl ? browserOpenId(entry.body) : token;
           assert.ok(!opened.has(token), 'An observation token must identify one reader lifetime');
           opened.set(token, entry.body.topic);
           if (!retired.has(id)) active.set(id, {topic:entry.body.topic, token});
@@ -80,7 +88,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         pending.delete(params.requestId);
         const {subscriptionId, delivery} = entry.body;
         if (entry.operation === 'unsubscribe') {
-          const id = browserUrl ? entry.body.requestId : subscriptionId;
+          const id = browserUrl ? browserOpenId(entry.body) : subscriptionId;
           retired.add(id);
           active.delete(id);
         } else if (delivery === '1') {
@@ -117,6 +125,27 @@ test(`${transport} main view navigation retires observation readers without dupl
     for (const [view] of views) await navigate(view);
     await navigate('Overview');
     await page.call('Network.enable', {maxPostDataSize:65536});
+    if (browserUrl) {
+      let paused;
+      const stopPaused = page.listen(event => {
+        if (event.method === 'Fetch.requestPaused') paused = event.params;
+      });
+      await page.call('Fetch.enable', { patterns: [{urlPattern:'*/api/observe/subscribe'}] });
+      try {
+        await page.evaluate(`import('/src/lib/companion-observations.ts').then(({companionObservations}) => {
+          window.stopNavigationProbe = companionObservations().subscribe('companion.firmware', () => {});
+        })`);
+        await until(() => paused);
+        const body = JSON.parse(paused.request.postData);
+        assert.equal(body.topic, 'companion.firmware');
+        const id = browserOpenId(body);
+        await page.evaluate('window.stopNavigationProbe(); delete window.stopNavigationProbe;');
+        await until(() => abortedOpens.has(id) && retired.has(id));
+      } finally {
+        await page.call('Fetch.disable');
+        stopPaused();
+      }
+    }
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [view, required] of views) {
         await navigate(view);
@@ -286,6 +315,9 @@ test(`${transport} main view navigation retires observation readers without dupl
       await until(async () => pending.size === 0 && active.size === 0);
     }
     assert.deepEqual(errors, []);
+    assert.deepEqual([...abortedOpens].filter(([id]) => !retired.has(id)), [],
+      'Every aborted open must have an accepted cancellation for the same request');
+    if (browserUrl) console.log(JSON.stringify({ transport, canceledOpens: abortedOpens.size }));
     assert.ok([...baselines.values()].every(count => count === 1));
   } finally {
     try {

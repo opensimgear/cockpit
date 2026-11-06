@@ -13,7 +13,7 @@ export async function browserPage(url) {
       call: (method, args) => session.send(method, args),
       evaluate: expression => page.evaluate(expression),
       listen(listener) {
-        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed'];
+        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Fetch.requestPaused'];
         const handlers = methods.map(method => [method, params => listener({method,params})]);
         for (const [method, handler] of handlers) session.on(method, handler);
         return () => handlers.forEach(([method, handler]) => session.off(method, handler));
