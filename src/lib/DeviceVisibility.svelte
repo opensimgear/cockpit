@@ -21,13 +21,27 @@
   let disposed = false;
   let refreshing = false;
   let refreshPending = false;
-  let loaded = false;
+  let requestSequence = 0;
+  function intentExecutable(intent: VisibilityIntent) {
+    return intent.mode === 'hide-from-process' ? intent.executable : '';
+  }
   async function request(value: GatewayRequest, updateIntent = false) {
-    const result = (await gatewayRequest({ ...value, sourceId: source.id })).controllers?.visibility;
+    const sequence = ++requestSequence;
+    let result: VisibilityStatus | undefined;
+    try {
+      result = (await gatewayRequest({ ...value, sourceId: source.id })).controllers?.visibility;
+    } catch (reason) {
+      if (!disposed && sequence === requestSequence) throw reason;
+      return;
+    }
+    if (disposed || sequence !== requestSequence) return;
     if (!result) throw new Error('Restart the native service to use device visibility settings.');
-    if (disposed) return;
+    const previous = status?.intent;
     status = result;
-    if (!loaded || updateIntent) { mode = result.intent.mode; executable = result.intent.mode === 'hide-from-process' ? result.intent.executable : ''; loaded = true; }
+    if (!previous || updateIntent || (mode === previous.mode && executable === intentExecutable(previous))) {
+      mode = result.intent.mode;
+      executable = intentExecutable(result.intent);
+    }
     if (result.processes) { processes = value.offset ? [...processes, ...result.processes] : result.processes; nextProcess = result.nextProcess ?? null; }
   }
   async function action(value: GatewayRequest) {
@@ -37,9 +51,7 @@
     finally { busy = false; if (refreshPending) void refresh(); }
   }
   async function refresh() {
-    if (disposed || document.hidden) return;
-    refreshPending = true;
-    if (busy || refreshing) return;
+    if (!refreshPending || disposed || document.hidden || busy || refreshing) return;
     refreshing = true;
     try {
       while (refreshPending && !busy && !disposed && !document.hidden) {
@@ -51,9 +63,13 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
-    observations.subscribe('system.inventory', state => { if (state.status === 'ready') void refresh(); });
+    observations.subscribe('system.inventory', state => {
+      if (state.status === 'ready' || (!status && (state.status === 'error' || state.status === 'lost'))) {
+        refreshPending = true;
+        void refresh();
+      }
+    });
     document.addEventListener('visibilitychange', refresh);
-    void refresh();
     return () => {
       disposed = true;
       observations.close();

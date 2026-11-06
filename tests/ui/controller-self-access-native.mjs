@@ -40,6 +40,8 @@ test('native startup grants HidHide self-access and Devices displays the same pa
     assert.ok(source, 'A remembered native controller is required to inspect visibility details.');
     const initial = await native({ command: 'controller_visibility_status', sourceId: source.id });
     assert.deepEqual(initial.visibility.selfAccess, access);
+    const visibilityReads = () => commands.filter(command => command === 'controller_visibility_status').length;
+    const beforeOpen = visibilityReads();
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
     const tile = devices.locator(`[data-component-id="controller:${source.id}"]`);
@@ -51,13 +53,13 @@ test('native startup grants HidHide self-access and Devices displays the same pa
     await expect(status).toContainText(access.executable);
     await expect(status).toContainText('Access was verified at startup.');
     await expect(devices.locator('.system-list')).not.toBeVisible();
-    // The native baseline can arrive after the initial read. Once settled, the
-    // panel must stay idle across more than two of its former refresh periods.
-    await expect.poll(() => commands.filter(command => command === 'controller_visibility_status').length).toBeGreaterThan(1);
-    await page.waitForTimeout(400);
-    const observed = commands.filter(command => command === 'controller_visibility_status').length;
+    // Opening the panel reads once after the inventory baseline. Allow any
+    // subsequent native inventory changes to settle before checking idle work.
+    assert.equal(visibilityReads() - beforeOpen, 1);
+    await page.waitForTimeout(800);
+    const settledReads = visibilityReads();
     await page.waitForTimeout(2200);
-    assert.equal(commands.filter(command => command === 'controller_visibility_status').length, observed);
+    assert.equal(visibilityReads(), settledReads);
     const repeated = await native({ command: 'controller_visibility_status', sourceId: source.id });
     assert.deepEqual(repeated.visibility.selfAccess, access);
     assert.deepEqual(repeated.visibility.effective, initial.visibility.effective);

@@ -1,19 +1,35 @@
 import assert from'node:assert/strict';import test from'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import*as server from'svelte/internal/server';import*as svelte from'svelte';
 const file=new URL('./DeviceVisibility.svelte',import.meta.url),source=await readFile(file,'utf8'),physical={id:'exact-physical-source',online:true,baselineReady:true},plain=v=>JSON.parse(JSON.stringify(v));
 const status=platform=>({platform,modes:[{mode:'visible',label:'Visible',supported:true,qualified:true,reason:'Local preference only.'},{mode:'hide-from-process',label:'Hide from a process',supported:true,qualified:true,reason:'Profile-controlled hiding.'}],enabled:true,qualified:true,reason:'Native inspection evidence.',intent:{mode:'hide-from-process',executable:'C:\\Games\\Game.exe'},selected:['exact-physical-source','other-physical'],selectedCount:2,global:{inspected:true,active:true,inverse:false,hiddenCount:2,applicationCount:1,applications:['C:\\Tools\\Tool.exe']},effective:{hidden:true,configured:true,inverse:false,scope:'global'},job:null,recovery:{required:true,id:'native-recovery-session'}});
-function harness(seed,{send}={}){const exports={},requests=[],document={hidden:false,addEventListener(){},removeEventListener(){}};let mount,listener,closed=false;const injected=source.replace('</script>','status=seed;mode=seed.intent.mode;executable=seed.intent.mode==="hide-from-process"?seed.intent.executable:"";capture({action,refresh,get status(){return status;},get error(){return error;}});</script>'),{js}=compile(injected,{filename:file.pathname,generate:'server'});let handlers;vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,seed,document,capture(v){handlers=v;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return {...svelte,onMount:fn=>mount=fn};if(name==='./streams/shared')return{SharedObservations:class{subscribe(topic,fn){assert.equal(topic,'system.inventory');listener=fn;}close(){closed=true;}}};if(name.endsWith('.svelte'))return{default:()=>{}};if(name==='./gateway')return{gatewayRequest:async request=>{requests.push(plain(request));return send?send(request):{controllers:{visibility:seed}};}};throw Error(name);}});const html=render(exports.default,{props:{source:physical}}).body;return{html,handlers,requests,document,mount,notify:state=>listener(state),get closed(){return closed;}};}
+function harness(seed,{send}={}){const exports={},requests=[],document={hidden:false,addEventListener(){},removeEventListener(){}};let mount,listener,closed=false;const injected=source.replace('</script>','status=seed;mode=seed.intent.mode;executable=seed.intent.mode==="hide-from-process"?seed.intent.executable:"";capture({action,refresh,setDraft(value){mode=value.mode;executable=intentExecutable(value);},get draft(){return {mode,executable};},get status(){return status;},get error(){return error;}});</script>'),{js}=compile(injected,{filename:file.pathname,generate:'server'});let handlers;vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,seed,document,capture(v){handlers=v;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return {...svelte,onMount:fn=>mount=fn};if(name==='./streams/shared')return{SharedObservations:class{subscribe(topic,fn){assert.equal(topic,'system.inventory');listener=fn;}close(){closed=true;}}};if(name.endsWith('.svelte'))return{default:()=>{}};if(name==='./gateway')return{gatewayRequest:async request=>{requests.push(plain(request));return send?send(request):{controllers:{visibility:seed}};}};throw Error(name);}});const html=render(exports.default,{props:{source:physical}}).body;return{html,handlers,requests,document,mount,notify:state=>listener(state),get closed(){return closed;}};}
 test('visibility subscribes, coalesces changes during a read, and cleans up',async()=>{
  const native=status('windows');let release;
  const first=new Promise(resolve=>release=resolve);
  let reads=0;
  const h=harness(native,{send:async()=>{if(++reads===1)await first;return{controllers:{visibility:native}};}});
  const cleanup=h.mount();
+ assert.equal(reads,0,'Opening waits for the subscription baseline');
  h.notify({status:'ready'});h.notify({status:'ready'});
  assert.equal(reads,1);
  release();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(reads,2);
  h.document.hidden=true;h.notify({status:'ready'});assert.equal(reads,2);
+ h.document.hidden=false;await h.handlers.refresh();assert.equal(reads,3);
+ await h.handlers.refresh();assert.equal(reads,3,'Visibility changes without pending work do not read');
  cleanup();assert.equal(h.closed,true);
+});
+test('external visibility snapshots follow clean fields and preserve an unsaved draft',async()=>{
+ const native=status('windows');let reply={...native,intent:{mode:'visible'}};
+ const h=harness(native,{send:async()=>({controllers:{visibility:reply}})});
+ const cleanup=h.mount();
+ h.notify({status:'ready'});await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(plain(h.handlers.draft),{mode:'visible',executable:''});
+ h.handlers.setDraft({mode:'hide-from-process',executable:'C:\\Games\\Draft.exe'});
+ reply={...native,intent:{mode:'hide-all'}};
+ h.notify({status:'ready'});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.handlers.status.intent.mode,'hide-all');
+ assert.deepEqual(plain(h.handlers.draft),{mode:'hide-from-process',executable:'C:\\Games\\Draft.exe'});
+ cleanup();
 });
 test('qualified visibility UI has local scope, inspection and restoration but no standalone Apply, bulk Apply or process launch forms',()=>{
  for(const platform of['windows','linux','macos']){const native=status(platform);native.launch={implemented:true,qualified:true,reason:'Previously offered isolated launch.',job:null};const h=harness(native);for(const text of['Manage HidHide setup in Settings','Saved policy','Executable path','Choose a running application','Save visibility selection','Restore visibility','Author and apply device hiding in Profiles','active global HidHide rule'])assert.ok(h.html.includes(text),text);for(const text of['Apply visibility','Apply all saved selections','Launch an isolated application','Launch isolated application','Application directory','Arguments (one per line)'])assert.ok(!h.html.includes(text),text);assert.deepEqual(h.requests,[]);}
