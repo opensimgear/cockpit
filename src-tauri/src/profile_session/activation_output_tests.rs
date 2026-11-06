@@ -97,6 +97,24 @@ fn renewal_count(driver: &Arc<Mutex<DriverState>>) -> usize {
 }
 
 #[test]
+fn activation_without_output_preserves_admission_and_deadline_guards() {
+    let (_directory, mut host, owner, _, epoch) = activation_host_fixture();
+    host.run(&owner).unwrap().output.take().unwrap().stop().unwrap();
+
+    let result = host.with_prepared_heartbeat(&owner, Duration::ZERO, true, |_| {
+        panic!("Expired activation must never enter synchronous work")
+    });
+    let result: Result<(), String> = result;
+    assert!(result.unwrap_err().contains("exceeded its deadline"));
+
+    let result = host.with_activation_heartbeat(&owner, |_| {
+        epoch.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    });
+    assert!(result.unwrap_err().contains("cancelled by a newer native control"));
+}
+
+#[test]
 fn activation_keeps_real_output_lease_alive_while_synchronous_work_runs() {
     let (_directory, mut host, owner, driver, _) = activation_host_fixture();
     let minimum_renewals = (LEASE_US / RENEW_US + 1) as usize;

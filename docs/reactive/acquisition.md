@@ -66,6 +66,8 @@ checks the proof before admitting input or dispatching output.
 Profiles with vehicle tabs can park while their exact game source is watched.
 Committed vehicle identity changes wake routing. Paused variant transitions
 retain bounded service until replacement finishes.
+Activation without prepared output checks its admission epoch and deadline
+around synchronous work. It does not start an idle output heartbeat worker.
 The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline

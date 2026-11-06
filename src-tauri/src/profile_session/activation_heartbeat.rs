@@ -130,9 +130,16 @@ impl NativeProfileHost {
             return Err("Only prepared neutral outputs may use the activation heartbeat.".into());
         }
         let expected = state.admission_epoch;
+        let deadline = Instant::now() + timeout;
+        if state.output.is_none() && (!include_desktop || state.desktop.is_none()) {
+            permitted(&epoch, expected, deadline)?;
+            let result = work(self);
+            permitted(&epoch, expected, deadline)?;
+            return result;
+        }
         let mut output = state.output.take();
         let mut desktop = if include_desktop { state.desktop.take() } else { None };
-        let result = during(&epoch, expected, Instant::now() + timeout, || {
+        let result = during(&epoch, expected, deadline, || {
             if let Some(output) = output.as_mut() {
                 output.keep_alive().map_err(|error| format!("Virtual output could not stay neutral during profile activation. {error}"))?;
             }
