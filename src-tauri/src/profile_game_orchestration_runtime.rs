@@ -177,7 +177,11 @@ impl GatewayManager {
                 .store(true, Ordering::Release);
         }
         if let Some(owner) = owner {
-            coordinator.cancel_launch(owner)?;
+            let cancelled = coordinator.cancel_launch(owner);
+            if !matches!(&cancelled, Ok(false)) {
+                self.profile_wake.notify();
+            }
+            cancelled?;
         }
         Ok(())
     }
@@ -313,6 +317,7 @@ impl GatewayManager {
                         },
                     )?
                 };
+                self.profile_wake.notify();
                 let game_name = self.games.resource_catalogue().into_iter()
                     .find(|game| game["id"] == game_id)
                     .and_then(|game| game["name"].as_str().map(str::to_owned))
@@ -431,7 +436,9 @@ impl GatewayManager {
                         .lock()
                         .unwrap_or_else(|p| p.into_inner());
                     coordinator.check_launch_hold(held_owner.as_ref().unwrap(), held_epoch)?;
-                    coordinator.finish_launch(held_owner.as_ref().unwrap(), candidate)?;
+                    let finished = coordinator.finish_launch(held_owner.as_ref().unwrap(), candidate);
+                    self.profile_wake.notify();
+                    finished?;
                     // Adopt the real watcher session before the parent releases its
                     // pending guards, so automatic polling cannot reapply this run.
                     self.profile_automatic.note(capture.policy_epoch, &decision);

@@ -312,6 +312,7 @@ fn game_launch_progress_keeps_one_operation_through_hardware_and_real_process_st
     });
     let (spawning, spawning_entered, spawning_release) = progress_gate();
     *fixture.games.spawn_gate.lock().unwrap() = Some(spawning);
+    let idle_wake = fixture.manager.profile_wake.observed();
     let launching = fixture.manager.clone();
     let worker = std::thread::spawn(move || launch(&launching, "dcs"));
     preparing_entered
@@ -323,8 +324,11 @@ fn game_launch_progress_keeps_one_operation_through_hardware_and_real_process_st
         .recv_timeout(Duration::from_secs(5))
         .expect("Native game spawn did not enter its gate");
     let progress = activation_progress(&fixture.manager, None);
+    let held_wake = fixture.manager.profile_wake.observed();
     spawning_release.send(()).unwrap();
     let result = worker.join().unwrap().unwrap();
+    assert_ne!(held_wake, idle_wake, "Arming the hold must wake the idle worker");
+    assert_ne!(fixture.manager.profile_wake.observed(), held_wake, "Finishing the hold must wake the worker");
     assert_eq!(preparing["phase"], "preparing");
     assert_eq!(progress["activationId"], preparing["activationId"]);
     assert_eq!(progress["phase"], "launching", "{progress}");

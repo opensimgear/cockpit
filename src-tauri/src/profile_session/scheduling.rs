@@ -10,7 +10,7 @@ impl<H: Host> Coordinator<H> {
             .map_or(Some(Duration::from_millis(5)), |run| self.host.service_interval(run))
     }
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        if self.launch.is_some() { return None; }
+        if let Some(held) = &self.launch { return Some(held.deadline); }
         let run = self.manifest.active.as_ref().filter(|run| self.validates(&run.owner))?;
         self.host.next_deadline(run)
     }

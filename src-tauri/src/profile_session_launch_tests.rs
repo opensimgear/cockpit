@@ -227,10 +227,17 @@ fn lost_health_or_deadline_compensates_without_start_or_replay() {
         } else {
             p.lock().unwrap().fail_health = true;
         }
+        let deadline = c.launch.as_ref().unwrap().deadline;
+        assert_eq!(c.next_deadline(), Some(deadline));
+        let remaining = scheduling::service_wait(
+            c.service_interval(), c.next_deadline(), deadline - Duration::from_millis(1),
+        );
+        assert_eq!(remaining, Some(Duration::from_millis(1)));
         c.poll().unwrap();
         assert_eq!(c.status.state, State::Faulted);
         assert!(c.status.owner.is_none());
         assert!(c.launch.is_none());
+        assert_eq!(c.next_deadline(), None);
         assert!(p.lock().unwrap().restores > 0);
         assert!(!p.lock().unwrap().phases.contains(&ApplyPhase::Start));
     }
