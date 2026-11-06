@@ -1404,10 +1404,12 @@ impl GatewayManager {
         }
         if matches!(command.as_str(),"profile_debug_controller_status"|"profile_debug_controller_input") {
             request.as_object_mut().unwrap().remove("clientId");
-            let result=crate::profile_debug_controller::Request::parse(&request).and_then(|request|self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).debug_controller(&request));
-            if command=="profile_debug_controller_input" && result.is_ok() {
-                self.profile_wake.notify();
-                if result.as_ref().is_ok_and(|state| state["replayed"] != true) {
+            let mut result=crate::profile_debug_controller::Request::parse(&request).and_then(|request|self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).debug_controller(&request));
+            if let Ok(Value::Object(state)) = &mut result {
+                if state.remove("queued").is_some_and(|queued| queued == true) {
+                    self.profile_wake.notify();
+                }
+                if state.remove("changed").is_some_and(|changed| changed == true) {
                     if let Some(publisher) = &self.debug_inputs_observation {
                         let _ = publisher.publish_latest_state(publisher.generation(), json!({}), self.observations.captured_us(), "profile-debug-inputs");
                     }

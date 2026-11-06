@@ -193,6 +193,8 @@ impl DebugInputs {
             .get_mut(&request.node_id)
             .ok_or("Choose a debug controller in this applied profile variant.")?;
         let mut replay = false;
+        let mut changed = false;
+        let mut queued = false;
         if request.is_input() {
             let stream_id = request.stream_id.as_ref().unwrap();
             let sequence = request.sequence.unwrap().0;
@@ -228,7 +230,11 @@ impl DebugInputs {
                         );
                     }
                 }
-                let frame_changes = changes
+                let changed_values = changes
+                    .iter()
+                    .filter(|change| source.values.get(&change.port_id) != Some(&change.value))
+                    .collect::<Vec<_>>();
+                let frame_changes = changed_values
                     .iter()
                     .filter(|change| source.used.contains(&change.port_id))
                     .map(|change| FrameChange {
@@ -242,11 +248,8 @@ impl DebugInputs {
                             .into(),
                     );
                 }
-                let next = source
-                    .sequence
-                    .checked_add(1)
-                    .ok_or("Debug source sequence exhausted.")?;
                 if !frame_changes.is_empty() {
+                    let next = source.sequence.checked_add(1).ok_or("Debug source sequence exhausted.")?;
                     self.pending.push_back(Frame {
                         source: request.node_id.clone(),
                         generation: Counter(self.generation),
@@ -256,8 +259,10 @@ impl DebugInputs {
                         changes: frame_changes,
                     });
                     source.sequence = next;
+                    queued = true;
                 }
-                for change in changes {
+                changed = !changed_values.is_empty();
+                for change in changed_values {
                     source
                         .values
                         .insert(change.port_id.clone(), change.value.clone());
@@ -272,7 +277,7 @@ impl DebugInputs {
             }
         }
         Ok(
-            json!({"owner":request.owner,"nodeId":request.node_id,"values":source.values.iter().map(|(port_id,value)|json!({"portId":port_id,"value":value})).collect::<Vec<_>>(),"streamId":request.stream_id,"sequence":request.sequence,"replayed":replay,"pendingFrames":self.pending.len()}),
+            json!({"owner":request.owner,"nodeId":request.node_id,"values":source.values.iter().map(|(port_id,value)|json!({"portId":port_id,"value":value})).collect::<Vec<_>>(),"streamId":request.stream_id,"sequence":request.sequence,"replayed":replay,"pendingFrames":self.pending.len(),"changed":changed,"queued":queued}),
         )
     }
     pub(crate) fn poll(&mut self) -> Vec<Frame> {

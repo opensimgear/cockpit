@@ -46,6 +46,7 @@ struct Source {
     physical: String,
     ports: Vec<Port>,
     controls: Vec<Control>,
+    levels: BTreeMap<String, SignalSample>,
     generation: u64,
     provider_sequence: u64,
     sequence: u64,
@@ -112,6 +113,7 @@ impl HidInputs {
                     physical: physical.into(),
                     ports: vec![port],
                     controls: vec![],
+                    levels: BTreeMap::new(),
                     generation: 1,
                     provider_sequence: 0,
                     sequence: 0,
@@ -213,7 +215,7 @@ impl HidInputs {
                 return Err("A native baseline predates the admitted source.".into());
             }
             source.controls = current.controls.clone();
-            frames.push(source.frame(&current.baseline, true)?);
+            frames.extend(source.frame(&current.baseline, true)?);
         }
         self.session = snapshot.session;
         self.cursor = snapshot.cursor;
@@ -279,7 +281,7 @@ impl HidInputs {
                     continue;
                 }
                 match source.frame(&event, baseline) {
-                    Ok(frame) => frames.push(frame),
+                    Ok(frame) => frames.extend(frame),
                     Err(error) => {
                         frames.push(source.loss(event.captured_us, Reason::Gap)?);
                         degraded.push(format!("{}: {error}", source.logical));
@@ -317,7 +319,7 @@ impl Source {
             changes: vec![],
         })
     }
-    fn frame(&mut self, event: &stream::Event, baseline: bool) -> Result<Frame, String> {
+    fn frame(&mut self, event: &stream::Event, baseline: bool) -> Result<Option<Frame>, String> {
         if event.captured_us < self.at {
             return Err("A native report predates the admitted source.".into());
         }
@@ -339,7 +341,7 @@ impl Source {
                 } else {
                     Reason::Gap
                 },
-            );
+            ).map(Some);
         }
         let values = event
             .values
@@ -364,19 +366,22 @@ impl Source {
                 }
                 None => continue,
             };
-            changes.push(Change {
-                port_id: port.logical.clone(),
-                sample,
-            });
+            if baseline || self.levels.get(&port.logical) != Some(&sample) {
+                changes.push(Change { port_id: port.logical.clone(), sample });
+            }
         }
+        let sequence = if baseline || !changes.is_empty() { Some(self.next()?) } else { None };
+        // Every raw report advances continuity. Only a baseline or changed
+        // routed levels consume a reducer sequence. Preview keeps every report.
         self.generation = event.generation;
         self.provider_sequence = event.sequence;
         self.at = event.captured_us;
         self.ready = true;
-        Ok(Frame {
+        self.levels.extend(changes.iter().map(|change| (change.port_id.clone(), change.sample.clone())));
+        Ok(sequence.map(|sequence| Frame {
             source: self.logical.clone(),
             generation: Counter(self.generation),
-            sequence: Counter(self.next()?),
+            sequence: Counter(sequence),
             captured_us: Counter(self.at),
             reason: if baseline {
                 Reason::Baseline
@@ -384,7 +389,7 @@ impl Source {
                 Reason::Change
             },
             changes,
-        })
+        }))
     }
 }
 

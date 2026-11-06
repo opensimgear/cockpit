@@ -84,8 +84,10 @@ test('physical routing shares capture with preview and survives preview closure 
     const preview=await previewState();
     assert.equal(preview.error,null);
     latest={sample,frames:preview.frames.slice(-3)};
-    const frame=preview.frames.find(frame=>frame.capturedUs===sample?.observedUs
-      && frame.native===sample?.sample.value?.value);
+    // observedUs includes liveness renewals. An unchanged level can remain
+    // available while the independent preview still receives raw reports.
+    const frame=preview.frames.findLast(frame=>sample?.sample.status==='known'&&sample.observedUs!==null
+      && BigInt(frame.capturedUs)<=BigInt(sample.observedUs)&&frame.native===sample.sample.value.value);
     return frame?{frame,sample}:null;
   }).catch(error=>{throw new Error(`No shared capture matched: ${JSON.stringify(latest)}`,{cause:error});});
   assert.equal(shared.frame.generation,previewBefore.frames[0].generation);

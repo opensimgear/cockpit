@@ -94,6 +94,14 @@ fn capture_groups_exact_physical_controls_and_keeps_logical_source_ownership_sep
     event.reason = stream::Reason::Change;
     event.sequence += 1;
     event.captured_us += 1;
+    capture.pages.borrow_mut().push_back(page(Some(event.clone()),false));
+    let (frames, errors) = inputs.poll(&capture, |_| Ok(())).unwrap();
+    assert!(frames.is_empty());
+    assert!(errors.is_empty());
+    event.sequence += 1;
+    event.captured_us += 1;
+    let control = &inputs.sources[0].controls[0];
+    event.values.insert(control.id.clone(), control.decode(12).unwrap());
     capture.pages.borrow_mut().push_back(page(Some(event),false));
     let (frames, errors) = inputs.poll(&capture, |_| Ok(())).unwrap();
     assert!(errors.is_empty());
@@ -227,6 +235,7 @@ fn fixture() -> (Source, stream::Event) {
             token,
         }],
         controls: vec![control.clone()],
+        levels: BTreeMap::new(),
         generation: 7,
         provider_sequence: 0,
         sequence: 0,
@@ -247,7 +256,7 @@ fn fixture() -> (Source, stream::Event) {
 #[test]
 fn exact_native_axis_baseline_and_changes_keep_the_raw_domain() {
     let (mut source, mut event) = fixture();
-    let frame = source.frame(&event, true).unwrap();
+    let frame = source.frame(&event, true).unwrap().unwrap();
     assert_eq!(frame.reason, Reason::Baseline);
     assert_eq!(frame.source, "pedal");
     assert_eq!(frame.sequence.0, 1);
@@ -259,10 +268,9 @@ fn exact_native_axis_baseline_and_changes_keep_the_raw_domain() {
     event.sequence += 1;
     event.captured_us += 1;
     event.values.clear();
-    let unchanged = source.frame(&event, false).unwrap();
-    assert!(unchanged.changes.is_empty());
+    assert!(source.frame(&event, false).unwrap().is_none());
     assert_eq!(source.provider_sequence, 43);
-    assert_eq!(unchanged.sequence.0, 2);
+    assert_eq!(source.sequence, 1);
 }
 #[test]
 fn gap_withdraws_values_and_a_current_snapshot_starts_a_new_admission_sequence() {
@@ -274,7 +282,7 @@ fn gap_withdraws_values_and_a_current_snapshot_starts_a_new_admission_sequence()
     assert_eq!(gap.sequence.0, 2);
     let mut fresh = event.clone();
     fresh.captured_us = 125;
-    let baseline = source.frame(&fresh, true).unwrap();
+    let baseline = source.frame(&fresh, true).unwrap().unwrap();
     assert_eq!(baseline.reason, Reason::Baseline);
     assert_eq!(baseline.sequence.0, 3);
     assert_eq!(source.provider_sequence, 42);
@@ -294,7 +302,7 @@ fn missing_or_changed_controls_and_stale_route_generations_cannot_become_samples
     let (mut source, mut event) = fixture();
     event.reason = stream::Reason::Disconnect;
     assert_eq!(
-        source.frame(&event, false).unwrap().reason,
+        source.frame(&event, false).unwrap().unwrap().reason,
         Reason::Disconnect
     );
     assert!(!source.ready);

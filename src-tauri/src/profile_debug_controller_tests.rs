@@ -163,12 +163,14 @@ fn native_debug_streams_and_ordered_edges_have_bounded_backpressure() {
             )
             .unwrap();
     }
-    assert!(state
-        .request(
-            &input(257, json!([{"portId":"button-1","value":true}])),
-            400
-        )
-        .is_err());
+    let unchanged = input(257, json!([{"portId":"button-1","value":false}]));
+    let receipt = state.request(&unchanged, 400).unwrap();
+    assert_eq!(receipt["changed"], false);
+    assert_eq!(receipt["queued"], false);
+    assert_eq!(receipt["pendingFrames"], 256);
+    assert_eq!(state.request(&unchanged, 400).unwrap()["replayed"], true);
+    let press = input(258, json!([{"portId":"button-1","value":true}]));
+    assert!(state.request(&press, 400).is_err());
     let frames = state.poll();
     assert_eq!(frames.len(), 256);
     for (index, frame) in frames.iter().enumerate() {
@@ -178,12 +180,7 @@ fn native_debug_streams_and_ordered_edges_have_bounded_backpressure() {
             SignalSample::scalar(PortValue::Boolean(index % 2 == 0))
         );
     }
-    state
-        .request(
-            &input(257, json!([{"portId":"button-1","value":true}])),
-            401,
-        )
-        .unwrap();
+    assert_eq!(state.request(&press, 401).unwrap()["queued"], true);
     assert!(state
         .request(&input(1, json!([{"portId":"button-1","value":true}])), 402)
         .is_err());

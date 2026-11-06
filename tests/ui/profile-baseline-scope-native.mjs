@@ -59,12 +59,20 @@ test('native profile baselines stay scoped to their source',{
     await new Promise(resolve=>setTimeout(resolve,100));
     const heldA=await inspect('counter');
     assert.equal(sample(heldA).value.value,2,'Holding Source A must not retrigger its callback.');
+    for(let sequence=2;sequence<=17;sequence++){
+      await request({command:'profile_debug_controller_input',owner,nodeId:'source-a',streamId:streamA,sequence:String(sequence),changes:[{portId:'button-1',value:true}]});
+    }
+    await new Promise(resolve=>setTimeout(resolve,100));
+    const repeatedA=await inspect('counter');
+    assert.equal(sample(repeatedA).value.value,2,'Repeated reports of a held level must not retrigger its callback.');
+    await request({command:'profile_debug_controller_input',owner,nodeId:'source-a',streamId:streamA,sequence:'18',changes:[{portId:'button-1',value:false}]});
+    const releasedA=await until(()=>inspect('counter'),page=>sample(page).status==='known'&&sample(page).value.value===3);
 
     await request({command:'profile_stop'});
-    const stale=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({command:'profile_debug_controller_input',clientId:'profile-baseline-scope-acceptance',owner,nodeId:'source-a',streamId:streamA,sequence:'2',changes:[{portId:'button-1',value:false}]})}})`);
+    const stale=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({command:'profile_debug_controller_input',clientId:'profile-baseline-scope-acceptance',owner,nodeId:'source-a',streamId:streamA,sequence:'19',changes:[{portId:'button-1',value:true}]})}})`);
     assert.equal(stale.ok,false,'Stop must reject input from the prior owner.');
     await writeFile(`${directory}/evidence.json`,JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,profile:profile.id,owner,
-      noPhysicalOutputs:true,simulatorQualified:false,latencyQualified:false,aStarted,settledA,bBaseline,bPulse,afterB,afterA,heldA,staleOwnerRejected:true},null,2)+'\n');
+      noPhysicalOutputs:true,simulatorQualified:false,latencyQualified:false,aStarted,settledA,bBaseline,bPulse,afterB,afterA,heldA,repeatedA,releasedA,repeatedHeldReports:16,staleOwnerRejected:true},null,2)+'\n');
   }finally{
     try{
       const current=(await request({command:'profile_status'})).profiles.profileSession.owner;
