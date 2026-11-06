@@ -37,7 +37,7 @@
       }finally{applying=false;}
     };
     const stop=observeProfileActivation(next=>{
-      pending=next;
+      pending=next && next.origin!=='vehicle-switch' && ['succeeded','failed','cancelled'].includes(next.phase)?null:next;
       void apply().catch(()=>{});
     });
     return()=>{disposed=true;stop();unsubscribe();progress.dispose();};

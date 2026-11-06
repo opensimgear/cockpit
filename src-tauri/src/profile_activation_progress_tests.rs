@@ -28,16 +28,25 @@ fn native_progress_observation_follows_committed_attempt_changes() {
     tracker.cancel(OP,&manager.profile_admission_epoch).unwrap();
     assert_eq!(next()["cancelRequested"],true);
     manager.finish_profile_activation(OP,&json!({"ok":false}));
-    assert!(next().is_null());
+    assert_eq!(next()["phase"],"cancelled");
 
     let mut cleanup=json!({"command":"profile_stop","activationId":NEXT});
     assert_eq!(manager.begin_profile_cleanup(&mut cleanup,9).as_deref(),Some(NEXT));
     assert_eq!(next()["phase"],"deactivating");
     manager.finish_profile_activation(NEXT,&json!({"ok":true}));
-    assert!(next().is_null());
+    assert_eq!(next()["phase"],"succeeded");
+
+    let failed=uuid::Uuid::new_v4().to_string();
+    tracker.begin(&failed,PROFILE,||10).unwrap();
+    assert_eq!(next()["phase"],"preparing");
+    manager.finish_profile_activation(&failed,&json!({"ok":false,"error":"Authored activation failure"}));
+    let failure=next();
+    assert_eq!(failure["phase"],"failed");
+    assert_eq!(failure["error"],"Authored activation failure");
+    assert_eq!(tracker.current(),None);
 
     let switch=uuid::Uuid::new_v4().to_string();
-    tracker.begin_with(&switch,PROFILE,||10,|entry| {
+    tracker.begin_with(&switch,PROFILE,||11,|entry| {
         entry.origin="vehicle-switch".into();
         entry.cancellable=false;
     }).unwrap();

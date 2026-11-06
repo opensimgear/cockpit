@@ -11,6 +11,7 @@ const RETAIN: Duration = Duration::from_secs(600);
 const MAX_RETAINED: usize = 16;
 // Keep the newest vehicle-switch result visible briefly for confirmation.
 const VEHICLE_SWITCH_CONFIRMATION: Duration = Duration::from_millis(1200);
+const OBSERVATION_CONFIRMATION: Duration = Duration::from_millis(1200);
 
 fn operation_id(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| id.hyphenated().to_string() == value)
@@ -91,20 +92,22 @@ impl Tracker {
         Ok(epoch)
     }
     fn current(&self) -> Option<String> {
-        self.with_current(Instant::now(), |entry, _| entry.id.clone())
+        self.with_current(Instant::now(), false, |entry, _| entry.id.clone())
     }
 
     fn current_entry(&self, now: Instant) -> Option<(Activation, Option<Instant>)> {
-        self.with_current(now, |entry, deadline| (entry.clone(), deadline))
+        self.with_current(now, true, |entry, deadline| (entry.clone(), deadline))
     }
 
-    fn with_current<T>(&self, now: Instant, read: impl FnOnce(&Activation, Option<Instant>) -> T) -> Option<T> {
+    fn with_current<T>(&self, now: Instant, observing: bool, read: impl FnOnce(&Activation, Option<Instant>) -> T) -> Option<T> {
         // Compare admission epochs before checking visibility so a completed
         // newer operation cannot expose an older, superseded attempt again.
         let entries = self.entries.lock().unwrap_or_else(|p|p.into_inner());
         let entry = entries.values().max_by_key(|entry|(entry.epoch,entry.started))?;
-        let deadline = entry.completed.and_then(|at| at.checked_add(VEHICLE_SWITCH_CONFIRMATION))
-            .filter(|at| entry.origin=="vehicle-switch" && now < *at);
+        let retention = if entry.origin == "vehicle-switch" { Some(VEHICLE_SWITCH_CONFIRMATION) }
+            else { observing.then_some(OBSERVATION_CONFIRMATION) };
+        let deadline = entry.completed.zip(retention).and_then(|(at, retention)| at.checked_add(retention))
+            .filter(|at| now < *at);
         (entry.pending() || deadline.is_some()).then(|| read(entry, deadline))
     }
     pub(super) fn activating(&self,id:&str) {

@@ -117,6 +117,21 @@ async function runControlParity({page, reader, writer, call, ok, mutation}) {
     for (const field of ['resources','bindings','desktopOutputs','virtualOutputs','companionAssignments']) {
       assert.equal((document[field]??[]).length,0,field);
     }
+    const failedId = randomUUID();
+    const failed = await nativeResult('profile_apply', {
+      id:document.id, expectedRevision:document.revision+1, expectedActiveOwner:null, activationId:failedId,
+    });
+    assert.equal(failed.ok,false);
+    const deadline = Date.now() + 5000;
+    let failure;
+    while (!failure && Date.now() < deadline) {
+      failure = await page.evaluate(id => window.__activationIsolation.fast.find(frame =>
+        frame?.activationId === id && frame.phase === 'failed'),failedId);
+      if (!failure) await new Promise(resolve => setTimeout(resolve,25));
+    }
+    assert.ok(failure,'The live activation stream did not deliver the terminal failure');
+    assert.equal(failure.error,failed.error);
+    assert.equal((await runtime()).owner,null);
     await page.native({command:'profile_apply',id:document.id,expectedRevision:document.revision,expectedActiveOwner:null});
     const active = await runtime();
     assert.equal(active.owner?.profileId,document.id);
@@ -132,5 +147,5 @@ async function runControlParity({page, reader, writer, call, ok, mutation}) {
   }
   assert.equal((await runtime()).owner,null);
   return {crossSurfaceLearningCancel:true,staleCancelRejected:true,idleRecoveryParity:true,
-    cleanupNonCancellable:true,staleActivationPreservesNewOwner:true};
+    cleanupNonCancellable:true,staleActivationPreservesNewOwner:true,terminalActivationErrorStreamed:true};
 }
