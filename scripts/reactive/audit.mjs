@@ -14,9 +14,31 @@ const filesFromGit = (cwd, revision) => execFileSync('git', revision
   ? ['ls-tree', '-r', '--name-only', '-z', revision]
   : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
 {cwd, encoding:'utf8'}).split('\0');
-const sourceAt = (cwd, file, revision) => revision
-  ? execFileSync('git', ['show', `${revision}:${file}`], {cwd, encoding:'utf8'})
-  : readFileSync(resolve(cwd, file), 'utf8');
+function* sourcesAt(cwd, files, revision) {
+  if (!revision) {
+    for (const file of files) yield [file, readFileSync(resolve(cwd, file), 'utf8')];
+    return;
+  }
+  // One Git process per repository keeps the audit usable on Windows.
+  // Parse the batch by byte length so UTF-8 and newlines in blobs stay intact.
+  const output = execFileSync('git', ['cat-file', '--batch'], {
+    cwd,
+    input: files.map(file => `${revision}:${file}\n`).join(''),
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  let offset = 0;
+  for (const file of files) {
+    const headerEnd = output.indexOf(10, offset);
+    const header = headerEnd < 0 ? '' : output.toString('ascii', offset, headerEnd);
+    const match = /^[a-f0-9]+ blob (\d+)$/.exec(header);
+    if (!match) throw new Error(`Cannot read committed source ${file}: ${header}`);
+    const start = headerEnd + 1;
+    const end = start + Number(match[1]);
+    if (output[end] !== 10) throw new Error(`Incomplete committed source ${file}`);
+    yield [file, output.toString('utf8', start, end)];
+    offset = end + 1;
+  }
+}
 
 if (process.argv.includes('--check-ui-timers')) {
   const { checkUiTimers } = await import('./ui-timers.mjs');
@@ -24,7 +46,7 @@ if (process.argv.includes('--check-ui-timers')) {
   const files = [...new Set(filesFromGit(root, revision))].filter(file =>
     /^(?:src|apps|packages)\//.test(file) && /\.(?:[cm]?[jt]s|[jt]sx|svelte)$/.test(file)
     && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|(?:^|\/)test-fixtures?\.|[._-](?:tests?|fixtures)\./.test(file));
-  checkUiTimers(files.map(file => [file, sourceAt(root, file, revision)]));
+  checkUiTimers(sourcesAt(root, files, revision));
   console.log('Frontend timers match their documented owners.');
   process.exit(0);
 }
@@ -72,11 +94,11 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
     throw new Error(`Cannot inventory ${cwd}: ${error.message}`);
   }
   if (revision) revisions.push(`${repository} ${revision}`);
-  for (const file of [...new Set(files)].sort()) {
-    if (!/\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) || excluded.test(file)) continue;
-    if (repository === '.' && !trees.some(tree => file.startsWith(tree))) continue;
+  const productionFiles = [...new Set(files)].sort().filter(file =>
+    /\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) && !excluded.test(file)
+      && (repository !== '.' || trees.some(tree => file.startsWith(tree))));
+  for (const [file, source] of sourcesAt(cwd, productionFiles, revision)) {
     const path = resolve(cwd, file);
-    const source = sourceAt(cwd, file, revision);
     const lines = source.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];

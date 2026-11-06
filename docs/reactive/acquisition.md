@@ -145,7 +145,7 @@ worker and explicit launch and setup checks are separate.
 | Panels/designer/publication | Browser display reports follow publication, page and size changes; authenticated assignment and feedback streams | Preserve exact publication generation and native renderer ownership. Finish cross-client qualification. |
 | Browser companion connection | Assignment and transport events trigger reconnect; transient failures own one retry deadline | Lease renewal and release watchdogs remain timed. Qualify background behavior on each supported client. |
 | Serial/ESP32 firmware | Serial workers + status/control request cadence | Explicit producer/firmware protocol stream, bounded backpressure, publication replacement and held-release evidence per board |
-| Settings/preferences/dependencies/backups | UI preferences and AI settings use native observations | Publish remaining dependency/backup worker progress. AI settings reads status after a private invalidation from listener or credential changes |
+| Settings/preferences/dependencies/backups | Committed preferences, Activity retention, and backup state use observations. AI settings reads status after a private invalidation from listener or credential changes. | Verify remaining dependency progress and reopen behavior. |
 | Activity/debug/notifications | Activity commits and Debug's scoped topics invalidate current reads; notification dismissal has a local deadline | Qualify background changes and nested lifetimes |
 | MCP observation/admin | Gateway commands and HTTP sessions | Shared topic registry/snapshot boundary, negotiated resource notifications and bounded cursor fallback; observe never renews authority |
 | Native/browser-dev transports | gateway.ts IPC; native-gateway-bridge HTTP | Same typed envelopes, atomic subscription boundary, cancellation and overflow, including transport restart |
@@ -159,6 +159,9 @@ worker and explicit launch and setup checks are separate.
 | Windows process observation | Native process notifications are preferred. Global game activation parks when the catalogue has no installed game with process monitoring support and wakes on a library commit. The 500 ms discovery fallback applies when a monitorable installation exists and event coverage is unavailable. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
 | File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
+| ESP32 companion touch | The common touch task checks both boards every 20 ms. Sunton exposes touch IRQ on GPIO36. Waveshare wires GT911 INT to GPIO4, currently configured as input with interrupts disabled. | Wake the task from the board interrupt and recheck the input after arming to cover a contact already in progress. Drain and clear GT911 ready reports. For Sunton, verify release, debounce and held-motion behavior before disposition of any sampling during contact. |
+| ESP32 companion display | The common display task checks pending candidates, dirty render work and damage every 20 ms. | Notify from candidate and dirty-state producers. Keep explicit deadlines for animation, freshness and failed-render retry. |
+| ESP32 USB console | Provisioning drains nonblocking stdin. Direct requests retry empty reads and use an absolute response deadline. | Route UART or USB receive readiness to one bounded decoder. Let pending requests wait on bytes, cancellation or their deadline. Preserve exact link and reply identity through reconnect. |
 
 The recorded approval applies to the Assetto shared-memory reader. The boundaries above remain open under the original acquisition gate.
 
@@ -210,3 +213,26 @@ repositories. It also records native deadline waits such as `park_timeout` and
 `sleep_until`. The generated list includes legitimate timing and some inline
 test code, so each entry still needs semantic review. At final R9 there
 must be an owner and explicit disposition for every remaining production site.
+
+### November 6 committed inventory comparison
+
+The committed scan found 262 timing sites at Cockpit `04dec909`,
+device-gateway `e761e4d`, device-template `c545788` and firmware-common
+`64025cc`. The batched Git reader produced the same bytes as the per-file
+reader. The 247-entry pinned baseline and its dispositions remain available
+for tracking retired sites.
+
+| Count increase by file | Current owner and purpose |
+| --- | --- |
+| Browser companion connection worker (+1) | Retry deadline after connection failure. Close cancels it. |
+| Controller observation UI (+2) | Scheduler declaration and frame callback for dirty preview presentation. |
+| Desktop audit capacity (+7) | One production condition-variable wait for a barrier's remaining budget. Six waits belong to inline regressions. |
+| Desktop focus lifetime and native owner (+3) | Bounded waits for owner retirement, initialization and posted shutdown. |
+| Desktop worker serve and wait (+3) | Response writer shutdown bound and interruptible wait until an authored deadline. One wait is an inline regression. |
+| Mapping-host desktop worker (+1) | Condition-variable wait for worker completion up to the caller's deadline. |
+| Profile command worker, gateway and exact process exit (+17) | Inline regressions bound fixture coordination and exit observation. |
+| Controller report-cost example (+1) | Authored pacing in the optional report benchmark. |
+
+The comparison counts source sites, including test waits and callback
+declarations. The unresolved acquisition table tracks the firmware, process
+and platform boundaries that still require changes or qualification.

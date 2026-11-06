@@ -15,9 +15,10 @@ test('frontend interval guard detects multiline direct and property calls', () =
 test('an approved deadline cannot be replaced or duplicated', () => {
   const file = 'apps/browser-companion/src/connection-worker.ts';
   const allowed = 'timer = setTimeout(maintain, Math.max(0, Math.ceil(next - performance.now())));';
-  assert.doesNotThrow(() => checkUiTimers([[file, allowed + 'setTimeout(resolve, 1000);']]));
-  assert.throws(() => checkUiTimers([[file, allowed + allowed]]), /unclassified setTimeout/);
-  assert.throws(() => checkUiTimers([[file, allowed.replace('maintain', '() => fetch("/status")')]]),
+  const retry = 'retry = setTimeout(() => { retry = undefined; void connect(); }, 1000);';
+  assert.doesNotThrow(() => checkUiTimers([[file, allowed + retry]]));
+  assert.throws(() => checkUiTimers([[file, allowed + retry + allowed]]), /unclassified setTimeout/);
+  assert.throws(() => checkUiTimers([[file, retry + allowed.replace('maintain', '() => fetch("/status")')]]),
     /unclassified setTimeout/);
 });
 
