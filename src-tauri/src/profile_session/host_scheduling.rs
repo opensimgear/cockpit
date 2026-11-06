@@ -19,7 +19,6 @@ fn document_supported(document: &osg_profiles::ProfileDocument, watched_game: bo
         osg_profiles::ResourceKind::DebugController | osg_profiles::ResourceKind::Device
             | osg_profiles::ResourceKind::Companion)
         || watched_game && resource.kind == osg_profiles::ResourceKind::Game)
-        && document.visibility.is_empty()
         && document.overrides.is_empty()
         && document.vehicle_tabs.is_empty()
         && (watched_game || document.eligibility.game_ids.is_empty())
@@ -57,7 +56,7 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
         && (watched_game || game.is_none() && state.game_preparation.is_none())
         && state.child_game_owner.is_none() && state.game_resume.is_none()
         && desktop_notifications(state) && state.actions.is_empty() && state.publication.is_empty()
-        && state.visibility.is_empty() && state.companions.notification_driven()
+        && state.companions.notification_driven()
 }
 
 fn desktop_notifications(state: &NativeRun) -> bool {

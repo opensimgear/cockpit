@@ -72,6 +72,31 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     assert!(!host.hold_uses_notifications(&run), "A run with a reducer cannot qualify as a hold");
     let supported = || capture_driven(&host, &host.prepared[&key(&owner)], &run);
     assert_eq!(supported(), cfg!(windows));
+    {
+        use crate::profile_session_visibility::{tests::{plan, snapshot, Fake}, Visibility};
+        let io = Fake::new();
+        let snapshot = snapshot();
+        let mut visibility = Visibility::stage(&plan(&snapshot), &snapshot, io.clone())
+            .unwrap().bind(&owner).unwrap();
+        visibility.start().unwrap();
+        let state = host.run(&owner).unwrap();
+        state.document.visibility.push(osg_profiles::VisibilityIntent {
+            resource_id: "fixture-controller".into(), mode: osg_profiles::VisibilityMode::HiddenWhileActive,
+        });
+        let original = std::mem::replace(&mut state.visibility, visibility);
+        assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+        let before = host.run(&owner).unwrap().reducer.as_ref().unwrap().at_us();
+        let owned = io.owned.lock().unwrap().replace(uuid::Uuid::new_v4().to_string());
+        host.authority = Some(owner.clone());
+        assert!(host.health(&run).err().unwrap().contains("Another native visibility owner"));
+        host.authority = None;
+        let state = host.run(&owner).unwrap();
+        assert_eq!(state.reducer.as_ref().unwrap().at_us(), before);
+        *io.owned.lock().unwrap() = owned;
+        state.visibility.stop().unwrap();
+        state.visibility = original;
+        state.document.visibility.clear();
+    }
     let plan = host.run(&owner).unwrap().delivery.as_mut().unwrap();
     plan.sinks.push(osg_profiles::compiler_models::SinkPlan {
         endpoint: osg_profiles::Endpoint { node_id: "panel".into(), port_id: "led".into() },
