@@ -81,6 +81,9 @@ impl GameSources {
     }
     fn validate(&mut self, games: &GamesRuntime, force_catalogue: bool) -> Result<(), String> {
         self.validate_catalogue(force_catalogue)?;
+        self.validate_context(games)
+    }
+    fn validate_context(&self, games: &GamesRuntime) -> Result<(), String> {
         let Some(game) = &self.game else {
             return Ok(());
         };

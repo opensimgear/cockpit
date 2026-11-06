@@ -75,6 +75,10 @@ impl Shared {
         }
     }
     fn capture(&self, bytes: &[u8], captured_at: Instant) -> Result<(), ()> {
+        // The command path shares the state lock. Copy the UDP payload before
+        // taking it, then commit sequence and subscriber continuity together.
+        let bytes: Arc<[u8]> = bytes.into();
+        let length = bytes.len();
         let mut state = self.lock();
         if state.terminal.is_some() {
             return Err(());
@@ -87,7 +91,7 @@ impl Shared {
         };
         state.sequence = sequence;
         let frame = CapturedDatagram {
-            bytes: bytes.into(),
+            bytes,
             captured_at,
             producer_id: self.producer_id.clone(),
             sequence,
@@ -95,12 +99,12 @@ impl Shared {
         for pending in state.subscribers.values_mut() {
             if let Ok(queue) = pending {
                 if queue.frames.len() >= MAX_PENDING_FRAMES
-                    || queue.bytes.saturating_add(bytes.len()) > MAX_PENDING_BYTES
+                    || queue.bytes.saturating_add(length) > MAX_PENDING_BYTES
                 {
                     // Dropping the queue withdraws every partial baseline permanently.
                     *pending = Err(OVERFLOW.into());
                 } else {
-                    queue.bytes += bytes.len();
+                    queue.bytes += length;
                     queue.frames.push_back(frame.clone());
                 }
             }

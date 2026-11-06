@@ -88,7 +88,8 @@ impl GameSources {
         if self.command_revoked(effect) {
             return Err("Native simulator command publication authority was withdrawn; prepare a new reader to command again.".into());
         }
-        self.validate(games, false)?;
+        // command_request forces catalogue validation after the process check.
+        self.validate_context(games)?;
         let (command, argument) = self.command_request(effect)?;
         let Some(Reader::Dcs {
             transport: Some(transport),
