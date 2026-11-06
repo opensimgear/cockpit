@@ -191,6 +191,28 @@ impl Source {
             }
         }
     }
+    pub(crate) fn process_monitor(&self) -> Option<std::sync::Weak<process_events::Monitor>> {
+        self.owner.monitor.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn monitored_inspector_fixture() -> (Self, impl FnOnce()) {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut connection = defaults(12);
+        connection["listenPort"] = json!(0);
+        connection["port"] = json!(socket.local_addr().unwrap().port());
+        connection["processIdentity"] = json!({"pid":65000,"path":"C:/X-Plane/X-Plane.exe","epoch":1});
+        let (monitor, _) = process_events::test_monitor();
+        let monitor = Arc::new(monitor);
+        let catalogue = legacy_channels().into_iter().map(|channel| (channel.id.clone(), channel)).collect();
+        let owner = Owner::start(&connection, Some(monitor.clone()), catalogue).unwrap();
+        let source = Self::attach(Arc::new(owner), vec![]).unwrap();
+        (source, move || {
+            monitor.cancel();
+            drop(socket);
+        })
+    }
+
     pub(crate) fn watch(
         &self,
         wake: Arc<NativeWake>,

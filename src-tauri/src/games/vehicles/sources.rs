@@ -99,6 +99,7 @@ pub(super) enum CaptureWatch {
     Assetto { _watch: crate::acr_windows::Watch },
     Xplane {
         _watch: osg_streams::NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::NativeSnapshot>,
+        monitor: Option<std::sync::Weak<crate::xplane::process_events::Monitor>>,
     },
     Dcs {
         _bios: osg_streams::NativeWatch<dcs_bios::decoded::Snapshot, dcs_bios::decoded::Snapshot>,
@@ -106,9 +107,13 @@ pub(super) enum CaptureWatch {
     },
 }
 impl CaptureWatch {
-    pub(super) fn assetto_process_current(&self) -> Option<bool> {
+    pub(super) fn retained_process_current(&self) -> Option<bool> {
         match self {
             Self::Assetto { _watch } => _watch.process_current(),
+            Self::Xplane { _watch, monitor } => {
+                let monitor = monitor.as_ref()?;
+                Some(!_watch.is_closed() && monitor.upgrade().is_some_and(|monitor| monitor.error().is_none()))
+            }
             #[cfg(test)]
             Self::Fixture(current) => Some(current.load(std::sync::atomic::Ordering::Acquire)),
             _ => None,
@@ -191,7 +196,7 @@ impl Reader {
             Self::Rally { source, .. } => source.watch(wake)
                 .map(|watch| watch.map(|watch| CaptureWatch::Assetto { _watch: watch })),
             Self::Xplane(source) => source.watch(wake)
-                .map(|watch| Some(CaptureWatch::Xplane { _watch: watch })),
+                .map(|watch| Some(CaptureWatch::Xplane { _watch: watch, monitor: source.process_monitor() })),
             Self::Dcs { source, physics, .. } => Ok(Some(CaptureWatch::Dcs {
                 _bios: source.watch(wake.clone())?,
                 _ownship: physics.as_ref().and_then(|physics| physics.view().watch(wake).ok()),

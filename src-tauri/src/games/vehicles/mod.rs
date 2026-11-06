@@ -111,16 +111,16 @@ struct CaptureBinding {
     drained: u64,
 }
 impl Entry {
-    fn assetto_process_current(&self) -> Option<bool> {
-        self.capture_watch.as_ref()?._watch.assetto_process_current()
+    fn retained_process_current(&self) -> Option<bool> {
+        self.capture_watch.as_ref()?._watch.retained_process_current()
     }
 
     fn process_current(&self) -> bool {
-        self.assetto_process_current().unwrap_or_else(|| self.observed.elapsed() <= Duration::from_secs(2))
+        self.retained_process_current().unwrap_or_else(|| self.observed.elapsed() <= Duration::from_secs(2))
     }
 
     fn process_deadline(&self) -> Option<Instant> {
-        if self.assetto_process_current().is_some() { return None; }
+        if self.retained_process_current().is_some() { return None; }
         self.observed.checked_add(Duration::from_secs(2) + Duration::from_nanos(1))
     }
 }
@@ -170,7 +170,7 @@ impl Tracker {
     }
     pub(crate) fn needs_process_maintenance(&self) -> bool {
         self.entries.values().any(|entry| {
-            (entry.reader.is_some() || entry.polling) && entry.assetto_process_current().is_none()
+            (entry.reader.is_some() || entry.polling) && entry.retained_process_current().is_none()
         })
     }
     pub(crate) fn capture_deadline(&self) -> Option<Instant> {

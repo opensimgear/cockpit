@@ -27,6 +27,41 @@ fn take_poll(tracker: &mut Tracker) -> VehiclePoll {
     let candidates = tracker.poll_candidates();
     tracker.begin_polls(candidates).pop().unwrap()
 }
+
+#[test]
+fn watched_xplane_uses_its_owner_monitor_and_wakes_on_loss_without_packets() {
+    let (_directory, mut tracker, game) = fixture();
+    let (source, stop_monitor) = crate::xplane::Source::monitored_inspector_fixture();
+    let id = "x-plane-12";
+    tracker.entries.get_mut(id).unwrap().reader = Some(Reader::Xplane(source));
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    tracker.watch_captures(wake.clone());
+    let qualify = |candidate: Qualification| {
+        candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| panic!("Owner already monitors X-Plane"))
+            .without_renewal()
+    };
+    let candidates = tracker.capture_candidates().into_iter().map(qualify).collect();
+    let poll = tracker.begin_polls(candidates).pop().unwrap();
+    tracker.apply_poll(poll.read());
+    tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
+    assert!(tracker.telemetry(&game).is_some());
+    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+    assert!(tracker.poll_candidates().is_empty());
+
+    let observed = wake.observed();
+    stop_monitor();
+    assert!(tracker.telemetry(&game).is_none());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while wake.observed() == observed {
+        assert!(Instant::now() < deadline, "X-Plane monitor loss did not wake the reader");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let candidates = tracker.capture_candidates().into_iter().map(qualify).collect();
+    let poll = tracker.begin_polls(candidates).pop().unwrap();
+    tracker.apply_poll(poll.read());
+    assert!(tracker.entries[id].reader.is_none());
+    assert!(tracker.telemetry(&game).is_none());
+}
 #[test]
 fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     let (_directory, mut tracker, game) = fixture();

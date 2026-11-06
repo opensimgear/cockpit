@@ -108,7 +108,7 @@ impl Tracker {
                     && entry.capture_watch.as_mut().is_some_and(CaptureBinding::begin_drain);
                 let expired = entry.capture_watch.is_some()
                     && entry.reader.as_ref().and_then(Reader::assetto_deadline).is_some_and(|at| now >= at);
-                let retained_process = entry.assetto_process_current().is_some();
+                let retained_process = entry.retained_process_current().is_some();
                 let inspection_due = entry.reader.is_some() && entry.inspection.deadline(now).is_some_and(|deadline| now >= deadline);
                 if (capture_only || retained_process) && !changed && !expired && !inspection_due {
                     return None;
@@ -226,7 +226,7 @@ impl Tracker {
         // A slow read does not make old telemetry fresh on completion.
         if poll.qualification.qualified == Some(false)
             || poll.at.elapsed() > Duration::from_secs(2)
-            || (!entry.process_current() && (entry.assetto_process_current().is_none() || !matches!(poll.result, Some(Err(_)))))
+            || (!entry.process_current() && (entry.retained_process_current().is_none() || !matches!(poll.result, Some(Err(_)))))
         {
             entry.generation = entry.generation.wrapping_add(1);
             entry.current = None;

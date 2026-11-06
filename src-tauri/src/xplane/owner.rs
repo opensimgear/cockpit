@@ -107,6 +107,7 @@ struct Owner {
     _worker: JoinHandle<()>,
     address: std::net::SocketAddr,
     process_scope: String,
+    monitor: Option<std::sync::Weak<process_events::Monitor>>,
 }
 impl Owner {
     fn start(
@@ -158,6 +159,7 @@ impl Owner {
         let worker_shared = shared.clone();
         let worker_catalogue = catalogue.clone();
         let worker_stop = stop.clone();
+        let monitor_view = monitor.as_ref().map(Arc::downgrade);
         let worker = thread::Builder::new()
             .name("xplane-capture".into())
             .spawn(move || {
@@ -185,6 +187,7 @@ impl Owner {
             _worker: worker,
             address,
             process_scope: connection["processIdentity"].to_string(),
+            monitor: monitor_view,
         })
     }
     fn update(

@@ -75,10 +75,10 @@ configured integration. A committed library replacement wakes the owner after
 the new catalogue is visible. The independent vehicle telemetry worker also
 parks while it owns no reader. Accepted reader admission wakes it even before
 the first packet; detached reads retain maintenance until their result is
-accepted or retired. Watched Assetto readers use the exact process monitor
-already owned by the capture source and drain only on capture notifications.
-Process loss withdraws the cached view even during a detached read. Their first
-native page timestamp determines the exact local freshness deadline, which
+accepted or retired. Watched Assetto and X-Plane readers use the exact process
+monitor already owned by the capture source. Process loss withdraws the cached
+view even during a detached read. Assetto readers drain on capture notifications.
+Their first native page timestamp determines the exact local freshness deadline, which
 expires the decoder without another read from the source. Other admitted
 readers still use the separate 100 ms process qualification pass. Configured
 integrations still use the 500 ms
