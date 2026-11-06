@@ -3052,10 +3052,18 @@ mod tests {
         osg_persistence::test_support::write_evidence(&root.path().join("output-recovery.json"),"recovery-output",Some(b"malformed retained owner")).unwrap();
         std::fs::write(root.path().join("local-settings.json"),b"obsolete config").unwrap();
         manager.retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().into()),false));
+        let manager = Arc::new(manager);
+        let mcp = crate::mcp_tools::Tools::new(manager.clone());
         let status=request(&manager,"profile_retired_recovery_status",None,json!({}));
         assert_eq!(status["state"]["retiredRecovery"]["required"],true);
+        assert_eq!(mcp.call("profile_retired_recovery_status", json!({}), "retained-recovery-fixture")["data"],
+            status["state"]["retiredRecovery"]);
         let reply=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
         assert_eq!(reply["ok"],false);assert!(reply["error"].as_str().unwrap().contains("retained"));
+        let remote = mcp.call("profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,
+            "expectedRevision":1,"expectedActiveOwner":null,"operationId":uuid::Uuid::new_v4()}), "retained-recovery-fixture");
+        assert_eq!(remote["ok"], false, "{remote}");
+        assert_eq!(remote["error"]["message"], reply["error"]);
         assert!(manager.guard_learning().unwrap_err().contains("retained"));
         assert_eq!(request(&manager,"profile_retired_recovery_acknowledge",None,json!({"reference":null}))["ok"],false);
         assert_eq!(osg_persistence::test_support::read_evidence(&root.path().join("output-recovery.json"),"recovery-output").unwrap(),b"malformed retained owner");

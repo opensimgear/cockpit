@@ -346,7 +346,25 @@ fn game_launch_progress_keeps_one_operation_through_hardware_and_real_process_st
 
 #[test]
 fn tracked_cancel_during_game_process_wait_revokes_the_rebound_epoch_without_replay() {
+    cancel_during_game_process_wait(false);
+}
+
+#[test]
+fn mcp_cancel_during_game_process_wait_preserves_the_same_epoch_fence() {
+    cancel_during_game_process_wait(true);
+}
+
+fn cancel_during_game_process_wait(via_mcp: bool) {
     let fixture = Fixture::new();
+    let tools = via_mcp.then(|| crate::mcp_tools::Tools::new(fixture.manager.clone()));
+    let cancel = |id: &str| {
+        let result = if let Some(tools) = &tools {
+            tools.call("activation_cancel", json!({"activationId":id,"operationId":uuid::Uuid::new_v4()}), "launch-cancel-fixture")
+        } else {
+            request(&fixture.manager, "profile_activation_cancel", json!({"activationId":id}))
+        };
+        assert_eq!(result["ok"], true, "{result}");
+    };
     fixture.games.appear.store(false, Ordering::Release);
     let launching = fixture.manager.clone();
     let worker = std::thread::spawn(move || launch(&launching, "dcs"));
@@ -369,12 +387,7 @@ fn tracked_cancel_during_game_process_wait_revokes_the_rebound_epoch_without_rep
         .manager
         .profile_admission_epoch
         .load(Ordering::Acquire);
-    let cancelled = request(
-        &fixture.manager,
-        "profile_activation_cancel",
-        json!({"activationId":id}),
-    );
-    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    cancel(&id);
     assert_ne!(
         fixture
             .manager
@@ -384,6 +397,9 @@ fn tracked_cancel_during_game_process_wait_revokes_the_rebound_epoch_without_rep
     );
     assert!(worker.join().unwrap().is_err());
     let completed = activation_progress(&fixture.manager, Some(&id));
+    if let Some(tools) = &tools {
+        assert_eq!(tools.call("activation_status", json!({"activationId":id}), "launch-cancel-fixture")["data"], completed);
+    }
     assert_eq!(completed["phase"], "cancelled", "{completed}");
     assert_eq!(completed["outcome"], "inactive");
     assert!(fixture
@@ -413,12 +429,7 @@ fn tracked_cancel_during_game_process_wait_revokes_the_rebound_epoch_without_rep
         .manager
         .profile_admission_epoch
         .load(Ordering::Acquire);
-    let stale = request(
-        &fixture.manager,
-        "profile_activation_cancel",
-        json!({"activationId":id}),
-    );
-    assert_eq!(stale["ok"], true, "{stale}");
+    cancel(&id);
     assert_eq!(
         fixture
             .manager

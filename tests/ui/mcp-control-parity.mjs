@@ -68,5 +68,26 @@ export async function controlParity({page, reader, writer, call, ok, mutation}) 
   assert.equal(nativeMissing.ok,false);
   assert.equal(mcpMissing.ok,false);
   assert.equal(mcpMissing.error.message,nativeMissing.error);
-  return {crossSurfaceLearningCancel:true,staleCancelRejected:true,idleRecoveryParity:true,cleanupNonCancellable:true};
+
+  const {document} = await ok(writer,'profile_create',mutation({name:`Output-free cancel fixture ${randomUUID()}`}));
+  try {
+    for (const field of ['resources','bindings','desktopOutputs','virtualOutputs','companionAssignments']) {
+      assert.equal((document[field]??[]).length,0,field);
+    }
+    await page.native({command:'profile_apply',id:document.id,expectedRevision:document.revision,expectedActiveOwner:null});
+    const active = await runtime();
+    assert.equal(active.owner?.profileId,document.id);
+    assert.equal(active.state,'running');
+    const previous = {activationId:manual};
+    await page.native({command:'profile_activation_cancel',...previous});
+    await ok(writer,'activation_cancel',mutation(previous));
+    assert.deepEqual((await runtime()).owner,active.owner);
+    assert.deepEqual((await ok(reader,'profile_status')).profileSession.owner,active.owner);
+  } finally {
+    if ((await runtime()).owner?.profileId===document.id) await ok(writer,'profile_stop',mutation({}));
+    await page.native({command:'profile_delete',id:document.id,expectedRevision:document.revision});
+  }
+  assert.equal((await runtime()).owner,null);
+  return {crossSurfaceLearningCancel:true,staleCancelRejected:true,idleRecoveryParity:true,
+    cleanupNonCancellable:true,staleActivationPreservesNewOwner:true};
 }

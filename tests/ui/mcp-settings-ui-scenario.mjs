@@ -23,13 +23,23 @@ export async function desktopUiConflict({page,writer,ok,mutation}) {
       const label=[...document.querySelectorAll('.output-settings label')].find(label=>label.textContent.includes('Enable desktop output on this computer'));
       const input=label?.querySelector('input');return input&&!input.disabled&&input.checked===enabled;
     },original.enabled),'The real desktop output control did not capture its current settings');
+    const nativeBaseline=(await page.native({command:'profile_local_settings_get',...selector})).localSettings;
+    assert.equal(nativeBaseline.revision,initial.revision);
     const committed=await ok(writer,'local_settings_save',mutation({...selector,expectedSettingsRevision:initial.revision,expectedActiveOwner:null,settings:candidate}));
     changed=true;assert.deepEqual(committed.settings.scope,candidate.scope);
-    await page.evaluate(()=>[...document.querySelectorAll('.output-settings label')].find(label=>label.textContent.includes('Enable desktop output on this computer')).querySelector('input').click());
-    const error=await until(()=>page.evaluate(()=>[...document.querySelectorAll('.output-settings [role="alert"]')].map(item=>item.textContent).find(text=>/revision conflict/i.test(text))),'A stale real UI settings edit did not report a revision conflict');
+    await until(()=>page.evaluate(enabled=>{
+      const input=document.querySelector('input[aria-describedby="desktop-output-help"]');
+      return input&&!input.disabled&&input.checked===enabled;
+    },candidate.enabled),'The portal did not render the committed settings');
+    const stale=await page.invoke('gateway_request',{request:{command:'profile_local_settings_save',
+      clientId:'mcp-desktop-settings-fixture',...selector,expectedSettingsRevision:nativeBaseline.revision,
+      expectedActiveOwner:null,settings:{...original,enabled:!original.enabled}}});
+    assert.equal(stale.ok,false);
+    const error=stale.error;
+    assert.match(error,/revision conflict/i);
     const after=await ok(writer,'local_settings_get',selector);
     assert.equal(after.revision,committed.revision);assert.equal(after.settings.enabled,candidate.enabled);assert.deepEqual(after.settings.scope,candidate.scope);assert.equal(after.profileSession.owner,null);
-    return{staleUiRejected:true,mcpConfigurationPreserved:true,ownerUnchanged:true,error};
+    return{committedSettingsRendered:true,stalePortalRequestRejected:true,mcpConfigurationPreserved:true,ownerUnchanged:true,error};
   } finally {
     if(changed){
       const current=await ok(writer,'local_settings_get',selector);
