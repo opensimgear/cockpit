@@ -5,9 +5,11 @@ use super::*;
 pub(super) fn hold_uses_notifications(host: &NativeProfileHost, state: &NativeRun) -> bool {
     // Native HID reports and catalogue revocation wake the host. A neutral
     // virtual feeder wakes on failure and renews at its retained deadline.
+    // Desktop registration starts only after the reducer is installed.
     cfg!(windows) && host.native && host.native_wake.is_some() && host.input_wake.is_some()
+        && state.reducer.is_none() && !state.launch_context_installed
         && state.inputs.as_ref().is_some_and(|inputs| inputs.notification_driven())
-        && state.panels.hold_uses_notifications() && state.companions.is_empty() && state.desktop.is_none()
+        && state.panels.hold_uses_notifications() && state.companions.is_empty()
         && state.visibility.is_empty() && state.actions.is_empty() && state.publication.is_empty()
         && state.output.as_ref().is_none_or(|output| output.renewal_deadline().is_some())
 }

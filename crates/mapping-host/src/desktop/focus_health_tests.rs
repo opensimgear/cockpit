@@ -56,7 +56,11 @@ fn fixture() -> (Desktop, Phase) {
         focus_watch: Default::default(),
         authorization_deadline: None,
     };
+    assert!(!desktop.registered);
+    desktop.keep_alive().unwrap();
+    assert!(!desktop.registered, "Pre-start maintenance must not register output");
     desktop.start_focused(&phase, true).unwrap();
+    assert!(desktop.registered);
     (desktop, phase)
 }
 

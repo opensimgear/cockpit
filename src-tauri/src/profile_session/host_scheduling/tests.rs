@@ -69,6 +69,7 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     state.reducer = Some(Phase::new(prepared.plan.program.clone(), Counter(1), owner.session.clone()).unwrap());
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run), "Non-native hosts keep service");
     host.native = true; // No native adapter is opened by this scheduling-policy test.
+    assert!(!host.hold_uses_notifications(&run), "A run with a reducer cannot qualify as a hold");
     let supported = || capture_driven(&host, &host.prepared[&key(&owner)], &run);
     assert_eq!(supported(), cfg!(windows));
     let plan = host.run(&owner).unwrap().delivery.as_mut().unwrap();
