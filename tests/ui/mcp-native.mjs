@@ -184,9 +184,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       profiles.add(saved.document.id);
       await until(async () => (await library())?.value?.profiles.some(profile => profile.name === mcpName),
         'Native library observer did not receive the MCP commit');
-      await profileEditorObservation({page, writer, ok, mutation, until, library, saved, mcpName, nextObservation, observationUri});
+      const isolatedUnrelatedEdit = await profileEditorObservation({page, writer, ok, mutation, until, library, saved, unrelated:created.profiles.document, mcpName, nextObservation, observationUri});
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
-        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true, observedEditorCommitInMcp: true };
+        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true, observedEditorCommitInMcp: true, isolatedUnrelatedEdit };
       if (observeController) {
         const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
         assert.ok(source, 'A connected host controller is required for this optional check');
