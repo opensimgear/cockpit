@@ -1,5 +1,6 @@
 // Opt-in passive measurement of the actual profile inspector, never raw/photon latency.
 // Open its physical controller block and set OSG_CONTROLLER_SOURCE_ID explicitly.
+// Set OSG_DESKTOP_NATIVE_APP when Cockpit is running from a copied executable.
 import {nativePage} from './cdp.mjs';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -26,6 +27,7 @@ try{
    return {rows,offset:(best.before+best.after)/2-best.native,uncertainty:best.rtt/2,id:best.id};
   };
   const before=await calibrate(),samples=[],dom=[],errors=[],controller=new AbortController();
+  let snapshotCount=0,changeCount=0;
   let axes=[],generation,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
   const domSignature=()=>axes.map(id=>{
    const slot=[...inspector.querySelectorAll('[data-control-id]')].find(slot=>slot.dataset.controlId===id);
@@ -57,29 +59,34 @@ try{
      if(previousFrame&&(frame.session!==previousFrame.session||frame.generation!==previousFrame.generation
       ||BigInt(frame.revision)!==BigInt(previousFrame.revision)+1n
       ||(previousFrame.sequence!==undefined&&BigInt(frame.sequence)!==BigInt(previousFrame.sequence)+1n)))errors.push('Native stream revision or sequence continuity changed.');
-     if(frame.kind==='snapshot'){
-      if(generation!==undefined)errors.push('Baseline changed during measurement.');
+     const snapshot=frame.kind==='snapshot';
+     if(snapshot)snapshotCount++;
+     if(frame.kind==='change')changeCount++;
+     const controls=snapshot?(payload?.controls??[]):[];
+     const snapshotAxes=controls.filter(c=>c.capability.kind==='axis').map(c=>c.capability.id).sort();
+     const values=snapshot?new Map(controls.map(c=>[c.capability.id,c.value?.normalized])):undefined;
+     if(generation===undefined&&snapshot){
       generation=payload?.source?.generation;
       nativeSequence=BigInt(payload.source.sequence);
-      axes=(payload?.controls??[]).filter(c=>c.capability.kind==='axis').map(c=>c.capability.id).sort();
-      if(payload?.source?.id!==sourceId||!axes.length)errors.push('Wrong controller or no axes.');
-      const values=new Map((payload?.controls??[]).map(c=>[c.capability.id,c.value?.normalized]));
+      axes=snapshotAxes;
+      if(payload?.source?.id!==sourceId||!payload.source.baselineReady||!axes.length)errors.push('Wrong controller, no ready baseline or no axes.');
       previousWire=axes.map(id=>String(values.get(id))).join('|');
       // Never timestamp pre-existing DOM as a new report transition.
       previousDom=domSignature();
-     }else if(frame.kind==='change'){
+     }else if(generation!==undefined&&(snapshot||frame.kind==='change')){
       if(payload?.source?.generation!==generation||payload?.source?.id!==sourceId||!payload?.source?.baselineReady)errors.push('Source identity, generation or readiness changed.');
+      if(snapshot&&snapshotAxes.join('|')!==axes.join('|'))errors.push('Axis set changed during measurement.');
       const sequence=BigInt(payload.source.sequence),expected=nativeSequence+(payload.reason==='metadata'?0n:1n);
       if(sequence!==expected)errors.push('Native controller report continuity changed.');
       nativeSequence=sequence;
-      const signature=axes.map(id=>String(payload?.values?.[id]?.normalized)).join('|');
+      const signature=axes.map(id=>String(snapshot?values.get(id):payload?.values?.[id]?.normalized)).join('|');
       // Equal consecutive values do not establish a new visible transition.
       if(signature!==previousWire){
        if(samples.length<5000)samples.push({signature,sequence:payload?.source?.sequence,captured:Number(BigInt(frame.capturedUs))/1000+before.offset,received});
        else if(!limited){limited=true;errors.push('Timing sample limit exceeded.');}
        previousWire=signature;
       }
-     }
+     }else if(generation===undefined)errors.push('Expected an initial controller snapshot.');
      previousFrame=frame;
      void ack().catch(error=>errors.push(String(error)));
     },error:message=>errors.push(message)
@@ -100,17 +107,18 @@ try{
    return {count:values.length,p50:p(.5),p95:p(.95),p99:p(.99),max:p(1)};
   };
   const matched=rows.filter(row=>Number.isFinite(row.dom));
+  if(!snapshotCount)errors.push('No native controller snapshot arrived.');
   if(matched.length<20)errors.push('Fewer than 20 unambiguous visible axis transitions; this run cannot qualify timing.');
   if(matched.some(row=>row.dom-row.captured < -before.uncertainty))errors.push('DOM predates correlated capture beyond clock uncertainty.');
   return {at:new Date().toISOString(),durationMs:performance.now()-started,scope:'profile-controller-inspector',
    sourceId,generation,axes,visibility,focused,clockUncertaintyMs:before.uncertainty,
-   clockOffsetDriftMs:after.offset-before.offset,changedReportCount:rows.length,domTransitionCount:dom.length,
+   clockOffsetDriftMs:after.offset-before.offset,snapshotCount,changeCount,changedReportCount:rows.length,domTransitionCount:dom.length,
    journalToObserverMs:summarize('received'),journalToDomMs:summarize('dom'),journalToFrameOpportunityMs:summarize('frameOpportunity'),
    qualification:'Passive journal commit to observed DOM only; excludes OS/HID delivery, lock wait and physical display. No virtual output or deliberate hardware sweep.',
    rawInputLatencyQualified:false,virtualLatencyQualified:false,errors,before,after,rows};
  })()`);
  const directory='.research/reactive/profile-preview-latency';await mkdir(directory,{recursive:true});
- result.executableSha256=createHash('sha256').update(await readFile('src-tauri/target/debug/osg-cockpit.exe')).digest('hex');
+ result.executableSha256=createHash('sha256').update(await readFile(process.env.OSG_DESKTOP_NATIVE_APP??'src-tauri/target/debug/osg-cockpit.exe')).digest('hex');
  const path=directory+'/'+Date.now()+'.json';await writeFile(path,JSON.stringify(result,null,2)+'\n');
  const {rows,before,after,...summary}=result;console.log(JSON.stringify({path,...summary},null,2));
  if(result.errors.length)throw Error('Invalid timing run: '+result.errors.join('; '));
