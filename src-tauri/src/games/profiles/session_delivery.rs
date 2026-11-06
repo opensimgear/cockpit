@@ -286,4 +286,14 @@ impl GameSources {
         self.command_catalogue = None;
         self.command_fences.clear();
     }
+    #[cfg(test)]
+    pub(crate) fn submit_test_command(
+        &mut self,
+        job: impl FnOnce(&std::sync::atomic::AtomicBool) -> Result<(), String> + Send + 'static,
+    ) -> Result<(), String> {
+        if self.command_worker.is_none() {
+            self.command_worker = Some(command_worker::Worker::start(None)?);
+        }
+        self.command_worker.as_ref().unwrap().submit(job)
+    }
 }

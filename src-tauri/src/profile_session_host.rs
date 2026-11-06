@@ -585,7 +585,9 @@ impl NativeProfileHost {
                 if stale {
                     // A fresh reader baseline may replace only cached delivery
                     // tokens, never the immutable graph or its local assignment.
-                    let mut snapshot = resources.snapshot_for_compile_with_companions(state.assignments.clone(), &state.companion_catalogues)?;
+                    let mut snapshot = resources.try_snapshot_for_compile_with_companions(
+                        state.assignments.clone(), &state.companion_catalogues,
+                    )?.ok_or("Simulator command was rejected because delivery inventory is updating.")?;
                     snapshot.backend = state.backend.clone();
                     Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
                     let report = osg_profiles::compiler::compile(&state.document, &snapshot);

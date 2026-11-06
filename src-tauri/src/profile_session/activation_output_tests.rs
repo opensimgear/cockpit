@@ -229,3 +229,112 @@ fn cleanup_storage_still_writes_after_output_stop_and_epoch_cancellation() {
     assert!(stored, "Cancelled activation must still record completed compensation");
     assert_eq!(renewal_count(&driver), before);
 }
+
+#[test]
+fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
+    use osg_mapping::program::{Endpoint as MappingEndpoint, Program, Sink, SinkKind, SourcePort};
+    use osg_mapping::profile::OutputControl;
+    use osg_profiles::{compiler_models::SourcePlan, Endpoint, Port, PortContract, Resource, ResourceKind};
+    use std::sync::mpsc;
+
+    let (_directory, mut host, owner, driver, _) = activation_host_fixture();
+    let mut candidate = candidate(1);
+    candidate.document.id = owner.profile_id.clone();
+    let run = run(&candidate, owner.clone());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    host.set_authority(Some(&owner)).unwrap();
+    host.run(&owner).unwrap().game.submit_test_command(move |cancelled| {
+        entered_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        done_tx.send(cancelled.load(Ordering::Acquire)).unwrap();
+        Ok(())
+    }).unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let before = renewal_count(&driver);
+    host.with_activation_heartbeat(&owner, |_| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while renewal_count(&driver) == before {
+            if Instant::now() >= deadline { return Err("Virtual output did not renew".into()); }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Ok(())
+    }).unwrap();
+
+    let controllers = host.controllers.clone();
+    let now = controllers.monotonic_us();
+    let state = host.run(&owner).unwrap();
+    let contract = PortContract::State {
+        schema: osg_mapping::signal::ScalarSchema::Boolean {},
+        freshness_ms: 1000,
+        fallback: Some(osg_mapping::signal::PortValue::Boolean(false)),
+    };
+    state.document.resources.push(Resource {
+        id: "debug".into(),
+        name: "Debug controller".into(),
+        kind: ResourceKind::DebugController,
+        required: false,
+        ports: vec![Port { id: "button-1".into(), name: "Button".into(),
+            direction: osg_profiles::Direction::Output, contract: contract.clone() }],
+    });
+    let mut plan = state.report.plan.clone().unwrap();
+    plan.sources.push(SourcePlan {
+        endpoint: Endpoint { node_id: "debug".into(), port_id: "button-1".into() },
+        inventory_resource_id: None,
+        observed_port_id: None,
+        contract: contract.clone(),
+        token: None,
+        preparation: None,
+        route: None,
+        readiness: PlanReadiness::Ready,
+    });
+    let source = MappingEndpoint { node_id: "debug".into(), port_id: "button-1".into() };
+    let program = Program {
+        sources: vec![SourcePort { endpoint: source.clone(), contract: contract.clone() }],
+        nodes: vec![],
+        sinks: vec![Sink {
+            id: "button".into(),
+            endpoint: MappingEndpoint { node_id: "combined".into(), port_id: "button-0".into() },
+            from: source,
+            contract,
+            kind: SinkKind::Virtual {
+                controller_id: "combined".into(), control: OutputControl::Button { index: 0 },
+            },
+        }],
+        controllers: vec![controller("combined", 0)],
+    };
+    let (debug, baseline) = crate::profile_debug_controller::DebugInputs::capture(
+        &state.document, &plan, owner.generation, now,
+    ).unwrap();
+    state.debug_inputs = debug;
+    let mut reducer = Phase::new_at(program, Counter(owner.generation), owner.session.clone(), Counter(now)).unwrap();
+    reducer.accept_batch(baseline, Counter(now)).unwrap();
+    state.recording.record(reducer.drain_reports());
+    state.reducer = Some(reducer);
+    state.inputs = Some(crate::profile_session_inputs::HidInputs::capture(&plan, controllers.as_ref(), None, |_| Ok(())).unwrap().0);
+    state.panels.acquire(now).unwrap();
+    state.panels.baseline(&plan, |_| Ok(())).unwrap().unwrap();
+    state.panels.start().unwrap();
+    state.delivery = Some(plan);
+
+    let request = crate::profile_debug_controller::Request::parse(&json!({
+        "command":"profile_debug_controller_input", "owner": owner, "nodeId":"debug",
+        "streamId":uuid::Uuid::new_v4().to_string(), "sequence":"1",
+        "changes":[{"portId":"button-1","value":true}]
+    })).unwrap();
+    host.debug_controller(&run, &request).unwrap();
+    assert!(host.health(&run).unwrap().stop.is_none());
+    assert!(driver.lock().unwrap().messages.iter().any(|(_, message)|
+        matches!(message, Message::Report { report, .. } if report.state.buttons[0])));
+    assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+    host.set_authority(None).unwrap();
+    host.neutralize(&run).unwrap();
+    assert_eq!(driver.lock().unwrap().slot.status, SlotStatus::Free);
+    host.restore(&run, false).unwrap();
+    assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    release_tx.send(()).unwrap();
+    assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+}

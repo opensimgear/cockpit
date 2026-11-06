@@ -4,6 +4,23 @@ use super::*;
 use std::sync::TryLockError;
 
 impl Runtime {
+    pub(crate) fn try_snapshot_for_compile_with_companions(
+        &self,
+        assignments: Vec<osg_profiles::store::LocalAssignment>,
+        catalogues: &[CompanionCatalogue],
+    ) -> Result<Option<osg_profiles::compiler_models::CompileSnapshot>, String> {
+        self.check_compile_capture(&assignments)?;
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(poison)) => poison.into_inner(),
+        };
+        let mut snapshot = Self::snapshot_locked(&state, assignments)?;
+        drop(state);
+        companion_catalogue::capture_offline(&mut snapshot, catalogues)?;
+        Ok(Some(snapshot))
+    }
+
     /// Inventory contention preserves the last committed exact-token result.
     /// A never-confirmed token remains pending; committed revocation is an error.
     pub(crate) fn validate_live_delivery(&self, token: &ResourceToken) -> Result<Route, String> {

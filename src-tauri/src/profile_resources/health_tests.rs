@@ -75,20 +75,25 @@ fn busy_inventory_defers_readiness_without_waiting_then_returns_the_exact_curren
     let requested = assignment.clone();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
-        let _ = sender.send(
-            reader
-                .try_snapshot_for_preparation(vec![requested])
-                .map(|capture| capture.is_none()),
-        );
+        let compile = reader.try_snapshot_for_compile_with_companions(vec![requested.clone()], &[]);
+        let preparation = reader.try_snapshot_for_preparation(vec![requested]);
+        let _ = sender.send((compile, preparation));
     });
     let deferred = receiver.recv_timeout(Duration::from_secs(1));
     // Release before checking the deadline so a regression fails promptly,
     // rather than leaving a fixture thread blocked until the suite times out.
     drop(locked);
     worker.join().unwrap();
-    assert!(deferred
-        .expect("Readiness must return while registry adoption still owns the mutex")
-        .unwrap());
+    let (compile, preparation) =
+        deferred.expect("Readiness must return while registry adoption still owns the mutex");
+    assert!(compile.unwrap().is_none());
+    assert!(preparation.unwrap().is_none());
+    let compile = runtime
+        .try_snapshot_for_compile_with_companions(vec![assignment.clone()], &[]).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(compile).unwrap(),
+        serde_json::to_value(runtime.snapshot_for_compile(vec![assignment.clone()]).unwrap()).unwrap()
+    );
     let (snapshot, pins) = runtime
         .try_snapshot_for_preparation(vec![assignment.clone()])
         .unwrap()

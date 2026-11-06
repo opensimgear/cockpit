@@ -124,6 +124,14 @@ impl Runtime {
         &self,
         assignments: Vec<osg_profiles::store::LocalAssignment>,
     ) -> Result<osg_profiles::compiler_models::CompileSnapshot, String> {
+        self.check_compile_capture(&assignments)?;
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        Self::snapshot_locked(&state, assignments)
+    }
+    fn check_compile_capture(
+        &self,
+        assignments: &[osg_profiles::store::LocalAssignment],
+    ) -> Result<(), String> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
@@ -136,8 +144,7 @@ impl Runtime {
         {
             return Err("The compiler capture exceeds the profile resource/port limit.".into());
         }
-        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        Self::snapshot_locked(&state, assignments)
+        Ok(())
     }
     fn snapshot_locked(
         state: &State,
