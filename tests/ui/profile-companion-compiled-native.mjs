@@ -2,6 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {createInterface} from 'node:readline';
 import {randomUUID,createHash,X509Certificate} from 'node:crypto';
 import {connect} from 'node:tls';
 import {readFile} from 'node:fs/promises';
@@ -10,6 +13,7 @@ import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 test('compiled browser input reaches the profile and returns host feedback', {timeout:90000}, async(t)=>{
   const qualifyHostWake=process.env.OSG_COMPANION_HOST_WAKE_NATIVE==='1';
   const qualifyFeedback=process.env.OSG_COMPANION_FEEDBACK_NATIVE==='1';
+  const recoveryProbe=process.env.OSG_COMPANION_RECOVERY_VJOY_PROBE;
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
   const request=async(command,params={})=>{
@@ -21,7 +25,8 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
   const id='reactive-'+randomUUID();
   const publication=JSON.parse(await readFile(new URL('../../scripts/fixtures/compiled-flight-publication.json',import.meta.url)));
   const {chromium}=createRequire(import.meta.url)(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-  let browser, peer, profile, desktopPreferences;
+  let browser, peer, profile, desktopPreferences, slot, probe;
+  const inventory=async()=>(await request('system_inventory')).systemInventory.virtualDevices;
   const desktop=async()=>(await request('profile_desktop_status')).desktop;
   const assertHostWake=async phase=>{
    const status=await desktop();
@@ -91,6 +96,27 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    document.resources.push({id:'browser-panel',name:'Compiled browser panel',kind:'companion',required:true,ports});
    document.companionAssignments.push({resourceId:'browser-panel',publicationHash:publication.publicationHash});
    document.bindings.push({id:'button-lamp',from:{nodeId:'browser-panel',portId:'button'},to:{nodeId:'browser-panel',portId:'lamp'}});
+   if(recoveryProbe){
+    slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)
+     &&!device.discreteHats&&!device.forceFeedback&&device.buttons+device.axes.length+device.continuousHats<=128);
+    assert.ok(slot,'A compatible free vJoy slot is required');
+    const layout={
+     buttons:Array.from({length:slot.buttons},(_,index)=>'button-'+(index+1)),
+     axes:slot.axes.map((_,index)=>({portId:'axis-'+(index+1),range:'bipolar',fallback:0})),
+     hats:Array.from({length:slot.continuousHats},(_,index)=>'hat-'+(index+1)),
+    };
+    const draft=await cockpit.evaluate(`(async()=>{
+     const {graphSetVirtual,graphConnect}=await import('/src/lib/profile-graph.ts');
+     const document=${JSON.stringify(document)};
+     const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
+     document.resources.push({id:'independent',name:'Independent debug source',kind:'debug-controller',
+      required:false,ports:[{id:'button-1',name:'Button',direction:'output',contract}]});
+     return graphConnect(graphSetVirtual({document,assignments:[]},
+      {id:'recovery-vjoy',name:'Recovery test output',required:true,layout:${JSON.stringify(layout)}}),
+      {nodeId:'independent',portId:'button-1'},{nodeId:'recovery-vjoy',portId:'button-1'}).document;
+    })()`);
+    Object.assign(document,draft);
+   }
    if(qualifyHostWake){
     const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
     const port=(id,direction)=>({id,name:id,direction,contract});
@@ -101,8 +127,10 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    }
    const assignments=[{resourceId:'browser-panel',sourceId:row.id,ports:selected.map((p,i)=>({profilePortId:ports[i].id,observedPortId:p.descriptor.id,expectedContractHash:p.contractHash}))}];
    profile=(await request('profile_editor_save',{document,assignments,expectedRevision:document.revision})).profiles.document;
+   if(slot)await request('profile_virtual_slot_set',{id:profile.id,expectedRevision:profile.revision,nodeId:'recovery-vjoy',slot:slot.slot});
    const applied=await request('profile_apply',{id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null,activationId:randomUUID()});
    assert.equal(applied.profiles.profileSession.state,'running');
+   if(slot)await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy',5000);
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    const owner=applied.profiles.profileSession.owner;
    if(qualifyHostWake)await assertHostWake('applied');
@@ -158,7 +186,34 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    const before=await readInstance();
    assert.equal(before.values['flight-input-0'],true);
    assert.equal(before.profileOwned,true);
-   await page.reload({waitUntil:'domcontentloaded'});
+   const streamId=randomUUID();
+   const independent=(sequence,value)=>request('profile_debug_controller_input',{owner,nodeId:'independent',
+    streamId,sequence:String(sequence),changes:[{portId:'button-1',value}]});
+   const probeLines=[];
+   let probeDone;
+   if(slot){
+    probe=spawn(recoveryProbe,['--vjoy-button'],{windowsHide:true});
+    const lines=createInterface({input:probe.stdout});
+    probeDone=once(probe,'close');
+    const [line]=await Promise.race([once(lines,'line'),probeDone.then(()=>{throw Error('vJoy probe exited before registration');})]);
+    assert.equal(line,'ready');
+    lines.on('line',value=>probeLines.push(value));
+    await independent(1,true);
+   }
+   if(slot){
+    const lossStarted=performance.now();
+    await page.goto('about:blank',{waitUntil:'domcontentloaded'});
+    await until(readInstance,row=>row&&!row.connected&&!row.armed,3000);
+    await until(async()=>{
+     const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
+     return profileInspection.ports.length===2&&profileInspection.ports.every(port=>port.sample.value?.value!==true);
+    },Boolean,1000);
+    assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
+    t.diagnostic(`Browser loss and affected contribution withdrawal observed within ${Math.round(performance.now()-lossStarted)} ms`);
+    await page.goto(url.href,{waitUntil:'domcontentloaded'});
+   }else{
+    await page.reload({waitUntil:'domcontentloaded'});
+   }
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    await until(readInstance,row=>row?.connected&&row.armed&&row.values['flight-input-0']===false,15000);
    await until(async()=>{
@@ -176,12 +231,29 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),Boolean,7000);
    const rearmed=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
    assert.deepEqual(rearmed.profileInspection.ports.map(port=>port.sample.value.value),[true,true]);
+   if(slot){
+    await independent(2,false);
+    await delay(100);
+    await independent(3,true);
+    await delay(100);
+   }
+   const stopStarted=performance.now();
    const stopped=await request('profile_stop');
    assert.equal(stopped.profiles.profileSession.state,'stopped');
    assert.equal(stopped.profiles.profileSession.owner,null);
+   if(slot){
+    await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free',1000);
+    t.diagnostic(`Stop and vJoy slot release observed within ${Math.round(performance.now()-stopStarted)} ms`);
+    assert.equal((await probeDone)[0],0);
+    const events=JSON.parse(probeLines.at(-1)).buttonEvents.filter(event=>event.report===slot.slot);
+    assert.ok(events.every(event=>event.status===0x00110000));
+    assert.equal(new Set(events.map(event=>event.device)).size,1);
+    assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false],
+     'The unrelated vJoy hold must survive browser loss and release only on an authored transition or Stop');
+   }
   } finally {
    const cleanupErrors=[];
-   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake||qualifyFeedback)cleanupErrors.push(error);}};
+   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake||qualifyFeedback||recoveryProbe)cleanupErrors.push(error);}};
    let stopped=false;
    if(profile||desktopPreferences)await cleanup(async()=>{
     const result=await request('profile_stop');
@@ -196,6 +268,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    });
    if(peer)await cleanup(()=>companion('companion_unassign',{instanceId:id}));
    if(peer)await cleanup(()=>companion('companion_revoke',{companionId:peer.companionId}));
+   if(probe&&probe.exitCode===null&&probe.signalCode===null)probe.kill();
    try{await browser?.close();}finally{cockpit.close();}
    if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'Companion native qualification cleanup failed');
   }

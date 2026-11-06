@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 23 checked and 32
-open. The open criteria include 19 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 24 checked and 31
+open. The open criteria include 18 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -20,7 +20,7 @@ and #198 are In progress because implementation/qualification is underway.
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
-| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes adapter combinations, broader focus and child-loss qualification, first-dispatch and burst timing, and the affected-owner cleanup matrix. Sustained latency qualification is interrupted by WSL foreground takeover. |
+| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts/server peers and native client reads use event I/O; pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines; unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
@@ -64,6 +64,17 @@ is busy. Existing native queue saturation tests verify explicit failure and
 cancellation. The rebuilt Cockpit passes MCP and Windows vJoy burst checks
 with a stalled preview. Live simulator effects and physical latency remain
 in #199.
+
+The running-Cockpit Stop and recovery criterion in #193 is checked. The
+compiled browser companion fixture explicitly disconnects while its input
+and feedback are held. The affected samples withdraw under the same profile
+owner while an independent authored source keeps a Windows vJoy button held.
+The reconnected browser must supply a new neutral baseline and then a new
+press. Windows Raw Input records the independent button's authored transitions
+and release from Stop, with no release during the browser outage. One local
+run observed browser loss and withdrawal after 52 ms and Stop plus the
+committed slot release after 345 ms. These are fixture observations, separate
+from raw input or physical end-to-end latency.
 
 ## User-operated qualification stays in #199
 
