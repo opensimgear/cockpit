@@ -183,8 +183,38 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       profiles.add(saved.document.id);
       await until(async () => (await library())?.value?.profiles.some(profile => profile.name === mcpName),
         'Native library observer did not receive the MCP commit');
+      const clickProfileButton = label => page.evaluate(label => {
+        const button = [...document.querySelectorAll('main button')].find(button =>
+          button.getAttribute('aria-label') === label || button.textContent.trim() === label);
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      }, label);
+      const editorName = () => page.evaluate(() => document.querySelector('button[aria-label="Edit profile name"] span')?.textContent);
+      await until(() => page.evaluate(() => {
+        const button = document.querySelector('nav[aria-label="Main navigation"] button[title="Profiles"]');
+        button?.click();
+        return !!button;
+      }), 'Profiles navigation did not open');
+      await until(() => clickProfileButton(`Edit ${mcpName}`), 'Temporary profile did not appear in the list');
+      await until(async () => await editorName() === mcpName, 'Clean profile editor did not open');
+      let revision = saved.document.revision;
+      let latestName;
+      for (const suffix of ['first edit', 'latest edit']) {
+        latestName = `${mcpName} ${suffix}`;
+        const draft = await ok(writer, 'profile_prepare_changes', {
+          profileId: saved.document.id, expectedRevision: revision, edits: [{kind: 'set_name', name: latestName}],
+        });
+        await ok(writer, 'profile_save_prepared', mutation({draftId: draft.draftId}));
+        revision = (await ok(writer, 'profile_get', {id: saved.document.id})).document.revision;
+        await until(async () => await editorName() === latestName, 'The open editor missed a committed MCP rename');
+      }
+      await until(() => clickProfileButton('Back to Profiles'), 'Clean editor did not close');
+      await until(() => clickProfileButton(`Edit ${latestName}`), 'Latest profile was absent from the list');
+      await until(async () => await editorName() === latestName, 'Reopened editor restored a stale name');
+      await until(() => clickProfileButton('Back to Profiles'), 'Reopened editor did not close');
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
-        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true };
+        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true };
       if (observeController) {
         const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
         assert.ok(source, 'A connected host controller is required for this optional check');
