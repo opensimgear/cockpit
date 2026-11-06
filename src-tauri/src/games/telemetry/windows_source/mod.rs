@@ -49,13 +49,25 @@ fn selected_game_image_matches(image: &str, expected: &str, game: Game) -> Resul
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotError {
+    Unstable,
+    Failed(String),
+}
+
+impl From<String> for SnapshotError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
 /// No public ACR seqlock/transaction guarantee exists. Two equal bounded copies
 /// are a best-effort stability check, not a claim of multi-page atomicity.
 fn consistent_copy(
     owner: &mut CaptureOwner,
     source: SourceIdentity,
     read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
-) -> Result<RawSample, String> {
+) -> Result<RawSample, SnapshotError> {
     consistent_copy_for_game(owner, source, Game::Rally, read)
 }
 fn consistent_copy_for_game(
@@ -63,13 +75,13 @@ fn consistent_copy_for_game(
     source: SourceIdentity,
     game: Game,
     read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
-) -> Result<RawSample, String> {
-    let mut copy = || -> Result<RawSample, String> {
-        let mut capture_page = |page| {
+) -> Result<RawSample, SnapshotError> {
+    let mut copy = || -> Result<RawSample, SnapshotError> {
+        let mut capture_page = |page| -> Result<_, SnapshotError> {
             let captured_at = std::time::Instant::now();
             let bytes = read(page)?;
             let capture = owner.capture(captured_at)?;
-            Ok::<_, String>((bytes, capture))
+            Ok((bytes, capture))
         };
         let (physics, physics_capture) = capture_page(Page::Physics)?;
         let (graphics, graphics_capture) = capture_page(Page::Graphics)?;
@@ -90,16 +102,15 @@ fn consistent_copy_for_game(
     for _ in 0..3 {
         let first = copy()?;
         let second = copy()?;
-        validate_for_game(&first, game)?;
-        validate_for_game(&second, game)?;
         if first.physics == second.physics
             && first.graphics == second.graphics
             && first.statics == second.statics
         {
+            validate_for_game(&second, game)?;
             return Ok(second);
         }
     }
-    Err("Assetto telemetry changed during all bounded snapshot attempts.".into())
+    Err(SnapshotError::Unstable)
 }
 
 mod shared;

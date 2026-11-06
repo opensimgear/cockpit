@@ -7,7 +7,7 @@ fn live_reader_validation_never_waits_for_inventory_adoption() {
     runtime.publish_profile_game_delivery(delivery("dcs", "reader", 1)).unwrap();
     let guard = runtime.state.lock().unwrap();
     let began = Instant::now();
-    assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader").unwrap(), None);
+    assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader").unwrap(), Some(()));
     assert!(began.elapsed() < Duration::from_millis(100));
     drop(guard);
     assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader").unwrap(), Some(()));

@@ -245,8 +245,8 @@ impl WindowsSource {
     pub fn process_image(&self) -> Option<&str> {
         self.process.as_ref().map(|p| p.image.as_str())
     }
-    fn read(&mut self) -> Result<RawSample, String> {
-        if let Some(error) = self.monitor.error() { return Err(error); }
+    fn read(&mut self) -> Result<RawSample, super::SnapshotError> {
+        if let Some(error) = self.monitor.error() { return Err(error.into()); }
         if self.process.is_none() {
             let process = Process::open(self.pid)?;
             selected_game_image_matches(&process.image, &self.expected_image, self.game)?;
@@ -257,7 +257,7 @@ impl WindowsSource {
         if !process.running() {
             let error = "Selected ACR process exited; telemetry was detached.".to_owned();
             self.process_error = Some(error.clone());
-            return Err(error);
+            return Err(error.into());
         }
         if self.pages.is_none() {
             self.capture_owner.begin_generation()?;
@@ -273,14 +273,14 @@ impl WindowsSource {
             identity,
             self.game,
             &mut |page| Ok(pages.copy(page)),
-        )?;
+        );
         if !process.running() {
             let error = "Selected ACR process exited during telemetry capture.".to_owned();
             self.process_error = Some(error.clone());
-            return Err(error);
+            return Err(error.into());
         }
-        if let Some(error) = self.monitor.error() { return Err(error); }
-        Ok(sample)
+        if let Some(error) = self.monitor.error() { return Err(error.into()); }
+        sample
     }
 }
 // Ownership moves to one provider worker. The process/mappings are never
@@ -303,7 +303,8 @@ impl Source for WindowsSource {
                 self.last_packet = Some(packet);
                 Ok(Some(sample))
             }
-            Err(error) => {
+            Err(super::SnapshotError::Unstable) => Ok(None),
+            Err(super::SnapshotError::Failed(error)) => {
                 self.pages = None;
                 self.last_packet = None;
                 Err(error)

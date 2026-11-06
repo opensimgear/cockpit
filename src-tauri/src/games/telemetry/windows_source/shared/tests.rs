@@ -10,6 +10,21 @@ impl Source for Input {
     fn close(&mut self) {}
 }
 
+struct Intermittent(mpsc::Receiver<Option<RawSample>>, mpsc::Sender<()>);
+impl Source for Intermittent {
+    fn poll(&mut self) -> Result<Option<RawSample>, String> {
+        match self.0.try_recv() {
+            Ok(Some(sample)) => Ok(Some(sample)),
+            Ok(None) => {
+                let _ = self.1.send(());
+                Ok(None)
+            }
+            Err(_) => Ok(None),
+        }
+    }
+    fn close(&mut self) {}
+}
+
 fn sample(packet: u32) -> RawSample {
     RawSample {
         source: SourceIdentity {
@@ -129,6 +144,41 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
     assert!(watch.is_closed());
     let (_, next) = mpsc::channel();
     assert!(SharedSource::attach(&replacement, game, false, || Ok(Input(next))).is_ok());
+}
+
+#[test]
+fn contended_capture_is_skipped_without_error_or_refreshing_the_last_sample() {
+    let identity = ProcessIdentity { pid: 3, epoch: 1, path: "test.exe".into() };
+    let (send, input) = mpsc::channel();
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let mut source = SharedSource::attach(&identity, Game::Rally, false, || {
+        Ok(Intermittent(input, observed_tx))
+    }).unwrap();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    let watch = source.watch(wake.clone()).unwrap().unwrap();
+    send.send(Some(sample(10))).unwrap();
+    let mut received = None;
+    wait_for(|| {
+        received = source.poll().unwrap();
+        received.is_some()
+    });
+    assert_eq!(received.unwrap().physics, 10u32.to_le_bytes());
+
+    send.send(None).unwrap();
+    observed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(source.poll().unwrap().is_none(), "contention must not publish an error frame");
+    assert!(source.terminal_error().is_none());
+    assert!(!source.owner.done.load(Ordering::Acquire), "transient contention must keep the capture owner alive");
+    assert!(!watch.is_closed());
+
+    send.send(Some(sample(11))).unwrap();
+    let mut received = None;
+    wait_for(|| {
+        received = source.poll().unwrap();
+        received.is_some()
+    });
+    assert_eq!(received.unwrap().physics, 11u32.to_le_bytes());
+    assert!(source.terminal_error().is_none());
 }
 
 #[test]

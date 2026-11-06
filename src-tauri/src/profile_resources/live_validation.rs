@@ -13,8 +13,9 @@ type Answer = Result<Route, String>;
 struct Confirmed {
     entries: BTreeMap<String, (ResourceToken, Answer)>,
     order: VecDeque<String>,
-    owners: BTreeMap<(String, String), Result<(), String>>,
-    owner_order: VecDeque<(String, String)>,
+    // Commit state owns this table. Failed queries cannot evict an admitted reader.
+    game_readers: BTreeMap<String, String>,
+    retired_readers: VecDeque<(String, String)>,
 }
 
 pub(super) struct StateMutex {
@@ -89,23 +90,18 @@ impl StateMutex {
             .entries.get(&key).map(|(_, answer)| answer.clone()).transpose()
     }
     pub(super) fn confirmed_game_owner(&self, game: &str, reader: &str) -> Result<Option<()>, String> {
-        self.confirmed.lock().unwrap_or_else(|p| p.into_inner()).owners
-            .get(&(game.into(), reader.into())).cloned().transpose()
+        let confirmed = self.confirmed.lock().unwrap_or_else(|p| p.into_inner());
+        if confirmed.game_readers.get(game).is_some_and(|session| session == reader) {
+            return Ok(Some(()));
+        }
+        if confirmed.retired_readers.iter().any(|(id, session)| id == game && session == reader) {
+            return Err("The native game reader lost its current inventory scope or verified metadata.".into());
+        }
+        Ok(None)
     }
 }
 
 impl StateGuard<'_> {
-    pub(super) fn confirm_game_owner(&self, game: &str, reader: &str, answer: &Result<(), String>) {
-        let key = (game.to_owned(), reader.to_owned());
-        let mut confirmed = self.owner.confirmed.lock().unwrap_or_else(|p| p.into_inner());
-        if !confirmed.owners.contains_key(&key) {
-            if confirmed.owners.len() == OWNER_CAPACITY {
-                if let Some(oldest) = confirmed.owner_order.pop_front() { confirmed.owners.remove(&oldest); }
-            }
-            confirmed.owner_order.push_back(key.clone());
-        }
-        confirmed.owners.insert(key, answer.clone());
-    }
     pub(super) fn confirm(&self, token: &ResourceToken, answer: &Answer) {
         let Ok(key) = serde_json::to_string(token) else { return; };
         let mut confirmed = self.owner.confirmed.lock().unwrap_or_else(|p| p.into_inner());
@@ -131,25 +127,32 @@ impl Drop for StateGuard<'_> {
         if !self.dirty { return; }
         // Validation can scan registry state. Never do that while owning the
         // small cache mutex: contended readers must still obtain the old commit.
-        let (tokens, owners) = {
+        let tokens = {
             let confirmed = self.owner.confirmed.lock().unwrap_or_else(|p| p.into_inner());
-            (confirmed.entries.iter().map(|(key, (token, _))| (key.clone(), token.clone())).collect::<Vec<_>>(),
-                confirmed.owners.keys().cloned().collect::<Vec<_>>())
+            confirmed.entries.iter().map(|(key, (token, _))| (key.clone(), token.clone())).collect::<Vec<_>>()
         };
         let answers = tokens.into_iter().map(|(key, token)| {
             let answer = Runtime::validate_delivery_locked(&self.state, &token);
             (key, (token, answer))
         }).collect();
-        let owner_answers = owners.into_iter().map(|(game, reader)| {
-            let answer = Runtime::validate_game_delivery_owner(&self.state, &game, &reader);
-            ((game, reader), answer)
-        }).collect();
+        let game_readers: BTreeMap<_, _> = self.state.game_deliveries.iter()
+            .filter(|_| !self.state.read_only)
+            .map(|(game, batch)| (game.clone(), batch.session.clone())).collect();
         // State remains locked until this guard's fields drop. New state can
         // therefore never be observed alongside answers from an older commit.
         let old = {
             let mut confirmed = self.owner.confirmed.lock().unwrap_or_else(|p| p.into_inner());
-            (std::mem::replace(&mut confirmed.entries, answers),
-                std::mem::replace(&mut confirmed.owners, owner_answers))
+            let previous = std::mem::replace(&mut confirmed.game_readers, game_readers);
+            for (game, reader) in previous {
+                if confirmed.game_readers.get(&game) != Some(&reader) {
+                    confirmed.retired_readers.retain(|(id, session)| id != &game || session != &reader);
+                    if confirmed.retired_readers.len() == OWNER_CAPACITY {
+                        confirmed.retired_readers.pop_front();
+                    }
+                    confirmed.retired_readers.push_back((game, reader));
+                }
+            }
+            std::mem::replace(&mut confirmed.entries, answers)
         };
         drop(old);
         self.owner.catalogue_wake.notify();

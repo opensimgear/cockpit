@@ -271,7 +271,7 @@ fn game_withdrawal_and_replacement_revoke_last_confirmed_reader_at_commit() {
         drop(writer);
         let writer = runtime.state.lock().unwrap();
         assert!(runtime.try_validate_profile_game_delivery("dcs", "reader-a").is_err());
-        assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader-b").unwrap(), None);
+        assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader-b").unwrap(), replacement.then_some(()));
         drop(writer);
         if replacement {
             assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader-b").unwrap(), Some(()));
@@ -282,13 +282,23 @@ fn game_withdrawal_and_replacement_revoke_last_confirmed_reader_at_commit() {
 }
 
 #[test]
-fn confirmed_game_reader_cache_is_bounded() {
+fn failed_lookups_cannot_displace_the_committed_reader_and_retirement_history_is_bounded() {
     let runtime = game_owner();
     runtime.validate_profile_game_delivery("dcs", "reader-a").unwrap();
     for index in 0..OWNER_CAPACITY {
         assert!(runtime.validate_profile_game_delivery("dcs", &format!("unknown-{index}")).is_err());
     }
-    assert_eq!(runtime.state.confirmed.lock().unwrap().owners.len(), OWNER_CAPACITY);
+    {
+        let _writer = runtime.state.lock().unwrap();
+        assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader-a").unwrap(), Some(()));
+        assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "unknown-0").unwrap(), None);
+    }
+    for index in 0..=OWNER_CAPACITY {
+        runtime.state.lock().unwrap().game_deliveries.get_mut("dcs").unwrap().session = format!("reader-{index}");
+    }
     let _writer = runtime.state.lock().unwrap();
+    assert_eq!(runtime.state.confirmed.lock().unwrap().retired_readers.len(), OWNER_CAPACITY);
     assert_eq!(runtime.try_validate_profile_game_delivery("dcs", "reader-a").unwrap(), None);
+    assert!(runtime.try_validate_profile_game_delivery("dcs", "reader-0").is_err());
+    assert_eq!(runtime.try_validate_profile_game_delivery("dcs", &format!("reader-{OWNER_CAPACITY}")).unwrap(), Some(()));
 }

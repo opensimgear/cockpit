@@ -188,21 +188,39 @@ fn a_torn_read_retries_and_unstable_or_missing_pages_fail_with_bounded_work() {
     assert_eq!(parse(&sample).unwrap().packet_id, 11);
     assert_eq!(physics_reads, 4);
     physics_reads = 0;
-    assert!(consistent_copy(&mut owner(), identity(), &mut |page| {
+    let unstable = consistent_copy(&mut owner(), identity(), &mut |page| {
         let mut data = bytes(page);
         if matches!(page, Page::Physics) {
             physics_reads += 1;
             data[..4].copy_from_slice(&(physics_reads as u32).to_le_bytes());
         }
         Ok(data)
-    })
-    .is_err());
+    });
+    assert!(matches!(unstable, Err(SnapshotError::Unstable)));
     assert_eq!(physics_reads, 6);
     assert!(consistent_copy(&mut owner(), identity(), &mut |_| Err(
         "mapping unavailable".into()
     ))
     .is_err());
     assert!(consistent_copy(&mut owner(), identity(), &mut |_| Ok(vec![0])).is_err());
+}
+
+#[test]
+fn malformed_bytes_in_a_torn_copy_are_retried_before_validation() {
+    let mut graphics_reads = 0;
+    let sample = consistent_copy(&mut owner(), identity(), &mut |page| {
+        let mut data = bytes(page);
+        if page == Page::Graphics {
+            graphics_reads += 1;
+            if graphics_reads == 1 {
+                data[4..8].copy_from_slice(&99i32.to_le_bytes());
+            }
+        }
+        Ok(data)
+    })
+    .unwrap();
+    assert_eq!(graphics_reads, 4);
+    assert!(parse(&sample).is_ok());
 }
 #[test]
 fn current_rpm_limit_is_part_of_the_stable_copy_even_when_the_packet_is_unchanged() {

@@ -67,9 +67,7 @@ impl Runtime {
             return Err("Resource inventory has stopped.".into());
         }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let result = Self::validate_game_delivery_owner(&state, game, reader);
-        state.confirm_game_owner(game, reader, &result);
-        result
+        Self::validate_game_delivery_owner(&state, game, reader)
     }
     pub(crate) fn try_validate_profile_game_delivery(&self, game: &str, reader: &str) -> Result<Option<()>, String> {
         if self.stop.load(Ordering::Acquire) { return Err("Resource inventory has stopped.".into()); }
@@ -78,9 +76,7 @@ impl Runtime {
             Err(std::sync::TryLockError::WouldBlock) => return self.state.confirmed_game_owner(game, reader),
             Err(std::sync::TryLockError::Poisoned(poison)) => poison.into_inner(),
         };
-        let result = Self::validate_game_delivery_owner(&state, game, reader);
-        state.confirm_game_owner(game, reader, &result);
-        result.map(Some)
+        Self::validate_game_delivery_owner(&state, game, reader).map(Some)
     }
     /// Setup-only predecessor capture after outgoing admission has stopped.
     /// A dormant run must remember an older run's withdrawn reader for CAS.
