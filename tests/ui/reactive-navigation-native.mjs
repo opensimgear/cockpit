@@ -26,7 +26,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const active = new Map();
   const opened = new Map();
   const baselines = new Map();
-  const activityDeliveries = new Map();
+  const deliveries = new Map();
   const errors = [];
   const retired = new Set();
   const abortedOpens = new Map();
@@ -96,8 +96,8 @@ test(`${transport} main view navigation retires observation readers without dupl
           active.delete(id);
         } else if (delivery === '1') {
           baselines.set(subscriptionId, (baselines.get(subscriptionId) ?? 0) + 1);
-        } else if (opened.get(subscriptionId) === 'settings.activity') {
-          activityDeliveries.set(subscriptionId, delivery);
+        } else {
+          deliveries.set(subscriptionId, delivery);
         }
       }
     }
@@ -260,15 +260,15 @@ test(`${transport} main view navigation retires observation readers without dupl
         input.valueAsNumber = ${draftDays};
         input.dispatchEvent(new Event('input', {bubbles:true}));
       })()`);
-      const beforeDraftCommit = activityDeliveries.get(firstActivityReader);
+      const beforeDraftCommit = deliveries.get(firstActivityReader);
       await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
-      await until(() => activityDeliveries.get(firstActivityReader) !== beforeDraftCommit);
+      await until(() => deliveries.get(firstActivityReader) !== beforeDraftCommit);
       assert.equal(await retentionInput(), draftDays, 'An external commit must not overwrite the draft');
-      const beforeSave = activityDeliveries.get(firstActivityReader);
+      const beforeSave = deliveries.get(firstActivityReader);
       await page.evaluate(`document.querySelector('[aria-label="Activity retention"] button').click()`);
       await until(() => page.evaluate(`document.querySelector('[aria-label="Activity retention"] [role="status"]')
         ?.textContent.includes('Retention saved')`));
-      await until(() => activityDeliveries.get(firstActivityReader) !== beforeSave);
+      await until(() => deliveries.get(firstActivityReader) !== beforeSave);
       await clickTab('Devices');
       await until(() => pending.size === 0 && !activityReader());
       await request({command:'activity_settings_save', retentionDays:changedDays});
@@ -281,9 +281,9 @@ test(`${transport} main view navigation retires observation readers without dupl
       const {activitySettings: current} = await request({command:'activity_settings_get'});
       if (current.retentionDays === changedDays || current.retentionDays === changedDays + 1) {
         const reader = activityReader();
-        const beforeRestore = activityDeliveries.get(reader);
+        const beforeRestore = deliveries.get(reader);
         await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
-        if (reader) await until(() => activityDeliveries.get(reader) !== beforeRestore);
+        if (reader) await until(() => deliveries.get(reader) !== beforeRestore);
       }
     }
     const backupReader = () => [...active.values()].find(reader => reader.topic === 'storage.backups')?.token;
@@ -321,6 +321,47 @@ test(`${transport} main view navigation retires observation readers without dupl
       await until(() => pending.size === 0 && settingsTopics().length === 0);
     }
     const {desktop} = await request({command:'profile_desktop_status'});
+    const desktopReader = () => [...active.values()].find(reader => reader.topic === 'settings.desktop')?.token;
+    const readDesktopToggle = () => page.evaluate(`(() => {
+      const card = document.querySelector('section[aria-label="Keyboard and mouse"]');
+      const toggle = card?.querySelector('[role="switch"]');
+      return toggle && {checked:toggle.checked, disabled:toggle.disabled,
+        note:card.querySelector('.status-note')?.textContent.trim()};
+    })()`);
+    if (desktop.qualified && !desktop.error) {
+      const saveDesktop = async enabled => {
+        const {localSettings} = await request({command:'profile_local_settings_get', scope:'desktop'});
+        assert.equal(localSettings.profileSession.owner, null, 'Desktop settings fixture requires a stopped profile');
+        await request({command:'profile_local_settings_save', scope:'desktop',
+          expectedSettingsRevision:localSettings.revision, expectedActiveOwner:null,
+          settings:{enabled, scope:localSettings.settings.scope}});
+      };
+      await clickTab('Devices');
+      await settled(deviceTopics);
+      await until(readDesktopToggle, state => state?.checked === desktop.enabled && !state.disabled);
+      const firstReader = desktopReader();
+      assert.ok(firstReader);
+      try {
+        const beforeSave = deliveries.get(firstReader);
+        await saveDesktop(!desktop.enabled);
+        await until(readDesktopToggle, state => state?.checked === !desktop.enabled);
+        await until(() => deliveries.get(firstReader) !== beforeSave);
+        await clickTab('General');
+        await until(() => pending.size === 0 && !desktopReader());
+        await saveDesktop(desktop.enabled);
+        assert.equal(desktopReader(), undefined);
+        await clickTab('Devices');
+        await settled(deviceTopics);
+        assert.notEqual(desktopReader(), firstReader);
+        await until(readDesktopToggle, state => state?.checked === desktop.enabled);
+      } finally {
+        const {desktop: current} = await request({command:'profile_desktop_status'});
+        if (current.enabled !== desktop.enabled) await saveDesktop(desktop.enabled);
+      }
+      await clickTab('General');
+      await until(() => pending.size === 0 && !desktopReader());
+      console.log(JSON.stringify({transport, desktopSettingsBackgroundAndReopen: 'passed'}));
+    }
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [tab, topics] of [['Devices', deviceTopics], ['Companions', ['companion.listener']],
         ['AI integration', browserUrl ? [] : ['settings.mcp']]]) {
@@ -334,14 +375,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         if (tab === 'Devices') {
           await until(() => systemInventoryReads > beforeInventory);
           assert.equal(systemInventoryReads - beforeInventory, 1, 'The inventory baseline owns the initial read');
-          const keyboard = 'section[aria-label="Keyboard and mouse"]';
-          const read = () => page.evaluate(`(() => {
-            const card = document.querySelector('${keyboard}');
-            const toggle = card?.querySelector('[role="switch"]');
-            return toggle && {checked:toggle.checked, disabled:toggle.disabled,
-              note:card.querySelector('.status-note')?.textContent.trim()};
-          })()`);
-          await until(read, state => state?.checked === desktop.enabled
+          await until(readDesktopToggle, state => state?.checked === desktop.enabled
             && state.disabled === (!desktop.qualified || !!desktop.error)
             && (desktop.qualified || state.note === desktop.reason));
         }

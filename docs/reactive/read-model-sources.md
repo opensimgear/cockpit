@@ -76,6 +76,12 @@ fixture also opens the view on a free slot, verifies that a profile lease
 updates the visible row to busy, stops the profile while the view is closed,
 and verifies the free slot on reopen.
 
+On both transports, the navigation fixture commits desktop output enablement
+through the guarded settings command while Devices Settings is open. It checks
+the visible toggle and its observation acknowledgement, closes the tab, and
+restores the original setting while no desktop-settings reader is open. A new
+reader shows the restored value on reopen. No profile is applied by the fixture.
+
 The discovery fixture runs against native Cockpit with
 `OSG_GAME_DISCOVERY_NATIVE=1` or browser development with
 `OSG_GAME_DISCOVERY_BROWSER_URL`. Both wait for the exact committed
