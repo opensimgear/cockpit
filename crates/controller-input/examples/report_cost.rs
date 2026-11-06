@@ -38,9 +38,12 @@ fn paced(
     reader: &mut Reader,
     data: &mut BTreeMap<u16, u32>,
     hz: u32,
+    secondary: &str,
 ) -> Value {
     const REPORTS: u32 = 300;
     let baseline = registry.stream_snapshot(&[id.into()]).unwrap();
+    let mut secondary_data = data.clone();
+    let mut secondary_reports = 0;
     let period = Duration::from_secs(1) / hz;
     let start = Instant::now();
     let mut lateness = Vec::new();
@@ -53,12 +56,34 @@ fn paced(
         data.insert(1, reverse);
         data.insert(128, index);
         registry.report(id, 1, data).unwrap();
+        if hz == 1000 && index % 8 == 0 {
+            secondary_reports += 1;
+            secondary_data.insert(128, secondary_reports);
+            registry.report(secondary, 1, &secondary_data).unwrap();
+        }
     }
     let elapsed = start.elapsed();
     let page = registry.stream_page(&baseline.session, baseline.cursor);
     assert!(!page.gap);
-    assert_eq!(page.events.len(), REPORTS as usize);
-    for (index, event) in (1..=REPORTS).zip(&page.events) {
+    if hz == 1000 {
+        assert_eq!(secondary_reports, REPORTS / 8);
+        let secondary_events: Vec<_> = page
+            .events
+            .iter()
+            .filter(|event| event.source == secondary)
+            .collect();
+        assert_eq!(secondary_events.len(), secondary_reports as usize);
+        for (index, event) in (1..=secondary_reports).zip(secondary_events) {
+            assert_eq!(event.values[AXIS].native, i64::from(index));
+        }
+    }
+    let events: Vec<_> = page
+        .events
+        .iter()
+        .filter(|event| event.source == id)
+        .collect();
+    assert_eq!(events.len(), REPORTS as usize);
+    for (index, event) in (1..=REPORTS).zip(events) {
         assert_eq!(
             event.sequence,
             baseline.sources[0].baseline.sequence + u64::from(index)
@@ -104,6 +129,13 @@ fn paced(
     assert_eq!(held.sources[0].baseline.values[BUTTON].native, 1);
     registry.fault(id, "Synthetic report loss");
     assert!(registry.stream_snapshot(&[id.into()]).is_err());
+    if hz == 1000 {
+        let unaffected = registry.stream_snapshot(&[secondary.into()]).unwrap();
+        assert_eq!(
+            unaffected.sources[0].baseline.values[AXIS].native,
+            i64::from(secondary_reports)
+        );
+    }
     data.insert(0, 0);
     registry.report(id, 1, data).unwrap();
     let recovered = registry.stream_page(&held.session, held.cursor);
@@ -120,9 +152,62 @@ fn paced(
     assert_eq!(recovered.events[1].values[REVERSE_BUTTON].native, 0);
     lateness.sort_unstable();
     json!({"targetHz":hz,"observedHz":f64::from(REPORTS)/elapsed.as_secs_f64(),
-        "reports":REPORTS,"orderedEncoderButtonEdges":page.events.len(),"previewDeliveries":preview_deliveries,
+        "reports":REPORTS,"orderedEncoderButtonEdges":REPORTS,"concurrent125HzReports":secondary_reports,"previewDeliveries":preview_deliveries,
         "overrunReports":REPORT_LIMIT+1,"overrunReturnedEdges":overrun.events.len(),"recoveredNeutralBaseline":true,
         "previewLosses":preview_losses,"schedulingLatenessP95Us":lateness[lateness.len()*95/100]})
+}
+
+fn connect_fixture(registry: &mut Registry, path: &str) -> (String, BTreeMap<u16, u32>) {
+    let mut controls = Vec::new();
+    for index in 0..128 {
+        controls.push(Control::new(9, index + 1, 1, 0, index));
+    }
+    for index in 0..6 {
+        let mut axis = Control::new(1, 0x30 + index, 1, 0, 128 + index);
+        axis.bits = 12;
+        axis.max = 4095;
+        controls.push(axis);
+    }
+    let mut hat = Control::new(1, 0x39, 1, 0, 134);
+    hat.bits = 4;
+    hat.max = 7;
+    hat.has_null = true;
+    controls.push(hat);
+    for index in 135..137 {
+        let mut raw = Control::new(0, 0, 1, 0, index);
+        raw.bits = 12;
+        raw.max = 4095;
+        controls.push(raw);
+    }
+    let id = registry
+        .connect(Definition {
+            identity: Identity {
+                backend: "diagnostic".into(),
+                vendor_id: 1,
+                product_id: 2,
+                serial: None,
+                collection: path.into(),
+                fingerprint: String::new(),
+                path: path.into(),
+            },
+            name: "Synthetic 137-control report".into(),
+            controls,
+            diagnostics: vec![],
+        })
+        .unwrap();
+    let data = BTreeMap::from([
+        (128, 0),
+        (129, 2048),
+        (130, 2048),
+        (131, 2048),
+        (132, 2048),
+        (133, 2048),
+        (134, 8),
+        (135, 0),
+        (136, 0),
+    ]);
+    registry.report(&id, 1, &data).unwrap();
+    (id, data)
 }
 
 fn main() {
@@ -135,55 +220,7 @@ fn main() {
     } {
         let observed = scenario != "never-opened";
         let mut registry = Registry::default();
-        let mut controls = Vec::new();
-        for index in 0..128 {
-            controls.push(Control::new(9, index + 1, 1, 0, index));
-        }
-        for index in 0..6 {
-            let mut axis = Control::new(1, 0x30 + index, 1, 0, 128 + index);
-            axis.bits = 12;
-            axis.max = 4095;
-            controls.push(axis);
-        }
-        let mut hat = Control::new(1, 0x39, 1, 0, 134);
-        hat.bits = 4;
-        hat.max = 7;
-        hat.has_null = true;
-        controls.push(hat);
-        for index in 135..137 {
-            let mut raw = Control::new(0, 0, 1, 0, index);
-            raw.bits = 12;
-            raw.max = 4095;
-            controls.push(raw);
-        }
-        let id = registry
-            .connect(Definition {
-                identity: Identity {
-                    backend: "diagnostic".into(),
-                    vendor_id: 1,
-                    product_id: 2,
-                    serial: None,
-                    collection: "capture-cost".into(),
-                    fingerprint: String::new(),
-                    path: "synthetic".into(),
-                },
-                name: "Synthetic 137-control report".into(),
-                controls,
-                diagnostics: vec![],
-            })
-            .unwrap();
-        let mut data = BTreeMap::from([
-            (128, 0),
-            (129, 2048),
-            (130, 2048),
-            (131, 2048),
-            (132, 2048),
-            (133, 2048),
-            (134, 8),
-            (135, 0),
-            (136, 0),
-        ]);
-        registry.report(&id, 1, &data).unwrap();
+        let (id, mut data) = connect_fixture(&mut registry, "synthetic");
         let broker = Broker::new("report-cost".into()).unwrap();
         let mut reader = if observed {
             Some(
@@ -204,6 +241,8 @@ fn main() {
             reader.recv().unwrap();
         }
         if paced_mode {
+            let (secondary, baseline) = connect_fixture(&mut registry, "synthetic-secondary");
+            registry.report(&secondary, 1, &baseline).unwrap();
             results.push(paced(
                 &mut registry,
                 &broker,
@@ -211,6 +250,7 @@ fn main() {
                 reader.as_mut().unwrap(),
                 &mut data,
                 hz,
+                &secondary,
             ));
             continue;
         }
