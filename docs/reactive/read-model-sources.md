@@ -40,6 +40,11 @@ view is closed, one committed-only read on each of three reopens, and bounded
 search requests. The native AI settings fixture covers committed edits and a
 quiet idle interval.
 
+The controller inventory fixture verifies an exact-source metadata rename and
+restore through the native and browser-dev transports. Two inventory readers
+see the same commit while the selected input reader remains ready. A closed
+reader misses the restore and receives the current name immediately on reopen.
+
 The companion listener fixture runs on both transports. It occupies a
 loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates
