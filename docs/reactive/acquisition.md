@@ -171,9 +171,11 @@ The provisioning wake uses the UART driver's bounded event queue. It carries
 readiness only. The driver ring and the network task retain byte ownership.
 The network task parks while disconnected or faulted on the UART boards.
 Pending pairing waits for approval, transport termination, UART activity
-or its existing offer expiry. Connected states retain the 10 ms maintenance
-wake for protocol, input and safety work. Non-UART builds retain the same
-wake for console acquisition.
+or its existing offer expiry. Panel preparation wakes when the renderer
+finishes the current candidate, on UART activity, or at the existing heartbeat
+deadline. Panel error also waits for UART activity or its heartbeat deadline.
+Live input and other connected states retain the 10 ms maintenance wake.
+Non-UART builds retain that wake for console acquisition.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
 Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt

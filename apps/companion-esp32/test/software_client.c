@@ -32,6 +32,8 @@ static unsigned frames,writes;
 int64_t esp_timer_get_time(void){struct timespec at;assert(!clock_gettime(CLOCK_MONOTONIC,&at));return (int64_t)at.tv_sec*1000000+at.tv_nsec/1000;}
 void vTaskDelay(unsigned ms){struct timespec delay={ms/1000,(long)(ms%1000)*1000000};nanosleep(&delay,NULL);}
 void vTaskDelete(TaskHandle_t task){assert(!task);}
+TaskHandle_t xTaskGetCurrentTaskHandle(void){return NULL;}
+void xTaskNotifyGive(TaskHandle_t task){(void)task;}
 int xTaskCreate(void (*fn)(void *),const char *name,unsigned bytes,void *arg,unsigned priority,void *handle){(void)fn;(void)name;(void)bytes;(void)arg;(void)priority;(void)handle;return pdPASS;}
 int xSemaphoreTake(SemaphoreHandle_t mutex,unsigned wait){(void)mutex;(void)wait;return 1;}
 int xSemaphoreGive(SemaphoreHandle_t mutex){(void)mutex;return 1;}

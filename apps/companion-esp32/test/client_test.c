@@ -31,6 +31,8 @@ static char requested_type[32];
 static osg_runtime test_runtime;
 static bool test_dirty;
 static unsigned display_wakes;
+static unsigned network_wakes;
+static int network_token;
 static void wake_display(void){display_wakes++;}
 static const osg_panel *test_drawing;
 static cJSON *fixture;
@@ -42,6 +44,8 @@ static int fake_settimeofday(const struct timeval *v,const struct timezone *zone
 int64_t esp_timer_get_time(void){return (int64_t)fake_ms*1000;}
 void vTaskDelay(unsigned ms){fake_ms+=ms;}
 void vTaskDelete(TaskHandle_t task){assert(!task);}
+TaskHandle_t xTaskGetCurrentTaskHandle(void){return &network_token;}
+void xTaskNotifyGive(TaskHandle_t task){assert(task==&network_token);network_wakes++;}
 int xTaskCreate(void (*fn)(void *),const char *name,unsigned bytes,void *arg,unsigned priority,void *handle){(void)fn;(void)name;(void)bytes;(void)arg;(void)priority;(void)handle;return pdPASS;}
 int xSemaphoreTake(SemaphoreHandle_t s,unsigned wait){(void)s;(void)wait;return 1;}
 int xSemaphoreGive(SemaphoreHandle_t s){(void)s;return 1;}
@@ -276,6 +280,7 @@ static void portable_image_tests(const unsigned char *protected_pixels,int prote
 }
 static void candidate_handoff_tests(void){
     live_ready();assert(osg_set_page(&test_runtime,1));bound_page=1;
+    network_owner=xTaskGetCurrentTaskHandle();network_wakes=0;
     const osg_panel *old=test_runtime.panel;const unsigned active=banks.active;const size_t bytes=banks.slots[active].arena.used;
     unsigned char *snapshot=malloc(bytes);assert(snapshot);memcpy(snapshot,banks.slots[active].arena.data,bytes);
     stop();state=AUTH;next_request=fake_ms;advance();assert(state==OPEN);
@@ -284,13 +289,15 @@ static void candidate_handoff_tests(void){
     osg_scene_ticket ignored;assert(!osg_network_candidate_begin(&ignored));
     osg_scene_ticket wrong=ticket;wrong.generation++;osg_network_candidate_finish(wrong,true,NULL);assert(test_drawing==pending_panel&&!candidate_finished);
     int baselines=baseline_requests;(advance)();assert(state==PREPARING&&baseline_requests==baselines&&!candidate_finished);
+    assert(next_request==fake_ms+250&&network_wait()==pdMS_TO_TICKS(250)&&network_wakes==0);
     stop();assert(!candidate_pending&&test_drawing==pending_panel&&!test_runtime.armed);
     cmd("{\"command\":\"connect\"}");advance();assert(state==OPEN);int before=requests;(advance)();assert(state==OPEN&&requests==before);
     osg_network_candidate_finish(ticket,true,NULL);assert(!test_drawing&&!candidate_finished);
     (advance)();assert(state==PREPARING);osg_scene_ticket newer;assert(osg_network_candidate_begin(&newer)&&newer.generation>ticket.generation);
     osg_network_candidate_finish(ticket,true,NULL);assert(test_drawing&&candidate_pending&&!candidate_finished);
+    assert(network_wakes==0);
     osg_panel_source_diagnostic rejected={.code=OSG_PANEL_SOURCE_BUDGET,.required=128,.available=48};strcpy(rejected.widget,"master-widget");strcpy(rejected.layer,"caption");strcpy(rejected.field,"fontSize");
-    osg_network_candidate_finish(newer,false,&rejected);memset(&rejected,0,sizeof(rejected));(advance)();update_screen();
+    osg_network_candidate_finish(newer,false,&rejected);assert(network_wakes==1);memset(&rejected,0,sizeof(rejected));(advance)();update_screen();
     assert(state==PANEL_ERROR&&test_runtime.panel==old&&!test_runtime.armed&&test_runtime.screen==OSG_SCREEN_PANEL);
     assert(!strcmp(operation.diagnostic.field,"fontSize")&&operation.diagnostic.required==128&&operation.diagnostic.available==48);
     assert(!memcmp(snapshot,banks.slots[active].arena.data,bytes)&&baseline_requests==baselines);free(snapshot);

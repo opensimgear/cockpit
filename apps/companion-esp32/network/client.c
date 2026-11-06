@@ -22,6 +22,7 @@
 
 typedef enum { OFF, PAIR_BEGIN, PAIR_WAIT, AUTH, WAIT_ASSIGNMENT, OPEN, LIVE, FAULT, PANEL_ERROR, PREPARING } phase;
 static osg_network_ui ui;
+static TaskHandle_t network_owner;
 static osg_settings settings;
 static osg_socket connection;
 static uint64_t next_feedback_connect;
@@ -790,10 +791,11 @@ static void update_screen(void){
 static unsigned network_wait(void){
     if(osg_serial_has_wake()){
         if(state==OFF||state==FAULT)return portMAX_DELAY;
-        if(state==PAIR_WAIT){
+        if(state==PAIR_WAIT||state==PREPARING||state==PANEL_ERROR){
             const uint64_t now=millis();
-            if(now>=pair_deadline)return 0;
-            const unsigned ticks=pdMS_TO_TICKS(pair_deadline-now);
+            const uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
+            if(now>=deadline)return 0;
+            const unsigned ticks=pdMS_TO_TICKS(deadline-now);
             return ticks?ticks:1;
         }
     }
@@ -805,6 +807,9 @@ static void network_task(void *arg){
     if(!osg_json_configure(profile->json_bytes,profile->reply_bytes,profile->json_nodes)){fail("json-workspace-unavailable");vTaskDelete(NULL);return;}
     if(fcntl(fileno(stdin),F_SETFL,O_NONBLOCK)<0){fail("serial-nonblocking-mode-failed");vTaskDelete(NULL);return;}
     if(!osg_serial_start()){report("serial-driver-initialization-failed");vTaskDelete(NULL);return;}
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    network_owner=xTaskGetCurrentTaskHandle();
+    xSemaphoreGive(ui.mutex);
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}
@@ -857,16 +862,19 @@ const osg_panel *osg_network_candidate_begin(osg_scene_ticket *ticket){
     xSemaphoreGive(ui.mutex);return candidate?&candidate->panel:NULL;
 }
 void osg_network_candidate_finish(osg_scene_ticket ticket,bool success,const osg_panel_source_diagnostic *diagnostic){
+    TaskHandle_t wake=NULL;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(checking_panel&&ticket.slot==checking_ticket.slot&&ticket.generation==checking_ticket.generation){
         if(candidate_pending&&ticket.slot==candidate_ticket.slot&&ticket.generation==candidate_ticket.generation&&osg_scene_banks_candidate(&banks,ticket)){
             candidate_success=success;candidate_finished=true;
             candidate_diagnostic=diagnostic?*diagnostic:(osg_panel_source_diagnostic){0};
+            wake=network_owner;
         }
         if(*ui.drawing_panel==checking_panel)*ui.drawing_panel=NULL;
         checking_panel=NULL;
     }
     xSemaphoreGive(ui.mutex);
+    if(wake)xTaskNotifyGive(wake);
 }
 static void *scene_allocate(void *context,size_t bytes){(void)context;return osg_workspace_allocate(bytes);}
 static void scene_release(void *context,void *pointer){(void)context;free(pointer);}
