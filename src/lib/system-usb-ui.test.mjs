@@ -26,7 +26,13 @@ const endpoint = () => ({ key, port: { path: 'COM8', serialNumber: serial }, pre
 
 async function harness() {
   let current = endpoint(), handlers, mountedCleanup;
-  const calls = [], mounts = [], custom = new Map(), timers = new Map(), metadataListeners = [], document = { hidden: false };
+  const calls = [], mounts = [], custom = new Map(), timers = new Map(), document = { hidden: false };
+  const inputListeners = new Set(), metadataListeners = new Set();
+  const subscribe = listeners => (selectedKey, listener) => {
+    assert.equal(selectedKey, key);
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
   const publishMetadata = value => metadataListeners.forEach(listener => listener({ status: 'ready', value: {
     key: value.key, connected: value.snapshot.connected, port: value.snapshot.port, identity: value.snapshot.identity, route: value.snapshot.route,
     config: value.snapshot.config, observedAtMs: value.snapshot.observedAtMs, error: value.snapshot.error,
@@ -49,10 +55,12 @@ async function harness() {
     return { moduleUsb: { module: plain(current) } };
   };
   const file = new URL('./SystemUsbDetails.svelte', import.meta.url);
-  const source = (await readFile(file, 'utf8'))
+  const source = (await readFile(file, 'utf8')).replaceAll('\r\n', '\n')
     .replace('$effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));', 'onMount(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));')
     .replace('$effect(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;', 'onMount(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;')
     .replace('</script>', `capture({run,client,connect,claim,release,configure,invoke,get module(){return module;},get editing(){return editing;},get busy(){return busy;},get error(){return error;},get draft(){return draft;},setDraft(value){draft=value;}});</script>`);
+  assert.match(source, /onMount\(\(\) => observeUsbMetadata\(/, 'The server harness must mount the metadata observer.');
+  assert.match(source, /onMount\(\(\) => observeUsbInputs\(/, 'The server harness must mount the input observer.');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' }), exports = {};
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
     exports, document, setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; }, clearInterval(id) { timers.delete(id); }, capture(value) { handlers = value; }, require(name) {
@@ -60,15 +68,15 @@ async function harness() {
       if (name === 'svelte') return { ...svelte, onMount(callback) { mounts.push(callback); } };
       if (name.endsWith('.svelte')) return { default() {} };
       if (name === './gateway') return { gatewayRequest };
-      if (name === './usb-input-observations') return { observeUsbInputs() { return () => {}; } };
-      if (name === './usb-metadata-observations') return { observeUsbMetadata(_key, listener) { metadataListeners.push(listener); return () => {}; } };
+      if (name === './usb-input-observations') return { observeUsbInputs: subscribe(inputListeners) };
+      if (name === './usb-metadata-observations') return { observeUsbMetadata: subscribe(metadataListeners) };
       const normalized = name.replace(/\.ts$/, '');
       if (modules.has(normalized)) return modules.get(normalized);
       throw Error('Unexpected component import ' + name);
     },
   }, { filename: file.pathname });
   const html = render(exports.default, { props: { endpointKey: key } }).body;
-  return { html, handlers, calls, custom, timers, document, get current() { return current; }, setCurrent(value) { current = value; publishMetadata(current); }, publishMetadata,
+  return { html, handlers, calls, custom, timers, document, inputListeners, metadataListeners, get current() { return current; }, setCurrent(value) { current = value; publishMetadata(current); }, publishMetadata,
     loseMetadata() { metadataListeners.forEach(listener => listener({ status: 'lost', error: 'USB metadata source lost' })); },
     async mount() { mountedCleanup = mounts.map(mount => mount()); await settle(); publishMetadata(current); }, cleanup() { mountedCleanup?.forEach(stop => stop?.()); }, refresh() { return handlers.run(() => handlers.client.status(key), false); } };
 }
@@ -330,8 +338,13 @@ test('an Apply completed after navigation releases any returned writer using the
 test('mounted USB details leave input acquisition to the shared subscription without a refresh timer', async () => {
   const h = await harness(); await h.mount(); h.calls.length = 0;
   assert.equal(h.timers.size, 0);
+  assert.equal(h.inputListeners.size, 1);
+  assert.equal(h.metadataListeners.size, 1);
   h.document.hidden = true; await settle();
   h.document.hidden = false; await settle();
   assert.deepEqual(h.calls, []);
-  h.cleanup(); assert.equal(h.timers.size, 0);
+  h.cleanup();
+  assert.equal(h.inputListeners.size, 0);
+  assert.equal(h.metadataListeners.size, 0);
+  assert.equal(h.timers.size, 0);
 });

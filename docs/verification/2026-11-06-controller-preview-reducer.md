@@ -20,6 +20,12 @@ reported zero diagnostics. All 16 reducer and 27 transport tests passed.
 Reducer coverage was 99.61% lines, 96.53% branches and 100% functions.
 
 The broader inventory suite passed 114 of 130 tests. The same 16 USB setup
-tests failed on the preceding isolated baseline. Those failures remain open
-for the integrated qualification. Physical controller motion-to-display
-and virtual-controller timing remain in #199.
+tests failed on the preceding isolated baseline. The follow-up fixed the
+test harness, which failed to mount the metadata observer when the component
+used Windows line endings. All 21 USB detail cases now pass with LF and CRLF.
+The suite also asserts that navigation releases both fixture readers.
+
+The full 130-test system inventory suite and the inventory and USB coverage
+gates passed. The running native Cockpit passed its navigation trace and
+reported zero USB setup endpoints. Physical USB ownership and controller
+motion-to-display and virtual-controller timing remain in #199.
