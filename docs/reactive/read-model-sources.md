@@ -25,7 +25,14 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 
 The native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
 
-The native artwork regression changes, deletes and restores an owned file and verifies all four image transitions in the exact `games.detail.<id>` subscriber, without fixture gateway reads between mutations. The Activity fixture runs against native Cockpit with
+The artwork regression runs against the native gateway over both transports.
+It changes, deletes and restores an owned file and checks every transition in
+the exact `games.detail.<id>` subscriber without fixture gateway reads between
+mutations. After the detail subscription closes, a summary subscription
+confirms the committed file deletion and the first reopened detail snapshot
+reflects it.
+
+The Activity fixture runs against native Cockpit with
 `OSG_ACTIVITY_OBSERVATION_NATIVE=1` or against the browser development gateway
 with `OSG_ACTIVITY_OBSERVATION_BROWSER_URL` set. It traces the real observation
 and gateway requests. Both runs cover a visible commit, a commit while the
