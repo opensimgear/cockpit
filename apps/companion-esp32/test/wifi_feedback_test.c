@@ -25,7 +25,7 @@ const osg_crypto osg_platform_crypto={sha,decode};
 
 SemaphoreHandle_t xSemaphoreCreateBinary(void){return &index;}
 int xSemaphoreTake(SemaphoreHandle_t semaphore,unsigned timeout){
-    (void)timeout;assert(semaphore==&index);
+    assert(semaphore==&index&&timeout==portMAX_DELAY);
     if(cancel_before_take){osg_wifi_feedback_stop();return 1;}
     cJSON *message=osg_wifi_feedback_take();
     if(message){assert(!delivered);delivered=message;}

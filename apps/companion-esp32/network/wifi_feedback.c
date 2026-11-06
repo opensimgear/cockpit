@@ -32,7 +32,8 @@ static void receive_feedback(void *unused){
         atomic_store(&pending,true);
         xTaskNotifyGive(recipient);
         while(atomic_load(&pending)&&!atomic_load(&stopping)){
-            (void)xSemaphoreTake(consumed,pdMS_TO_TICKS(500));
+            // Both consumption and cancellation release this exact handoff.
+            (void)xSemaphoreTake(consumed,portMAX_DELAY);
         }
     }
     osg_socket_close(&socket);

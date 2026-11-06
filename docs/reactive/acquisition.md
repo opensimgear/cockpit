@@ -184,6 +184,15 @@ heartbeat, feedback reconnect, pending batch and input safety expiry. The
 authentication wait until their request deadline. Opening waits for the exact
 renderer borrow to be released when the inactive scene bank is busy. Non-UART
 console acquisition retains the 10 ms maintenance wake.
+
+The Wi-Fi feedback worker parks while its one raw frame is held by the network
+task. Consumption or cancellation releases that handoff. The separate socket
+readiness wait still has a 500 ms cancellation bound.
+
+The pinned USB Serial/JTAG VFS supports read readiness once its buffered
+driver is installed. A non-UART console bridge would need to install that
+driver and coordinate readiness with the existing direct-request reader.
+This remains unqualified. See the [USB Serial/JTAG VFS source](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_usb_serial_jtag/src/usb_serial_jtag_vfs.c).
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
 Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt
