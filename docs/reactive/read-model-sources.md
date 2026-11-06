@@ -23,7 +23,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `preferences.<key>` | UI persistence owner publishes committed `theme`, `devices-mode`, `canvas-navigation`, `canvas-styling`, `tray` and `progress` values | Shared preference consumers on native and browser-dev. |
 | `preferences.remembered` | Native, browser-dev and MCP `ui_preferences_save` commit the `inventory/remembered` SQLite record. Its observation carries only the committed revision, so the record may exceed the change-frame budget. | The shared preference adapter fetches the single record after its revision advances. Mounted Devices reprojects it with cached provider state without saving it back. Live native and browser-dev fixtures verified that another client can add and remove a remembered row without extra record revisions. |
 
-The native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
+The dedicated native activation window consumes `profiles.activation-window`, a window-scoped, UI-only projection of the activation progress owner. The main native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
 
 The artwork regression runs against the native gateway over both transports.
 It changes, deletes and restores an owned file and checks every transition in
@@ -39,6 +39,12 @@ and gateway requests. Both runs cover a visible commit, a commit while the
 view is closed, one committed-only read on each of three reopens, and bounded
 search requests. The native AI settings fixture covers committed edits and a
 quiet idle interval.
+
+The profile fixture uses two independent library readers and the runtime
+reader on both transports. An external rename triggers one pinned document
+read for a clean editor. A second rename updates both libraries while the
+dirty editor retains its draft and performs no document read or save.
+The fixture also checks that the former profile refresh commands stay quiet.
 
 The controller inventory fixture verifies an exact-source metadata rename and
 restore through the native and browser-dev transports. Two inventory readers

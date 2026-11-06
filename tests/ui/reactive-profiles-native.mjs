@@ -3,22 +3,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
-import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {browserPage,nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
-test('native profile streams update independent consumers and preserve dirty authoring',{
- skip:process.env.OSG_REACTIVE_PROFILES_NATIVE!=='1',timeout:90000,
+const browserUrl=process.env.OSG_REACTIVE_PROFILES_BROWSER_URL;
+const transport=browserUrl?'browser-dev':'native';
+
+test(transport+' profile streams update independent consumers and preserve dirty authoring',{
+ skip:!browserUrl&&process.env.OSG_REACTIVE_PROFILES_NATIVE!=='1',timeout:90000,
 },async()=>{
- const page=await nativePage(),calls=[];let id,revision,recording=false;
+ const page=browserUrl?await browserPage(browserUrl):await nativePage(),calls=[];let id,revision,recording=false;
  const unlisten=page.listen(event=>{
   if(recording&&event.method==='Network.requestWillBeSent'){
    const request=event.params.request;
-   if(/ipc\.localhost|ipc:\/\//.test(request.url)){
-    try{const body=JSON.parse(request.postData);calls.push({url:request.url,command:body.request?.command,topic:body.topic});}catch{}
+   if(/ipc\.localhost|ipc:\/\//.test(request.url)||new URL(request.url).pathname==='/api/gateway/'){
+    try{const body=JSON.parse(request.postData);calls.push({url:request.url,command:(body.request??body).command,topic:body.topic});}catch{}
    }
   }
  });
  const request=async value=>{
-  const result=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'independent-profile-readmodel-acceptance'})}})`);
+  const body=JSON.stringify({...value,clientId:'independent-profile-readmodel-acceptance'});
+  const result=await page.evaluate(browserUrl
+   ?`fetch('/api/gateway/',{method:'POST',headers:{'Content-Type':'application/json','x-osg-client':'1'},body:${JSON.stringify(body)}}).then(response=>response.json())`
+   :`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${body}})`);
   assert.equal(result.ok,true,`${value.command}: ${result.error}`);return result.state.profiles;
  };
  try{
@@ -64,14 +70,15 @@ test('native profile streams update independent consumers and preserve dirty aut
   await request({command:'profile_delete',id,expectedRevision:revision});id=null;
   await until(()=>page.evaluate(`(()=>{const s=window.__profileReadModelAcceptance;return [s.library,s.other].every(list=>!list.at(-1)?.value?.profiles.some(row=>row.name==='Stream remote change'))})()`));
   await mkdir('.research/reactive',{recursive:true});
-  const executable=await readFile('src-tauri/target/debug/osg-cockpit.exe');
-  await writeFile('.research/reactive/profiles-native.json',JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,
-   executableSha256:createHash('sha256').update(executable).digest('hex'),baseline,dirty,calls,
+  const executablePath=browserUrl?process.env.OSG_GATEWAY_SERVICE:process.env.OSG_DESKTOP_NATIVE_APP??'src-tauri/target/debug/osg-cockpit.exe';
+  const executableSha256=executablePath?createHash('sha256').update(await readFile(executablePath)).digest('hex'):null;
+  await writeFile(`.research/reactive/profiles-${transport}.json`,JSON.stringify({at:new Date().toISOString(),transport,actualNativeGateway:true,
+   executableSha256,baseline,dirty,calls,
    independentConsumers:true,noExternalOutputs:true,hardwareLatencyQualified:false},null,2)+'\n');
  }finally{
   recording=false;
   if(id)await request({command:'profile_delete',id,expectedRevision:revision}).catch(()=>{});
   await page.evaluate(`(()=>{const s=window.__profileReadModelAcceptance;s?.stops.forEach(stop=>stop());delete window.__profileReadModelAcceptance;})()`).catch(()=>{});
-  unlisten();page.close();
+  unlisten();await page.close();
  }
 });
