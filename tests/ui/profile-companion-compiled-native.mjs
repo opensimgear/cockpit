@@ -14,6 +14,8 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
   const qualifyHostWake=process.env.OSG_COMPANION_HOST_WAKE_NATIVE==='1';
   const qualifyFeedback=process.env.OSG_COMPANION_FEEDBACK_NATIVE==='1';
   const recoveryProbe=process.env.OSG_COMPANION_RECOVERY_VJOY_PROBE;
+  const slowFeedback=process.env.OSG_COMPANION_SLOW_FEEDBACK_NATIVE==='1';
+  if(slowFeedback)assert.ok(recoveryProbe,'Slow feedback qualification requires the vJoy probe');
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
   const request=async(command,params={})=>{
@@ -58,13 +60,29 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    });
    browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,args:['--ignore-certificate-errors-spki-list='+pin]});
    const page=await browser.newPage();
-   await page.addInitScript(()=>{
+   await page.addInitScript(slowFeedback=>{
     window.__feedbackProbe=[];
     window.__feedbackTrace=[];
     const Original=window.SharedWorker;
     window.SharedWorker=class extends Original {
      constructor(...args){
       super(...args);
+      if(slowFeedback){
+       const send=this.port.postMessage.bind(this.port);
+       const stall={enabled:false,received:0,held:[]};
+       window.__feedbackStall=stall;
+       stall.release=()=>{
+        stall.enabled=false;
+        for(const ack of stall.held.splice(0))send(ack);
+       };
+       this.port.postMessage=(message,...rest)=>{
+        if(stall.enabled&&message.type==='feedback-ack')stall.held.push(message);
+        else send(message,...rest);
+       };
+       this.port.addEventListener('message',({data})=>{
+        if(data.type==='feedback')stall.received++;
+       });
+      }
       this.port.addEventListener('message',({data})=>{
        const frame=data?.reply?.feedback;
        if(frame){
@@ -76,7 +94,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
       });
      }
     };
-   });
+   },slowFeedback);
    await page.goto(url.href,{waitUntil:'domcontentloaded'});
    peer=await until(async()=>(await companion('companion_status')).host.clients.find(row=>!existing.has(row.companionId)),Boolean,15000)
     .catch(async error=>{throw new Error('Browser pairing did not finish: '+await page.locator('body').innerText(),{cause:error});});
@@ -209,6 +227,13 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     streamId,sequence:String(sequence),changes:[{portId:'button-1',value}]});
    const probeLines=[];
    let probeDone;
+   const assertRawTransitions=async expected=>{
+    assert.equal((await probeDone)[0],0);
+    const events=JSON.parse(probeLines.at(-1)).buttonEvents.filter(event=>event.report===slot.slot);
+    assert.ok(events.every(event=>event.status===0x00110000));
+    assert.equal(new Set(events.map(event=>event.device)).size,1);
+    assert.deepEqual(events.map(event=>event.pressed),expected);
+   };
    if(slot){
     probe=spawn(recoveryProbe,['--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
@@ -245,12 +270,46 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    assert.equal(await page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),false,
     'The reloaded browser must not receive the previous held feedback as fresh');
+   let stalledAt;
+   if(slowFeedback){
+    await page.evaluate(()=>{window.__feedbackStall.enabled=true;});
+    stalledAt=await until(()=>page.evaluate(()=>{
+     const stall=window.__feedbackStall;
+     return stall.held.length===1?stall.received:null;
+    }),Boolean,2500);
+   }
    await page.getByRole('button',{name:'probe: press',exact:true}).click();
+   if(slowFeedback){
+    await until(async()=>{
+     const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
+     return profileInspection.ports[0]?.sample.value?.value===true;
+    },Boolean,1000);
+    await independent(2,false);
+    await delay(100);
+    await independent(3,true);
+    await delay(1500);
+    // The probe must finish before feedback resumes, so the Windows reports
+    // prove native dispatch progressed during the stall.
+    await assertRawTransitions([true,false,true]);
+    const stalled=await page.evaluate(()=>{
+     const {held,received}=window.__feedbackStall;
+     return {held:held.length,received};
+    });
+    assert.deepEqual(stalled,{held:1,received:stalledAt},'A held receipt must bound browser feedback to one in-flight event');
+    const peerState=await readInstance();
+    assert.ok(peerState.connected&&peerState.armed,'Slow feedback must preserve the input lease');
+    assert.deepEqual((await request('profile_status')).profiles.profileSession.owner,owner);
+    assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
+    await page.evaluate(()=>window.__feedbackStall.release());
+    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.mode==='snapshot'&&
+     frame.values.some(value=>value.channelId==='flight-channel-0'&&value.status==='fresh'&&value.value===true))),Boolean,3000);
+    t.diagnostic('Feedback acknowledgements stalled for more than one renewal and a full input lease');
+   }
    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),Boolean,7000);
    const rearmed=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
    assert.deepEqual(rearmed.profileInspection.ports.map(port=>port.sample.value.value),panelValues(true));
-   if(slot){
+   if(slot&&!slowFeedback){
     await independent(2,false);
     await delay(100);
     await independent(3,true);
@@ -263,12 +322,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    if(slot){
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free',1000);
     t.diagnostic(`Stop and vJoy slot release observed within ${Math.round(performance.now()-stopStarted)} ms`);
-    assert.equal((await probeDone)[0],0);
-    const events=JSON.parse(probeLines.at(-1)).buttonEvents.filter(event=>event.report===slot.slot);
-    assert.ok(events.every(event=>event.status===0x00110000));
-    assert.equal(new Set(events.map(event=>event.device)).size,1);
-    assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false],
-     'The unrelated vJoy hold must survive browser loss and release only on an authored transition or Stop');
+    if(!slowFeedback)await assertRawTransitions([true,false,true,false]);
    }
   } finally {
    const cleanupErrors=[];

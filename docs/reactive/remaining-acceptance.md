@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 25 checked and 30
-open. The open criteria include 17 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 26 checked and 29
+open. The open criteria include 16 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -22,7 +22,7 @@ and #198 are In progress because implementation/qualification is underway.
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
-| #195 | Companion publication, reconnect, backgrounding and slow-consumer qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
+| #195 | Companion publication, reconnect and backgrounding qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
 | #197 | Complete manual/MCP state/error/cancel/recovery parity and schema/documentation/negotiation inventory. The desktop output status snapshot is available through MCP. Slow-observer isolation passed in the running app and in bounded native stress fixtures. Sustained socket backpressure remains part of broader load qualification. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
@@ -38,6 +38,15 @@ browser fixture. The browser regression verifies that a quiet channel expires
 while its peer stays fresh and that replaying a delta cannot extend freshness.
 Native projection tests separately verify that an expired sample is published
 as stale and cannot renew itself.
+
+The slow feedback criterion in #195 is checked. The browser fixture holds
+one feedback acknowledgement across multiple renewals and an input lease.
+The browser still sends input and the exact profile owner and armed peer
+remain live. Windows Raw Input sees independent vJoy transitions before
+feedback resumes. The browser receives a current snapshot after release.
+Native worker and service tests cover blocked validation, coalescing for
+a slow peer, and bounded latest state. Sustained mixed-consumer load remains
+part of #198.
 
 CAN publication ownership and gateway inventory use sequenced gateway
 invalidations. Setup and lease deadlines are scheduled independently. Physical
