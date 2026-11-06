@@ -1,6 +1,38 @@
 use super::*;
 
+impl Shared {
+    pub(super) fn notify_routing(&self) {
+        if let Some(wake) = self.routing.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
+    }
+}
+
 impl Overrides {
+    pub(crate) fn watch_routing(&self, wake: &Arc<osg_streams::NativeWake>) {
+        for slot in &self.slots {
+            *slot.shared.routing.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        }
+    }
+
+    pub(crate) fn hold_uses_notifications(&self) -> bool {
+        self.slots.iter().all(|slot| {
+            slot.shared.routing.lock().unwrap_or_else(|p| p.into_inner()).strong_count() > 0
+        })
+    }
+
+    /// A disarmed hold still checks the original proof expiry if the actor
+    /// cannot publish a terminal result before its current I/O returns.
+    pub(crate) fn hold_deadline(&self) -> Option<Instant> {
+        self.slots.iter().map(|slot| {
+            let verified = slot.shared.verified.lock().unwrap_or_else(|p| p.into_inner());
+            match verified.as_ref().and_then(|proof| proof.live.as_ref()) {
+                Some((deadline, _)) => *deadline,
+                None => Instant::now(),
+            }
+        }).min()
+    }
+
     /// Check the lease against the host's captured gateway view without waiting
     /// on its adapter or on the publication worker's status locks.
     pub(crate) fn try_verify_disabled(

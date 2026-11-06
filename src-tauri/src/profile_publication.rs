@@ -425,6 +425,7 @@ pub(crate) struct Status {
 }
 struct Shared {
     wake: Arc<osg_streams::NativeWake>,
+    routing: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     start: AtomicBool,
     withdrawn: AtomicBool,
     authority: Arc<AtomicBool>,
@@ -452,6 +453,7 @@ fn live_at((deadline, fence): &(Instant, PublicationFence), io: &dyn Io, gateway
 fn shared(recovery: bool) -> Arc<Shared> {
     Arc::new(Shared {
         wake: Arc::default(),
+        routing: Mutex::default(),
         start: AtomicBool::new(false),
         withdrawn: AtomicBool::new(false),
         authority: Arc::new(AtomicBool::new(false)),
@@ -710,7 +712,7 @@ impl Overrides {
     pub(crate) fn revoke_renewal(&self) {
         for slot in &self.slots {
             slot.shared.withdrawn.store(true, Ordering::Release);
-            slot.shared.authority.store(false, Ordering::Release);
+            let was_live = slot.shared.authority.swap(false, Ordering::AcqRel);
             // Preserve a completed immutable restoration snapshot across
             // repeated cleanup polling. Live proof still requires authority.
             slot.shared
@@ -719,6 +721,9 @@ impl Overrides {
                 .unwrap_or_else(|p| p.into_inner())
                 .active = false;
             slot.shared.wake.notify();
+            if was_live {
+                slot.shared.notify_routing();
+            }
         }
     }
     pub(crate) fn stop(&mut self) -> Result<Status, String> {
@@ -913,6 +918,8 @@ fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), mut status: 
         let mut revision = changes.0.lock().unwrap_or_else(|p| p.into_inner());
         *revision = revision.wrapping_add(1);
         changes.1.notify_all();
+        drop(revision);
+        shared.notify_routing();
     }
 }
 #[path = "profile_publication_actor.rs"]

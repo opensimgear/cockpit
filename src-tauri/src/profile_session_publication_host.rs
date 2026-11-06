@@ -63,6 +63,7 @@ fn wait(
 impl NativeProfileHost {
     pub(super) fn acquire_publication(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        let routing = self.native_wake.clone();
         if !self.run(owner)?.publication.is_empty() {
             self.report_progress(owner, "publishing-hardware-config", "Applying peripheral hardware configuration");
         }
@@ -72,6 +73,9 @@ impl NativeProfileHost {
             return Ok(());
         }
         Self::check_epoch(&epoch, expected)?;
+        if let Some(wake) = routing.as_ref() {
+            state.publication.watch_routing(wake);
+        }
         state.publication.acquire()?;
         let result = wait(&mut state.publication, false, || {
             Self::check_epoch(&epoch, expected)

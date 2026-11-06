@@ -51,8 +51,9 @@ park. Physical action workers renew their own neutral leases and notify the
 host on loss. Windows visibility worker changes wake the host and inventory.
 The worker still verifies the device and policy on its own cadence.
 A notified companion feed wakes on committed input and retains its native
-lease deadline. Companion feeds without a wake and CAN publication work
-keep bounded host service.
+lease deadline. The CAN publication actor wakes the hold on status changes.
+The hold retains the exact publication proof expiry as a deadline. Companion
+feeds and other adapters without a wake keep bounded host service.
 The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline

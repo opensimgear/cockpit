@@ -1408,7 +1408,8 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline)
         });
-        [companion, state.output.as_ref().and_then(|output| output.renewal_deadline())]
+        [companion, state.publication.hold_deadline(),
+            state.output.as_ref().and_then(|output| output.renewal_deadline())]
             .into_iter().flatten().min()
     }
     fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}

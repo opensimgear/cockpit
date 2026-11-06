@@ -10,7 +10,7 @@ pub(super) fn hold_uses_notifications(host: &NativeProfileHost, state: &NativeRu
         && state.reducer.is_none() && !state.launch_context_installed
         && state.inputs.as_ref().is_some_and(|inputs| inputs.notification_driven())
         && state.panels.hold_uses_notifications() && state.companions.notification_driven()
-        && state.publication.is_empty()
+        && state.publication.hold_uses_notifications()
         && state.output.as_ref().is_none_or(|output| output.renewal_deadline().is_some())
 }
 
