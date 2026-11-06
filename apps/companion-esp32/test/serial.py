@@ -8,11 +8,12 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-serial"
 OUT.mkdir(parents=True, exist_ok=True)
-for counter in OUT.glob("serial-test-*.gcda"):
-    counter.unlink()
+for prefix in ("serial-test", "sunton-serial-test", "usb-test"):
+    for counter in OUT.glob(prefix + "-*.gcda"):
+        counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
          "-g", "-fsanitize=address,undefined", "--coverage"]
-flags += ["-I" + str(APP / folder) for folder in ("test/serial_include", "network", "core", "third_party/cjson")]
+flags += ["-I" + str(APP / folder) for folder in ("test/serial_include", "test/include", "network", "core", "third_party/cjson")]
 sources = [str(APP / "network/serial.c"), str(APP / "test/serial_test.c")]
 for uart, baud, binary in ((1, 921600, "serial-test"), (1, 115200, "sunton-serial-test"), (0, 921600, "usb-test")):
     subprocess.run([*flags, "-DCONFIG_ESP_CONSOLE_UART=" + str(uart), "-DCONFIG_OSG_SERIAL_BAUD=" + str(baud), *sources, "-o", str(OUT / binary)], check=True)

@@ -31,6 +31,7 @@ static unsigned frames,writes;
 
 int64_t esp_timer_get_time(void){struct timespec at;assert(!clock_gettime(CLOCK_MONOTONIC,&at));return (int64_t)at.tv_sec*1000000+at.tv_nsec/1000;}
 void vTaskDelay(unsigned ms){struct timespec delay={ms/1000,(long)(ms%1000)*1000000};nanosleep(&delay,NULL);}
+void vTaskDelete(TaskHandle_t task){assert(!task);}
 int xTaskCreate(void (*fn)(void *),const char *name,unsigned bytes,void *arg,unsigned priority,void *handle){(void)fn;(void)name;(void)bytes;(void)arg;(void)priority;(void)handle;return pdPASS;}
 int xSemaphoreTake(SemaphoreHandle_t mutex,unsigned wait){(void)mutex;(void)wait;return 1;}
 int xSemaphoreGive(SemaphoreHandle_t mutex){(void)mutex;return 1;}
@@ -53,6 +54,7 @@ cJSON *osg_serial_take_command(void){return NULL;}
 void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;(void)record;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
+bool osg_serial_pending(void){return false;}
 bool osg_wifi_clock(void){return true;}
 bool osg_wifi_start(const osg_settings *value){(void)value;return true;}
 void osg_wifi_stop(void){}

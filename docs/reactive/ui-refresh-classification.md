@@ -176,7 +176,7 @@ These locations use the same pinned ledger.
 | `apps/companion-esp32/boards/sunton-3248s035r/board.c:71,81`, `apps/companion-esp32/boards/waveshare-lcd7/board.c:160,162,164,166` | Board initialization, reset and display or touch readiness | Keep the one-time hardware settling delays. Physical display bring-up remains in #199. |
 | `apps/companion-esp32/main/app_main.c:27` | Touch worker, read the board every 20 ms | Identify the board interrupt or driver-event bridge for each supported controller. Physical touch cadence and release qualification remain open. |
 | `apps/companion-esp32/main/app_main.c:88` | Former unconditional 20 ms display wake | Replaced with task notifications for candidate and dirty state. Only visible feedback expiry and failed-render retry schedule deadlines. Verify display damage, expiry and recovery on hardware. |
-| `apps/companion-esp32/network/serial_wire.c:82` | Former one-millisecond retry after an empty stdin read | Direct requests wait on UART console readiness and their absolute deadline. `serial_wire_test.c` covers framing, readiness, interrupted waits and receive errors. Provisioning wakes and physical reconnect qualification remain open. |
+| `apps/companion-esp32/network/serial_wire.c:82` | Former one-millisecond retry after an empty stdin read | Direct requests wait on UART console readiness and their absolute deadline. The UART event queue wakes provisioning on supported boards. Tests cover retained wakes, framing, interrupted waits and receive errors. Physical reconnect qualification remains open. |
 
 At the pinned sibling revisions, the scanner found no direct timing calls in
 `device-gateway`, `device-template`, or `firmware-common`. The gateway main

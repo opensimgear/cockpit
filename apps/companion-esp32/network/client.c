@@ -790,7 +790,9 @@ static void update_screen(void){
 static void network_task(void *arg){
     (void)arg;osg_json_init();
     const osg_render_limits *profile=osg_render_profile_limits();
-    if(!osg_json_configure(profile->json_bytes,profile->reply_bytes,profile->json_nodes)){fail("json-workspace-unavailable");return;}
+    if(!osg_json_configure(profile->json_bytes,profile->reply_bytes,profile->json_nodes)){fail("json-workspace-unavailable");vTaskDelete(NULL);return;}
+    if(fcntl(fileno(stdin),F_SETFL,O_NONBLOCK)<0){fail("serial-nonblocking-mode-failed");vTaskDelete(NULL);return;}
+    if(!osg_serial_start()){report("serial-driver-initialization-failed");vTaskDelete(NULL);return;}
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}
@@ -798,12 +800,13 @@ static void network_task(void *arg){
         else if(!osg_wifi_clock())fail("trusted-clock-invalid");
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
-    if(fcntl(fileno(stdin),F_SETFL,O_NONBLOCK)<0){fail("serial-nonblocking-mode-failed");return;}
     report("serial-provisioning-ready");
     for(;;){
         cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
         if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
-        int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
+        if(osg_serial_pending()){
+            int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
+        }
         usb_assignments();update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
     }
 }
@@ -859,6 +862,5 @@ void osg_network_start(osg_network_ui value){
     const osg_render_limits *profile=osg_render_profile_limits();
     const osg_scene_memory memory={profile->scene_bytes,profile->total_layers,profile->components};
     if(!osg_scene_banks_init(&banks,memory,(osg_scene_allocator){NULL,scene_allocate,scene_release,scene_available})){report("scene-bank-initialization-failed");return;}
-    if(!osg_serial_start()){report("serial-driver-initialization-failed");return;}
     if(xTaskCreate(network_task,"companion-network",24576,NULL,4,NULL)!=pdPASS)report("network-task-allocation-failed");
 }

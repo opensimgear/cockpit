@@ -41,6 +41,7 @@ static int fake_getchar(void){if(!mock_serial_input)return EOF;int c=(unsigned c
 static int fake_settimeofday(const struct timeval *v,const struct timezone *zone){(void)zone;return clock_ok&&v->tv_sec>0?0:-1;}
 int64_t esp_timer_get_time(void){return (int64_t)fake_ms*1000;}
 void vTaskDelay(unsigned ms){fake_ms+=ms;}
+void vTaskDelete(TaskHandle_t task){assert(!task);}
 int xTaskCreate(void (*fn)(void *),const char *name,unsigned bytes,void *arg,unsigned priority,void *handle){(void)fn;(void)name;(void)bytes;(void)arg;(void)priority;(void)handle;return pdPASS;}
 int xSemaphoreTake(SemaphoreHandle_t s,unsigned wait){(void)s;(void)wait;return 1;}
 int xSemaphoreGive(SemaphoreHandle_t s){(void)s;return 1;}
