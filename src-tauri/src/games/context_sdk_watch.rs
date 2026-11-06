@@ -79,17 +79,20 @@ pub(super) fn publish_change(inner: &Inner) {
     inner.changes.mark_resources();
 }
 
-pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant) -> Option<Duration> {
+pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant,
+    assetto_setup_pending: bool) -> Option<Duration> {
     let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
     let mut configured = Vec::new();
-    let mut needs_setup_maintenance = false;
+    let mut needs_setup_maintenance = assetto_setup_pending;
     for game in &settings.catalogue {
         let Some(key) = crate::game_discovery::integration_key(game) else { continue; };
         let Some(id) = game["id"].as_str() else { continue; };
         if game["installed"] == true || game["executable"].is_string() || game["installPath"].is_string() {
             configured.push(id.to_owned());
-            // X-Plane has a separate catalogue watch and no external setup refresh.
-            needs_setup_maintenance |= !XPLANE.contains(&key);
+            // DCS also maintains discovery scopes. Assetto only needs a
+            // deadline if its watch is missing or setup reinspection is pending.
+            needs_setup_maintenance |= key == "dcs"
+                || (key.starts_with("assetto-corsa") && !inner.setup.catalogue_watched(key));
         }
     }
     drop(settings);

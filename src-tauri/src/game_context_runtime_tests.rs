@@ -111,8 +111,21 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     *platform.process.lock().unwrap() = None;
     runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
     wait_for_setup();
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), Some(Duration::from_millis(500)));
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now()), None);
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now(), false), Some(Duration::from_millis(500)));
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), false), None);
+
+    let mut catalogue = platform.catalogue(&BTreeMap::new());
+    catalogue.push(json!({"id":"assetto-corsa","provider":"assetto-corsa",
+        "integrationKey":"assetto-corsa","integrationCompatible":true,"installed":true}));
+    *checked.lock().unwrap() = None;
+    runtime.seed_test_catalogue(catalogue);
+    wait_for_setup();
+    let delay = |pending| context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), pending);
+    assert!(delay(false).is_some(), "An unwatched Assetto installation needs maintenance");
+    runtime.inner.setup.set_setup_watch("assetto-corsa", true);
+    assert_eq!(delay(false), None, "A watched idle Assetto installation can park");
+    assert!(delay(true).is_some(), "Pending setup reinspection needs a retry");
+    runtime.inner.setup.set_setup_watch("assetto-corsa", false);
 
     let mut catalogue = platform.catalogue(&BTreeMap::new());
     catalogue.push(json!({"id":"dcs","provider":"dcs-bios","integrationKey":"dcs",
@@ -120,7 +133,7 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(catalogue);
     wait_for_setup();
-    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now())
+    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), false)
         .is_some_and(|delay| delay > Duration::from_millis(500)));
     runtime.shutdown();
 }

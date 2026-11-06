@@ -218,7 +218,7 @@ impl GamesRuntime {
                 let updated = update_wake.observed();
                 let epoch = (library, processes);
                 let sdk_changed = sdk_watches.refresh(&inner);
-                assetto_watches.refresh(&inner);
+                let assetto_setup_pending = assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
                 let scope = inner.changes.context_process_live(library).then_some(epoch);
                 inner.refresh_game_contexts_with_inventory(library != last_library, |games| {
@@ -229,7 +229,7 @@ impl GamesRuntime {
                 if inner.closed.load(Ordering::Acquire) { break; }
                 if processes == process_wake.observed() && updated == update_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
-                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner, live, started));
+                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner, live, started, assetto_setup_pending));
                 }
             }
             polling_closed.store(true, Ordering::Release);

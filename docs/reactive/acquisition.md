@@ -106,8 +106,9 @@ The two-second pass remains for scopes where native watches could not be
 installed. Assetto
 reinspects the selected executable on native file changes. The Rally and
 Competizione watches include the possible sibling runtime before it exists.
-If a native watch cannot be registered, that Assetto selection retains the
-existing two-second check.
+With live process notifications and a working Assetto file watch, the context
+owner can park between events. The two-second deadline remains when a watch
+cannot be registered or a watched reinspection is waiting for setup admission.
 X-Plane setup readiness comes from committed local settings and executable
 selection. The context owner watches each selected installation's
 `Resources/plugins/DataRefs.txt` with an exact native file filter. Changes

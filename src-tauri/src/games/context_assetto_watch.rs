@@ -14,7 +14,7 @@ struct ProviderWatch {
 }
 
 impl AssettoWatches {
-    pub(super) fn refresh(&mut self, inner: &Inner) {
+    pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
         let games = {
             let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
             PROVIDERS.map(|provider| settings.catalogue.iter()
@@ -35,5 +35,6 @@ impl AssettoWatches {
                 }
             }
         }
+        self.0.iter().any(|watch| watch.pending)
     }
 }
