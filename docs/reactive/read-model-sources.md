@@ -40,6 +40,11 @@ view is closed, one committed-only read on each of three reopens, and bounded
 search requests. The native AI settings fixture covers committed edits and a
 quiet idle interval.
 
+The companion listener fixture runs on both transports. It occupies a
+loopback port, observes the waiting state, releases the port with Settings
+hidden, and checks that reopen shows Listening. A committed disable updates
+the pairing form while the hidden listener settings make no reads.
+
 The discovery fixture runs against native Cockpit with
 `OSG_GAME_DISCOVERY_NATIVE=1` or browser development with
 `OSG_GAME_DISCOVERY_BROWSER_URL`. Both wait for the exact committed
