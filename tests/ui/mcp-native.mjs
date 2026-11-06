@@ -73,7 +73,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
   let page = await nativePage();
   const credentials = [], clients = [], profiles = new Set(), evidence = { client: '@modelcontextprotocol/sdk 1.32.1', hardwareValidation: 'Software acceptance; no physical-device qualification' };
   const artifacts = resolve('.research/mcp-native', String(Date.now())); await mkdir(artifacts, { recursive: true });
-  let settings, writer, endpoint, initialCompanionState, initialCompanionCa;
+  let settings, writer, endpoint, initialCompanionState, initialCompanionCa, fixtureGameId;
   try {
     if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS){
       initialCompanionState=await until(async()=>{
@@ -318,6 +318,16 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       await writeFile('.research/reactive/mcp-native-observation.json', JSON.stringify(evidence.modernObservation, null, 2) + '\n');
       return;
     }
+    const registeredGames = (await page.native({ command: 'game_get_state' })).games.catalogue;
+    if (!registeredGames.some(game => game.id === 'x-plane-11')) {
+      const installPath = resolve(artifacts, 'X-Plane 11');
+      const executable = resolve(installPath, 'X-Plane.exe');
+      await mkdir(resolve(installPath, 'Resources/plugins'), { recursive: true });
+      await writeFile(resolve(installPath, 'Resources/plugins/DataRefs.txt'), '2 1110 Wed Jun 24 15:46:43 2026\n\nsim/flightmodel/position/indicated_airspeed float y knots Fixture speed\n');
+      await promisify(execFile)('rustc', ['scripts/fixtures/custom-game-native.rs', '-o', executable], { windowsHide: true });
+      fixtureGameId = (await ok(writer, 'game_add', mutation({ name: 'X-Plane 11 fixture', installPath, executable }))).gameId;
+      assert.equal(fixtureGameId, 'x-plane-11');
+    }
     const mismatch = await modern('tools/list', {}, { 'Mcp-Method': 'resources/list' }); assert.equal(mismatch.status, 400); assert.equal((await mismatch.json()).error.code, -32020);
     const unsupported = await modern('tools/list', {}, { 'MCP-Protocol-Version': '2099-01-01' }); assert.equal(unsupported.status, 400); assert.ok((await unsupported.json()).error);
     const malformed = await fetch(endpoint, { method: 'POST', signal: AbortSignal.timeout(10000), headers: { Authorization: `Bearer ${read.token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-11-25' }, body: '{' }); assert.ok([400, 415].includes(malformed.status)); await malformed.text();
@@ -473,6 +483,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
   } finally {
     for (const client of clients) await client.close().catch(() => {});
     for (const id of profiles) { try { await page.native({ command: 'profile_stop' }); const state = (await page.native({ command: 'profile_get', id })).profiles; await page.native({ command: 'profile_delete', id, expectedRevision: state.document.revision }); } catch {} }
+    if (fixtureGameId) await page.native({ command: 'game_remove', gameId: fixtureGameId });
     for (const id of credentials) await page.invokeMcp('mcp_credential_revoke', { id }).catch(() => {});
     if (settings) await page.invokeMcp('mcp_settings_update', { settings: { enabled: settings.enabled, port: settings.port } }).catch(() => {});
     page.close();
