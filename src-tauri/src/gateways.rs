@@ -230,6 +230,7 @@ pub struct GatewayManager {
     debug_inputs_observation: Option<osg_streams::Publisher>,
     pub(crate) can_input_observations: crate::stm32_panel_observations::Bridges,
     profile_read_models: crate::profile_read_models::Runtime,
+    desktop_settings_observation: Option<crate::profile_desktop_settings::observation::Observation>,
     game_read_models: crate::game_read_models::Runtime,
     profile_samples: crate::profile_samples::Runtime,
     activity: crate::activity::Runtime,
@@ -526,6 +527,8 @@ impl GatewayManager {
         let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone())
             .with_inventory_change(Arc::new(move || profile_inventory.changed()));
         let game_read_models=crate::game_read_models::Runtime::new(observations.clone(),games.clone());
+        let desktop_settings_observation = crate::profile_desktop_settings::observation::Observation::register(&observations, native)
+            .map_err(|error| eprintln!("Cannot start desktop settings observation: {error}")).ok();
         observations.watch_reader_lifecycle(games.read_model_signal().wake.clone());
         let sample_session = Arc::downgrade(&profile_session);
         let sample_capture = Arc::new(move |plans: &[Arc<crate::profile_session::inspection::samples::NodePlan>]| {
@@ -545,6 +548,7 @@ impl GatewayManager {
             debug_inputs_observation,
             can_input_observations: Default::default(),
             profile_read_models,
+            desktop_settings_observation,
             game_read_models,
             profile_samples,
             activity,

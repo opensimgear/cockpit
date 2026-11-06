@@ -67,6 +67,9 @@ impl GatewayManager {
                     let enabled = request["enabled"].as_bool().ok_or("Desktop enablement must be a boolean.")?;
                     let scope = serde_json::from_value(request["scope"].clone()).map_err(|e|format!("Invalid desktop scope: {e}"))?;
                     preferences.configure(enabled, scope)?;
+                    if let Some(observation) = &self.desktop_settings_observation {
+                        observation.committed(&self.observations, &preferences);
+                    }
                 } else {
                     let identity = desktop::recent_application()?;
                     let epoch = identity.created.parse::<u64>().map_err(|_|"Invalid observed process creation time.")?;
@@ -93,7 +96,7 @@ impl GatewayManager {
             json!({"reference":reference,"name":name})
         }).collect::<Vec<_>>();
         Ok(json!({"enabled":preferences.value.enabled,"qualified":self.profile_native && settings::qualified(),
-            "state":state,"reason":if settings::qualified() { "Keyboard and mouse output is available. Enable it in Settings and choose its application scope in the profile keyboard block." } else { settings::QUALIFICATION },
+            "state":state,"reason":settings::reason(),
             "scope":preferences.value.scope,"application":preferences.value.application,"error":preferences.error,"runtime":runtime,
             "applications":applications,"capturedApplicationReference":captured_application,
             "recentApplication":desktop::recent_application().ok()}))

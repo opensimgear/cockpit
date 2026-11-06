@@ -6,13 +6,15 @@
   import { gatewayRequest } from './gateway';
   import {guardUiSettings} from './ui-settings-guard';
   import { desktopStatus, type DesktopStatus } from './profile-desktop-runtime';
+  import type { WireFrame } from './streams/protocol';
   import type { VisibilityStatus } from './visibility';
   import type { NativeSystemInventory } from './system-inventory-providers';
-  import { SharedObservations } from './streams/shared';
+  import { SharedObservations, type ObservationState } from './streams/shared';
 
   const settingsRequest=guardUiSettings(gatewayRequest);
   let visibility = $state.raw<VisibilityStatus | null>(null);
-  let desktop = $state.raw<DesktopStatus | null>(null);
+  type DesktopSettings = { enabled: boolean; qualified: boolean; scope: DesktopStatus['scope']; reason: string; error: string | null };
+  let desktop = $state.raw<DesktopSettings | null>(null);
   let inventory = $state.raw<NativeSystemInventory | null>(null);
   let busy = $state(''), error = $state('');
   let disposed = false;
@@ -25,6 +27,36 @@
   const hidingSetupIssue = $derived(hidHideDriver?.installed === true && visibility?.selfAccess?.ready === false ? visibility.selfAccess.message : '');
   const hidingIssue = $derived(visibility?.settingsError || hidHideDriver?.error || hidingSetupIssue);
   const hidingEnabled = $derived(hidHideDriver?.installed === true && visibility?.enabled && visibility.qualified && !hidingIssue);
+
+  function desktopSettings(frame: WireFrame): DesktopSettings {
+    const value = frame.payload;
+    if (frame.topic !== 'settings.desktop' || frame.source !== 'desktop-settings' || !['snapshot', 'change'].includes(frame.kind)
+      || !value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Keyboard and mouse settings observation is malformed.');
+    }
+    const payload = value as Record<string, unknown>;
+    const scope = payload.scope as Record<string, unknown> | null;
+    if (Object.keys(payload).length !== 5 || typeof payload.enabled !== 'boolean'
+      || typeof payload.qualified !== 'boolean' || !scope || Array.isArray(scope)
+      || Object.keys(scope).length !== 1 || !['application', 'desktop-wide'].includes(String(scope.kind))
+      || typeof payload.reason !== 'string' || !(payload.error === null || typeof payload.error === 'string')) {
+      throw new Error('Keyboard and mouse settings observation is malformed.');
+    }
+    return { enabled: payload.enabled, qualified: payload.qualified, scope: payload.scope as DesktopSettings['scope'],
+      reason: payload.reason, error: payload.error as string | null };
+  }
+
+  function observeDesktopSettings(state: ObservationState) {
+    if (state.status !== 'ready' || !state.frame) {
+      desktop = null;
+      return;
+    }
+    try { desktop = desktopSettings(state.frame); }
+    catch (reason) {
+      desktop = null;
+      if (!disposed) error = reason instanceof Error ? reason.message : String(reason);
+    }
+  }
 
   async function changeEnablement(event: Event, current: () => boolean, save: (enabled: boolean) => Promise<void>) {
     const input = event.currentTarget as HTMLInputElement;
@@ -46,10 +78,6 @@
         if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
         if (!disposed) visibility = result.controllers.visibility;
       }),
-      settingsRequest({ command: 'profile_desktop_status' }).then(result => {
-        const status = desktopStatus(result.desktop);
-        if (!disposed) desktop = status;
-      }),
     ]);
     if (!disposed) {
       error = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => String(result.reason instanceof Error ? result.reason.message : result.reason)).join(' ');
@@ -60,8 +88,15 @@
     if (busy || !desktop) return;
     busy = 'desktop'; error = '';
     try {
-      const result = desktopStatus((await settingsRequest({ command: 'profile_desktop_configure', enabled, scope: desktop.scope })).desktop);
-      if (!disposed) desktop = result;
+      const current = desktop;
+      const latest = desktopStatus((await settingsRequest({ command: 'profile_desktop_status' })).desktop);
+      if (!latest.qualified || latest.error) throw new Error(latest.error ?? latest.reason ?? 'Keyboard and mouse output is unavailable.');
+      if (!desktop || desktop.enabled !== latest.enabled || desktop.scope.kind !== latest.scope.kind
+        || current.enabled !== desktop.enabled || current.scope.kind !== desktop.scope.kind
+        || current.qualified !== desktop.qualified || current.error !== desktop.error) {
+        throw new Error('Keyboard and mouse settings changed. Wait for the current settings observation before changing them.');
+      }
+      await settingsRequest({ command: 'profile_desktop_configure', enabled, scope: latest.scope });
     } catch (reason) { if (!disposed) error = reason instanceof Error ? reason.message : String(reason); }
     finally { if (!disposed) busy = ''; }
   }
@@ -73,6 +108,7 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
+    observations.subscribe('settings.desktop', observeDesktopSettings);
     observations.subscribe('system.inventory', state => {
       if (state.status === 'ready') void loadInventory().catch(reason => { if (!disposed) error = String(reason); });
     });

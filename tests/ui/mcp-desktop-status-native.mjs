@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { nativePage } from '../../scripts/reactive/cdp.mjs';
+import { nativePage, until } from '../../scripts/reactive/cdp.mjs';
 
-test('read-only MCP desktop status matches the native portal snapshot', {
+test('desktop status matches MCP and committed settings update the portal', {
   skip: process.env.OSG_MCP_DESKTOP_STATUS_NATIVE !== '1', timeout: 60000,
 }, async () => {
   const page = await nativePage();
   const client = new Client({name:'Desktop status parity fixture',version:'1'}, {capabilities:{}});
+  const writer = new Client({name:'Desktop settings parity fixture',version:'1'}, {capabilities:{}});
   const invoke = (command, args = {}) => page.evaluate(
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
   );
@@ -21,7 +23,18 @@ test('read-only MCP desktop status matches the native portal snapshot', {
   const configure = async (enabled, port) => invoke('mcp_settings_update', {settings:{
     enabled,port,expectedSettingsRevision:(await settings()).settingsRevision,
   }});
-  let initial, credential, enabledByFixture = false;
+  const call = async (client, name, args) => {
+    const reply = await client.callTool({name,arguments:args});
+    assert.ok(!reply.isError, JSON.stringify(reply.structuredContent));
+    assert.equal(reply.structuredContent.ok,true);
+    return reply.structuredContent.data;
+  };
+  const desktopSettings = () => call(writer,'local_settings_get',{scope:'desktop'});
+  const save = (current, enabled) => call(writer,'local_settings_save',{
+    scope:'desktop',expectedSettingsRevision:current.revision,expectedActiveOwner:null,
+    settings:{scope:current.settings.scope,enabled},operationId:randomUUID(),
+  });
+  let initial, credential, writeCredential, restore, enabledByFixture = false;
   try {
     initial = await settings();
     credential = await invoke('mcp_credential_create', {
@@ -51,13 +64,44 @@ test('read-only MCP desktop status matches the native portal snapshot', {
     }
     if (desktop.runtime === null) assert.equal(result.data.runtime,null);
     assert.deepEqual((await native('profile_status')).profiles.profileSession.owner,before.profiles.profileSession.owner);
+    assert.equal(before.profiles.profileSession.owner,null,'The settings mutation requires an idle dev profile');
+    assert.ok((await client.listResources()).resources.some(resource => resource.uri==='cockpit://observations/settings.desktop'));
+    writeCredential = await invoke('mcp_credential_create', {
+      name:'Temporary desktop settings writer',scope:'write',expectedSettingsRevision:(await settings()).settingsRevision,
+    });
+    await writer.connect(new StreamableHTTPClientTransport(new URL(status.endpoint), {
+      requestInit:{headers:{Authorization:`Bearer ${writeCredential.token}`}},
+    }));
+    const baseline = await desktopSettings();
+    assert.equal(baseline.settings.enabled,desktop.enabled);
+    await page.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Cockpit')?.click()`);
+    await until(() => page.evaluate(`(()=>{const button=[...document.querySelectorAll('.sidebar-link')].find(item=>item.textContent.trim()==='Settings');if(!button)return false;button.click();return true;})()`));
+    await until(() => page.evaluate(`(()=>{const button=document.getElementById('settings-tab-outputs');if(!button)return false;button.click();return true;})()`));
+    const desktopToggle = 'document.querySelector(\'input[aria-describedby="desktop-output-help"]\')';
+    const toggleState = () => page.evaluate(`${desktopToggle} && {enabled:${desktopToggle}.checked,disabled:${desktopToggle}.disabled}`);
+    await until(toggleState,state=>state?.enabled===desktop.enabled&&!state.disabled);
+    restore = desktop.enabled;
+    await save(baseline,!restore);
+    await until(toggleState,state=>state?.enabled===!restore&&!state.disabled);
+    await page.evaluate(`${desktopToggle}.click()`);
+    await until(toggleState,state=>state?.enabled===restore&&!state.disabled);
+    assert.equal((await desktopSettings()).settings.enabled,restore);
+    restore = undefined;
   } finally {
     try {
-      try { await client.close(); }
+      try {
+        if (restore !== undefined) {
+          const current = await desktopSettings();
+          if (current.settings.enabled !== restore) await save(current,restore);
+        }
+      }
       finally {
-        if (credential) await invoke('mcp_credential_revoke', {
-          id:credential.credential.id,expectedSettingsRevision:(await settings()).settingsRevision,
-        });
+        await Promise.allSettled([client.close(),writer.close()]);
+        for (const item of [credential,writeCredential]) {
+          if (item) await invoke('mcp_credential_revoke', {
+            id:item.credential.id,expectedSettingsRevision:(await settings()).settingsRevision,
+          });
+        }
       }
     } finally {
       try { if (enabledByFixture) await configure(initial.enabled, initial.port); }

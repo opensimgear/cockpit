@@ -5,12 +5,17 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+pub(crate) mod observation;
 
 pub(crate) fn qualified() -> bool {
     osg_desktop_output::qualification_gate()
 }
 pub(crate) const QUALIFICATION: &str =
     "Native keyboard and mouse output is available on Windows only.";
+pub(crate) fn reason() -> &'static str {
+    if qualified() { "Keyboard and mouse output is available. Enable it in Settings and choose its application scope in the profile keyboard block." }
+    else { QUALIFICATION }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]

@@ -19,7 +19,7 @@ const initial = () => ({
 });
 async function harness(send, { nativeApp = true, overrides = {} } = {}) {
   const file = new URL('./OutputSettings.svelte', import.meta.url);
-  const source = (await readFile(file, 'utf8')).replace('</script>', 'desktop=seed.desktop;visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableDesktop,manageDriver,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
+  const source = (await readFile(file, 'utf8')).replace('</script>', 'visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableDesktop,manageDriver,observeDesktopSettings,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' });
   const exports = {}, requests = [], invocations = [], setups = [], seed = { ...initial(), ...overrides };
   let handlers,settingsVersion=1;
@@ -29,7 +29,8 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
       if(request.command==='profile_local_settings_save'){seed.desktop.enabled=request.settings.enabled;seed.desktop.scope=request.settings.scope;settingsVersion++;}
       return{localSettings:{scope:'desktop',gameId:null,revision:`sha256:${String(settingsVersion).padStart(64,'0')}`,settings:{enabled:seed.desktop.enabled,scope:seed.desktop.scope},profileSession:{owner:null}}};
     }
-    return{systemInventory:seed.inventory,desktop:{...seed.desktop},controllers:{visibility:{...seed.visibility,...(request.command==='controller_visibility_enable'?{enabled:request.enabled}:{})}}};
+    if(request.command==='profile_desktop_status')return{desktop:{...seed.desktop}};
+    return{systemInventory:seed.inventory,controllers:{visibility:{...seed.visibility,...(request.command==='controller_visibility_enable'?{enabled:request.enabled}:{})}}};
   };
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
     exports, seed, TextEncoder, capture(value) { handlers = value; },
@@ -46,7 +47,8 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
     },
   });
   const html = render(exports.default).body;
-  return { html, handlers, requests, invocations, setups };
+  const observe = (payload = seed.desktop, { source = 'desktop-settings', topic = 'settings.desktop', kind = 'snapshot' } = {}) => handlers.observeDesktopSettings({ status:'ready', frame:{ source, topic, kind, payload:{enabled:payload.enabled,qualified:payload.qualified,scope:payload.scope,reason:payload.reason,error:payload.error??null} } });
+  return { html, handlers, requests, invocations, setups, observe, seed };
 }
 
 test('Settings owns driver tools and machine enablement while application scope belongs to profile blocks', async () => {
@@ -59,15 +61,21 @@ test('Settings owns driver tools and machine enablement while application scope 
   assert.ok(h.html.includes('Choose the application scope in each profile'));
   assert.ok(!h.html.includes('<select'));
   assert.deepEqual(h.requests, []);
+  assert.equal(h.handlers.state.desktop, null, 'desktop settings wait for their observation baseline');
+  h.observe();
+  assert.equal(h.handlers.state.desktop.enabled, false);
   await h.handlers.refresh();
-  assert.deepEqual(h.requests.map(request=>request.command),['system_inventory','controller_visibility_status','profile_local_settings_get','profile_desktop_status']);h.requests.length=0;
+  assert.deepEqual(h.requests.map(request=>request.command),['system_inventory','controller_visibility_status']);h.requests.length=0;
   await h.handlers.refresh(true);
   assert.deepEqual(h.requests[0], { command:'system_inventory', refresh:true });h.requests.length=0;
   await h.handlers.enableDesktop(true);
   assert.deepEqual(h.requests, [
+    { command:'profile_local_settings_get',scope:'desktop' },
+    { command:'profile_desktop_status' },
     { command: 'profile_local_settings_save',scope:'desktop',expectedSettingsRevision:`sha256:${'1'.padStart(64,'0')}`,expectedActiveOwner:null,settings:{enabled:true,scope:{kind:'application'}} },
     {command:'profile_desktop_status'},
   ]);
+  assert.equal(h.handlers.state.desktop.enabled, false, 'only the committed observation updates displayed state');
   await h.handlers.manageDriver('open_vjoy');
   await h.handlers.manageDriver('open_hidhide');
   assert.deepEqual(h.invocations, ['open_vjoy', 'open_hidhide']);
@@ -75,13 +83,37 @@ test('Settings owns driver tools and machine enablement while application scope 
 
 test('failed setup refresh and enablement report native errors without claiming a saved change', async () => {
   const h = await harness(async () => { throw new Error('Stop the running profile before changing setup.'); });
+  h.observe();
   await h.handlers.enableDesktop(true);
   assert.equal(h.handlers.state.desktop.enabled, false);
-  assert.match(h.handlers.state.error, /Refresh current local settings/);
+  assert.match(h.handlers.state.error, /Stop the running profile/);
   await h.handlers.refresh();
   assert.match(h.handlers.state.error, /Stop the running profile/);
   assert.equal(h.handlers.state.busy, '');
-  assert.deepEqual(h.requests.map(request => request.command), ['system_inventory', 'controller_visibility_status', 'profile_local_settings_get']);
+  assert.deepEqual(h.requests.map(request => request.command), ['profile_local_settings_get','system_inventory','controller_visibility_status']);
+});
+
+test('desktop settings observation validates committed snapshots and clears the toggle on loss', async () => {
+  const h = await harness();
+  h.observe();
+  assert.equal(h.handlers.state.desktop.enabled, false);
+  h.observe({ ...initial().desktop, enabled:true, scope:{kind:'desktop-wide'} }, { kind:'change' });
+  assert.equal(h.handlers.state.desktop.enabled, true);
+  assert.equal(h.handlers.state.desktop.scope.kind, 'desktop-wide');
+  h.observe(initial().desktop, { source:'profiles' });
+  assert.equal(h.handlers.state.desktop, null, 'wrong source data is rejected');
+  h.handlers.observeDesktopSettings({status:'lost',error:'overflow'});
+  assert.equal(h.handlers.state.desktop, null, 'loss withdraws the last settings baseline');
+});
+
+test('desktop toggle refuses to configure when the committed settings differ from the shown baseline', async () => {
+  const h = await harness();
+  h.observe();
+  h.seed.desktop.enabled = true;
+  await h.handlers.enableDesktop(true);
+  assert.deepEqual(h.requests.map(request=>request.command), ['profile_local_settings_get','profile_desktop_status']);
+  assert.equal(h.handlers.state.desktop.enabled, false);
+  assert.match(h.handlers.state.error, /settings changed/i);
 });
 
 test('separate output cards retain unavailable reasons and disable unsupported switches', async () => {
@@ -91,7 +123,8 @@ test('separate output cards retain unavailable reasons and disable unsupported s
     inventory: { virtualDevices: [], diagnostics: ['vJoy driver is unavailable.'] },
   } });
   for (const label of ['Virtual controllers', 'Device hiding', 'Keyboard and mouse']) assert.ok(h.html.includes(`aria-label="${label}"`));
-  for (const reason of ['Desktop output is unsupported.', 'HidHide is not installed.', 'vJoy driver is unavailable.']) assert.ok(h.html.includes(reason));
+  for (const reason of ['HidHide is not installed.', 'vJoy driver is unavailable.']) assert.ok(h.html.includes(reason));
+  assert.equal(h.handlers.state.desktop, null, 'unsupported desktop reason is unavailable before a baseline');
   const switches = h.html.match(/<input[^>]*role="switch"[^>]*>/g);
   assert.equal(switches.length, 1);
   assert.ok(switches.every(input => /\bdisabled\b/.test(input)));
