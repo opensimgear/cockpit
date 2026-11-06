@@ -29,3 +29,14 @@ Physical focus changes and desktop target timing remain tracked in #199.
 - The Windows dev build and running MCP/portal check passed. Dev executable
   SHA-256 was
   `a25793426448bcb1c4bc83fb506998d1b262a9b58fb6d5268a083599d8462893`.
+
+## Subscription lifetime follow-up
+
+The running Cockpit opened four distinct readiness readers across repeated
+Runtime & recovery tab visits. Each exact reader was unsubscribed on tab or
+Debug exit. Leaving the runtime tab cleared the displayed readiness, and
+the trace observed zero automatic detailed desktop status requests.
+
+The routing UI harness now supplies the activation observation mock and
+rejects stream construction during server rendering. The combined routing
+and profile read-model suite passed all 73 tests on the isolated candidate.
