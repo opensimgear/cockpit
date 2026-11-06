@@ -300,11 +300,21 @@ fn batches_exact_targets_and_seals_receipts_before_any_mutation() {
     assert!(!serde_json::to_string(receipt)
         .unwrap()
         .contains(&decoded.secret));
+    let activation = Arc::new(osg_streams::NativeWake::default());
+    activation.bind_thread(thread::current()).unwrap();
+    actor.watch_activation(&activation);
+    let activation_revision = activation.observed();
     let revision = actor.status_revision();
     assert!(!actor.wait_for_status_change(revision, Duration::ZERO));
     actor.acquire().unwrap();
     wait(&actor, |s| s.active);
     assert!(actor.wait_for_status_change(revision, Duration::from_secs(1)));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while activation.observed() == activation_revision {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "Publication status did not wake activation");
+        activation.wait(activation_revision, remaining);
+    }
     assert_eq!(io.count("claim"), 1);
     assert_eq!(io.0.lock().unwrap().masks, vec![(3, 2)]);
     let verified = actor.verified(false).unwrap();
@@ -1416,6 +1426,35 @@ mod native_host {
         assert_eq!(f.io.count("claim"), 2);
         assert_eq!(f.io.count("release"), 2);
     }
+    #[test]
+    fn pending_publication_activation_wakes_on_stop_without_gateway_progress() {
+        let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        let mut fixture = Fixture::new();
+        fixture.peer_stop.store(true, Ordering::Release);
+        fixture.peer.take().unwrap().join().unwrap();
+        let candidate = fixture.candidate(Some(false));
+        let io = fixture.io.clone();
+        let epoch = fixture.epoch.clone();
+        let admission = fixture.games.read_model_signal();
+        let cancel = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while io.count("claim") == 0 {
+                assert!(Instant::now() < deadline, "The pending publication was never claimed");
+                thread::sleep(Duration::from_millis(1));
+            }
+            epoch.fetch_add(1, Ordering::AcqRel);
+            admission.wake_profile_admission();
+        });
+        let start = Instant::now();
+        let result = fixture.coordinator.apply(candidate);
+        cancel.join().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(start.elapsed() < Duration::from_secs(3));
+        assert_eq!(fixture.io.count("claim"), 1);
+        assert_eq!(fixture.io.count("release"), 1);
+        assert_ne!(fixture.coordinator.status().state, State::Running);
+    }
+
     #[test]
     fn actual_host_stop_epoch_fences_a_claim_queued_after_durable_intent() {
         let _serial = TESTS.lock().unwrap_or_else(|p| p.into_inner());

@@ -61,6 +61,9 @@ Game telemetry baselines and publication inventory recapture also wake on
 profile admission changes. Telemetry retains the existing provider retry
 deadline and the bounded fallback for a missing producer watch. Publication
 inventory recapture waits for a gateway commit or its existing deadline.
+CAN publication activation waits for actor status or admission changes, with
+its original deadline. Restoration still waits for actor status and retains
+its separate cleanup deadline.
 Active physical action sinks can park with their exact endpoint workers.
 Those workers own renewals and notify routing on failure. Repeated
 revocation of an already retired action does not wake routing again.

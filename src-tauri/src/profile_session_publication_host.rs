@@ -22,12 +22,13 @@ pub(super) fn active(state: &NativeRun) -> Result<(), String> {
 fn wait(
     actor: &mut Overrides,
     restoring: bool,
+    activation: Option<&osg_streams::NativeWake>,
     mut guard: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
+        let revision = activation.map_or_else(|| actor.status_revision(), |wake| wake.observed());
         guard()?;
-        let revision = actor.status_revision();
         let status = if restoring {
             actor.stop()?
         } else {
@@ -52,10 +53,13 @@ fn wait(
                     "Publication did not establish exact settled ownership and a fresh native input baseline before activation."
                 }.into());
             }
-            let budget = if restoring { remaining } else { remaining.min(Duration::from_millis(5)) };
-            if actor.wait_for_status_change(revision, budget) {
-                break;
-            }
+            let changed = if let Some(wake) = activation {
+                wake.wait(revision, remaining);
+                wake.observed() != revision
+            } else {
+                actor.wait_for_status_change(revision, remaining)
+            };
+            if changed { break; }
             guard()?;
         }
     }
@@ -64,6 +68,7 @@ impl NativeProfileHost {
     pub(super) fn acquire_publication(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
         let routing = self.native_wake.clone();
+        let admission = self.games.read_model_signal();
         if !self.run(owner)?.publication.is_empty() {
             self.report_progress(owner, "publishing-hardware-config", "Applying peripheral hardware configuration");
         }
@@ -76,8 +81,13 @@ impl NativeProfileHost {
         if let Some(wake) = routing.as_ref() {
             state.publication.watch_routing(wake);
         }
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current())
+            .map_err(|_| "Cannot bind the native publication activation waiter.")?;
+        admission.watch_profile_admission(&wake);
+        state.publication.watch_activation(&wake);
         state.publication.acquire()?;
-        let result = wait(&mut state.publication, false, || {
+        let result = wait(&mut state.publication, false, Some(&wake), || {
             Self::check_epoch(&epoch, expected)
         });
         if result.is_err() {
@@ -94,7 +104,7 @@ impl NativeProfileHost {
             self.report_progress(&run.owner, "cleanup-restoring-peripheral-config", "Restoring peripheral hardware configuration");
         }
         if let Some(state) = self.prepared.get_mut(&owner_key) {
-            return wait(&mut state.publication, true, || Ok(()));
+            return wait(&mut state.publication, true, None, || Ok(()));
         }
         if !self.recovery_publications.contains_key(&owner_key) {
             let actor = Overrides::from_run(run, self.panels.clone())?;
@@ -109,6 +119,7 @@ impl NativeProfileHost {
         wait(
             self.recovery_publications.get_mut(&owner_key).unwrap(),
             true,
+            None,
             || Ok(()),
         )?;
         self.recovery_publications.remove(&owner_key);

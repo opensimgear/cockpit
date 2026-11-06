@@ -426,6 +426,7 @@ pub(crate) struct Status {
 struct Shared {
     wake: Arc<osg_streams::NativeWake>,
     routing: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
+    activation: Mutex<std::sync::Weak<osg_streams::NativeWake>>,
     start: AtomicBool,
     withdrawn: AtomicBool,
     authority: Arc<AtomicBool>,
@@ -454,6 +455,7 @@ fn shared(recovery: bool) -> Arc<Shared> {
     Arc::new(Shared {
         wake: Arc::default(),
         routing: Mutex::default(),
+        activation: Mutex::default(),
         start: AtomicBool::new(false),
         withdrawn: AtomicBool::new(false),
         authority: Arc::new(AtomicBool::new(false)),
@@ -722,7 +724,7 @@ impl Overrides {
                 .active = false;
             slot.shared.wake.notify();
             if was_live {
-                slot.shared.notify_routing();
+                slot.shared.notify_status_waiters();
             }
         }
     }
@@ -919,7 +921,7 @@ fn publish_status(shared: &Shared, changes: &(Mutex<u64>, Condvar), mut status: 
         *revision = revision.wrapping_add(1);
         changes.1.notify_all();
         drop(revision);
-        shared.notify_routing();
+        shared.notify_status_waiters();
     }
 }
 #[path = "profile_publication_actor.rs"]

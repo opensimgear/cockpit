@@ -1,7 +1,10 @@
 use super::*;
 
 impl Shared {
-    pub(super) fn notify_routing(&self) {
+    pub(super) fn notify_status_waiters(&self) {
+        if let Some(wake) = self.activation.lock().unwrap_or_else(std::sync::PoisonError::into_inner).upgrade() {
+            wake.notify();
+        }
         if let Some(wake) = self.routing.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
@@ -9,6 +12,12 @@ impl Shared {
 }
 
 impl Overrides {
+    pub(crate) fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>) {
+        for slot in &self.slots {
+            *slot.shared.activation.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::downgrade(wake);
+        }
+    }
+
     pub(crate) fn watch_routing(&self, wake: &Arc<osg_streams::NativeWake>) {
         for slot in &self.slots {
             *slot.shared.routing.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
