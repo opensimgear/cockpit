@@ -1,5 +1,8 @@
 //! Synthetic admission-cost diagnostic, never a physical latency qualification.
-use osg_controller_input::registry::{Control, Definition, Identity, Registry};
+use osg_controller_input::{
+    registry::{Control, Definition, Identity, Registry},
+    stream::{Reason, REPORT_LIMIT},
+};
 use osg_streams::{Broker, Reader};
 use serde_json::{json, Value};
 use std::{
@@ -10,6 +13,15 @@ use std::{
 
 const AXIS: &str = "hid:0001:0030:1:0:128";
 const BUTTON: &str = "hid:0009:0001:1:0:0";
+const REVERSE_BUTTON: &str = "hid:0009:0002:1:0:1";
+
+fn encoder_buttons(report: u32) -> (u32, u32) {
+    match report % 4 {
+        1 => (1, 0),
+        3 => (0, 1),
+        _ => (0, 0),
+    }
+}
 
 fn preview_axis(payload: &Value) -> Option<i64> {
     payload["controls"]
@@ -36,7 +48,9 @@ fn paced(
         let deadline = start + period * index;
         thread::sleep(deadline.saturating_duration_since(Instant::now()));
         lateness.push(deadline.elapsed().as_micros());
-        data.insert(0, index % 2);
+        let (forward, reverse) = encoder_buttons(index);
+        data.insert(0, forward);
+        data.insert(1, reverse);
         data.insert(128, index);
         registry.report(id, 1, data).unwrap();
     }
@@ -49,7 +63,9 @@ fn paced(
             event.sequence,
             baseline.sources[0].baseline.sequence + u64::from(index)
         );
-        assert_eq!(event.values[BUTTON].native, i64::from(index % 2));
+        let (forward, reverse) = encoder_buttons(index);
+        assert_eq!(event.values[BUTTON].native, i64::from(forward));
+        assert_eq!(event.values[REVERSE_BUTTON].native, i64::from(reverse));
         assert_eq!(event.values[AXIS].native, i64::from(index));
     }
     registry
@@ -71,9 +87,41 @@ fn paced(
         }
     }
     assert_eq!(latest_axis, Some(i64::from(REPORTS)));
+    for report in 1..=REPORT_LIMIT as u32 + 1 {
+        let (forward, reverse) = encoder_buttons(report);
+        data.insert(0, forward);
+        data.insert(1, reverse);
+        registry.report(id, 1, data).unwrap();
+    }
+    let overrun = registry.stream_page(&page.session, page.cursor);
+    assert!(overrun.gap);
+    assert!(
+        overrun.events.is_empty(),
+        "Overrun must not return partial edges"
+    );
+    let held = registry.stream_snapshot(&[id.into()]).unwrap();
+    assert_eq!(held.sources[0].baseline.reason, Reason::Baseline);
+    assert_eq!(held.sources[0].baseline.values[BUTTON].native, 1);
+    registry.fault(id, "Synthetic report loss");
+    assert!(registry.stream_snapshot(&[id.into()]).is_err());
+    data.insert(0, 0);
+    registry.report(id, 1, data).unwrap();
+    let recovered = registry.stream_page(&held.session, held.cursor);
+    assert!(!recovered.gap);
+    assert_eq!(
+        recovered
+            .events
+            .iter()
+            .map(|event| &event.reason)
+            .collect::<Vec<_>>(),
+        vec![&Reason::Gap, &Reason::Baseline]
+    );
+    assert_eq!(recovered.events[1].values[BUTTON].native, 0);
+    assert_eq!(recovered.events[1].values[REVERSE_BUTTON].native, 0);
     lateness.sort_unstable();
     json!({"targetHz":hz,"observedHz":f64::from(REPORTS)/elapsed.as_secs_f64(),
-        "reports":REPORTS,"orderedButtonEdges":page.events.len(),"previewDeliveries":preview_deliveries,
+        "reports":REPORTS,"orderedEncoderButtonEdges":page.events.len(),"previewDeliveries":preview_deliveries,
+        "overrunReports":REPORT_LIMIT+1,"overrunReturnedEdges":overrun.events.len(),"recoveredNeutralBaseline":true,
         "previewLosses":preview_losses,"schedulingLatenessP95Us":lateness[lateness.len()*95/100]})
 }
 
