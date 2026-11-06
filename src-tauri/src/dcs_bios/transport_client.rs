@@ -63,7 +63,7 @@ impl Transport {
         argument: &str,
         port: u16,
     ) -> Result<(), String> {
-        self.send_control_checked(command, argument, port, None)
+        self.send_control_checked(command, argument, port, None, || Ok(()))
     }
     /// Submit only if every acquired report has reached the canonical decoder
     /// commit. This guard remains held through the nonblocking UDP dispatch.
@@ -73,8 +73,9 @@ impl Transport {
         argument: &str,
         port: u16,
         processed_head: u64,
+        admit: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
-        self.send_control_checked(command, argument, port, Some(processed_head))
+        self.send_control_checked(command, argument, port, Some(processed_head), admit)
     }
     fn send_control_checked(
         &self,
@@ -82,6 +83,7 @@ impl Transport {
         argument: &str,
         port: u16,
         processed_head: Option<u64>,
+        admit: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
         if port == 0
             || command.is_empty()
@@ -104,19 +106,21 @@ impl Transport {
             &format!("{command} {argument}\n"),
             SocketAddrV4::new(*self.command.ip(), port),
             processed_head,
+            admit,
         )
     }
     fn send_bytes(&self, command: &str) -> Result<(), String> {
         self.send_bytes_to(command, self.command)
     }
     fn send_bytes_to(&self, command: &str, destination: SocketAddrV4) -> Result<(), String> {
-        self.send_bytes_after(command, destination, None)
+        self.send_bytes_after(command, destination, None, || Ok(()))
     }
     fn send_bytes_after(
         &self,
         command: &str,
         destination: SocketAddrV4,
         processed_head: Option<u64>,
+        admit: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
         // Queue loss revokes authority even before this reader polls. Serialize
         // validation and the nonblocking dispatch with native loss commits.
@@ -135,6 +139,7 @@ impl Transport {
             // scheduler work (R4) owns any later decision to submit again.
             return Err("DCS decode has pending native data; command was not submitted.".into());
         }
+        admit()?;
         let written = self
             .sender
             .send_to(command.as_bytes(), destination)

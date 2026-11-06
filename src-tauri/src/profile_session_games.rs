@@ -149,6 +149,9 @@ pub(crate) struct GameSources {
     revision: u64,
     last_command_sequence: u64,
     revoked_commands: BTreeSet<(String, String)>,
+    command_worker: Option<command_worker::Worker>,
+    command_catalogue: Option<std::sync::Arc<std::sync::Mutex<crate::dcs_profile::DcsCatalogueGuard>>>,
+    command_fences: BTreeMap<(String, String), std::sync::Arc<std::sync::atomic::AtomicBool>>,
     witness: Option<(u64, u16)>,
     witnessed_progress: bool,
     reader_session: String,
@@ -232,6 +235,8 @@ mod native_admission;
 mod native_tables;
 #[path = "games/profiles/source_wakes.rs"]
 mod source_wakes;
+#[path = "games/profiles/command_worker.rs"]
+mod command_worker;
 include!("games/profiles/session_prepare.rs");
 include!("games/profiles/session_read.rs");
 include!("games/profiles/session_delivery.rs");

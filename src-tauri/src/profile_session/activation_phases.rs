@@ -206,7 +206,7 @@ impl NativeProfileHost {
                 action::start(state)?;
                 state.started = started;
                 let _physical_diagnostics = action::dispatch(state,&effects);
-                let diagnostics = Self::dispatch_game(&resources, &games, state, &panels_io, effects)?;
+                let diagnostics = Self::dispatch_game(&resources, &games, state, &panels_io, effects, &admission_epoch)?;
                 if !diagnostics.is_empty() { return Err(diagnostics.join("; ")); }
                 if let Some(output) = state.output.as_mut() {
                     output.poll(&state.recording)?;

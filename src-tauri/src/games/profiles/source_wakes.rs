@@ -39,7 +39,8 @@ impl GameSources {
             self.notifications.clear();
             let wake = signal.as_ref().map(Arc::downgrade);
             self.validation.set_wake(wake.clone());
-            self.catalogue_validation.set_wake(wake);
+            self.catalogue_validation.set_wake(wake.clone());
+            if let Some(worker) = &self.command_worker { worker.set_wake(wake); }
             self.notifications.signal = signal;
         }
     }

@@ -108,6 +108,9 @@ impl GameSources {
                 ..Default::default()
             };
         }
+        if let Some(worker) = &mut self.command_worker {
+            if let Err(error) = worker.poll() { return self.lose(clock(), error); }
+        }
         let wake_error = self.refresh_source_wakes(games).err();
         if baseline {
             let began = Instant::now();
@@ -240,6 +243,9 @@ impl GameSources {
                 let snapshot = match receiver.snapshot() {
                     Ok(snapshot) => snapshot,
                     Err(_) if !authored_fixture => {
+                        self.command_worker = None;
+                        self.command_catalogue = None;
+                        self.command_fences.clear();
                         // Subscriber errors are sticky. Reopening subscribes to
                         // the healthy canonical publisher's current baseline, or
                         // replaces a terminal publisher. Retain its old owner
@@ -259,6 +265,9 @@ impl GameSources {
                         return Ok(Some(decoder.snapshot(now_us / 1000)));
                     }
                     Err(_) if baseline => {
+                        self.command_worker = None;
+                        self.command_catalogue = None;
+                        self.command_fences.clear();
                         // Recovery registers a new coherent source baseline;
                         // it cannot replay the lost reader's partial history.
                         decoder.reset_stream(now_us / 1000);

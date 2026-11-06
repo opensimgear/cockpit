@@ -84,6 +84,7 @@ impl GameSources {
             .as_ref()
             .map(|game| (game.proof.game_id.as_str(), self.reader_session.as_str()))
     }
+    #[cfg(test)]
     pub(crate) fn invoke(&mut self, games: &GamesRuntime, effect: &Effect) -> Result<(), String> {
         if self.command_revoked(effect) {
             return Err("Native simulator command publication authority was withdrawn; prepare a new reader to command again.".into());
@@ -101,11 +102,65 @@ impl GameSources {
         transport.send_control_for_aircraft(&command, &argument,
             self.game.as_ref().and_then(|game| game.proof.vehicle_id.as_deref()))
     }
+    pub(crate) fn queue_command(
+        &mut self,
+        games: &std::sync::Arc<GamesRuntime>,
+        resources: &std::sync::Arc<crate::profile_resources::Runtime>,
+        token: &osg_profiles::resources::ResourceToken,
+        effect: &Effect,
+        epoch: (std::sync::Arc<std::sync::atomic::AtomicU64>, u64),
+    ) -> Result<(), String> {
+        use std::sync::{Arc, atomic::Ordering};
+        let (command, argument) = self.command_payload(effect)?;
+        let Some(Reader::Dcs { transport: Some(transport), catalogue_guard, .. }) = &self.reader else {
+            return Err("The native simulator command transport is unavailable.".into());
+        };
+        let sender = transport.command_sender();
+        let catalogue = self.command_catalogue.get_or_insert_with(|| {
+            Arc::new(std::sync::Mutex::new(catalogue_guard.clone()))
+        }).clone();
+        let game = self.game.as_ref().ok_or("The native simulator command has no game proof.")?.clone();
+        let context = self.context.as_ref().ok_or("The native simulator command has no applied context.")?.clone();
+        let endpoint = (effect.endpoint.node_id.clone(), effect.endpoint.port_id.clone());
+        let revoked = self.command_fences.entry(endpoint).or_default().clone();
+        let games = Arc::clone(games);
+        let resources = Arc::clone(resources);
+        let token = token.clone();
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        if self.command_worker.is_none() {
+            self.command_worker = Some(command_worker::Worker::start(
+                self.notification_wake().as_ref().map(Arc::downgrade),
+            )?);
+        }
+        self.command_worker.as_mut().unwrap().submit(move |stopped| {
+            let retired = || stopped.load(Ordering::Acquire) || revoked.load(Ordering::Acquire)
+                || epoch.0.load(Ordering::Acquire) != epoch.1;
+            if retired() { return Ok(()); }
+            let check = || {
+                if retired() { return Err("The queued DCS command was revoked.".into()); }
+                if Instant::now() >= deadline { return Err("The queued DCS command expired before dispatch.".into()); }
+                Ok(())
+            };
+            let result = (|| {
+                check()?;
+                games.validate_admitted_game_context(&context, &game.proof)?;
+                catalogue.lock().unwrap_or_else(|error| error.into_inner()).validate(true)?;
+                resources.validate_delivery(&token)?;
+                sender.send(&command, &argument, game.proof.vehicle_id.as_deref(), check)
+            })();
+            if retired() { Ok(()) } else { result }
+        })
+    }
+
+    #[cfg(test)]
     fn command_request(&mut self, effect: &Effect) -> Result<(String, String), String> {
+        self.validate_catalogue(true)?;
+        self.command_payload(effect)
+    }
+    fn command_payload(&mut self, effect: &Effect) -> Result<(String, String), String> {
         if self.command_revoked(effect) {
             return Err("Native simulator command publication authority was withdrawn; prepare a new reader to command again.".into());
         }
-        self.validate_catalogue(true)?;
         let context = self
             .context
             .as_ref()
@@ -203,10 +258,14 @@ impl GameSources {
                 .any(|endpoint| endpoint.node_id == key.0 && endpoint.port_id == key.1)
             {
                 self.revoked_commands.insert(key.clone());
+                if let Some(fence) = self.command_fences.get(key) {
+                    fence.store(true, std::sync::atomic::Ordering::Release);
+                }
             }
         }
     }
     pub(crate) fn stop(&mut self) {
+        self.stop_commands();
         self.notifications.clear();
         self.validation.cancel();
         self.catalogue_validation.cancel();
@@ -221,5 +280,10 @@ impl GameSources {
         self.context = None;
         self.fresh = false;
         self.lost = true;
+    }
+    pub(crate) fn stop_commands(&mut self) {
+        self.command_worker = None;
+        self.command_catalogue = None;
+        self.command_fences.clear();
     }
 }

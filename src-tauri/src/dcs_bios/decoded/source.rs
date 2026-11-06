@@ -251,8 +251,26 @@ impl Client {
 
 pub(crate) struct Source {
     owner: Arc<Owner>,
-    client: Mutex<Client>,
+    client: Arc<Mutex<Client>>,
     command_port: u16,
+}
+pub(crate) struct CommandSender {
+    owner: Weak<Owner>,
+    client: Weak<Mutex<Client>>,
+    command_port: u16,
+}
+impl CommandSender {
+    pub(crate) fn send(
+        &self, command: &str, argument: &str, expected: Option<&str>,
+        admit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let source = Source {
+            owner: self.owner.upgrade().ok_or("The DCS command reader retired.")?,
+            client: self.client.upgrade().ok_or("The DCS command reader retired.")?,
+            command_port: self.command_port,
+        };
+        source.send_control_checked(command, argument, expected, admit)
+    }
 }
 impl Source {
     pub fn open(network: &Network, spec: Spec) -> Result<Self, String> {
@@ -283,11 +301,11 @@ impl Source {
         }
         Ok(Self {
             owner,
-            client: Mutex::new(Client {
+            client: Arc::new(Mutex::new(Client {
                 reader,
                 last: None,
                 error: None,
-            }),
+            })),
             command_port: network.command_port,
         })
     }
@@ -337,6 +355,16 @@ impl Source {
         argument: &str,
         expected: Option<&str>,
     ) -> Result<(), String> {
+        self.send_control_checked(command, argument, expected, || Ok(()))
+    }
+    pub(crate) fn command_sender(&self) -> CommandSender {
+        CommandSender { owner: Arc::downgrade(&self.owner), client: Arc::downgrade(&self.client),
+            command_port: self.command_port }
+    }
+    fn send_control_checked(
+        &self, command: &str, argument: &str, expected: Option<&str>,
+        admit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
         let current = self.owner.shared.lock();
         let client = self.client.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(error) = &current.terminal {
@@ -363,7 +391,7 @@ impl Source {
             .transport
             .upgrade()
             .ok_or("DCS decode transport closed.")?
-            .send_control_port_after(command, argument, self.command_port, current.processed_head)
+            .send_control_port_after(command, argument, self.command_port, current.processed_head, admit)
     }
 }
 

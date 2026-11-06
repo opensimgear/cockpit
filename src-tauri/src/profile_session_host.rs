@@ -554,11 +554,12 @@ impl NativeProfileHost {
         Ok(sample)
     }
     fn dispatch_game(
-        resources: &crate::profile_resources::Runtime,
-        games: &crate::games::GamesRuntime,
+        resources: &Arc<crate::profile_resources::Runtime>,
+        games: &Arc<crate::games::GamesRuntime>,
         state: &mut NativeRun,
         panels: &crate::gateways::ProfilePanelIo,
         effects: Vec<osg_mapping::engine::typed::Effect>,
+        epoch: &Arc<AtomicU64>,
     ) -> Result<Vec<String>, String> {
         let mut diagnostics = std::collections::BTreeSet::new();
         for effect in effects {
@@ -580,7 +581,7 @@ impl NativeProfileHost {
             if state.dcs_hid.blocked(&effect.endpoint) { continue; }
             let result = (|| {
                 let stale = sink.readiness != PlanReadiness::Ready || sink.token.as_ref()
-                    .is_none_or(|token| resources.validate_delivery(token).is_err());
+                    .is_none_or(|token| resources.validate_live_delivery(token).is_err());
                 if stale {
                     // A fresh reader baseline may replace only cached delivery
                     // tokens, never the immutable graph or its local assignment.
@@ -607,8 +608,7 @@ impl NativeProfileHost {
                     .ok_or("The simulator action is dormant or no longer ready.")?;
                 let token = sink.token.as_ref().filter(|token| token.access == osg_profiles::resources::Access::Invoke)
                     .ok_or("The simulator action has no current native invocation token.")?;
-                resources.validate_delivery(token)?;
-                state.game.invoke(games, &effect)
+                state.game.queue_command(games, resources, token, &effect, (epoch.clone(), state.admission_epoch))
             })();
             if let Err(error) = result {
                 let loss = state.game.fail(effect.at_us.0, error);
@@ -1064,6 +1064,7 @@ impl Host for NativeProfileHost {
             if let Some(epoch)=progress_epoch {Self::emit_progress(progress.as_ref(),epoch,step,message);}
         };
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
+            state.game.stop_commands();
             state.game_publication.cancel();
             state.debug_inputs.clear();
             state.inputs.take();
@@ -1251,6 +1252,7 @@ impl Host for NativeProfileHost {
         let games = self.games.clone();
         let companions = self.companions.clone();
         let panels_io = self.panels.clone();
+        let admission_epoch = self.admission_epoch.clone();
         let state = self.run(&run.owner)?;
         publication::active(state)?;
         visibility::active(&mut state.visibility)?;
@@ -1322,7 +1324,7 @@ impl Host for NativeProfileHost {
             }
         }
         degraded.extend(action::dispatch(state,&effects));
-        degraded.extend(Self::dispatch_game(&resources, &games, state, &panels_io, effects)?);
+        degraded.extend(Self::dispatch_game(&resources, &games, state, &panels_io, effects, &admission_epoch)?);
         if let Some(output) = state.output.as_mut() {
             output.poll(&state.recording)?;
         }

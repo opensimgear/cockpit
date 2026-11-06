@@ -1541,8 +1541,16 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
     else {
         panic!()
     };
-    transport.send_control(&command, &argument).unwrap();
     let mut data = [0; 128];
+    let queued = transport.command_sender();
+    assert_eq!(
+        queued.send(&command, &argument, None, || Err("Retired at send admission.".into())).unwrap_err(),
+        "Retired at send admission.",
+    );
+    commands.set_nonblocking(true).unwrap();
+    assert_eq!(commands.recv_from(&mut data).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    commands.set_nonblocking(false).unwrap();
+    queued.send(&command, &argument, None, || Ok(())).unwrap();
     let (count, _) = commands.recv_from(&mut data).unwrap();
     assert_eq!(&data[..count], b"UFC_MASTER_CAUTION 1\n");
     assert!(source.command_request(&request).is_err());
