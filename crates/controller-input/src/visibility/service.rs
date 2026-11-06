@@ -488,6 +488,8 @@ impl Drop for Service {
 }
 #[path = "game.rs"]
 mod game;
+#[path = "routing.rs"]
+mod routing;
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;

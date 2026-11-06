@@ -218,6 +218,7 @@ impl NativeProfileHost {
     pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
         self.resources.watch_routing_catalogue(&wake);
         self.companions.watch_routing(&wake);
+        self.controllers.watch_visibility_routing(&wake);
         self.native_wake = Some(wake);
         self
     }

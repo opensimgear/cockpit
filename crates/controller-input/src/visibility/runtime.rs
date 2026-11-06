@@ -114,6 +114,7 @@ pub struct Worker {
     thread: Option<JoinHandle<()>>,
     reads: Option<SyncSender<ReadRequest>>,
     pub(super) changed: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub(super) routing: std::sync::Weak<osg_streams::NativeWake>,
 }
 impl Default for Worker {
     fn default() -> Self {
@@ -124,6 +125,7 @@ impl Default for Worker {
             thread: None,
             reads: None,
             changed: None,
+            routing: Default::default(),
         }
     }
 }
@@ -216,15 +218,20 @@ impl Worker {
         let (sender, reads) = mpsc::sync_channel(1);
         let job = status.job_id.clone();
         let changed = self.changed.clone();
+        let routing = self.routing.clone();
+        let notify = move || {
+            if let Some(wake) = routing.upgrade() { wake.notify(); }
+            if let Some(changed) = &changed { changed(); }
+        };
         let spawned=std::thread::Builder::new().name("device-visibility".into()).spawn(move||{
             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||run(task,path,factory,observe,cancel,|id|{
                 if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.phase="active".into();status.message="Persistent visibility session active; restore before changing device assignments.".into();status.session_id=Some(id);}
                 completed.notify_all();
-                if let Some(changed) = &changed { changed(); }
+                notify();
             },reads,job))).unwrap_or_else(|_|Err("Visibility worker failed; inspect the durable recovery journal.".into()));
             if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.active=false;status.phase=if result.is_ok(){"restored"}else{"attention"}.into();status.message=result.err().unwrap_or("Owned visibility changes restored and verified.".into()).chars().take(512).collect();}
             completed.notify_all();
-            if let Some(changed) = &changed { changed(); }
+            notify();
         });
         match spawned {
             Ok(thread) => {

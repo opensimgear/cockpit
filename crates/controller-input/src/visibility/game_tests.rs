@@ -195,12 +195,20 @@ fn policy_change_after_preflight_and_external_change_during_run_are_preserved() 
     driver.lock().unwrap().hidden.clear();
     let prepared = s.game_request("preflight", &intent).unwrap();
     let request = json!({"owner":uuid::Uuid::new_v4().to_string(),"prepared":prepared});
+    let (changed, notifications) = std::sync::mpsc::channel();
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    s.watch_routing(&routing);
+    s.watch_changes(Arc::new(move || { let _ = changed.send(()); }));
     s.game_request("start", &request).unwrap();
     wait(&s, &request, &registry, &id, true);
+    notifications.recv_timeout(Duration::from_secs(3)).unwrap();
+    let active = routing.observed();
+    assert!(active > 0);
     driver.lock().unwrap().hidden.push(r"HID\EXTERNAL\2".into());
     let external = driver.lock().unwrap().clone();
-    s.game_request("stop", &request).unwrap();
-    wait(&s, &request, &registry, &id, false);
+    notifications.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(routing.observed() > active);
+    assert_eq!(s.game_request("poll", &request).unwrap()["phase"], "attention");
     assert!(s
         .game_request("stop", &request)
         .unwrap_err()
