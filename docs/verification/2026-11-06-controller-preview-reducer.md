@@ -49,3 +49,24 @@ The running Cockpit passed delayed preview receipt and output-free routing.
 All 17 controller observer tests and 130 inventory tests passed. Observer
 coverage was 98.68% lines, 96.74% branches and 97.37% functions, with zero
 Svelte diagnostics on the isolated candidate.
+
+## Native channel fetch baseline
+
+With the native Devices controller inspector open, run
+`node scripts/reactive/controller-preview-latency.mjs` with
+`OSG_CONTROLLER_TRACE_IPC=1` and the dev Cockpit CDP URL. The optional
+trace records WebView channel fetches separately from the capture clock.
+
+Two ten-second visible VKB Gladiator runs each matched 125 reports and
+captured 252 controller snapshot fetches across the inspector and diagnostic
+subscriber. The p95 response was about 29,739 bytes and p95 fetch duration
+was 1.31–1.36 ms. Four response bodies per run were unavailable from DevTools. The pinned
+Tauri channel takes the separate fetch path for JSON payloads of 8,192 bytes
+or more. The reported fetch duration covers the WebView request and response.
+The journal-to-DOM p95 was 13.7–13.8 ms in the same instrumented runs.
+
+This establishes a transport baseline for retaining control descriptors
+once and sending compact absolute samples on subsequent native deliveries.
+Any change needs to preserve a complete baseline for late readers,
+generation and loss boundaries, and latest-state recovery after backpressure.
+The trace does not measure motion-to-display or virtual-controller output.

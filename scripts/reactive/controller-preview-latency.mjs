@@ -1,9 +1,34 @@
 // Opt-in live measurement. Open the native Devices controller inspector first.
 // Measures journal commit -> JS/DOM/frame opportunities, not hardware or photon latency.
+// OSG_CONTROLLER_TRACE_IPC=1 also measures large WebView channel fetches.
 import {nativePage} from './cdp.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 const page=await nativePage();
+const traceIpc=process.env.OSG_CONTROLLER_TRACE_IPC==='1';
+const pending=new Map(),reads=new Set(),fetches=[];
+let unreadableFetches=0;
+const stopTrace=traceIpc?page.listen(({method,params})=>{
+  const id=params.requestId;
+  if(method==='Network.requestWillBeSent'&&/plugin(?::|%3a)__TAURI_CHANNEL__(?:\||%7c)fetch/i.test(params.request.url)){
+    pending.set(id,params.timestamp);
+  }else if(method==='Network.loadingFailed'){
+    pending.delete(id);
+  }else if(method==='Network.loadingFinished'&&pending.has(id)){
+    const started=pending.get(id);
+    pending.delete(id);
+    const task=page.call('Network.getResponseBody',{requestId:id}).then(({body})=>{
+      const {frame}=JSON.parse(body);
+      if(frame?.source!=='controller-input'||fetches.length>=5000)return;
+      fetches.push({kind:frame.kind,capturedUs:frame.capturedUs,
+        sequence:frame.payload?.source?.sequence,bytes:Buffer.byteLength(body),
+        fetchMs:(params.timestamp-started)*1000});
+    }).catch(()=>{unreadableFetches++;});
+    reads.add(task);
+    void task.finally(()=>reads.delete(task));
+  }
+}):()=>{};
 try{
+  if(traceIpc)await page.call('Network.enable');
   const result=await page.evaluate(`(async()=>{
     const {gatewayRequest}=await import('/src/lib/gateway.ts');
     const {observeControllerInputs}=await import('/src/lib/controller-observations.ts');
@@ -76,13 +101,26 @@ try{
       source:{name:selected.name,backend:selected.backend,controls:selected.controlCount},
       clockUncertaintyMs:best.rtt/2,clockRoundTripMs:best.rtt,
       journalToObserverMs:summary('received'),journalToDomMs:summary('dom'),
-      observerToDomMs:summary('dom','received'),
+      // Separate readers can receive the same report in either order.
+      diagnosticObserverToDomOffsetMs:summary('dom','received'),
       journalToFrameOpportunityMs:summary('frame'),journalToFollowingFrameMs:summary('nextFrame'),
       errors,clocks,samples:rows};
   })()`);
+  stopTrace();
+  await Promise.all(reads);
+  if(traceIpc){
+    const p95=key=>{
+      const values=fetches.map(packet=>packet[key]).sort((a,b)=>a-b);
+      return values.length?values[Math.floor((values.length-1)*.95)]:null;
+    };
+    result.channelFetch={count:fetches.length,p95Bytes:p95('bytes'),p95Ms:p95('fetchMs'),
+      unreadableFetches,kinds:[...new Set(fetches.map(packet=>packet.kind))]};
+    result.channelFetches=fetches;
+  }
   await mkdir('.research/reactive',{recursive:true});
-  await writeFile('.research/reactive/controller-preview-latency.json',JSON.stringify(result,null,2));
+  const artifact=traceIpc?'controller-preview-latency-ipc':'controller-preview-latency';
+  await writeFile(`.research/reactive/${artifact}.json`,JSON.stringify(result,null,2));
   if(result.errors.length)throw Error('Timing run invalid: '+result.errors.join('; '));
-  const {samples,clocks,...summary}=result;
+  const {samples,clocks,channelFetches,...summary}=result;
   console.log(JSON.stringify(summary,null,2));
-}finally{page.close();}
+}finally{stopTrace();page.close();}
