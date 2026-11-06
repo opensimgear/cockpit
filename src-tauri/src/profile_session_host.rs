@@ -1229,7 +1229,8 @@ impl Host for NativeProfileHost {
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
         [routing, state.game.validation_deadline(), state.game.assetto_capture_deadline(),
-            state.scripts.next_deadline(), state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
+            state.dcs_hid.withdrawal_deadline(), state.scripts.next_deadline(),
+            state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|
             host_scheduling::output_deadline(output.cursor(), state.recording.cursor(), output.renewal_deadline()))]
             .into_iter().flatten().min()
     }

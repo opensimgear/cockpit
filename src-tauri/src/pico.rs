@@ -104,6 +104,18 @@ impl PicoService {
             None => empty_state(),
         }
     }
+    pub(crate) fn try_cached_state(&self) -> Option<Value> {
+        let selected = match self.selected.try_lock() {
+            Ok(selected) => selected,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        match selected.as_ref() {
+            Some(Selected::Debug(service)) => service.try_cached_state(),
+            Some(Selected::Legacy(service)) => service.try_cached_state(),
+            None => Some(empty_state()),
+        }
+    }
 
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory))
@@ -474,6 +486,15 @@ impl LegacyPicoService {
         claims.sort();
         state["claimedModules"] = json!(claims);
         json!({"ok":false,"error":error,"state":state})
+    }
+
+    fn try_cached_state(&self) -> Option<Value> {
+        let snapshot = match self.snapshot.try_lock() {
+            Ok(snapshot) => snapshot,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        Some(snapshot.state.clone())
     }
 
     pub fn shutdown(&self) {

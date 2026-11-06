@@ -125,6 +125,9 @@ impl Stm32Service {
     pub(crate) fn publication_fence(&self) -> Option<PublicationFence> {
         self.workspace.publication.current()
     }
+    pub(crate) fn try_publication_fence(&self) -> Option<Option<PublicationFence>> {
+        self.workspace.publication.try_current()
+    }
 
     pub(crate) fn watch_publication(&self, wake: &Arc<osg_streams::NativeWake>) {
         self.workspace.publication.watch(wake);

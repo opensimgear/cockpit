@@ -115,7 +115,7 @@ impl Fleet {
     fn metadata_cached(&self,key:&str) -> Result<Cached,String> {
         let state = self.state.lock().unwrap_or_else(|p|p.into_inner());
         let slot = state.slots.get(key).ok_or("Unknown USB metadata endpoint.")?;
-        let current = snapshot_projection(key,slot,state.diagnostic.as_deref(),true).snapshot;
+        let current = snapshot_projection(key,slot,state.diagnostic.as_deref(),true,None).snapshot;
         let at = current.observed_at_ms.unwrap_or(0).saturating_mul(1000);
         let payload = json!({"key":key,"connected":current.connected,"port":current.port,
             "identity":current.identity,"route":current.route,"config":current.config,

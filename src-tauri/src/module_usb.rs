@@ -1134,6 +1134,16 @@ impl ModuleUsbService {
             route:cached.route.clone(),config:cached.config.clone(),observed_at_ms:cached.observed_at_ms,
             error:cached.error.clone(),..Default::default()}
     }
+    pub(crate) fn try_metadata_snapshot(&self) -> Option<UsbSnapshot> {
+        let cached = match self.latest.try_lock() {
+            Ok(cached) => cached,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        Some(UsbSnapshot {connected:cached.connected,port:cached.port.clone(),identity:cached.identity.clone(),
+            route:cached.route.clone(),config:cached.config.clone(),observed_at_ms:cached.observed_at_ms,
+            error:cached.error.clone(),..Default::default()})
+    }
     pub fn snapshot(&self) -> UsbSnapshot {
         let mut snapshot=self.latest
             .lock()

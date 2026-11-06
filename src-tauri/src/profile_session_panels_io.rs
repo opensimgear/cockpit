@@ -96,10 +96,38 @@ impl ProfilePanelIo {
         let adapter = self.sessions.lock().unwrap_or_else(|p| p.into_inner()).get(gateway).cloned()?;
         adapter.publication_fence()
     }
+    /// Outer `None` means busy; inner `None` means the proof is absent or closed.
+    pub(crate) fn try_publication_fence(&self, gateway: &str) -> Option<Option<crate::stm32::PublicationFence>> {
+        if self.closed.load(Ordering::Acquire) { return Some(None); }
+        let sessions = match self.sessions.try_lock() {
+            Ok(sessions) => sessions,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        let Some(adapter) = sessions.get(gateway).cloned() else { return Some(None); };
+        drop(sessions);
+        Some(adapter.try_publication_fence()?)
+    }
     /// Read-only current native publisher inventory; no serial request or scan.
     pub(crate) fn publication_snapshots(&self) -> Result<Vec<(String, Value)>, String> {
         if self.closed.load(Ordering::Acquire) { return Err("Cockpit gateway manager has closed.".into()); }
         Ok(self.states())
+    }
+    pub(crate) fn try_publication_snapshots(&self) -> Result<Option<Vec<(String, Value)>>, String> {
+        if self.closed.load(Ordering::Acquire) { return Err("Cockpit gateway manager has closed.".into()); }
+        let sessions = match self.sessions.try_lock() {
+            Ok(sessions) => sessions,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+        };
+        let adapters = sessions.iter().map(|(id, adapter)| (id.clone(), adapter.clone())).collect::<Vec<_>>();
+        drop(sessions);
+        let mut snapshots = Vec::with_capacity(adapters.len());
+        for (id, adapter) in adapters {
+            let Some(state) = adapter.try_cached_state() else { return Ok(None); };
+            snapshots.push((id, state));
+        }
+        Ok(Some(snapshots))
     }
     /// Sealed native owner operations share the configuration writer gate.
     /// There is deliberately no JSON/IPC command that accepts their owner.
@@ -111,6 +139,10 @@ impl ProfilePanelIo {
     }
     pub(crate) fn usb_snapshots(&self) -> Vec<crate::module_usb_fleet::SlotSnapshot> {
         self.usb.snapshots()
+    }
+    /// Nonblocking metadata projection for current USB route and identity guards.
+    pub(crate) fn try_usb_snapshots(&self) -> Option<Vec<crate::module_usb_fleet::SlotSnapshot>> {
+        self.usb.try_snapshots()
     }
     /// No raw worker ownership token or request is logged or returned here.
     pub(crate) fn usb(&self, key: &str, operation: UsbRequest) -> Result<UsbSnapshot, String> {
@@ -275,6 +307,11 @@ impl ProfilePanelIo {
 }
 #[cfg(test)]
 impl ProfilePanelIo {
+    pub(crate) fn with_sessions_held_for_test(&self, run: impl FnOnce()) {
+        let _held = self.sessions.lock().unwrap();
+        run();
+    }
+
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::new(Arc::default(), Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(||Ok(vec![])),false)),
@@ -304,7 +341,9 @@ impl ProfilePanelIo {
             fn panel_capture(&self,module:&str)->Result<Arc<crate::stm32_panel_capture::Capture>,String>{self.panels.capture(module)}
             fn request(&self,request:Value)->Value{(self.ordinary)(request)}
             fn cached_state(&self)->Value{(self.cached)()}
+            fn try_cached_state(&self)->Option<Value>{Some((self.cached)())}
             fn publication_fence(&self) -> Option<crate::stm32::PublicationFence> { (self.fence)() }
+            fn try_publication_fence(&self) -> Option<Option<crate::stm32::PublicationFence>> { Some((self.fence)()) }
             fn watch_publication(&self, wake: &Arc<osg_streams::NativeWake>) { (self.watch)(wake); }
             fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{(self.request)(request)}
             fn shutdown(&self){}

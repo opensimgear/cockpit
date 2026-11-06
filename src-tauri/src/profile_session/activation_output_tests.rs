@@ -231,7 +231,7 @@ fn cleanup_storage_still_writes_after_output_stop_and_epoch_cancellation() {
 }
 
 #[test]
-fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
+fn stalled_simulator_command_and_panel_cache_do_not_hold_host_output_or_stop() {
     use osg_mapping::program::{Endpoint as MappingEndpoint, Program, Sink, SinkKind, SourcePort};
     use osg_mapping::profile::OutputControl;
     use osg_profiles::{compiler_models::SourcePlan, Endpoint, Port, PortContract, Resource, ResourceKind};
@@ -252,6 +252,15 @@ fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
         Ok(())
     }).unwrap();
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let panels = host.panels.clone();
+    let (panel_held_tx, panel_held_rx) = mpsc::channel();
+    let (release_panel, panel_release_rx) = mpsc::channel();
+    let panel_holder = std::thread::spawn(move || panels.with_sessions_held_for_test(|| {
+        panel_held_tx.send(()).unwrap();
+        let _ = panel_release_rx.recv_timeout(Duration::from_secs(10));
+    }));
+    panel_held_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let before = renewal_count(&driver);
     host.with_activation_heartbeat(&owner, |_| {
@@ -317,6 +326,10 @@ fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
     state.panels.acquire(now).unwrap();
     state.panels.baseline(&plan, |_| Ok(())).unwrap().unwrap();
     state.panels.start().unwrap();
+    let (guarded, capture, _) = dcs_hid::tests::fixture();
+    state.dcs_hid = dcs_hid::Guard::capture(&guarded, &capture);
+    plan.branches.extend(guarded.branches);
+    plan.sinks.extend(guarded.sinks);
     state.delivery = Some(plan);
 
     let request = crate::profile_debug_controller::Request::parse(&json!({
@@ -325,7 +338,9 @@ fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
         "changes":[{"portId":"button-1","value":true}]
     })).unwrap();
     host.debug_controller(&run, &request).unwrap();
-    assert!(host.health(&run).unwrap().stop.is_none());
+    let health = host.health(&run).unwrap();
+    assert!(health.stop.is_none());
+    assert!(health.degraded.iter().any(|message| message.contains("waiting for current HID publication proof")));
     assert!(driver.lock().unwrap().messages.iter().any(|(_, message)|
         matches!(message, Message::Report { report, .. } if report.state.buttons[0])));
     assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
@@ -335,6 +350,9 @@ fn stalled_simulator_command_does_not_hold_host_output_or_stop() {
     assert_eq!(driver.lock().unwrap().slot.status, SlotStatus::Free);
     host.restore(&run, false).unwrap();
     assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(!panel_holder.is_finished(), "Stop waited for the locked panel cache");
+    release_panel.send(()).unwrap();
+    panel_holder.join().unwrap();
     release_tx.send(()).unwrap();
     assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
 }

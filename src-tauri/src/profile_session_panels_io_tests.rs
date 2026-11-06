@@ -21,6 +21,7 @@ impl Adapter for Fake {
     fn cached_state(&self) -> Value {
         json!({"connected":true,"modules":[{"id":MODULE,"online":true,"boot":10}]})
     }
+    fn try_cached_state(&self) -> Option<Value> { Some(self.cached_state()) }
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
         self.claims.lock().unwrap().clone()
     }
@@ -66,6 +67,17 @@ fn fixture() -> (Arc<ProfilePanelIo>, Arc<Fake>, String, UsbRouteToken) {
         route,
     )
 }
+#[test]
+fn cached_publication_snapshots_return_busy_instead_of_waiting_for_sessions_lock() {
+    let (io, _, _, _) = fixture();
+    let sessions = io.sessions.lock().unwrap();
+    assert!(io.try_publication_snapshots().unwrap().is_none());
+    assert!(io.try_publication_fence(GATEWAY).is_none());
+    drop(sessions);
+    let snapshots = io.try_publication_snapshots().unwrap().unwrap();
+    assert_eq!(snapshots[0].1["connected"], true);
+}
+
 fn request(command: &str) -> Value {
     json!({"command":command,"gatewayId":GATEWAY,"moduleId":MODULE,"clientId":"profile-test","boot":10})
 }

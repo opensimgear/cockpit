@@ -264,6 +264,12 @@ impl GameSources {
             }
         }
     }
+    pub(crate) fn cancel_pending_command(&mut self, endpoint: &osg_profiles::Endpoint) {
+        let key = (endpoint.node_id.clone(), endpoint.port_id.clone());
+        if let Some(fence) = self.command_fences.remove(&key) {
+            fence.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
     pub(crate) fn stop(&mut self) {
         self.stop_commands();
         self.notifications.clear();

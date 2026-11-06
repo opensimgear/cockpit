@@ -406,15 +406,19 @@ fn dcs_publication_withdrawal_revokes_only_exact_command_tokens_and_preserves_li
     };
     runtime.validate_delivery(&command).unwrap();
     assert!(runtime
-        .withdraw_profile_game_commands("dcs", "foreign-reader", &["command".into()])
+        .try_withdraw_profile_game_commands("dcs", "foreign-reader", &["command".into()])
         .is_err());
     assert!(runtime
-        .withdraw_profile_game_commands("dcs", "reader-one", &["unknown".into()])
+        .try_withdraw_profile_game_commands("dcs", "reader-one", &["unknown".into()])
         .is_err());
     runtime.validate_delivery(&command).unwrap();
-    runtime
-        .withdraw_profile_game_commands("dcs", "reader-one", &["command".into()])
-        .unwrap();
+    let ports = ["command".into()];
+    {
+        let _inventory_writer = runtime.state.lock().unwrap();
+        assert!(!runtime.try_withdraw_profile_game_commands("dcs", "reader-one", &ports).unwrap());
+    }
+    runtime.validate_delivery(&command).unwrap();
+    assert!(runtime.try_withdraw_profile_game_commands("dcs", "reader-one", &ports).unwrap());
     assert!(runtime.validate_delivery(&command).is_err());
     runtime.validate_delivery(&unrelated).unwrap();
     runtime.validate_delivery(&telemetry).unwrap();
@@ -458,7 +462,7 @@ fn dcs_publication_withdrawal_revokes_only_exact_command_tokens_and_preserves_li
         .unwrap();
     runtime.validate_delivery(&replacement).unwrap();
     assert!(runtime
-        .withdraw_profile_game_commands("dcs", "reader-one", &["command".into()])
+        .try_withdraw_profile_game_commands("dcs", "reader-one", &["command".into()])
         .is_err());
     runtime.validate_delivery(&replacement).unwrap();
     runtime.shutdown();

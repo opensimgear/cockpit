@@ -998,6 +998,9 @@ impl VerifiedPublication {
         Ok(())
     }
 }
+#[path = "profile_publication_active_proof.rs"]
+mod active_proof;
+
 impl Overrides {
     pub(crate) fn verified(&self, restored: bool) -> Result<VerifiedPublication, String> {
         let status = self.poll();

@@ -61,6 +61,7 @@ trait Adapter: Send + Sync {
     fn watch_resource_inventory(&self, _wake: &Arc<osg_streams::NativeWake>) {}
     fn watch_publication(&self, _wake: &Arc<osg_streams::NativeWake>) {}
     fn publication_fence(&self) -> Option<crate::stm32::PublicationFence> { None }
+    fn try_publication_fence(&self) -> Option<Option<crate::stm32::PublicationFence>> { Some(None) }
     fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){(Arc::new(self.cached_state()),BTreeMap::new())}
     fn set_workspace_owned(&self,_owned:bool) {}
     fn renew_workspace_client(&self,_client:&str)->Result<Vec<String>,String>{Err("Workspace lease renewal is unsupported.".into())}
@@ -68,6 +69,7 @@ trait Adapter: Send + Sync {
     fn output_activity(&self)->bool{false}
     fn request(&self, request: Value) -> Value;
     fn cached_state(&self) -> Value { empty_state() }
+    fn try_cached_state(&self) -> Option<Value> { None }
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { vec![] }
     fn shutdown(&self);
 }
@@ -79,6 +81,7 @@ impl Adapter for PicoService {
     fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }
+    fn try_cached_state(&self) -> Option<Value> { self.try_cached_state() }
     fn request(&self, request: Value) -> Value {
         self.request(request)
     }
@@ -92,6 +95,9 @@ impl Adapter for Stm32Service {
     }
     fn publication_fence(&self) -> Option<crate::stm32::PublicationFence> {
         Stm32Service::publication_fence(self)
+    }
+    fn try_publication_fence(&self) -> Option<Option<crate::stm32::PublicationFence>> {
+        Stm32Service::try_publication_fence(self)
     }
     fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
         self.watch_resource_inventory(wake);
@@ -107,6 +113,7 @@ impl Adapter for Stm32Service {
     fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }
+    fn try_cached_state(&self) -> Option<Value> { self.try_cached_state() }
     fn request(&self, request: Value) -> Value {
         self.request(request)
     }

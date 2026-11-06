@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 22 checked and 33
-open. The open criteria include 20 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 23 checked and 32
+open. The open criteria include 19 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -20,7 +20,7 @@ and #198 are In progress because implementation/qualification is underway.
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
-| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines; the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining adapter combinations, broader focus/child-loss qualification, first-dispatch/burst timing, the affected-owner cleanup matrix, and independent dispatch under stalled consumers remain. Sustained latency qualification is interrupted by WSL foreground takeover. |
+| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes adapter combinations, broader focus and child-loss qualification, first-dispatch and burst timing, and the affected-owner cleanup matrix. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts/server peers and native client reads use event I/O; pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines; unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
@@ -53,13 +53,17 @@ supplement the authored running-Cockpit fixtures. See
 [native capture admission](../verification/2026-11-03-native-port-admission.md)
 and the native overflow regression in commit `246237e2`.
 
-The independent stalled-consumer criterion stays open. The simulator command
-worker stall fixture in `1d3eceb8` verifies virtual lease renewal, mapping and
-Stop during an in-flight simulator job. The active HID publication guard still
-takes resource, gateway cache and USB fleet locks on the profile host before
-command enqueue. Its exact-reader withdrawal also takes the resource lock.
-Those waits need isolation with separate checks for transient contention and
-confirmed publication loss.
+The stalled-consumer criterion in #193 is checked. The active host fixture
+holds the gateway sessions lock and stalls the simulator command worker
+while a guarded DCS branch is active. Virtual lease renewal, a mapped button
+report, Stop, slot release and restoration complete while both consumers
+are still blocked. Busy publication snapshots reject affected commands and
+cancel their queued work. Confirmed loss revokes affected command authority
+immediately and retries the exact reader's inventory update if the registry
+is busy. Existing native queue saturation tests verify explicit failure and
+cancellation. The rebuilt Cockpit passes MCP and Windows vJoy burst checks
+with a stalled preview. Live simulator effects and physical latency remain
+in #199.
 
 ## User-operated qualification stays in #199
 

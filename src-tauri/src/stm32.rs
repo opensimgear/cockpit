@@ -2356,6 +2356,14 @@ impl Stm32Service {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         workspace::native_view(state.0.clone(), state.1.as_ref())
     }
+    pub(crate) fn try_cached_state(&self) -> Option<Value> {
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        Some(workspace::native_view(state.0.clone(), state.1.as_ref()))
+    }
 
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())

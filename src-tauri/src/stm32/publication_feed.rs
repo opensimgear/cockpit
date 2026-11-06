@@ -77,6 +77,14 @@ impl PublicationFeed {
     pub(crate) fn current(&self) -> Option<PublicationFence> {
         self.0.lock().unwrap_or_else(|p| p.into_inner()).current.clone()
     }
+    pub(crate) fn try_current(&self) -> Option<Option<PublicationFence>> {
+        let state = match self.0.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        Some(state.current.clone())
+    }
 
     pub(crate) fn inventory_evidence(&self) -> (Option<PublicationFence>, Option<PublicationFence>) {
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());

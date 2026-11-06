@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 const GATEWAY: &str = "stm32:0123456789abcdef01234567";
 const MODULE: &str = "4f534744123456789012345678901234";
-fn fixture() -> (ExecutionPlan, CompileSnapshot, Vec<(String, Value)>) {
+pub(in super::super) fn fixture() -> (ExecutionPlan, CompileSnapshot, Vec<(String, Value)>) {
     let mut snapshot = CompileSnapshot {
         inventory_session: "fixture".into(),
         inventory_revision: "1".into(),
@@ -130,17 +130,17 @@ fn publication_drift_blocks_commands_even_when_selected_input_generation_is_unch
     let (plan, snapshot, mut gateways) = fixture();
     let original = plan.sources[0].route.clone();
     assert!(
-        validate_fixture(&plan, &snapshot, &gateways, &[], |_, _| panic!(
+        validate_fixture(&plan, &snapshot, &gateways, &[], |_, _, _| panic!(
             "No lease needed for stable configured disable"
         ))
         .is_ok()
     );
     gateways[0].1["modules"][0]["published"] = json!(true);
-    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
     assert_eq!(plan.sources[0].route, original);
     gateways[0].1["modules"][0]["published"] = json!(false);
     gateways[0].1["modules"][0]["directUsb"] = json!(true);
-    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
 }
 
 #[test]
@@ -149,14 +149,14 @@ fn foreign_disabled_lease_new_publisher_and_route_changes_are_rejected() {
     gateways[0].1["publication"] =
         json!({"phase":"owned","outcome":"ok","expectedReconnect":false});
     let mut proofs = 0;
-    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _| {
+    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _, _| {
         proofs += 1;
         Err("Foreign owner".into())
     })
     .is_err());
     assert_eq!(proofs, 1);
     assert!(
-        validate_fixture(&plan, &snapshot, &gateways, &[], |gateway, module| {
+        validate_fixture(&plan, &snapshot, &gateways, &[], |gateway, module, _| {
             assert_eq!((gateway, module), (GATEWAY, MODULE));
             Ok(())
         })
@@ -164,11 +164,11 @@ fn foreign_disabled_lease_new_publisher_and_route_changes_are_rejected() {
     );
     let mut changed = gateways.clone();
     changed[0].1["modules"][0]["lease"] = json!(9);
-    assert!(validate_fixture(&plan, &snapshot, &changed, &[], |_, _| Ok(())).is_err());
+    assert!(validate_fixture(&plan, &snapshot, &changed, &[], |_, _, _| Ok(())).is_err());
     let mut other = gateways[0].1.clone();
     other["gatewaySerial"] = json!("1123456789abcdef01234567");
     gateways.push(("stm32:1123456789abcdef01234567".into(), other));
-    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_fixture(&plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
 }
 
 #[test]
@@ -176,14 +176,14 @@ fn dormant_and_other_game_or_companion_branches_do_not_require_hid_changes() {
     let (mut plan, mut snapshot, _) = fixture();
     plan.branches[0].readiness = PlanReadiness::Dormant;
     plan.sinks[0].readiness = PlanReadiness::Dormant;
-    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _| panic!("Dormant")).is_ok());
+    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _, _| panic!("Dormant")).is_ok());
     plan.branches[0].readiness = PlanReadiness::Ready;
     plan.sinks[0].readiness = PlanReadiness::Ready;
     snapshot.resources[1].game_id = Some("x-plane".into());
-    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _| panic!("Other game")).is_ok());
+    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _, _| panic!("Other game")).is_ok());
     snapshot.resources[1].game_id = Some("dcs".into());
     snapshot.resources[0].summary.resource_type = ResourceType::Companion;
-    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _| panic!("Companion")).is_ok());
+    assert!(validate_fixture(&plan, &snapshot, &[], &[], |_, _, _| panic!("Companion")).is_ok());
 }
 
 fn validate_fixture(
@@ -191,7 +191,7 @@ fn validate_fixture(
     snapshot: &CompileSnapshot,
     gateways: &[(String, Value)],
     usb: &[crate::module_usb_fleet::SlotSnapshot],
-    owned: impl FnMut(&str, &str) -> Result<(), String>,
+    owned: impl FnMut(&str, &str, &Value) -> Result<(), String>,
 ) -> Result<(), String> {
     validate_snapshots(
         &Guard::capture(plan, snapshot),
@@ -208,9 +208,9 @@ fn immutable_obligation_cannot_disappear_with_current_inventory_or_game_metadata
     let guard = Guard::capture(&plan, &snapshot);
     snapshot.resources[1].game_id = None;
     snapshot.resources[0].summary.resource_type = ResourceType::Companion;
-    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
     snapshot.resources.remove(0);
-    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
 }
 
 #[test]
@@ -225,26 +225,35 @@ fn publication_withdrawal_is_per_sink_permanent_and_diagnostic_survives_blocked_
     plan.branches.push(unrelated);
     let mut guard = Guard::capture(&plan, &snapshot);
     assert!(guard.needs_observation(&plan));
-    let mut current = Ok((snapshot, gateways, vec![]));
-    assert!(guard.observe(&plan, &current, |_, _| Ok(())).is_empty());
-    current.as_mut().unwrap().1[0].1["modules"][0]["published"] = json!(true);
-    assert_eq!(guard.observe(&plan, &current, |_, _| Ok(())).len(), 1);
+    let mut current = Ok(Some((snapshot, gateways, vec![])));
     let endpoint = osg_mapping::program::Endpoint {
         node_id: "game".into(),
         port_id: "button".into(),
     };
+    assert!(guard.observe(&plan, &Ok(None), |_, _, _| unreachable!()).is_empty());
+    assert!(guard.blocked(&endpoint));
+    assert!(guard.revoked.is_empty());
+    assert_eq!(guard.diagnostics(), vec![BUSY]);
+    assert!(!guard.blocked(&osg_mapping::program::Endpoint {
+        node_id: "game".into(),
+        port_id: "companion-command".into(),
+    }));
+    assert!(guard.observe(&plan, &current, |_, _, _| Ok(Some(()))).is_empty());
+    assert!(!guard.blocked(&endpoint));
+    current.as_mut().unwrap().as_mut().unwrap().1[0].1["modules"][0]["published"] = json!(true);
+    assert_eq!(guard.observe(&plan, &current, |_, _, _| Ok(Some(()))).len(), 1);
     assert!(guard.blocked(&endpoint));
     assert!(!guard.needs_observation(&plan));
     assert!(!guard.blocked(&osg_mapping::program::Endpoint {
         node_id: "game".into(),
         port_id: "companion-command".into()
     }));
-    current.as_mut().unwrap().1[0].1["modules"][0]["published"] = json!(false);
-    assert!(guard.observe(&plan, &current, |_, _| Ok(())).is_empty());
+    current.as_mut().unwrap().as_mut().unwrap().1[0].1["modules"][0]["published"] = json!(false);
+    assert!(guard.observe(&plan, &current, |_, _, _| Ok(Some(()))).is_empty());
     assert!(guard.blocked(&endpoint));
     plan.branches[0].readiness = PlanReadiness::Blocked;
     plan.sinks[0].readiness = PlanReadiness::Blocked;
-    assert!(guard.observe(&plan, &current, |_, _| Ok(())).is_empty());
+    assert!(guard.observe(&plan, &current, |_, _, _| Ok(Some(()))).is_empty());
     assert_eq!(
         guard.revoked.len(),
         1,
@@ -256,7 +265,7 @@ fn publication_withdrawal_is_per_sink_permanent_and_diagnostic_survives_blocked_
     let mut guard = Guard::capture(&plan, &snapshot);
     assert_eq!(
         guard
-            .observe(&plan, &Err("Inventory unavailable".into()), |_, _| Ok(()))
+            .observe(&plan, &Err("Inventory unavailable".into()), |_, _, _| Ok(Some(())))
             .len(),
         1
     );
@@ -269,7 +278,7 @@ fn current_capture_cannot_adopt_a_changed_input_lease_or_usb_publisher() {
         .route
         .provider_generation = "[1,2,9,4,5]".into();
     gateways[0].1["modules"][0]["lease"] = json!(9);
-    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _| Ok(())).is_err());
+    assert!(validate_snapshots(&guard, &plan, &snapshot, &gateways, &[], |_, _, _| Ok(())).is_err());
     let (mut plan, mut snapshot, _) = fixture();
     let mut slot = crate::profile_resource_sources::hid_publication::tests::usb();
     slot.snapshot.identity.as_mut().unwrap().module_id = MODULE.into();
@@ -287,11 +296,11 @@ fn current_capture_cannot_adopt_a_changed_input_lease_or_usb_publisher() {
         &snapshot,
         &[],
         &[slot.clone()],
-        |_, _| Ok(())
+        |_, _, _| Ok(())
     )
     .is_ok());
     slot.snapshot.config.as_mut().unwrap()["layout"]["reportBytes"] = json!(1);
-    assert!(validate_snapshots(&guard, &plan, &snapshot, &[], &[slot], |_, _| Ok(())).is_err());
+    assert!(validate_snapshots(&guard, &plan, &snapshot, &[], &[slot], |_, _, _| Ok(())).is_err());
 }
 
 #[test]
@@ -315,7 +324,7 @@ fn thirty_two_revoked_command_branches_keep_bounded_diagnostics_across_repeated_
     let lost = guard.observe(
         &plan,
         &Err("Native publication observation lost".into()),
-        |_, _| Ok(()),
+        |_, _, _| Ok(Some(())),
     );
     assert_eq!(lost.len(), 32);
     assert_eq!(guard.revoked.len(), 32);
@@ -340,7 +349,7 @@ fn thirty_two_revoked_command_branches_keep_bounded_diagnostics_across_repeated_
         "The existing native status bound remains valid without truncation"
     );
     assert!(guard
-        .observe(&plan, &Ok((snapshot, gateways, vec![])), |_, _| Ok(()))
+        .observe(&plan, &Ok(Some((snapshot, gateways, vec![]))), |_, _, _| Ok(Some(())))
         .is_empty());
     assert!(!guard.needs_observation(&plan));
     for endpoint in lost {

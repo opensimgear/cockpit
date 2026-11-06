@@ -6,6 +6,8 @@ use osg_profiles::compiler::CompileSnapshot;
 use serde_json::{json, Value};
 
 const LOST: &str = "An OSG input's direct or gateway HID publication changed or is unverified; the DCS command branch was withdrawn. Apply a fresh profile after disabling every publisher.";
+const BUSY: &str = "DCS command admission is waiting for current HID publication proof. Commands during this interval are rejected and are not replayed.";
+type Snapshots = (CompileSnapshot, Vec<(String, Value)>, Vec<crate::module_usb_fleet::SlotSnapshot>);
 
 pub(super) fn append_diagnostics(
     retained: &mut std::collections::BTreeSet<String>,
@@ -28,6 +30,9 @@ pub(super) struct Guard {
         BTreeMap<String, (String, Option<String>)>,
     )>,
     revoked: BTreeMap<(String, String), String>,
+    pending: Vec<osg_profiles::Endpoint>,
+    withdrawals: BTreeMap<(String, String), std::collections::BTreeSet<String>>,
+    withdrawal_retry: Option<Instant>,
 }
 impl Guard {
     pub(super) fn capture(plan: &ExecutionPlan, snapshot: &CompileSnapshot) -> Self {
@@ -103,21 +108,40 @@ impl Guard {
                     .any(|s| s.endpoint == *sink && s.readiness == PlanReadiness::Ready)
         })
     }
+    pub(super) fn withdrawal_deadline(&self) -> Option<Instant> {
+        self.withdrawal_retry
+    }
+    fn flush_withdrawals(&mut self, resources: &crate::profile_resources::Runtime) -> Vec<String> {
+        let mut diagnostics = self.diagnostics();
+        let mut busy = false;
+        self.withdrawals.retain(|(game, reader), ports| {
+            let ports = ports.iter().cloned().collect::<Vec<_>>();
+            match resources.try_withdraw_profile_game_commands(game, reader, &ports) {
+                Ok(true) => false,
+                Ok(false) => {
+                    busy = true;
+                    true
+                }
+                Err(error) => {
+                    // The private latch is already closed. Never modify a replacement reader.
+                    diagnostics.push(error);
+                    false
+                }
+            }
+        });
+        self.withdrawal_retry = busy.then(|| Instant::now() + std::time::Duration::from_millis(5));
+        diagnostics
+    }
     fn diagnostics(&self) -> Vec<String> {
-        unique_diagnostics(self.revoked.values().cloned())
+        unique_diagnostics(self.revoked.values().cloned().chain(
+            (!self.pending.is_empty()).then(|| BUSY.to_owned()),
+        ))
     }
     fn observe(
         &mut self,
         plan: &ExecutionPlan,
-        current: &Result<
-            (
-                CompileSnapshot,
-                Vec<(String, Value)>,
-                Vec<crate::module_usb_fleet::SlotSnapshot>,
-            ),
-            String,
-        >,
-        mut owned: impl FnMut(&str, &str) -> Result<(), String>,
+        current: &Result<Option<Snapshots>, String>,
+        mut owned: impl FnMut(&str, &str, &Value) -> Result<Option<()>, String>,
     ) -> Vec<osg_profiles::Endpoint> {
         let active = self
             .branches
@@ -135,6 +159,7 @@ impl Guard {
             })
             .cloned()
             .collect::<Vec<_>>();
+        self.pending.clear();
         let mut newly_lost = vec![];
         for branch in active {
             let key = (branch.0.node_id.clone(), branch.0.port_id.clone());
@@ -145,15 +170,22 @@ impl Guard {
                 branches: vec![branch.clone()],
                 ..Default::default()
             };
+            let mut pending = false;
             let result = match current {
-                Ok((snapshot, gateways, usb)) => {
-                    validate_snapshots(&single, plan, snapshot, gateways, usb, |g, m| owned(g, m))
+                Ok(Some((snapshot, gateways, usb))) => {
+                    validate_snapshots(&single, plan, snapshot, gateways, usb, |g, m, state| {
+                        pending |= owned(g, m, state)?.is_none();
+                        Ok(())
+                    })
                 }
+                Ok(None) => { pending = true; Ok(()) }
                 Err(error) => Err(error.clone()),
             };
             if let Err(error) = result {
                 self.revoked.insert(key, error);
                 newly_lost.push(branch.0);
+            } else if pending {
+                self.pending.push(branch.0);
             }
         }
         newly_lost
@@ -161,6 +193,9 @@ impl Guard {
     pub(super) fn blocked(&self, endpoint: &osg_mapping::program::Endpoint) -> bool {
         self.revoked
             .contains_key(&(endpoint.node_id.clone(), endpoint.port_id.clone()))
+            || self.pending.iter().any(|pending| {
+                pending.node_id == endpoint.node_id && pending.port_id == endpoint.port_id
+            })
     }
 }
 
@@ -185,7 +220,7 @@ pub(super) fn validate(
         &snapshot,
         &panels.publication_snapshots()?,
         &panels.usb_snapshots(),
-        |gateway, module| {
+        |gateway, module, _| {
             let proof = state.publication.verified(false)?;
             proof.validate()?;
             proof
@@ -206,31 +241,28 @@ pub(super) fn refresh(
     panels: &crate::gateways::ProfilePanelIo,
 ) -> Vec<String> {
     let Some(plan) = state.delivery.as_ref() else {
-        return state.dcs_hid.diagnostics();
+        state.dcs_hid.pending.clear();
+        return state.dcs_hid.flush_withdrawals(resources);
     };
     if !state.dcs_hid.needs_observation(plan) {
-        return state.dcs_hid.diagnostics();
+        state.dcs_hid.pending.clear();
+        return state.dcs_hid.flush_withdrawals(resources);
     }
-    let current = resources
-        .snapshot_for_compile(state.assignments.clone())
-        .and_then(|snapshot| {
-            Ok((
-                snapshot,
-                panels.publication_snapshots()?,
-                panels.usb_snapshots(),
-            ))
-        });
+    let current = (|| {
+        let Some(snapshot) = resources.try_snapshot_for_compile_with_companions(state.assignments.clone(), &[])? else {
+            return Ok(None);
+        };
+        let Some(gateways) = panels.try_publication_snapshots()? else { return Ok(None) };
+        let Some(usb) = panels.try_usb_snapshots() else { return Ok(None) };
+        Ok(Some((snapshot, gateways, usb)))
+    })();
     let publication = &state.publication;
-    let newly_lost = state.dcs_hid.observe(plan, &current, |gateway, module| {
-        let proof = publication.verified(false)?;
-        proof.validate()?;
-        proof
-            .targets()
-            .iter()
-            .any(|t| t.gateway == gateway && t.module == module && !t.enabled)
-            .then_some(())
-            .ok_or_else(|| LOST.to_owned())
+    let newly_lost = state.dcs_hid.observe(plan, &current, |gateway, module, current| {
+        publication.try_verify_disabled(gateway, module, current, panels)
     });
+    for endpoint in &state.dcs_hid.pending {
+        state.game.cancel_pending_command(endpoint);
+    }
     if !newly_lost.is_empty() {
         state.game.revoke_commands(&newly_lost);
         let ports = plan
@@ -240,14 +272,10 @@ pub(super) fn refresh(
             .filter_map(|s| s.observed_port_id.clone())
             .collect::<Vec<_>>();
         if let Some((game, reader)) = state.game.provider_identity() {
-            if let Err(error) = resources.withdraw_profile_game_commands(game, reader, &ports) {
-                // The private command latch is already closed. A replacement
-                // reader is never modified by this outgoing authority.
-                return vec![LOST.into(), error];
-            }
+            state.dcs_hid.withdrawals.entry((game.into(), reader.into())).or_default().extend(ports);
         }
     }
-    state.dcs_hid.diagnostics()
+    state.dcs_hid.flush_withdrawals(resources)
 }
 
 fn validate_snapshots(
@@ -256,7 +284,7 @@ fn validate_snapshots(
     snapshot: &CompileSnapshot,
     gateways: &[(String, Value)],
     usb: &[crate::module_usb_fleet::SlotSnapshot],
-    mut owned: impl FnMut(&str, &str) -> Result<(), String>,
+    mut owned: impl FnMut(&str, &str, &Value) -> Result<(), String>,
 ) -> Result<(), String> {
     for (logical, (inventory, captured_module)) in guard.required(plan) {
         let resource = snapshot
@@ -329,7 +357,7 @@ fn validate_snapshots(
                     }
                     match hid_publication::can_status(gateway, current, m) {
                         "disabled" => {}
-                        "lease-disabled" => owned(gateway, module)?,
+                        "lease-disabled" => owned(gateway, module, current)?,
                         _ => return Err(LOST.into()),
                     }
                 }
@@ -407,4 +435,4 @@ fn validate_snapshots(
 
 #[cfg(test)]
 #[path = "profile_session_dcs_hid_tests.rs"]
-mod tests;
+pub(super) mod tests;

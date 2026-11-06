@@ -14,16 +14,20 @@ impl Runtime {
     }
     /// Revoke only exact command ports of the current reader. Read tokens and
     /// the independently advancing telemetry catalogue remain unchanged.
-    pub(crate) fn withdraw_profile_game_commands(
+    pub(crate) fn try_withdraw_profile_game_commands(
         &self,
         game: &str,
         reader: &str,
         ports: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Resource inventory has stopped.".into());
         }
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(poison)) => poison.into_inner(),
+        };
         let batch = state
             .game_deliveries
             .get(game)
@@ -49,7 +53,7 @@ impl Runtime {
             .entry((game.into(), reader.into()))
             .or_default()
             .extend(ports.iter().cloned());
-        Ok(())
+        Ok(true)
     }
     /// Publication is deduplicated by native reader state. This cheap owner check
     /// still observes metadata revocation on every health tick without cloning

@@ -449,6 +449,60 @@ fn sixty_four_profile_choices_remain_bounded_to_thirty_two_per_gateway() {
     );
 }
 #[test]
+fn active_disabled_lease_distinguishes_contention_from_loss() {
+    let f = Fixture::new();
+    let (plan, snapshot) = f.plan();
+    let staged = Staged::prepare(&plan, &snapshot).unwrap();
+    let owner = RunOwner {
+        session: uuid::Uuid::new_v4().to_string(),
+        generation: 1,
+        profile_id: "fixture".into(),
+        profile_revision: 1,
+        game_id: Some("dcs".into()),
+    };
+    let counter = Arc::new(AtomicU64::new(1));
+    let io = Arc::new(ReadOnlyIo(f.state.clone(), counter.clone()));
+    let actor = Overrides::prepare_io(&staged, &owner, io.clone()).unwrap();
+    let current = state();
+    let panels = ProfilePanelIo::publication_action_fixture(
+        GATEWAY.into(),
+        Arc::new(state),
+        Arc::new(|_| panic!("A cached proof must never request transport I/O")),
+        Arc::new(|_| panic!("A cached proof must never dispatch a device command")),
+        Arc::default(),
+        Arc::new(move || io.fence(GATEWAY)),
+        Arc::new(|_| {}),
+    );
+    let slot = &actor.slots[0].shared;
+    let verify = |current: &Value| actor.try_verify_disabled(GATEWAY, MODULE, current, &panels);
+    assert!(verify(&current).is_err());
+    slot.authority.store(true, Ordering::Release);
+    assert!(verify(&current).is_err());
+    {
+        let mut status = slot.status.lock().unwrap();
+        status.active = true;
+        assert_eq!(verify(&current), Ok(None));
+    }
+    assert!(verify(&current).is_err());
+    {
+        let mut proof = slot.verified.lock().unwrap();
+        *proof = Some(Proof {
+            state: current.clone(),
+            live: Some((Instant::now() + Duration::from_secs(5), PublicationFence::fixture(target().epoch, counter.clone()).unwrap())),
+        });
+        assert_eq!(verify(&current), Ok(None));
+    }
+    panels.with_sessions_held_for_test(|| assert_eq!(verify(&current), Ok(None)));
+    assert_eq!(verify(&current), Ok(Some(())));
+    let mut changed = current.clone();
+    changed["modules"][0]["lease"] = json!(68);
+    assert!(verify(&changed).is_err());
+    counter.store(2, Ordering::Release);
+    assert!(verify(&current).is_err());
+    f.runtime.shutdown();
+}
+
+#[test]
 fn malformed_sealed_target_receipts_fail_before_any_transport_request() {
     let f = Fixture::new();
     let (plan, snapshot) = f.plan();

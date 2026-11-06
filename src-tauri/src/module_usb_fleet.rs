@@ -33,6 +33,7 @@ trait Endpoint: Send + Sync {
     fn watch_inputs(&self,_wake:Arc<osg_streams::NativeWake>){}
     fn output_activity(&self)->bool{false}
     fn snapshot(&self) -> UsbSnapshot;
+    fn try_metadata_snapshot(&self) -> Option<UsbSnapshot> { None }
     fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String>;
     fn shutdown(&self);
 }
@@ -44,6 +45,7 @@ impl Endpoint for ModuleUsbService {
     fn snapshot(&self) -> UsbSnapshot {
         self.snapshot()
     }
+    fn try_metadata_snapshot(&self) -> Option<UsbSnapshot> { self.try_metadata_snapshot() }
     fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String> {
         self.request(request)
     }
@@ -392,6 +394,22 @@ impl Fleet {
             .iter()
             .map(|(key, slot)| snapshot(key, slot, state.diagnostic.as_deref()))
             .collect()
+    }
+    pub(crate) fn try_snapshots(&self) -> Option<Vec<SlotSnapshot>> {
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        let mut snapshots = Vec::with_capacity(state.slots.len());
+        for (key, slot) in &state.slots {
+            let current = match &slot.service {
+                Some(service) => service.try_metadata_snapshot()?,
+                None => slot.cached.clone(),
+            };
+            snapshots.push(snapshot_projection(key, slot, state.diagnostic.as_deref(), true, Some(current)));
+        }
+        Some(snapshots)
     }
     pub(crate) fn cached_inventory(&self) -> Result<Vec<SlotSnapshot>, String> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -892,9 +910,9 @@ fn writer_pin(snapshot: &UsbSnapshot) -> Option<crate::module_configuration_rout
     })
 }
 fn snapshot(key: &str, slot: &Slot, diagnostic: Option<&str>) -> SlotSnapshot {
-    snapshot_projection(key,slot,diagnostic,false)
+    snapshot_projection(key,slot,diagnostic,false,None)
 }
-fn snapshot_projection(key: &str, slot: &Slot, diagnostic: Option<&str>,metadata:bool) -> SlotSnapshot {
+fn snapshot_projection(key: &str, slot: &Slot, diagnostic: Option<&str>,metadata:bool,cached:Option<UsbSnapshot>) -> SlotSnapshot {
     let mut diagnostics = diagnostic
         .map(str::to_owned)
         .into_iter()
@@ -909,10 +927,10 @@ fn snapshot_projection(key: &str, slot: &Slot, diagnostic: Option<&str>,metadata
         && diagnostic.is_none()
         && !slot.ambiguous
         && !slot.closing.load(Ordering::Acquire);
-    let current = slot
+    let current = cached.unwrap_or_else(|| slot
         .service
         .as_ref()
-        .map_or_else(|| slot.cached.clone(), |service| if metadata{service.metadata_snapshot()}else{service.snapshot()});
+        .map_or_else(|| slot.cached.clone(), |service| if metadata{service.metadata_snapshot()}else{service.snapshot()}));
     SlotSnapshot {
         key: key.into(),
         port: slot.port.clone(),
