@@ -23,6 +23,9 @@ test('the native companion inspector shows consistent input and output port tile
     document.resources.push({id:'panel', name:'Fixture panel', kind:'companion', required:false, ports:[
       {id:'lamp', name:'Lamp', direction:'input', contract},
       {id:'button', name:'Button', direction:'output', contract},
+      ...Array.from({length:11}, (_, index) => ({
+        id:'extra-'+index, name:'Extra '+index, direction:'output', contract,
+      })),
     ]});
     fixture = (await request({command:'profile_editor_save', document, assignments:[], expectedRevision:fixture.revision})).profiles.document;
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Profiles', exact:true}).click();
@@ -47,6 +50,16 @@ test('the native companion inspector shows consistent input and output port tile
     await inputs.getByRole('button', {name:'Clear input filter', exact:true}).click();
     await expect(inputs.locator('[data-port-id="lamp"]')).toBeVisible();
     await expect(input).toBeFocused();
+    const previous = outputs.getByRole('button', {name:'Previous outputs', exact:true});
+    const next = outputs.getByRole('button', {name:'Next outputs', exact:true});
+    await expect(previous).toBeDisabled();
+    await expect(outputs.locator('.port-tile')).toHaveCount(10);
+    await next.click();
+    await expect(next).toBeDisabled();
+    await expect(outputs.locator('.port-tile')).toHaveCount(2);
+    await expect(inputs.locator('[data-port-id="lamp"]')).toBeVisible();
+    await previous.click();
+    await expect(outputs.locator('[data-port-id="button"]')).toBeVisible();
   } finally {
     try {
       if (fixture) await request({command:'profile_delete', id:fixture.id, expectedRevision:fixture.revision});

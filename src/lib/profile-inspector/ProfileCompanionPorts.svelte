@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {Snippet} from 'svelte';
   import Icon from '../Icon.svelte';
+  import ProfilePortPager from './ProfilePortPager.svelte';
   import ProfilePortFilter from './ProfilePortFilter.svelte';
   import {integrationPortPage,integrationPortTypeLabel,portContractLabel} from '../profile-canvas';
   import type {DeepReadonly,ProfilePort} from '../profiles';
@@ -27,10 +28,8 @@
       </div>
     {:else}<p class="status">{query.trim()?`No matching ${label.toLowerCase()}.`:`No ${label.toLowerCase()} selected.`}</p>{/each}
   </div>
-  {#if results.pages>1}<div class="paging"><span>{results.offset+1}–{results.offset+results.rows.length} / {results.total}</span><div>
-    <button type="button" class="previous" aria-label={`Previous ${label.toLowerCase()}`} disabled={results.page===0} onclick={()=>page=results.page-1}><Icon name="chevron" size={14}/></button>
-    <button type="button" aria-label={`Next ${label.toLowerCase()}`} disabled={results.page+1>=results.pages} onclick={()=>page=results.page+1}><Icon name="chevron" size={14}/></button>
-  </div></div>{/if}
+  <ProfilePortPager label={label.toLowerCase()} page={results.page} pages={results.pages}
+    offset={results.offset} count={results.rows.length} total={results.total} change={value=>page=value}/>
 </section>
 
 <style>
@@ -43,5 +42,4 @@
   .port-tile strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:570}.type{max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:var(--ui-action-size)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button:disabled{cursor:default;opacity:.5}
   .status{margin:0;color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height)}
-  .paging{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:var(--ui-text-size)}.paging>div{display:flex;gap:4px}.paging button{display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--soft)}.previous :global(svg){transform:rotate(180deg)}
 </style>
