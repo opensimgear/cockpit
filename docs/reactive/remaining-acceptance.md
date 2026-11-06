@@ -195,6 +195,22 @@ HID acquisition and display presentation are separate measurements. Raw
 samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`
 and `.research/reactive/vjoy-ready-timing/burst-{1,2,3}.json`.
 
+A follow-up enabled the stalled preview, unread MCP subscription and Devices
+Settings inventory checks in the same run. Windows Raw Input received all 65
+authored transitions and the Stop release. The independent preview advanced,
+the MCP reader held unread for 1.91 seconds, and Devices Settings showed the
+slot busy before Stop and free on reopen. Submission-to-receipt p50/p95/p99
+were 1.20/1.43/2.84 ms and the MCP Stop reply took 86.4 ms. The 8 ms authored
+schedule is a target. These measurements are from a development executable
+built with working-tree edits, and physical acquisition remains in #199.
+
+The serial Windows library suite on that working tree finished with 2,379
+passes, one failure and 18 ignores. The failing topology fixture includes a
+local `hold` case that the compiled rule enum rejects. The browser companion
+suite (75 tests), MCP frontend suite (27 tests), companion coverage suite with
+loopback access, stream and controller coverage, and `pnpm check` passed.
+Final clean-candidate and platform suite qualification remains open.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig

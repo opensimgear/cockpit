@@ -11,11 +11,11 @@ assert.ok(selected.length && selected.every(view => views.includes(view)), 'Sele
 
 const browserUrl = process.env.OSG_IDLE_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
-const browserWarmupMs = browserUrl ? Number(process.env.OSG_IDLE_BROWSER_WARMUP_MS ?? 45_000) : 0;
+const browserWarmupMs = browserUrl ? Number(process.env.OSG_IDLE_BROWSER_WARMUP_MS ?? 0) : 0;
 assert.ok(Number.isSafeInteger(browserWarmupMs) && browserWarmupMs >= 0 && browserWarmupMs <= 120_000,
   'Browser warmup must be between 0 and 120,000 ms.');
 
-test(`${transport} Cockpit stays idle without periodic gateway reads`, { timeout: selected.length * 85_000 + browserWarmupMs }, async t => {
+test(`${transport} Cockpit stays idle without periodic gateway reads`, { timeout: selected.length * 85_000 + browserWarmupMs + (browserUrl ? 120_000 : 0) }, async t => {
   if (!browserUrl) {
     const page = await nativePage();
     try {
@@ -49,6 +49,37 @@ test(`${transport} Cockpit stays idle without periodic gateway reads`, { timeout
         stop?.();
       }
     });
+    const startup = await page.evaluate(async () => {
+      const { observeGamesState, observeGameJobs } = await import('/src/lib/game-read-models/shared.ts');
+      let games, jobs, timer;
+      const stops = [];
+      try {
+        return await new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(Error(`Browser startup did not settle: ${JSON.stringify({
+            games: games?.status, discovery: games?.value?.discovery?.status,
+            jobs: jobs?.value?.jobs.map(({ key, phase, terminal }) => ({ key, phase, terminal })),
+          })}`)), 110_000);
+          const check = () => {
+            const failure = [games, jobs].find(state => state?.status === 'error' && !state.resolvingPage);
+            if (failure) { reject(Error(failure.error)); return; }
+            if (games?.status !== 'ready' || jobs?.status !== 'ready') return;
+            const discovery = games.value.discovery;
+            // Ready awaits review. The scan has finished even though its job
+            // stays open until the user applies the results.
+            if (discovery?.status !== 'scanning' && jobs.value.jobs.every(job => job.terminal
+              || (job.key === 'discovery' && job.phase === 'ready' && job.run === discovery?.scanId))) {
+              resolve({ discovery: discovery?.status, jobs: jobs.value.jobs.length });
+            }
+          };
+          stops.push(observeGamesState(state => { games = state; check(); }));
+          stops.push(observeGameJobs(state => { jobs = state; check(); }));
+        });
+      } finally {
+        clearTimeout(timer);
+        for (const stop of stops) stop();
+      }
+    });
+    console.log(JSON.stringify({ transport, startup }));
     if (browserWarmupMs) await page.waitForTimeout(browserWarmupMs);
     for (const view of selected) await t.test(view, async () => traceView(page, view));
   } finally {

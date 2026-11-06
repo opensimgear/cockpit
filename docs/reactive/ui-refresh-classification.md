@@ -81,10 +81,17 @@ for a focused run. The trace records gateway commands and observation
 transport requests separately. For browser development, start `pnpm web:dev`
 with the native gateway service and set
 `OSG_IDLE_BROWSER_URL=http://127.0.0.1:5173/`. The browser trace verifies the
-workspace observation baseline and allows startup discovery to settle for
-45 seconds by default. Set `OSG_IDLE_BROWSER_WARMUP_MS` to override that wait.
+workspace observation baseline and waits for committed Games state and jobs
+to show startup discovery has settled. `OSG_IDLE_BROWSER_WARMUP_MS` adds an
+optional delay after that boundary.
 Companion applications, modal workflows and physical deadlines need their
 own evidence.
+
+The focused Devices rerun recorded zero gateway and observation requests in
+60.114 seconds on native and 60.110 seconds on browser development. The browser
+began with a first-start scan and opened the trace after that scan reached
+Ready for review. A separate trace started during the scan recorded game-model
+reads and therefore could not establish idle behavior.
 
 An initial 60,104 ms run in the Windows development Cockpit recorded zero
 `system_inventory` reads, 23 `companion_inventory` reads, 23
