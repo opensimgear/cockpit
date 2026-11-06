@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 29 checked and 26
-open. The open criteria include 13 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 30 checked and 25
+open. The open criteria include 12 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -17,13 +17,33 @@ criteria have delivered software and outstanding qualification.
 | Issue | Remaining boundary |
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
-| #192 | Committed game ownership survives failed lookups and busy registry reads. Unstable Assetto page copies skip acquisition and preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. The broader integration contention and adapter criteria remain open. Windows denied the Assetto process notification prerequisite for live fixture setup. |
+| #192 | Committed game ownership survives failed lookups and busy registry reads. Unstable Assetto page copies skip acquisition and preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. Cross-adapter contention and quality qualification remain open. Windows denied the Assetto and X-Plane process notification prerequisite for the latest telemetry fixtures. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
 
+## R3 adapter evidence
+
+The adapter evidence item is checked. Each supported adapter has automated
+coverage and running Cockpit evidence. The dated runs below used authored
+publishers. Real simulator behavior remains open in #199 for each simulator.
+
+| Adapter | Automated evidence | Running Cockpit evidence | Real simulator |
+| --- | --- | --- | --- |
+| DCS-BIOS | Native transport, catalogue and capture tests | Counter-only renewals, independent expiry and recovery, and a stalled observer in the [running fixture](https://github.com/opensimgear/cockpit/issues/192#issuecomment-6685710159) | Open |
+| DCS managed ownship | Native parser, source and session tests | Selected and unbound channels, pause, export denial, frozen clock, respawn and exit in the same fixture | Open |
+| Assetto Corsa | Windows source tests cover Corsa mapping, process identity and stable copies | Corsa entry in the [four-variant authored run](../verification/2026-11-03-native-port-admission.md), including processing, frozen expiry and recovery | Open |
+| Assetto Corsa Competizione | Windows source tests cover Competizione mapping, process identity and stable copies | Competizione entry in the same authored run | Open |
+| Assetto Corsa EVO | Windows source tests cover EVO mapping, process identity and stable copies | EVO entry in the same authored run | Open |
+| Assetto Corsa Rally | Windows source tests cover Rally mapping, process identity and stable copies | Rally entry in the same authored run | Open |
+| X-Plane 11 | [RREF leases](../verification/2026-11-02-xplane-subscription-leases.md) and [retained scheduling](../verification/2026-11-06-xplane-profile-service.md) tests | Version 11 passed authored RREF delivery, partial expiry and recovery. The [current SDK watcher](https://github.com/opensimgear/cockpit/issues/192#issuecomment-6685794927) passed without telemetry. | Open |
+| X-Plane 12 | Same RREF and retained scheduling tests | Version 12 passed the authored RREF and current SDK watcher checks separately. | Open |
+
+Later X-Plane and Assetto telemetry runs stopped at Windows process-notification
+access denial. The earlier runs establish adapter evidence for the tested builds.
+The process-monitor consent and lifetime qualification remain in #199.
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots
 every 34 ms. One latest pending projection and exact acknowledgements bound
