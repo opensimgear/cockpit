@@ -296,9 +296,38 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     }
     emitPhysics = false; evidence.phases.stale = await withdrawn('stale ownship');
     emitPhysics = true; await live(); await checkpoint('stale ownship withdraws physics while BIOS gauges remain live');
-    biosMode = 'counter-only'; await sleep(1250);
-    evidence.phases.leaseOnly = await live();
-    await checkpoint('BIOS counter-only lease renewal preserves retained values');
+    biosMode = 'counter-only';
+    const owner = (await status()).profileSession.owner;
+    await cdp.evaluate(`(async()=>{
+      const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
+      const {SharedObservations}=await import('/src/lib/streams/shared.ts');
+      const cancel=new AbortController(), fast=new SharedObservations();
+      const trace=window.__dcsSlowReader={fast:0,slow:0,error:null,close:()=>{cancel.abort();fast.close();}};
+      createNativeObservationTransport().open('games.telemetry',{
+        frame(_envelope,ack){trace.slow++;if(trace.slow===1)trace.release=ack;else void ack();},
+        error(error){trace.error=error;}
+      },cancel.signal);
+      fast.subscribe('games.telemetry',state=>{if(state.status==='ready')trace.fast++;});
+    })()`);
+    try {
+      const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
+      await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
+      const before = (await readers()).fast;
+      await sleep(1250);
+      const stalled = await readers();
+      assert.equal(stalled.error, null);
+      assert.equal(stalled.slow, 1, 'Only one native delivery may be in flight');
+      assert.ok(stalled.fast - before >= 16, 'The fast reader must continue during the withheld acknowledgement');
+      evidence.phases.leaseOnly = await live();
+      assert.deepEqual((await status()).profileSession.owner, owner);
+      await passive(biosId, 1000);
+      await cdp.evaluate('window.__dcsSlowReader.release()');
+      await until(async () => (await readers()).slow > 1, 'Slow reader did not resume after acknowledgement');
+      evidence.phases.slowReader = {fastNotifications: stalled.fast - before, withheldDeliveries: stalled.slow, ownerPreserved: true};
+    } finally {
+      await cdp.evaluate('window.__dcsSlowReader.close(); delete window.__dcsSlowReader');
+    }
+    await checkpoint('BIOS counter-only lease renewal and a stalled telemetry reader preserve retained values');
     biosMode = 'off';
     evidence.phases.biosStale = await until(async () => {
       const page = await samples();
