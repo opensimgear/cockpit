@@ -211,6 +211,14 @@ suite (75 tests), MCP frontend suite (27 tests), companion coverage suite with
 loopback access, stream and controller coverage, and `pnpm check` passed.
 Final clean-candidate and platform suite qualification remains open.
 
+An archive of committed `33ebae88` passed the locked Windows native library
+suite serially with 2,377 passes, zero failures and 18 ignores. The topology
+test passed on that revision. ESP32 host suites on the same archive passed for
+serial, workspace, network, core and storage. The Sunton and Waveshare adapter
+fault-injection suites passed with 100% line coverage each. These suites use
+host mocks. Board images, hardware timing, the final integrated soak and other
+platform suites still require evidence.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
