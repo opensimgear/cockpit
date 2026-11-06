@@ -22,3 +22,19 @@ cancellation and recovery parity remains under #197.
 All 2,359 native tests passed with 18 existing ignores. The new catalogue
 schema reached 21 of 21 production lines, and all 27 frontend MCP tests
 passed.
+
+## Input learning cancellation and idle recovery
+
+Two final runs of `tests/ui/mcp-native.mjs` with
+`OSG_MCP_OBSERVATION_ONLY=1` and `OSG_MCP_CONTROL_PARITY=1` passed against
+the running Cockpit with an attached HID controller. A portal-native start
+was cancelled through MCP, and an MCP start was cancelled through the
+portal-native command. The terminal snapshots agreed, candidates were
+withdrawn, and replay of the MCP cancellation returned the same result.
+Cancelling the retired capture produced the same error through both paths
+and left the newer capture listening.
+
+The two paths also agreed on successful, non-cancellable idle recovery and
+on rejection of an unknown activation ID. Neither run held an output owner
+or had retained output receipts to recover. Pending activation cancellation
+and recovery of retained hardware ownership still need live parity evidence.

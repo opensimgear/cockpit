@@ -13,6 +13,7 @@ import { softwareScenarios } from './mcp-software-scenarios.mjs';
 import { companionScenarios } from './mcp-companion-scenarios.mjs';
 import { uiPreferenceScenarios } from './mcp-ui-preference-scenarios.mjs';
 import { integrationObservation } from './mcp-integration-observation.mjs';
+import { controlParity } from './mcp-control-parity.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(operation, description, timeout = 20000) {
@@ -271,6 +272,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       }));
       assert.equal(staleRestore.ok, false);
       assert.equal((await ok(reader, 'profile_status')).profileSession.owner, null);
+      if (process.env.OSG_MCP_CONTROL_PARITY === '1') {
+        evidence.modernObservation.controlParity = await controlParity({page, reader, writer, call, ok, mutation});
+      }
       const games = await ok(reader, 'games_list', { limit: 1 });
       assert.equal(games.catalogue.length, Math.min(games.total, 1));
       assert.equal(games.discovery?.entries, undefined);
