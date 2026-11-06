@@ -111,7 +111,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const modern = async (method, params, extraHeaders = {}) => {
       const version = extraHeaders['MCP-Protocol-Version'] ?? '2026-07-28';
       return fetch(endpoint, {
-        method: 'POST', signal: AbortSignal.timeout(method === 'subscriptions/listen' && (process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1' || process.env.OSG_MCP_INTEGRATION_OBSERVATION === '1') ? 30000 : 10000),
+        method: 'POST', signal: AbortSignal.timeout(method === 'subscriptions/listen' ? 30000 : 10000),
         headers: { Authorization: `Bearer ${read.token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': version, 'Mcp-Method': method, ...(params.name || params.uri ? { 'Mcp-Name': params.name ?? params.uri } : {}), ...extraHeaders },
         body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params: { ...params, _meta: { 'io.modelcontextprotocol/protocolVersion': version, 'io.modelcontextprotocol/clientInfo': { name: 'Cockpit modern transport acceptance', version: '1' }, 'io.modelcontextprotocol/clientCapabilities': {} } } }),
       });
@@ -212,9 +212,32 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       await until(() => clickProfileButton('Back to Profiles'), 'Clean editor did not close');
       await until(() => clickProfileButton(`Edit ${latestName}`), 'Latest profile was absent from the list');
       await until(async () => await editorName() === latestName, 'Reopened editor restored a stale name');
+      const localDraft = `${mcpName} local draft`;
+      const remoteName = `${mcpName} remote edit`;
+      await until(() => clickProfileButton('Edit profile name'), 'Profile rename control was unavailable');
+      await page.evaluate(name => {
+        const input = document.querySelector('input[aria-label="Profile name"]');
+        input.value = name;
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+      }, localDraft);
+      await until(async () => await editorName() === localDraft, 'The local draft rename did not apply');
+      const remoteDraft = await ok(writer, 'profile_prepare_changes', {
+        profileId: saved.document.id, expectedRevision: revision, edits: [{kind: 'set_name', name: remoteName}],
+      });
+      await ok(writer, 'profile_save_prepared', mutation({draftId: remoteDraft.draftId}));
+      await until(async () => (await library())?.value?.profiles.some(profile => profile.name === remoteName), 'Library missed the remote rename');
+      assert.equal(await editorName(), localDraft, 'A remote commit overwrote the dirty editor');
+      await until(() => clickProfileButton('Save'), 'Dirty editor save was unavailable');
+      await until(() => page.evaluate(() => /revision|changed/i.test(document.querySelector('.workspace-error[role="alert"]')?.textContent ?? '')), 'Stale save did not show a revision conflict');
+      assert.equal((await ok(writer, 'profile_get', {id: saved.document.id})).document.name, remoteName);
       await until(() => clickProfileButton('Back to Profiles'), 'Reopened editor did not close');
+      await until(() => clickProfileButton('Discard and continue'), 'Dirty draft discard was unavailable');
+      await until(() => clickProfileButton(`Edit ${remoteName}`), 'Committed MCP profile was absent after discarding');
+      await until(async () => await editorName() === remoteName, 'Discard did not restore the committed name');
+      await until(() => clickProfileButton('Back to Profiles'), 'Recovered editor did not close');
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
-        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true };
+        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true };
       if (observeController) {
         const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
         assert.ok(source, 'A connected host controller is required for this optional check');
