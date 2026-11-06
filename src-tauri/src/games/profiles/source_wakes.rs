@@ -50,10 +50,15 @@ impl GameSources {
         [self.validation.next_deadline(), self.catalogue_validation.next_deadline()]
             .into_iter().flatten().min()
     }
-    pub(crate) fn watched_assetto(&self) -> bool {
+    pub(crate) fn watched_game_source(&self) -> bool {
         self.acquired && !self.lost && self.validation.started()
-            && matches!(self.reader, Some(Reader::Acr { source: Some(_), .. }))
-            && self.notifications.assetto.as_ref().is_some_and(|watch| !watch.is_closed())
+            && match &self.reader {
+                Some(Reader::Acr { source: Some(_), .. }) =>
+                    self.notifications.assetto.as_ref().is_some_and(|watch| !watch.is_closed()),
+                Some(Reader::Xplane { source: Some(_), .. }) =>
+                    self.notifications.xplane.as_ref().is_some_and(|watch| !watch.is_closed()),
+                _ => false,
+            }
     }
     pub(crate) fn assetto_capture_deadline(&self) -> Option<Instant> {
         if !self.fresh { return None; }

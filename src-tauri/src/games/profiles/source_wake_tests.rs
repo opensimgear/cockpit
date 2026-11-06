@@ -22,15 +22,15 @@ fn assetto_service_needs_live_watch_and_validation_and_reverts_on_close() {
         outputs: vec![],
     });
     source.acquired = true;
-    assert!(!source.watched_assetto());
+    assert!(!source.watched_game_source());
     let (watch, close) = crate::acr_windows::Watch::fixture(wake.clone());
     source.install_assetto_watch_fixture(watch);
-    assert!(!source.watched_assetto(), "A producer watch cannot substitute for native proof");
+    assert!(!source.watched_game_source(), "A producer watch cannot substitute for native proof");
     source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
-    assert!(source.watched_assetto());
+    assert!(source.watched_game_source());
     assert!(source.assetto_capture_deadline().is_none(), "A waiting decoder has no capture to expire");
     close();
-    assert!(!source.watched_assetto(), "A retired watch restores bounded service");
+    assert!(!source.watched_game_source(), "A retired watch restores bounded service");
 }
 
 pub(crate) fn watched_assetto_scheduling_fixture(
@@ -52,6 +52,28 @@ pub(crate) fn watched_assetto_scheduling_fixture(
     source.install_assetto_watch_fixture(watch);
     source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
     (source, prepared, close)
+}
+
+pub(crate) fn watched_xplane_scheduling_fixture(
+    plan: &ExecutionPlan,
+    games: &GamesRuntime,
+    wake: Arc<osg_streams::NativeWake>,
+) -> (GameSources, PreparedGame, impl Fn(u16)) {
+    let prepared = prepared("x-plane-12", crate::xplane::defaults(12), crate::xplane::catalogue());
+    let mut source = authored_sources(plan, Some(prepared.clone())).unwrap();
+    let (reader, publish) = crate::xplane::Source::inspector_fixture();
+    source.reader = Some(Reader::Xplane {
+        connection: prepared.connection.clone(),
+        outputs: vec![],
+        canonical_outputs: vec![],
+        source: Some(reader),
+    });
+    source.acquired = true;
+    source.set_wake(Some(wake.clone()));
+    source.refresh_source_wakes(games).unwrap();
+    assert!(!source.watched_game_source(), "The watch alone cannot replace proof");
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    (source, prepared, publish)
 }
 
 #[test]

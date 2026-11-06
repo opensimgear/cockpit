@@ -89,6 +89,21 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     host.prepared.get_mut(&key(&owner)).unwrap().game_publication.deferred = false;
     close();
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
+    let wake = host.native_wake.clone().unwrap();
+    let (game, proof, publish) = crate::profile_session_games::watched_xplane_scheduling_fixture(
+        &prepared.plan, &games, wake.clone(),
+    );
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    run.owner.game_id = Some(proof.proof.game_id.clone());
+    state.owner.game_id = run.owner.game_id.clone();
+    state.game_preparation = Some(proof);
+    state.game = game;
+    assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+    let observed = wake.observed();
+    publish(42);
+    assert!(wake.observed() > observed, "A native X-Plane commit must wake the profile host");
+    host.prepared.get_mut(&key(&owner)).unwrap().game.stop();
+    assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }

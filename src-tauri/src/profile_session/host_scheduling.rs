@@ -15,7 +15,7 @@ fn document_supported(document: &osg_profiles::ProfileDocument, watched_game: bo
 
 pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &OwnedRun) -> bool {
     let game = run.owner.game_id.as_deref();
-    let watched_game = game.is_some() && state.game.watched_assetto()
+    let watched_game = game.is_some() && state.game.watched_game_source()
         && state.game.provider_identity().is_some_and(|(provider, _)| Some(provider) == game)
         && state.game_preparation.as_ref().is_some_and(|prepared| Some(prepared.proof.game_id.as_str()) == game)
         && !state.game_publication.deferred
