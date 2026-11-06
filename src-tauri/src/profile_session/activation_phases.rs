@@ -20,6 +20,7 @@ impl NativeProfileHost {
                 }
                 let progress = self.progress.clone();
                 let desktop_wake = self.native_wake.clone();
+                let output_wake = self.native_wake.as_ref().map(Arc::downgrade);
                 let state = self.run(&run.owner)?;
                 state.clock_origin = origin;
                 state.panels.acquire(origin)?;
@@ -34,8 +35,7 @@ impl NativeProfileHost {
                     let path = crate::config_paths::config_path()
                         .with_file_name(crate::profile_session_virtual::journal_name(&run.owner)?);
                     Self::emit_progress(progress.as_ref(), state.admission_epoch, "creating-virtual-device", "Creating virtual controller output");
-                    state.output = Some(
-                        osg_virtual_controller::session::Session::start_with_journal(
+                    let output = osg_virtual_controller::session::Session::start_with_journal(
                             osg_virtual_controller::entry::factory(),
                             osg_mapping::engine::RunToken {
                                 session: run.owner.session.clone(),
@@ -44,8 +44,13 @@ impl NativeProfileHost {
                             state.bindings.clone(),
                             Counter(0),
                             Some(path),
-                        )?,
-                    );
+                        )?;
+                    if let Some(wake) = output_wake {
+                        output.watch_fault(Arc::new(move || {
+                            if let Some(wake) = wake.upgrade() { wake.notify(); }
+                        }));
+                    }
+                    state.output = Some(output);
                 }
                 self.with_activation_heartbeat(&run.owner, |host| host.acquire_game_and_companions(run))
             }

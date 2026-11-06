@@ -28,6 +28,22 @@ fn message() -> Message {
     }
 }
 #[test]
+fn terminal_reply_wakes_current_and_late_watchers_before_child_exit() {
+    let mut worker = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport sys,time\ntime.sleep(.05)\nprint('{\"fatal\":true,\"error\":\"fixture fault\"}',flush=True)\nsys.stdin.readline()\n").unwrap();
+    let (sent, received) = mpsc::channel();
+    worker.watch_fault(Arc::new(move || { let _ = sent.send(()); }));
+    received.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(worker.alive());
+    assert!(!worker.healthy());
+    assert_eq!(worker.exit_error(), "fixture fault");
+
+    let (sent, received) = mpsc::channel();
+    worker.watch_fault(Arc::new(move || { let _ = sent.send(()); }));
+    received.try_recv().unwrap();
+    worker.terminate();
+    assert!(!worker.alive());
+}
+#[test]
 fn request_failures_identify_timeout_eof_reader_loss_and_retained_child() {
     let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
     let mut timed = spawn(&format!("{hello}import sys,time\nsys.stdin.readline()\ntime.sleep(2)\n")).unwrap();

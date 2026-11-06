@@ -2,7 +2,7 @@
 use crate::output_journal::{Phase, Store};
 use crate::{
     feeder::{Message, RENEW_US},
-    supervisor::Worker,
+    supervisor::{FaultWake, Worker},
     vjoy::Binding,
 };
 use osg_mapping::{
@@ -14,6 +14,7 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 pub trait Channel: Send {
     fn request(&mut self, message: &Message) -> Result<(), String>;
     fn alive(&mut self) -> bool;
+    fn watch_fault(&self, _wake: FaultWake) {}
     fn exit_error(&mut self) -> String {
         "Virtual output helper exited.".into()
     }
@@ -28,7 +29,10 @@ impl Channel for Worker {
         Worker::request(self, message)
     }
     fn alive(&mut self) -> bool {
-        Worker::alive(self)
+        self.healthy()
+    }
+    fn watch_fault(&self, wake: FaultWake) {
+        Worker::watch_fault(self, wake);
     }
     fn exit_error(&mut self) -> String {
         Worker::exit_error(self)
@@ -265,6 +269,10 @@ impl Session {
     }
     pub fn token(&self) -> &RunToken {
         &self.token
+    }
+    /// Wake the owning scheduler when the current feeder's reply pipe fails.
+    pub fn watch_fault(&self, wake: FaultWake) {
+        if let Some(worker) = &self.worker { worker.watch_fault(wake); }
     }
     /// Inspect the same retained worker and its locked, confirmed journal without
     /// spawning, renewing, submitting reports or changing output ownership.

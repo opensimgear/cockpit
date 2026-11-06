@@ -8,7 +8,7 @@ use std::{
     io::{BufReader, Write},
     path::Path,
     process::{Child, Command, Stdio},
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{mpsc::{self, Receiver, SyncSender}, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -17,6 +17,13 @@ struct Reply {
     received: Instant,
     result: Result<Value, String>,
 }
+pub type FaultWake = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Default)]
+struct ReplyStatus {
+    closed: bool,
+    wake: Option<FaultWake>,
+}
 pub struct Worker {
     child: Child,
     outgoing: Option<SyncSender<Vec<u8>>>,
@@ -24,6 +31,7 @@ pub struct Worker {
     timeout: Duration,
     activation_timeout: Duration,
     hello: Value,
+    reply_status: Arc<Mutex<ReplyStatus>>,
 }
 impl Worker {
     pub fn spawn(
@@ -57,6 +65,8 @@ impl Worker {
             }
         });
         let (replies, incoming) = mpsc::sync_channel(32);
+        let reply_status = Arc::new(Mutex::new(ReplyStatus::default()));
+        let reader_status = reply_status.clone();
         thread::spawn(move || {
             let mut output = BufReader::new(output);
             loop {
@@ -86,6 +96,12 @@ impl Worker {
                     break;
                 }
             }
+            let wake = {
+                let mut status = reader_status.lock().unwrap_or_else(|p| p.into_inner());
+                status.closed = true;
+                status.wake.take()
+            };
+            if let Some(wake) = wake { wake(); }
         });
         let mut worker = Self {
             child,
@@ -94,6 +110,7 @@ impl Worker {
             timeout,
             activation_timeout: timeout,
             hello: Value::Null,
+            reply_status,
         };
         let hello = worker.reply_before(Instant::now() + timeout)?;
         if hello["ok"] != true || hello["backend"] != backend || hello["protocol"] != 1 {
@@ -221,6 +238,20 @@ impl Worker {
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
+    pub(crate) fn healthy(&mut self) -> bool {
+        let closed = self.reply_status.lock().unwrap_or_else(|p| p.into_inner()).closed;
+        !closed && self.alive()
+    }
+    pub(crate) fn watch_fault(&self, wake: FaultWake) {
+        {
+            let mut status = self.reply_status.lock().unwrap_or_else(|p| p.into_inner());
+            if !status.closed {
+                status.wake = Some(wake);
+                return;
+            }
+        }
+        wake();
+    }
     /// A dead child can have a final cleanup diagnostic still in its pipe.
     /// Allow its reader a small bounded window without waiting on native code.
     pub fn exit_error(&mut self) -> String {
@@ -240,6 +271,7 @@ impl Worker {
         self.child.id()
     }
     pub fn terminate(&mut self) {
+        self.reply_status.lock().unwrap_or_else(|p| p.into_inner()).wake = None;
         self.outgoing.take();
         if self.alive() {
             let _ = self.child.kill();
