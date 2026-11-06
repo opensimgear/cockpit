@@ -8,6 +8,7 @@ static const char hash[]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 static bool task_failure,idle_once,open_failure,write_failure,read_failure;
 static bool cancel_during_read,cancel_before_take;
 static size_t index;
+static unsigned terminal_wakes;
 static cJSON *delivered;
 static void (*worker)(void *);
 size_t osg_transport_reply_capacity=OSG_REPLY_BYTES;
@@ -32,7 +33,7 @@ int xSemaphoreTake(SemaphoreHandle_t semaphore,unsigned timeout){
 }
 int xSemaphoreGive(SemaphoreHandle_t semaphore){assert(semaphore==&index);return 1;}
 TaskHandle_t xTaskGetCurrentTaskHandle(void){return &index;}
-void xTaskNotifyGive(TaskHandle_t task){assert(task==&index);}
+void xTaskNotifyGive(TaskHandle_t task){assert(task==&index);if(!osg_wifi_feedback_running())terminal_wakes++;}
 void vTaskDelete(TaskHandle_t task){assert(!task);}
 int xTaskCreate(void (*fn)(void *),const char *name,unsigned stack,void *arg,unsigned priority,void *task){
     (void)name;(void)stack;(void)arg;(void)priority;(void)task;worker=fn;return task_failure?0:pdPASS;
@@ -106,7 +107,9 @@ int main(void){
         read_failure=failure==2;
         index=0;frames[0]="{\"type\":\"transfer-start\",\"bytes\":0}";
         assert(osg_wifi_feedback_start(&settings,&session,NULL));
+        const unsigned before=terminal_wakes;
         worker(NULL);
+        assert(terminal_wakes==before+1);
         assert(!osg_wifi_feedback_running()&&!osg_wifi_feedback_take()&&!delivered);
     }
     assert(!osg_wifi_feedback_start(&settings,&(osg_live_session){0},NULL));

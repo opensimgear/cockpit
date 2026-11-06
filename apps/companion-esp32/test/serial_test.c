@@ -38,6 +38,7 @@ int uart_vfs_dev_port_set_rx_line_endings(int port,int mode){assert(port==0&&mod
 void uart_vfs_dev_use_driver(int port){assert(port==0);uses++;}
 int main(void){
 #if CONFIG_ESP_CONSOLE_UART
+    assert(osg_serial_has_wake());
     assert(osg_serial_start()&&uses==1&&installs==1&&!deletes);
     installed=true;assert(!osg_serial_start()&&installs==1);installed=false;
     install_error=-1;assert(!osg_serial_start()&&uses==1&&installs==2&&!deletes);install_error=0;
@@ -49,6 +50,7 @@ int main(void){
     assert(wake_count==1&&task_deleted==1);
     assert(osg_serial_pending()&&!osg_serial_pending());
 #else
+    assert(!osg_serial_has_wake());
     assert(osg_serial_start()&&!installs&&!uses&&!deletes);
     assert(osg_serial_pending()&&osg_serial_pending());
 #endif

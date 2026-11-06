@@ -339,9 +339,12 @@ int main(int argc,char **argv){
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&initial_image,800,480));
     assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true,wake_display});
+    assert(state==OFF&&network_wait()==portMAX_DELAY);
+    serial_wake=false;assert(network_wait()==pdMS_TO_TICKS(10));serial_wake=true;
     serial_feedback_tests();
     pairing_notification_tests();
-    setup();advance();assert(state==PAIR_WAIT);fake_ms+=800;const int quiet_requests=requests;advance();assert(state==PAIR_WAIT&&requests==quiet_requests);
+    setup();advance();assert(state==PAIR_WAIT&&network_wait()==pdMS_TO_TICKS(pair_deadline-fake_ms));
+    fake_ms+=800;const int quiet_requests=requests;advance();assert(state==PAIR_WAIT&&requests==quiet_requests);
     mock_wifi_message=pairing_reply();wifi_feedback();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);
     cmd("{\"command\":\"connect\",\"instanceId\":\"instance\"}");wrong_session=false;advance();advance();assert(state==LIVE);
@@ -350,8 +353,9 @@ int main(int argc,char **argv){
     const unsigned after_page=display_wakes;
     cmd("{\"command\":\"page\",\"page\":9}");assert(display_wakes==after_page);
     cmd("{\"command\":\"status\"}");cmd("{\"command\":\"stop\"}");assert(state==OFF&&!test_runtime.connected);advance();
-    setup();network_ok=false;advance();assert(state==FAULT);
+    setup();network_ok=false;advance();assert(state==FAULT&&network_wait()==portMAX_DELAY);
     setup();pair_deadline=0;advance();assert(state==FAULT);
+    setup();advance();assert(state==PAIR_WAIT);pair_deadline=fake_ms;assert(network_wait()==0);advance();assert(state==FAULT);
     setup();advance();fake_ms+=400;pair_deadline=0;advance();assert(state==FAULT);
     setup();advance();mock_wifi_message=pairing_reply();cJSON_ReplaceItemInObjectCaseSensitive(mock_wifi_message,"hostId",cJSON_CreateString("wrong-host"));wifi_feedback();assert(state==FAULT);
     setup();installation_saved=false;settings.persist=true;store_ok=false;advance();mock_wifi_message=pairing_reply();wifi_feedback();assert(state==FAULT&&!installation_saved);

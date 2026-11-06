@@ -169,7 +169,11 @@ already buffered bytes during registration. [Console VFS](https://github.com/esp
 
 The provisioning wake uses the UART driver's bounded event queue. It carries
 readiness only. The driver ring and the network task retain byte ownership.
-The network task still has its separate maintenance wake for other work.
+The network task parks while disconnected or faulted on the UART boards.
+Pending pairing waits for approval, transport termination, UART activity
+or its existing offer expiry. Connected states retain the 10 ms maintenance
+wake for protocol, input and safety work. Non-UART builds retain the same
+wake for console acquisition.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
 Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt

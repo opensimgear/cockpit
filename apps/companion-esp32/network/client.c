@@ -787,6 +787,18 @@ static void update_screen(void){
     }
     xSemaphoreGive(ui.mutex);
 }
+static unsigned network_wait(void){
+    if(osg_serial_has_wake()){
+        if(state==OFF||state==FAULT)return portMAX_DELAY;
+        if(state==PAIR_WAIT){
+            const uint64_t now=millis();
+            if(now>=pair_deadline)return 0;
+            const unsigned ticks=pdMS_TO_TICKS(pair_deadline-now);
+            return ticks?ticks:1;
+        }
+    }
+    return pdMS_TO_TICKS(10);
+}
 static void network_task(void *arg){
     (void)arg;osg_json_init();
     const osg_render_limits *profile=osg_render_profile_limits();
@@ -807,7 +819,9 @@ static void network_task(void *arg){
         if(osg_serial_pending()){
             int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
         }
-        usb_assignments();update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
+        usb_assignments();update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();
+        if(!interrupted_command)interrupted_command=osg_serial_take_command();
+        if(!interrupted_command)(void)ulTaskNotifyTake(pdTRUE,network_wait());
     }
 }
 void osg_network_touch(bool valid,bool down,int x,int y){

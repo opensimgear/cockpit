@@ -3,6 +3,8 @@ cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
 bool osg_serial_pending(void){return false;}
+static bool serial_wake=true;
+bool osg_serial_has_wake(void){return serial_wake;}
 bool osg_wifi_feedback_start(const osg_settings *s,const osg_live_session *l,const char *id){(void)s;(void)l;(void)id;return false;}
 static bool mock_pairing_running,mock_pairing_failure;
 bool osg_wifi_pairing_start(const osg_settings *s,const char *id){assert(osg_secret(s->secret)&&!strcmp(id,"request"));mock_pairing_running=!mock_pairing_failure;return mock_pairing_running;}

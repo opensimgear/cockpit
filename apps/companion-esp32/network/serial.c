@@ -49,3 +49,10 @@ bool osg_serial_pending(void) {
     return true;
 #endif
 }
+bool osg_serial_has_wake(void) {
+#if CONFIG_ESP_CONSOLE_UART
+    return true;
+#else
+    return false;
+#endif
+}

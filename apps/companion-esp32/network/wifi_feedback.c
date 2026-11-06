@@ -19,6 +19,7 @@ static bool subscribed, assignments_only, pairing_only;
 
 static void receive_feedback(void *unused){
     (void)unused;
+    const TaskHandle_t recipient=owner;
     osg_socket socket={0};
     bool connected=!atomic_load(&stopping)&&osg_socket_open(&socket,&trust)&&
         osg_socket_write_text(&socket,outbound,strlen(outbound),500);
@@ -29,7 +30,7 @@ static void receive_feedback(void *unused){
         if(!ready)continue;
         if(!osg_socket_read_text(&socket,buffer,OSG_FRAME_BYTES,&length,esp_timer_get_time()+3000000))break;
         atomic_store(&pending,true);
-        xTaskNotifyGive(owner);
+        xTaskNotifyGive(recipient);
         while(atomic_load(&pending)&&!atomic_load(&stopping)){
             (void)xSemaphoreTake(consumed,pdMS_TO_TICKS(500));
         }
@@ -37,6 +38,7 @@ static void receive_feedback(void *unused){
     osg_socket_close(&socket);
     if(pairing_only&&buffer)mbedtls_platform_zeroize(buffer,OSG_FRAME_BYTES+1);
     atomic_store(&running,false);
+    xTaskNotifyGive(recipient);
     vTaskDelete(NULL);
 }
 
