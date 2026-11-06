@@ -1,5 +1,6 @@
 //! Passive delivery sessions. The producer never executes a transport callback.
 pub(crate) mod commands;
+mod controller_channel;
 mod service;
 mod service_output;
 pub use service_output::ServiceOutput;

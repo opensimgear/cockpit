@@ -26,8 +26,14 @@ pub(crate) fn observation_subscribe<R: tauri::Runtime>(
     {
         return Err("The activation window cannot observe this topic.".into());
     }
+    let controller = topic.starts_with("controllers.input.")
+        .then(|| Mutex::new(super::controller_channel::ControllerChannel::default()));
     state.0.with_observation_topic(&topic, || state.0.observations
         .subscribe(&client, "ui", &topic, move |delivery| {
+            let delivery = match &controller {
+                Some(encoder) => encoder.lock().unwrap_or_else(|error| error.into_inner()).encode(delivery),
+                None => delivery,
+            };
             channel.send(delivery).map_err(|error| error.to_string())
         }))
 }

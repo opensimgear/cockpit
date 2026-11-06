@@ -70,3 +70,25 @@ once and sending compact absolute samples on subsequent native deliveries.
 Any change needs to preserve a complete baseline for late readers,
 generation and loss boundaries, and latest-state recovery after backpressure.
 The trace does not measure motion-to-display or virtual-controller output.
+
+## Compact native preview delivery
+
+The native WebView sends a complete snapshot first. Later snapshots with
+the same descriptors carry all current native and normalized values in
+baseline order. The WebView restores the existing snapshot shape before
+it hands the frame to readers. Loss, generation change, or descriptor
+change requires a complete snapshot. The broker, browser-dev, MCP, and
+profile routing continue to use their existing frame contracts.
+
+The rebuilt Cockpit matched all 125 reports in the visible ten-second
+passive VKB trace. DevTools counted one large controller fetch for the
+diagnostic subscriber's initial baseline, compared with 252 fetches before
+the change. Journal-to-DOM p95 was 13.9 ms with 3.05 ms clock alignment
+uncertainty, so this trace establishes removal of the steady-state fetch
+rather than a measurable end-to-end latency improvement.
+
+The attached controller passed delayed receipt recovery, preview reopen,
+and output-free routing. All 28 frontend stream tests and 17 controller
+observer tests passed their coverage gates. Svelte checking reported zero
+diagnostics. The native suite passed 2,358 tests with 18 existing ignores.
+The encoder reached 44 of 50 production lines (88%).

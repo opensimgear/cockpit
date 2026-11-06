@@ -1,7 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNativeObservationTransport } from './native.ts';
+import { controllerChannelDecoder } from './controller-channel.ts';
 import { delivery, deferred, turn } from './fixtures.mjs';
+
+test('compact native controller snapshots restore exact values and require a fresh descriptor baseline after loss', () => {
+  const expand = controllerChannelDecoder();
+  const topic = 'controllers.input.source';
+  const baseline = delivery({topic, source:'controller-input', kind:'snapshot',
+    payload:{source:{sequence:'1'}, cursor:'1', capturedUs:'10', identity:{path:'usb'},
+      controls:[{capability:{id:'axis'},value:{native:0,normalized:0}}, {capability:{id:'hat'},value:null}]}});
+  const compact = delivery({topic, source:'controller-input', kind:'snapshot', revision:'2',
+    payload:{source:{sequence:'9'}, cursor:'9', capturedUs:'19', controllerSamples:[[32768,24576],null]}}, '2');
+  assert.throws(() => expand(compact), /Invalid compact controller snapshot/);
+  expand(baseline);
+  baseline.frame.payload.controls[0].capability.id = 'changed by consumer';
+  const restored = expand(compact);
+  assert.deepEqual(restored.frame.payload.controls, [
+    {capability:{id:'axis'}, value:{native:32768,normalized:24576}},
+    {capability:{id:'hat'}, value:null},
+  ]);
+  assert.deepEqual(restored.frame.payload.source, {sequence:'9'});
+  assert.equal(restored.frame.payload.cursor, '9');
+  assert.throws(() => expand({...compact,frame:{...compact.frame,generation:'2'}}), /Invalid compact controller snapshot/);
+  assert.throws(() => expand({...compact,frame:{...compact.frame,payload:{...compact.frame.payload,
+    controllerSamples:[['invalid',0],null]}}}), /Invalid compact controller sample/);
+  expand(delivery({topic,source:'controller-input',kind:'loss'}));
+  assert.throws(() => expand(compact), /Invalid compact controller snapshot/);
+});
 
 test('native early channel delivery waits for token and ACK follows delivery', async () => {
   const opening = deferred();

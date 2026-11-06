@@ -1,4 +1,5 @@
 import { errorMessage, parseDelivery, type ObservationTransport } from './protocol.ts';
+import { controllerChannelDecoder } from './controller-channel.ts';
 
 export interface NativeObservationDependencies {
   invoke: <T>(command: string, args: Record<string, unknown>) => Promise<T>;
@@ -16,6 +17,7 @@ export function createNativeObservationTransport(dependencies?: NativeObservatio
       let inFlight = false;
       let acknowledging = false;
       let deps = dependencies;
+      const expand = topic.startsWith('controllers.input.') ? controllerChannelDecoder() : undefined;
       const fail = (error: unknown) => {
         if (!active) return;
         observer.error(errorMessage(error));
@@ -61,7 +63,7 @@ export function createNativeObservationTransport(dependencies?: NativeObservatio
             if (envelope.subscriptionId !== token) throw new Error('Observation subscription mismatch');
             inFlight = true;
             let acknowledged = false;
-            observer.frame(envelope, async () => {
+            observer.frame(expand ? expand(envelope) : envelope, async () => {
               if (acknowledged || !active) return;
               acknowledged = true;
               acknowledging = true;
