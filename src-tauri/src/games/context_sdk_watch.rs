@@ -80,19 +80,28 @@ pub(super) fn publish_change(inner: &Inner) {
 }
 
 pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant) -> Option<Duration> {
-    let configured: Vec<_> = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
-        .catalogue.iter().filter(|game| {
-            crate::game_discovery::integration_key(game).is_some()
-                && (game["installed"] == true || game["executable"].is_string()
-                    || game["installPath"].is_string())
-        }).filter_map(|game| game["id"].as_str().map(str::to_owned)).collect();
+    let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
+    let mut configured = Vec::new();
+    let mut needs_setup_maintenance = false;
+    for game in &settings.catalogue {
+        let Some(key) = crate::game_discovery::integration_key(game) else { continue; };
+        let Some(id) = game["id"].as_str() else { continue; };
+        if game["installed"] == true || game["executable"].is_string() || game["installPath"].is_string() {
+            configured.push(id.to_owned());
+            // X-Plane has a separate catalogue watch and no external setup refresh.
+            needs_setup_maintenance |= !XPLANE.contains(&key);
+        }
+    }
+    drop(settings);
     if configured.is_empty() { return None; }
     if !process_live { return Some(Duration::from_millis(500)); }
     let now = Instant::now();
-    let setup = inner.context_setup_check.lock().unwrap_or_else(|p| p.into_inner())
-        .unwrap_or(now) + Duration::from_secs(2);
+    let setup = needs_setup_maintenance.then(|| {
+        inner.context_setup_check.lock().unwrap_or_else(|p| p.into_inner())
+            .unwrap_or(now) + Duration::from_secs(2)
+    });
     let vehicle = inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).context_deadline(&configured, serviced_at);
-    Some(vehicle.map_or(setup, |at| setup.min(at)).saturating_duration_since(now))
+    setup.into_iter().chain(vehicle).min().map(|at| at.saturating_duration_since(now))
 }
 
 #[cfg(all(test, any(target_os = "windows", target_os = "linux", target_os = "macos")))]

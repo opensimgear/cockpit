@@ -83,8 +83,10 @@ expires the decoder without another read from the source. Other admitted
 readers still use the separate 100 ms process qualification pass. The shared
 Windows process subscription wakes game context on lifecycle events. A live
 subscription lets the context worker reuse a successful batched inventory within
-the same library and event revisions. Setup and vehicle retries keep their own
-deadlines. The 500 ms pass remains when process coverage is unavailable or an
+the same library and event revisions. When X-Plane is the only configured
+integration, the context owner waits for notifications or a pending vehicle
+reader retry. X-Plane SDK changes use their own file watch. The 500 ms pass
+remains when process coverage is unavailable or an
 inventory read fails. Each game's installation and runtime checks still apply.
 For a watched DCS
 installation, native changes to the selected
