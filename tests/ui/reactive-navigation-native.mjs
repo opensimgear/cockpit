@@ -95,6 +95,10 @@ test(`${transport} main view navigation retires observation readers without dupl
       return pending.size === 0 && (!exact || active.size === expected.length)
         && [...active.values()].every(reader => baselines.get(reader.token) === 1)
         && (!expected || [...expected].every(topic => [...active.values()].some(reader => reader.topic === topic)));
+    }).catch(error => {
+      if (errors.length) throw error;
+      const actual = [...active.values()].map(reader => [reader.topic, baselines.get(reader.token) ?? 0]);
+      throw new Error(`Expected ${expected.join(', ')}; observed ${JSON.stringify(actual)} with ${pending.size} pending requests.`, { cause:error });
     });
     return [...active.values()].map(reader => reader.topic).sort();
   };
@@ -128,7 +132,11 @@ test(`${transport} main view navigation retires observation readers without dupl
     const clickDebugTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Debug sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
     const debugTopics = ['profiles.desktop', 'profiles.retired-recovery'];
-    const companionTopics = ['companion.listener', 'companion.presence'];
+    // The Devices sidebar count retains the shared companion readers.
+    // Opening Debug or the designer must not create a second pair.
+    const companionDetails = () => page.evaluate(`[...document.querySelectorAll('.profile-debug details')]
+      .find(item => item.querySelector('summary')?.textContent.trim() === 'Companion loading and image cache details')
+      ?.querySelector('pre')?.textContent.trim()`);
     const companionsOpen = open => page.evaluate(`(() => {
       const summary = [...document.querySelectorAll('.profile-debug details > summary')]
         .find(row => row.textContent.trim() === 'Companion loading and image cache details');
@@ -139,7 +147,23 @@ test(`${transport} main view navigation retires observation readers without dupl
       await clickDebugTab('Runtime & recovery');
       await settled(debugTopics, true);
       await companionsOpen(true);
-      await settled([...debugTopics, ...companionTopics], true);
+      await until(companionDetails, value => !!value && value !== 'null');
+      await settled(debugTopics, true);
+      if (cycle === 0) {
+        const visibility = hidden => page.evaluate(`(() => {
+          if (${hidden}) Object.defineProperty(document, 'hidden', {configurable:true, value:true});
+          else delete document.hidden;
+          document.dispatchEvent(new Event('visibilitychange'));
+        })()`);
+        await visibility(true);
+        try {
+          await until(companionDetails, value => value === 'null');
+        } finally {
+          await visibility(false);
+        }
+        await until(companionDetails, value => !!value && value !== 'null');
+        await settled(debugTopics, true);
+      }
       await companionsOpen(false);
       await settled(debugTopics, true);
       await clickDebugTab('Incoming telemetry');
@@ -162,7 +186,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         return true;
       })()`));
       await until(() => page.evaluate(`!!document.querySelector('[aria-label="Panel name"]')`));
-      await settled(companionTopics, true);
+      await settled([], true);
       await page.evaluate(`(() => {
         const confirm = window.confirm;
         try {

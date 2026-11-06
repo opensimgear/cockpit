@@ -9,6 +9,7 @@
   import GameTelemetryInspector from './GameTelemetryInspector.svelte';
   import {gatewayRequest} from './gateway';
   import {SharedObservations} from './streams/shared';
+  import {companionObservations} from './companion-observations';
   import {graphInventorySignature} from './profile-graph';
   import type {ProfileDraft} from './profile-editor';
   import type {DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfileResult,ProfileSummary} from './profiles';
@@ -30,7 +31,7 @@
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),signature=$state(''),environment=$state(''),busy=$state(false);
   let diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),offset=$state(0),offsets=$state([0]);
   let desktop=$state.raw<unknown>(null),desktopReadiness=$state.raw<{state:'stopped'|'active'|'paused'|'waiting'|'faulted'|'recovery-needed'}|null>(null);
-  let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false;
+  let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false,companionEpoch=0;
   const debugId=$props.id();
   const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
   let section=$state<'telemetry'|'profile'|'runtime'>('telemetry'),mounted=$state(false);
@@ -69,17 +70,28 @@
   });
   $effect(()=>{
     if(!mounted||!active||section!=='runtime'||!companionDetailsOpen)return;
-    const observations=new SharedObservations();
-    for(const topic of ['companion.presence','companion.listener']){
-      observations.subscribe(topic,state=>{
-        if(state.status==='ready')untrack(()=>void readCompanions());
-      });
-    }
-    const onVisible=()=>{if(!document.hidden)void readCompanions();};
-    document.addEventListener('visibilitychange',onVisible);
+    let stops: (() => void)[] = [];
+    const stop = () => {
+      companionEpoch++;
+      companionQueued = false;
+      companions = null;
+      stops.forEach(dispose => dispose());
+      stops = [];
+    };
+    const syncVisibility = () => {
+      if (document.hidden) { stop(); return; }
+      if (stops.length) return;
+      const observations = companionObservations();
+      stops = ['companion.presence','companion.listener'].map(topic =>
+        observations.subscribe(topic,state=>{
+          if(state.status==='ready')untrack(()=>void readCompanions());
+        }));
+    };
+    syncVisibility();
+    document.addEventListener('visibilitychange',syncVisibility);
     return()=>{
-      observations.close();
-      document.removeEventListener('visibilitychange',onVisible);
+      stop();
+      document.removeEventListener('visibilitychange',syncVisibility);
     };
   });
   function sectionKey(event:KeyboardEvent){const index=sections.findIndex(item=>item.id===section);let next=index;if(event.key==='ArrowRight')next=(index+1)%sections.length;else if(event.key==='ArrowLeft')next=(index+sections.length-1)%sections.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=sections.length-1;else return;event.preventDefault();section=sections[next].id;document.getElementById(`${debugId}-${section}-tab`)?.focus();}
@@ -90,8 +102,13 @@
     if(companionLoading){companionQueued=true;return;}
     companionLoading=true;
     companionQueued=false;
-    try{companions=(await gatewayRequest({command:'companion_status'})).companions;}
-    catch(reason){companions={error:reason instanceof Error?reason.message:String(reason)};}
+    const captured = companionEpoch;
+    try {
+      const status = (await gatewayRequest({command:'companion_status'})).companions;
+      if (captured === companionEpoch) companions = status;
+    } catch (reason) {
+      if (captured === companionEpoch) companions = {error:reason instanceof Error?reason.message:String(reason)};
+    }
     finally{
       companionLoading=false;
       if(companionQueued)void readCompanions();

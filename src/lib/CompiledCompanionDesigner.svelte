@@ -12,7 +12,7 @@
   import SourcePresentation from './SourcePresentation.svelte';
   import CompiledPanel from '../../packages/companion-ui/src/CompiledPanel.svelte';
   import { gatewayRequest } from './gateway';
-  import { SharedObservations } from './streams/shared';
+  import { companionObservations } from './companion-observations';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import { restoreCompanionPanels } from './companion-startup';
   import { notify } from './notifications';
@@ -81,13 +81,12 @@
   }
   $effect(() => {
     if (!active || !panelVisible) return;
-    const observations = new SharedObservations();
-    for (const topic of ['companion.presence', 'companion.listener']) {
+    const observations = companionObservations();
+    const stops = ['companion.presence', 'companion.listener'].map(topic =>
       observations.subscribe(topic, state => {
         if (state.status === 'ready') untrack(() => { void refresh(); });
-      });
-    }
-    return () => observations.close();
+      }));
+    return () => stops.forEach(stop => stop());
   });
   onMount(() => {
     void (async () => { try {
