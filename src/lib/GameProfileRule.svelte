@@ -42,13 +42,19 @@
     syncGame();if(!mounted||!active)return;
     return untrack(()=>{
     const gameId=game.id;
-    libraryReady=false;runtimeReady=false;stale=true;let selectedPreference='';
+    libraryReady=false;runtimeReady=false;stale=true;let selectedPreference='',matchingProfiles='';
     const changed=(message?:string)=>{
       libraryEpoch++;stale=!libraryReady||!runtimeReady;
       if(stale){error=message??'Waiting for current saved profiles.';return;}
       untrack(()=>void refresh());
     };
-    const stopLibrary=observeProfileLibrary(state=>{libraryReady=state.status==='ready';libraryWritable=state.value?.readOnly===false;changed(state.error);});
+    const stopLibrary=observeProfileLibrary(state=>{
+      const streamReady=state.status==='ready';
+      const matches=streamReady?JSON.stringify(state.value?.profiles.filter(profile=>profile.gameIds?.includes(gameId))??[]):'';
+      const different=streamReady!==libraryReady||matches!==matchingProfiles;
+      libraryReady=streamReady;libraryWritable=state.value?.readOnly===false;matchingProfiles=matches;
+      if(different)changed(state.error);
+    });
     const stopRuntime=observeProfileRuntime(state=>{
       const streamReady=state.status==='ready',preference=state.value?.preferredProfiles[gameId]??'';
       const different=streamReady!==runtimeReady||preference!==selectedPreference;

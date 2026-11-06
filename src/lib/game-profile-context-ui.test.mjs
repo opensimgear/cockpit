@@ -33,7 +33,14 @@ test('matching profiles reconcile library and preference events with no periodic
  assert.deepEqual(h.calls,[{command:'profile_game_candidates',gameId:'dcs'}]);assert.equal(result.handlers.fields.profileId,other);assert.equal(view.models.count('library'),1);assert.equal(view.models.count('runtime'),1);assert.equal(view.timers.size,0);assert.equal(view.events.size,0);
  view.models.emit('runtime',{status:'ready',value:{readOnly:false,preferredProfiles:{'x-plane-12':id}}});await settle();assert.equal(h.calls.length,1,'A preference for another game does not invalidate these candidates');
  h.set({...candidates(),preferredProfileId:id});view.models.emit('runtime',{status:'ready',value:{readOnly:false,preferredProfiles:{dcs:id}}});await settle();assert.equal(h.calls.length,2);assert.equal(result.handlers.fields.candidates.preferredProfileId,id);assert.equal(result.handlers.fields.profileId,other);
- view.models.emit('library');await settle();assert.equal(h.calls.length,3);cleanup();unmount();assert.equal(view.models.count('library'),0);assert.equal(view.models.count('runtime'),0);
+ const library=profiles=>view.models.emit('library',{status:'ready',value:{readOnly:false,profiles}});
+ const unrelated={...summary(other,'X-Plane rig'),gameIds:['x-plane-12']};
+ library([unrelated]);await settle();assert.equal(h.calls.length,2,'An unrelated library edit does not query candidates');
+ const matching=summary(id,'Renamed DCS rig');
+ h.set({...candidates(),profiles:[matching],preferredProfileId:id});
+ library([unrelated,matching]);await settle();assert.equal(h.calls.length,3);
+ assert.equal(result.handlers.fields.candidates.profiles[0].name,matching.name);
+ cleanup();unmount();assert.equal(view.models.count('library'),0);assert.equal(view.models.count('runtime'),0);
  const inactive=await component(),passive=inactive.render({game:game(),client:h.client,active:false});passive.handlers.mountProfiles();assert.equal(passive.handlers.watchProfiles(),undefined);await passive.handlers.refresh();assert.equal(h.calls.length,3);
  const wait=deferred(),waiting=await component(),read=waiting.render({game:game(),client:new GameProfileContextClient(()=>wait.promise)}),promise=read.handlers.refresh();await read.handlers.refresh();assert.equal(read.handlers.fields.loading,true);wait.resolve(candidates());await promise;await settle();assert.equal(read.handlers.fields.loading,false);for(const instance of [view,inactive,waiting])assert.deepEqual(instance.notifications,[]);
 });
