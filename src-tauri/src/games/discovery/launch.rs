@@ -222,6 +222,7 @@ impl Platform for NativePlatform {
         let monitored: Vec<_> = games.iter()
             .filter(|game| game["installed"] == true && game["processMonitoringSupported"] == true)
             .cloned().collect();
+        if monitored.iter().any(|game| process_paths(game).is_err()) { return None; }
         crate::xplane::process_events::InventoryEvents::start(&activation_process_paths(&monitored), wakes)
             .ok().flatten()
     }

@@ -173,6 +173,13 @@ impl Tracker {
             (entry.reader.is_some() || entry.polling) && entry.retained_process_current().is_none()
         })
     }
+    pub(crate) fn context_deadline(&self, configured: &[String], serviced_at: Instant) -> Option<Instant> {
+        configured.iter().filter_map(|id| {
+            let entry = self.entries.get(id)?;
+            (entry.enabled && entry.process.is_some() && entry.reader.is_none()
+                && entry.opening.is_none() && !entry.polling && entry.retry > serviced_at).then_some(entry.retry)
+        }).min()
+    }
     pub(crate) fn capture_deadline(&self) -> Option<Instant> {
         let now = Instant::now();
         self.entries.values().filter_map(|entry| {

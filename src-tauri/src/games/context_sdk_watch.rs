@@ -79,13 +79,20 @@ pub(super) fn publish_change(inner: &Inner) {
     inner.changes.mark_resources();
 }
 
-pub(super) fn maintenance_delay(inner: &Inner) -> Option<Duration> {
-    inner.settings.lock().unwrap_or_else(|error| error.into_inner())
-        .catalogue.iter().any(|game| {
+pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant) -> Option<Duration> {
+    let configured: Vec<_> = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
+        .catalogue.iter().filter(|game| {
             crate::game_discovery::integration_key(game).is_some()
                 && (game["installed"] == true || game["executable"].is_string()
                     || game["installPath"].is_string())
-        }).then_some(Duration::from_millis(500))
+        }).filter_map(|game| game["id"].as_str().map(str::to_owned)).collect();
+    if configured.is_empty() { return None; }
+    if !process_live { return Some(Duration::from_millis(500)); }
+    let now = Instant::now();
+    let setup = inner.context_setup_check.lock().unwrap_or_else(|p| p.into_inner())
+        .unwrap_or(now) + Duration::from_secs(2);
+    let vehicle = inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).context_deadline(&configured, serviced_at);
+    Some(vehicle.map_or(setup, |at| setup.min(at)).saturating_duration_since(now))
 }
 
 #[cfg(all(test, any(target_os = "windows", target_os = "linux", target_os = "macos")))]

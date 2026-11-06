@@ -82,6 +82,8 @@ impl GamesRuntime {
                     let continuity = events.as_ref().and_then(|events| events.continuity());
                     #[cfg(not(windows))]
                     let continuity = None;
+                    #[cfg(windows)]
+                    inner.changes.set_context_process_scope(library, continuity.clone().filter(|_| watched_library == Some(library)));
                     let event_owned = continuity.is_some();
                     inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity);
                     if !inner.closed.load(Ordering::Acquire) {

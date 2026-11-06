@@ -217,6 +217,7 @@ impl Tracker {
             self.retired.extend(entry.reader.take());
             entry.current = None;
             entry.telemetry = None;
+            entry.retry = Instant::now() + Duration::from_secs(2);
             self.retired.extend(observation.reader.and_then(Result::ok));
             self.publish_visible(&observation.id);
             return;

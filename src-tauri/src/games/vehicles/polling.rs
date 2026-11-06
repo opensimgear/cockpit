@@ -276,6 +276,7 @@ impl Tracker {
                 entry.generation = entry.generation.wrapping_add(1);
                 entry.error = Some(error);
                 entry.retry = Instant::now() + Duration::from_secs(2);
+                if let Some(changes) = &self.changes { changes.context_update_wake.notify(); }
             }
         }
         if retain { self.retain_seen(); }

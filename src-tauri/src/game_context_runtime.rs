@@ -2,6 +2,8 @@
 //! applied profile, start a provider, or turn an installation into live identity.
 use super::*;
 use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner};
+#[path = "games/context/process_cache.rs"]
+mod process_cache;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -200,24 +202,34 @@ impl GamesRuntime {
             });
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
+            let update_wake = &inner.changes.context_update_wake;
             let _ = context_wake.bind_thread(thread::current());
             let _ = process_wake.bind_thread(thread::current());
+            let _ = update_wake.bind_thread(thread::current());
+            let mut process_cache = process_cache::Cache::default();
             let mut last_library = context_wake.observed();
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             let mut dcs_watch = context_dcs_watch::DcsWatch::default();
             while !inner.closed.load(Ordering::Acquire) {
+                let started = Instant::now();
                 let library = context_wake.observed();
                 let processes = process_wake.observed();
+                let updated = update_wake.observed();
+                let epoch = (library, processes);
                 let sdk_changed = sdk_watches.refresh(&inner);
                 assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
-                inner.refresh_game_contexts(library != last_library);
+                let scope = inner.changes.context_process_live(library).then_some(epoch);
+                inner.refresh_game_contexts_with_inventory(library != last_library, |games| {
+                    process_cache.read(inner.platform.as_ref(), games, scope.filter(|_| process_wake.observed() == processes && inner.changes.context_process_live(library)))
+                });
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;
                 if inner.closed.load(Ordering::Acquire) { break; }
-                if processes == process_wake.observed() {
-                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner));
+                if processes == process_wake.observed() && updated == update_wake.observed() {
+                    let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
+                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner, live, started));
                 }
             }
             polling_closed.store(true, Ordering::Release);
@@ -382,6 +394,14 @@ impl Inner {
         .and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
     }
     pub(super) fn refresh_game_contexts(&self, force_setup: bool) {
+        self.refresh_game_contexts_with_inventory(force_setup, |games| self.platform.integration_processes(games));
+    }
+
+    fn refresh_game_contexts_with_inventory(
+        &self,
+        force_setup: bool,
+        inventory: impl FnOnce(&[&Value]) -> Vec<Result<Option<crate::game_discovery::ProcessIdentity>, String>>,
+    ) {
         let epoch = match self
             .contexts
             .lock()
@@ -444,7 +464,7 @@ impl Inner {
         }).collect();
         let selected: Vec<_> = games.iter().zip(&admission)
             .filter_map(|(game, (_, eligible))| matches!(eligible, Ok(true)).then_some(game)).collect();
-        let mut processes = self.platform.integration_processes(&selected).into_iter();
+        let mut processes = inventory(&selected).into_iter();
         for (game, (supported, eligible)) in games.iter().zip(admission) {
             let process = eligible.and_then(|eligible| {
                 if !eligible { return Ok(None); }

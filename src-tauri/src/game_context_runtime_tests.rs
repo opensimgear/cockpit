@@ -4,6 +4,43 @@ use crate::game_discovery::ProcessIdentity;
 use std::collections::BTreeMap;
 
 #[test]
+fn context_inventory_reuses_only_successful_results_in_the_live_scope() {
+    let platform = FakePlatform::new();
+    let games = platform.catalogue(&BTreeMap::new());
+    let selected = [&games[0]];
+    let mut cache = process_cache::Cache::default();
+    let scope = (5, 10);
+    assert!(cache.read(&platform, &selected, Some(scope))[0].is_ok());
+    let reads = platform.reads.load(Ordering::SeqCst);
+    assert!(cache.is_current(scope));
+    assert!(cache.read(&platform, &selected, Some(scope))[0].is_ok());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), reads);
+    let mut replacement = games[0].clone();
+    replacement["executable"] = json!("/replacement/X-Plane.exe");
+    assert!(cache.read(&platform, &[&replacement], Some(scope))[0].is_ok());
+    assert!(platform.reads.load(Ordering::SeqCst) > reads);
+
+    platform.failed.store(true, Ordering::Release);
+    let changed = (5, 11);
+    assert!(cache.read(&platform, &selected, Some(changed))[0].is_err());
+    assert!(!cache.is_current(changed));
+    platform.failed.store(false, Ordering::Release);
+    assert!(cache.read(&platform, &selected, Some(changed))[0].is_ok());
+    assert!(cache.is_current(changed));
+    assert!(cache.read(&platform, &selected, None)[0].is_ok());
+    assert!(!cache.is_current(changed));
+
+    let changes = crate::game_read_models::signals::Signal::default();
+    let continuity = Arc::new(crate::game_activation::ProcessContinuity::default());
+    assert!(continuity.begin());
+    changes.set_context_process_scope(5, Some(continuity.clone()));
+    assert!(changes.context_process_live(5));
+    assert!(!changes.context_process_live(6));
+    continuity.retire();
+    assert!(!changes.context_process_live(5));
+}
+
+#[test]
 fn capture_wakes_select_only_verified_streaming_providers() {
     let scratch = Scratch::new();
     let (runtime, _, _) = runtime(&scratch);
@@ -73,6 +110,9 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
 
     runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
     wait_for_setup();
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), Some(Duration::from_millis(500)));
+    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now())
+        .is_some_and(|delay| delay > Duration::from_millis(500)));
     runtime.shutdown();
 }
 

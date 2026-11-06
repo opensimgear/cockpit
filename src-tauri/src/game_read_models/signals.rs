@@ -32,18 +32,34 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) context_process_wake:Arc<osg_streams::NativeWake>, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>>, routing_wake:Mutex<Weak<osg_streams::NativeWake>>, activity_wake:Mutex<Weak<osg_streams::NativeWake>> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) context_process_wake:Arc<osg_streams::NativeWake>, pub(crate) context_update_wake:osg_streams::NativeWake, context_process_scope:Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>>, routing_wake:Mutex<Weak<osg_streams::NativeWake>>, activity_wake:Mutex<Weak<osg_streams::NativeWake>> }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),context_process_wake:Default::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default(),routing_wake:Mutex::default(),activity_wake:Mutex::default()}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),context_process_wake:Default::default(),context_update_wake:Default::default(),context_process_scope:Mutex::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default(),routing_wake:Mutex::default(),activity_wake:Mutex::default()}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
 }
 impl Signal {
+    pub(crate) fn set_context_process_scope(&self, library: u64, continuity: Option<Arc<crate::game_activation::ProcessContinuity>>) {
+        let mut scope = self.context_process_scope.lock().unwrap_or_else(|p| p.into_inner());
+        if match (&*scope, &continuity) {
+            (Some((epoch, old)), Some(next)) => *epoch == library && Arc::ptr_eq(old, next),
+            (None, None) => true,
+            _ => false,
+        } { return; }
+        *scope = continuity.map(|continuity| (library, continuity));
+        drop(scope);
+        self.context_process_wake.notify();
+    }
+
+    pub(crate) fn context_process_live(&self, library: u64) -> bool {
+        self.context_process_scope.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+            .is_some_and(|(epoch, continuity)| *epoch == library && continuity.is_live())
+    }
     fn tick(state:&mut State,domain:Domain) {
         if let Some(revision)=state.revision.checked_add(1){state.revision=revision;state.dirty|=domain.bit();}
         else {state.closed=true;state.error=Some("Game source revision exhausted. Reopen Cockpit.".into());}
@@ -88,6 +104,7 @@ impl Signal {
         *self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
     }
     pub(crate) fn mark_vehicle_context(&self) {
+        self.context_update_wake.notify();
         if let Some(wake) = self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
