@@ -135,6 +135,25 @@ test('latest absolute snapshots skip unread revisions and reuse unchanged rows',
   assert.equal(first.controls[68].value.native, 0);
 });
 
+test('a sparse change follows control IDs after an absolute snapshot changes row order', () => {
+  const { states, send } = setup();
+  const controls = [control({ id: 'left' }), control({ id: 'right' })];
+  const source = controller({ controlCount: 2 });
+  send(snapshot({ source, controls, total: 2 }));
+  const original = states.at(-1).detail.controls;
+  send(snapshot({ source: { ...source, sequence: '2' }, controls: [...controls].reverse(), total: 2,
+    cursor: '2', capturedUs: '11' }), { kind: 'snapshot' });
+  const reversed = states.at(-1).detail.controls;
+  assert.equal(reversed[0], original[1]);
+  assert.equal(reversed[1], original[0]);
+  send(change({ source: { ...source, sequence: '3' }, cursor: '3', capturedUs: '12',
+    values: { left: { native: 100, normalized: 32767 } } }));
+  const updated = states.at(-1).detail.controls;
+  assert.equal(updated[0], reversed[0]);
+  assert.equal(updated[1].capability, reversed[1].capability);
+  assert.equal(updated[1].value.native, 100);
+});
+
 test('same-generation recovery shares descriptors while replacement generation installs fresh descriptors', () => {
   const { states, send } = setup();
   send();

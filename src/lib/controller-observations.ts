@@ -13,7 +13,7 @@ type Listener = (state: ControllerInputState) => void;
 type RecordValue = Record<string, unknown>;
 type Snapshot = DeepReadonly<ControllerResult & { cursor: string; capturedUs: string }>;
 type ControlView = DeepReadonly<ControllerControl>;
-const descriptorIndexes = new WeakMap<Snapshot, ReadonlyMap<string, ControlView['capability']>>();
+const descriptorIndexes = new WeakMap<Snapshot, ReadonlyMap<string, number>>();
 interface Entry {
   listeners: Set<Listener>;
   state: ControllerInputState;
@@ -117,29 +117,40 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBas
     const ids = new Set<string>();
     const reusable = descriptorBaseline?.session === payload.session && descriptorBaseline.source!.generation === payload.source.generation
       ? descriptorBaseline : undefined;
-    const oldDescriptors = reusable ? descriptorIndexes.get(reusable) : undefined;
-    const oldRows = reusable ? new Map(reusable.controls!.map(control => [control.capability.id, control])) : undefined;
+    const oldIndexes = reusable ? descriptorIndexes.get(reusable) : undefined;
     requireValid(!reusable || reusable.total === payload.total);
-    const controls = payload.controls.map(raw => {
-      requireValid(record(raw));
-      capability(raw.capability);
-      requireValid(!ids.has(raw.capability.id));
-      ids.add(raw.capability.id);
+    let sameOrder = !!oldIndexes;
+    const controls = payload.controls.map((raw, index) => {
+      requireValid(record(raw) && record(raw.capability) && text(raw.capability.id));
+      const incoming = raw.capability;
+      const id = incoming.id as string;
+      requireValid(!ids.has(id));
+      ids.add(id);
+      const previousIndex = oldIndexes?.get(id);
+      sameOrder &&= previousIndex === index;
+      const previousRow = previousIndex === undefined ? undefined : reusable!.controls![previousIndex];
+      let descriptor: ControlView['capability'];
+      if (oldIndexes) {
+        const existing = previousRow?.capability;
+        requireValid(existing && Object.keys(existing).length === Object.keys(incoming).length
+          && Object.entries(existing).every(([key, value]) => incoming[key] === value));
+        descriptor = existing;
+      } else {
+        capability(incoming);
+        descriptor = frozenCopy(incoming);
+      }
       requireValid(raw.value === null || !unavailable);
-      requireValid(unavailable || raw.capability.kind === 'diagnostic' || raw.value !== null);
-      if (raw.value !== null) sample(raw.value, raw.capability);
-      const descriptor = raw.capability;
-      const existing = oldDescriptors?.get(descriptor.id);
-      if (oldDescriptors) requireValid(existing && Object.keys(existing).length === Object.keys(descriptor).length
-        && Object.entries(existing).every(([key, value]) => descriptor[key as keyof typeof descriptor] === value));
-      return row(existing ?? frozenCopy(descriptor), raw.value as ControllerControl['value'], oldRows?.get(descriptor.id));
+      requireValid(unavailable || descriptor.kind === 'diagnostic' || raw.value !== null);
+      if (raw.value !== null) sample(raw.value, descriptor);
+      return row(descriptor, raw.value, previousRow);
     });
     requireValid(unavailable || controls.some(control => control.capability.kind !== 'diagnostic'));
     const result: Snapshot = Object.freeze({ session: payload.session, source: frozenCopy(payload.source), identity: frozenCopy(payload.identity),
       diagnostics: Object.freeze([...payload.diagnostics]), controls: reusable && controls.every((control, index) => control === reusable.controls![index])
         ? reusable.controls : Object.freeze(controls), offset: 0, total: payload.total, limit: 256,
       cursor: payload.cursor, capturedUs: payload.capturedUs }) as Snapshot;
-    descriptorIndexes.set(result, oldDescriptors ?? new Map(controls.map(control => [control.capability.id, control.capability])));
+    descriptorIndexes.set(result, sameOrder ? oldIndexes!
+      : new Map(controls.map((control, index) => [control.capability.id, index])));
     return result;
   }
   requireValid(frame.kind === 'change' && previous && previous.session === payload.session
@@ -149,26 +160,29 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBas
     && ['baseline', 'change', 'gap', 'disconnect', 'metadata'].includes(payload.reason as string)
     && record(payload.values));
   const values = payload.values;
+  const entries = Object.entries(values);
   const ids = descriptorIndexes.get(previous)!;
-  for (const [id, value] of Object.entries(values)) {
-    requireValid(ids.has(id));
-    sample(value, ids.get(id)!);
-  }
-  requireValid(!unavailable || Object.keys(values).length === 0);
+  requireValid(!unavailable || entries.length === 0);
   // A complete baseline report must describe every control before values become available.
   if (payload.reason === 'baseline' && !unavailable) requireValid(previous.controls!.some(control => control.capability.kind !== 'diagnostic')
     && previous.controls!.every(control => control.capability.kind === 'diagnostic' || Object.hasOwn(values, control.capability.id)));
   requireValid(!payload.source.baselineReady || previous.source!.baselineReady || payload.reason === 'baseline');
   if (payload.reason === 'gap' || payload.reason === 'disconnect') requireValid(unavailable);
-  let changed = false;
-  const controls = previous.controls!.map(control => {
-    const next = row(control.capability, unavailable ? null : Object.hasOwn(values, control.capability.id)
-      ? values[control.capability.id] as ControllerControl['value'] : control.value, control);
-    changed ||= next !== control;
-    return next;
-  });
+  const controls = previous.controls!;
+  let updated: ControlView[] | undefined;
+  if (unavailable && previous.source!.baselineReady) {
+    updated = controls.map(control => row(control.capability, null, control));
+  }
+  for (const [controlId, value] of entries) {
+    const index = ids.get(controlId);
+    requireValid(index !== undefined);
+    const control = controls[index];
+    sample(value, control.capability);
+    const next = row(control.capability, value, control);
+    if (next !== control) (updated ??= [...controls])[index] = next;
+  }
   const result: Snapshot = Object.freeze({ ...previous, source: frozenCopy(payload.source), cursor: payload.cursor, capturedUs: payload.capturedUs,
-    controls: changed ? Object.freeze(controls) : previous.controls });
+    controls: updated ? Object.freeze(updated) : controls });
   descriptorIndexes.set(result, ids);
   return result;
 }
