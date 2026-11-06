@@ -7,6 +7,7 @@ import {createInterface} from 'node:readline';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 const probeExecutable=process.env.OSG_VJOY_RAW_PROBE;
+const slowPreview=process.env.OSG_VJOY_SLOW_PREVIEW==='1';
 test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
   skip:process.platform!=='win32'||!probeExecutable,timeout:60000,
 },async()=>{
@@ -47,6 +48,29 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy');
     await new Promise(resolve=>setTimeout(resolve,600));
     if(process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
+    let previewBefore;
+    if(slowPreview){
+      await page.evaluate(`(async()=>{
+        const {gatewayRequest}=await import('/src/lib/gateway.ts');
+        const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
+        const {observeControllerInputs}=await import('/src/lib/controller-observations.ts');
+        const {controllers}=await gatewayRequest({command:'controller_list',offset:0});
+        const source=controllers.sources.filter(source=>source.online&&source.baselineReady&&source.vendorId!==0x1234)
+          .sort((a,b)=>b.controlCount-a.controlCount)[0];
+        if(!source)throw Error('An attached reporting physical controller is required.');
+        const state={abort:new AbortController(),held:0,errors:[]};
+        window.__vjoySlowPreview=state;
+        createNativeObservationTransport().open('controllers.input.'+source.id,{
+          frame(){state.held++;},error(message){state.errors.push(message);}
+        },state.abort.signal);
+        state.stop=observeControllerInputs(source.id,value=>{
+          if(value.status==='ready')state.fast=value.detail.source.sequence;
+          if(value.status==='error'||value.status==='lost')state.errors.push(value.error??value.status);
+        });
+      })()`);
+      previewBefore=await until(()=>page.evaluate(`(()=>{const s=window.__vjoySlowPreview;
+        return s.held===1?s.fast:null;})()`));
+    }
     probe=spawn(probeExecutable,['--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const trace=[];
@@ -67,6 +91,13 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     await new Promise(resolve=>setTimeout(resolve,heldMs));
     assert.equal((await status()).owner?.profileId,saved.id);
     assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
+    const preview=slowPreview?await page.evaluate(`(()=>{const {fast,held,errors}=window.__vjoySlowPreview;
+      return {fast,held,errors};})()`):null;
+    if(preview){
+      assert.equal(preview.held,1,'The slow preview must still hold only its initial delivery');
+      assert.deepEqual(preview.errors,[]);
+      assert.ok(BigInt(preview.fast)>BigInt(previewBefore),'Independent physical preview must advance while vJoy is active');
+    }
     const stopReplyMs=observation?await observation.stop():null;
     if(!observation)await request({command:'profile_stop'});
     assert.equal((await status()).owner,null);
@@ -80,7 +111,7 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false]);
     await mkdir('.research/reactive',{recursive:true});
     await writeFile('.research/reactive/vjoy-raw-output-result.json',JSON.stringify({
-      slot:slot.slot,heldMs,stopReplyMs,slowReader,stopReleasedHeldButton:true,...report,
+      slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,stopReleasedHeldButton:true,...report,
     },null,2));
   } finally {
     try {
@@ -91,7 +122,12 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
       }
     } finally {
       try { await observation?.close(); }
-      finally {probe?.kill();page.close();}
+      finally {
+        try {
+          if(slowPreview)await page.evaluate(`(()=>{const s=window.__vjoySlowPreview;
+            s?.abort.abort();s?.stop?.();delete window.__vjoySlowPreview;})()`);
+        } finally {probe?.kill();page.close();}
+      }
     }
   }
 });
