@@ -79,7 +79,7 @@ fn native_internal_service_opt_out_ends_when_an_external_resource_is_authored() 
     request(json!({"command":"profile_apply","id":document.id,"expectedRevision":2}));
     assert_eq!(manager.profile_session.lock().unwrap().service_interval(), None);
     request(json!({"command":"profile_stop"}));
-    assert_eq!(manager.profile_session.lock().unwrap().service_interval(), Some(Duration::from_millis(100)));
+    assert_eq!(manager.profile_session.lock().unwrap().service_interval(), None);
 
     document.revision = 2;
     document.resources[0].kind = osg_profiles::ResourceKind::Device;

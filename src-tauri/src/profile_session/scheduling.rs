@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 impl<H: Host> Coordinator<H> {
     pub(crate) fn service_interval(&self) -> Option<Duration> {
         if self.launch.is_some() { return Some(Duration::from_millis(5)); }
+        self.status.owner.as_ref()?;
         self.manifest.active.as_ref().filter(|run| self.validates(&run.owner))
-            .map_or(Some(Duration::from_millis(if self.status.owner.is_some() { 5 } else { 100 })),
-                |run| self.host.service_interval(run))
+            .map_or(Some(Duration::from_millis(5)), |run| self.host.service_interval(run))
     }
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         if self.launch.is_some() { return None; }

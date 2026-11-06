@@ -195,13 +195,13 @@ fn scheduled_deadlines_belong_only_to_the_current_active_owner() {
 fn internal_service_opt_out_cannot_survive_the_owned_run() {
     let (mut runtime, probe) = coordinator(None);
     probe.lock().unwrap().internal = true;
-    assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(100)));
+    assert_eq!(runtime.service_interval(), None);
     runtime.apply(candidate()).unwrap();
     assert_eq!(runtime.service_interval(), None);
     probe.lock().unwrap().internal = false;
     assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(5)));
     runtime.stop().unwrap();
-    assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(100)));
+    assert_eq!(runtime.service_interval(), None);
 }
 #[test]
 fn returned_peripherals_reuse_the_captured_source_and_cannot_revive_a_stopped_or_replaced_owner() {

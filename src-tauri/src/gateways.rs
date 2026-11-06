@@ -1937,18 +1937,31 @@ mod tests {
         let (manager, _) = setup();
         let runtime = manager.clone();
         let (ready, waiting) = mpsc::sync_channel(1);
+        let (done, finished) = mpsc::sync_channel(1);
         let worker = std::thread::spawn(move || {
             let observed = runtime.profile_wake.observed();
+            let (service, deadline) = {
+                let coordinator = runtime.profile_session.lock().unwrap();
+                (coordinator.service_interval(), coordinator.next_deadline())
+            };
+            let wait = crate::profile_session::scheduling::service_wait(service, deadline, std::time::Instant::now());
+            assert_eq!(wait, None, "An idle coordinator must park without a service timer");
             ready.send(()).unwrap();
-            runtime.profile_wake.wait(observed, Duration::from_secs(30));
+            while runtime.profile_wake.observed() == observed {
+                runtime.profile_wake.wait_scheduled(observed, wait);
+            }
             let coordinator = runtime.profile_session.lock().unwrap();
             assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
             assert!(coordinator.status().owner.is_some());
+            done.send(()).unwrap();
         });
         manager.profile_wake.bind_thread(worker.thread().clone()).unwrap();
         waiting.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}))["ok"],true);
+        let result = finished.recv_timeout(Duration::from_secs(5));
+        if result.is_err() { manager.profile_wake.notify(); }
         worker.join().unwrap();
+        result.expect("Apply did not wake the idle coordinator");
     }
     #[test]
     fn desktop_controls_cannot_inject_or_accept_browser_process_identity() {
