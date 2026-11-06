@@ -18,6 +18,7 @@ sha2 = "0.10"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+crossbeam-queue = "0.3"
 osg-streams = { path = "../crates/streams" }
 osg-persistence = { path = "../crates/persistence" }
 osg-profiles = { path = "../crates/profiles" }

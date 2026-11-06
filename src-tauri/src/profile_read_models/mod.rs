@@ -1,6 +1,7 @@
 mod emergency;
 mod bounds;
 mod pages;
+mod ingress;
 pub(crate) use emergency::Emergency;
 // Event-driven projections of committed profile owners. Transport encoding and
 // Broker publication happen only on this worker, never on an authority lock.
@@ -9,7 +10,7 @@ use osg_mapping_host::desktop::Readiness;
 use osg_profiles::{activation::{Rule, Target}, service::read_model::Snapshot, session::SelectionMode};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{collections::VecDeque, sync::{Arc, Condvar, Mutex}, thread::JoinHandle};
+use std::{sync::{atomic::Ordering, Arc, Condvar, Mutex}, thread::JoinHandle};
 
 const CAPACITY: usize = 256;
 const TOPICS: [&str; 3] = ["profiles.library", "profiles.runtime", "profiles.desktop"];
@@ -78,51 +79,22 @@ impl Captured {
     }
     fn generation(&self) -> u64 { self.library.as_ref().expect("registered library").generation }
 }
-struct Queue {
-    events: VecDeque<Event>,
-    latest: Captured,
-    overflow: bool,
-    bytes: usize,
-    failed: bool,
-    closed: bool,
-    ready: Option<Result<(), String>>,
+#[derive(Default)]
+struct Inner {
+    ingress: ingress::Ingress,
+    ready: Mutex<Option<Result<(), String>>>,
+    ready_changed: Condvar,
 }
-impl Queue {
-    fn capture(&mut self, event: Event) {
-        if self.closed { return; }
-        let bytes = bounds::event(&event);
-        let limit = if matches!(&event, Event::Automatic(AutomaticChange::Snapshot(_))) { bounds::MAX_AUTOMATIC_SOURCE_BYTES } else { bounds::MAX_SOURCE_BYTES };
-        if bytes > limit {
-            self.failed = true;
-            self.closed = true;
-            self.events.clear();
-            self.latest = Captured::default();
-            self.bytes = 0;
-            return;
-        }
-        self.latest.apply(event.clone());
-        if self.events.len() == CAPACITY || self.bytes.saturating_add(bytes) > bounds::MAX_QUEUE_BYTES {
-            self.events.clear();
-            self.bytes = 0;
-            self.overflow = true;
-        }
-        if !self.overflow { self.bytes += bytes; self.events.push_back(event); }
-    }
-}
-struct Inner { queue: Mutex<Queue>, wake: Condvar }
 impl Inner {
     fn close(&self) {
-        let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
-        queue.closed = true;
-        queue.events.clear();
-        queue.latest = Captured::default();
-        queue.bytes = 0;
-        self.wake.notify_all();
+        let _ready = self.ready.lock().unwrap_or_else(|p| p.into_inner());
+        self.ingress.close();
+        self.ready_changed.notify_all();
     }
-    fn capture(&self, event: Event) {
-        let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
-        queue.capture(event);
-        self.wake.notify_one();
+    fn set_ready(&self, result: Result<(), String>) {
+        let mut ready = self.ready.lock().unwrap_or_else(|p| p.into_inner());
+        if ready.is_none() { *ready = Some(result); }
+        self.ready_changed.notify_all();
     }
 }
 pub(crate) struct Runtime {
@@ -134,8 +106,7 @@ pub(crate) struct Runtime {
 }
 impl Runtime {
     pub(crate) fn new(observations: observations::Runtime) -> Self {
-        Self { inner: Arc::new(Inner { queue: Mutex::new(Queue { events: VecDeque::new(),
-            latest: Captured::default(), overflow: false, bytes: 0, failed: false, closed: false, ready: None }), wake: Condvar::new() }),
+        Self { inner: Arc::new(Inner::default()),
             observations, worker: Mutex::new(None), pages: Arc::new(pages::Pages::default()), inventory_change: None }
     }
     pub(crate) fn with_inventory_change(mut self, changed: Arc<dyn Fn() + Send + Sync>) -> Self {
@@ -144,19 +115,19 @@ impl Runtime {
     }
     pub(crate) fn library_observer(&self) -> osg_profiles::service::read_model::Observer {
         let inner = self.inner.clone();
-        Arc::new(move |snapshot| inner.capture(Event::Library(snapshot)))
+        Arc::new(move |snapshot| inner.ingress.capture(Event::Library(snapshot)))
     }
     pub(crate) fn native_observer(&self) -> Arc<dyn Fn(Status) + Send + Sync> {
         let inner = self.inner.clone();
-        Arc::new(move |snapshot| inner.capture(Event::Native(snapshot)))
+        Arc::new(move |snapshot| inner.ingress.capture(Event::Native(snapshot)))
     }
     pub(crate) fn desktop_observer(&self) -> Arc<dyn Fn(Readiness) + Send + Sync> {
         let inner = self.inner.clone();
-        Arc::new(move |snapshot| inner.capture(Event::Desktop(snapshot)))
+        Arc::new(move |snapshot| inner.ingress.capture(Event::Desktop(snapshot)))
     }
     pub(crate) fn automatic_observer(&self) -> AutomaticObserver {
         let inner = self.inner.clone();
-        Arc::new(move |snapshot| inner.capture(Event::Automatic(snapshot)))
+        Arc::new(move |snapshot| inner.ingress.capture(Event::Automatic(snapshot)))
     }
     /// Source registration/capture precedes this call. Readiness means both
     /// profile topics have a snapshot; the Gateway cannot expose a half-bound reader.
@@ -171,11 +142,11 @@ impl Runtime {
                 .spawn(move || run(inner, observations, pages, inventory_change)).map_err(|error| error.to_string())?);
         }
         drop(worker);
-        let mut queue = self.inner.queue.lock().unwrap_or_else(|p| p.into_inner());
+        let mut ready = self.inner.ready.lock().unwrap_or_else(|p| p.into_inner());
         loop {
-            if let Some(ready) = &queue.ready { return ready.clone(); }
-            if queue.closed { return Err("Profile read models closed during bootstrap.".into()); }
-            queue = self.inner.wake.wait(queue).unwrap_or_else(|p| p.into_inner());
+            if let Some(result) = &*ready { return result.clone(); }
+            if self.inner.ingress.closed.load(Ordering::Acquire) { return Err("Profile read models closed during bootstrap.".into()); }
+            ready = self.inner.ready_changed.wait(ready).unwrap_or_else(|p| p.into_inner());
         }
     }
     pub(crate) fn page(&self, request: &Value) -> Result<Value, String> {
@@ -188,11 +159,7 @@ impl Runtime {
         self.pages.get(id, offset)
     }
     pub(crate) fn shutdown(&self) {
-        {
-            let mut queue = self.inner.queue.lock().unwrap_or_else(|p| p.into_inner());
-            queue.closed = true;
-            self.inner.wake.notify_all();
-        }
+        self.inner.close();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
@@ -212,28 +179,30 @@ fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages:
     let mut source_generation = 0;
     let mut previous_inventory_owner = None;
     let mut rules = pages::PreparedRules::default();
+    let inbox = &inner.ingress;
+    let _ = inbox.wake.bind_thread(std::thread::current());
+    let mut last = Default::default();
     loop {
-        let (events, overflow) = {
-            let mut queue = inner.queue.lock().unwrap_or_else(|p| p.into_inner());
-            while !queue.closed && queue.events.is_empty() && !queue.overflow {
-                queue = inner.wake.wait(queue).unwrap_or_else(|p| p.into_inner());
+        let observed = inbox.wake.observed();
+        if inbox.closed.load(Ordering::Acquire) {
+            if inbox.failed.load(Ordering::Acquire) {
+                inner.set_ready(Err("Profile source projection exceeds its bound.".into()));
             }
-            if queue.closed {
-                if queue.failed && queue.ready.is_none() { queue.ready = Some(Err("Profile source projection exceeds its bound.".into())); inner.wake.notify_all(); }
-                break;
-            }
-            if queue.overflow {
-                captured = queue.latest.clone();
-                queue.overflow = false;
-                queue.events.clear();
-                queue.bytes = 0;
-                (Vec::new(), true)
-            } else { queue.bytes = 0; (queue.events.drain(..).collect::<Vec<_>>(), false) }
+            break;
+        }
+        let (events, overflow) = inbox.drain(&mut last);
+        if events.is_empty() && !overflow {
+            inbox.wake.wait_scheduled(observed, None);
+            continue;
+        }
+        // Publish ordered lifecycle events normally. After a gap, only the
+        // reconstructed current state is published as the replacement baseline.
+        let steps = if overflow {
+            for event in events { captured.apply(event); }
+            vec![None]
+        } else {
+            events.into_iter().map(Some).collect()
         };
-        // Every retained lifecycle event is published in capture order. Overflow
-        // explicitly resets reader baselines instead of silently skipping states.
-        let mut steps = events.into_iter().map(Some).collect::<Vec<_>>();
-        if overflow { steps.push(None); }
         for event in steps {
             if let Some(event) = event { captured.apply(event); }
             if let (Some(changed), Some(native)) = (&inventory_change, &captured.native) {
@@ -245,9 +214,7 @@ fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages:
             }
             if !captured.complete() { continue; }
             if let Err(error) = rules.prepare(&captured.automatic.as_ref().expect("registered automatic source").rules, &pages) {
-                let mut queue = inner.queue.lock().unwrap_or_else(|p| p.into_inner());
-                if queue.ready.is_none() { queue.ready = Some(Err(error)); inner.wake.notify_all(); }
-                drop(queue);
+                inner.set_ready(Err(error));
                 for publisher in &publishers { broker.retire(publisher); }
                 inner.close(); pages.clear(); return;
             }
@@ -259,11 +226,7 @@ fn run(inner: Arc<Inner>, observations: observations::Runtime, pages: Arc<pages:
                         observations.captured_us(), clock.clone())
                         .map(|publisher| publishers.push(publisher)).map_err(|error| error.to_string())
                 });
-                {
-                    let mut queue = inner.queue.lock().unwrap_or_else(|p| p.into_inner());
-                    queue.ready = Some(result.clone());
-                    inner.wake.notify_all();
-                }
+                inner.set_ready(result.clone());
                 if result.is_err() { for publisher in &publishers { broker.retire(publisher); } inner.close(); pages.clear(); return; }
             } else {
                 for (index, publisher) in publishers.iter().enumerate() {

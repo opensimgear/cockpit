@@ -15,13 +15,17 @@ fn fixture() -> (Runtime, osg_profiles::service::Service) {
     start_fixture(Runtime::new(observations))
 }
 fn start_fixture(runtime: Runtime) -> (Runtime, osg_profiles::service::Service) {
+    let service = seed(&runtime);
+    runtime.start().unwrap();
+    (runtime, service)
+}
+fn seed(runtime: &Runtime) -> osg_profiles::service::Service {
     let mut service = osg_profiles::service::Service::new(None);
     service.observe_read_model(runtime.library_observer());
     runtime.native_observer()(status(State::Stopped));
     runtime.automatic_observer()(AutomaticChange::Snapshot(automatic()));
     runtime.automatic_observer()(AutomaticChange::Emergency { revision: 0, enabled: false });
-    runtime.start().unwrap();
-    (runtime, service)
+    service
 }
 fn next(reader: &mut osg_streams::Reader) -> osg_streams::WireFrame {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -138,22 +142,30 @@ fn ordered_background_lifecycle_and_preference_only_changes_are_delivered() {
 
 #[test]
 fn bounded_queue_overflow_explicitly_resets_continuity_and_reset_changes_generation() {
-    let (runtime, mut service) = fixture();
-    let mut reader = runtime.observations.broker().subscribe("reader", "ui", TOPICS[1]).unwrap();
-    let initial = next(&mut reader);
-    {
-        // Hold the queue only to make saturation deterministic, without racing
-        // a fast worker or relying on sleep/consumer timing.
-        let mut queue = runtime.inner.queue.lock().unwrap();
+    let runtime = Runtime::new(observations::Runtime::new());
+    let mut service = seed(&runtime);
+    let (mut reader, initial) = std::thread::scope(|scope| {
+        // Hold the worker after registration to saturate its ingress deterministically.
+        let readiness = runtime.inner.ready.lock().unwrap();
+        let start = scope.spawn(|| runtime.start());
+        let broker = runtime.observations.broker();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut reader = loop {
+            if let Ok(reader) = broker.subscribe("reader", "ui", TOPICS[1]) { break reader; }
+            assert!(Instant::now() < deadline, "Profile topic was not registered");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let initial = next(&mut reader);
+        let capture = runtime.native_observer();
         for index in 0..CAPACITY + 10 {
             let mut snapshot = status(State::Degraded);
             snapshot.degradation = vec![index.to_string()];
-            queue.capture(Event::Native(snapshot));
+            capture(snapshot);
         }
-        assert!(queue.overflow);
-        assert!(queue.events.is_empty());
-        runtime.inner.wake.notify_one();
-    }
+        drop(readiness);
+        start.join().unwrap().unwrap();
+        (reader, initial)
+    });
     assert_eq!(next(&mut reader).kind, "loss");
     let snapshot = next(&mut reader);
     assert_eq!(snapshot.kind, "snapshot");
@@ -163,6 +175,25 @@ fn bounded_queue_overflow_explicitly_resets_continuity_and_reset_changes_generat
     let reset = next(&mut reader);
     assert_eq!(reset.kind, "snapshot");
     assert_ne!(reset.generation, initial.generation);
+    runtime.shutdown();
+}
+
+#[test]
+fn urgent_status_and_emergency_producers_bypass_projection_readiness_lock() {
+    let (runtime, _) = fixture();
+    let lock = runtime.inner.ready.lock().unwrap();
+    let status_observer = runtime.native_observer();
+    let automatic_observer = runtime.automatic_observer();
+    let (sent, received) = std::sync::mpsc::channel();
+    let producer = std::thread::spawn(move || {
+        automatic_observer(AutomaticChange::Emergency { revision: 2, enabled: true });
+        status_observer(status(State::Stopped));
+        sent.send(()).unwrap();
+    });
+    let result = received.recv_timeout(std::time::Duration::from_secs(1));
+    drop(lock);
+    producer.join().unwrap();
+    result.unwrap();
     runtime.shutdown();
 }
 

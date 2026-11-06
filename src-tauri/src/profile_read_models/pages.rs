@@ -2,7 +2,7 @@
 //! readers have no path, filesystem, inventory, or command authority.
 use super::*;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::{BTreeMap, VecDeque}, sync::Arc};
 
 const MAX_BLOBS: usize = 4;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
