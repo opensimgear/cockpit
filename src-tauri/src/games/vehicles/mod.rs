@@ -178,7 +178,8 @@ impl Tracker {
         self.entries.values().filter_map(|entry| {
             let reader = entry.reader.as_ref()?;
             let deadline = entry.capture_watch.as_ref().and_then(|_| reader.assetto_deadline());
-            deadline.into_iter().chain(entry.inspection.deadline(now)).min()
+            deadline.into_iter().chain(reader.ownship_retry_deadline())
+                .chain(entry.inspection.deadline(now)).min()
         }).min()
     }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {

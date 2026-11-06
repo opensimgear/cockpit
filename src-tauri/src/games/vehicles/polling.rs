@@ -110,7 +110,9 @@ impl Tracker {
                     && entry.reader.as_ref().and_then(Reader::assetto_deadline).is_some_and(|at| now >= at);
                 let retained_process = entry.retained_process_current().is_some();
                 let inspection_due = entry.reader.is_some() && entry.inspection.deadline(now).is_some_and(|deadline| now >= deadline);
-                if (capture_only || retained_process) && !changed && !expired && !inspection_due {
+                let ownship_due = entry.reader.as_ref().and_then(Reader::ownship_retry_deadline)
+                    .is_some_and(|deadline| now >= deadline);
+                if (capture_only || retained_process) && !changed && !expired && !inspection_due && !ownship_due {
                     return None;
                 }
                 Some(Qualification {

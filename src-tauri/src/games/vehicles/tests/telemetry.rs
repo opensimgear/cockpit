@@ -225,6 +225,39 @@ fn rally_catalogue_remembers_only_qualified_native_car_models_and_stale_withdraw
 }
 
 #[test]
+fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
+    let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let connection = connection(reserve.local_addr().unwrap().port());
+    drop(reserve);
+    let directory = crate::test_directory();
+    let mut tracker = Tracker::new(directory.path().join("vehicles.json"));
+    let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs",
+        "provider":"dcs-bios","installed":true,"executable":"DCS.exe"});
+    let process = ProcessIdentity { pid: 1, epoch: 1, path: "DCS.exe".into() };
+    tracker.begin_observation(&game, &connection, Some(process.clone()), "setup", true, 1).unwrap();
+    let mut reader = Reader::open("dcs", &connection, &process).unwrap();
+    let Reader::Dcs { physics, physics_retry, .. } = &mut reader else { unreachable!() };
+    *physics = None;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    *physics_retry = deadline;
+    tracker.entries.get_mut("dcs").unwrap().reader = Some(reader);
+    assert_eq!(tracker.capture_deadline(), Some(deadline));
+    assert!(tracker.capture_candidates().is_empty());
+    let entry = tracker.entries.get_mut("dcs").unwrap();
+    let observed = entry.observed;
+    let Some(Reader::Dcs { physics_retry, .. }) = &mut entry.reader else { unreachable!() };
+    *physics_retry = Instant::now();
+    assert_eq!(tracker.maintenance_delay(deadline), Some(Duration::ZERO));
+    let candidates = tracker.capture_candidates().into_iter().map(|candidate| {
+        candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal()
+    }).collect();
+    let poll = tracker.begin_polls(candidates).pop().unwrap();
+    tracker.apply_poll(poll.read());
+    assert_eq!(tracker.entries["dcs"].observed, observed);
+    assert!(tracker.capture_deadline().is_none_or(|next| next > Instant::now()));
+}
+
+#[test]
 fn shared_export_subscriber_overflow_is_an_explicit_error_and_new_subscribers_start_empty() {
     let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = reserve.local_addr().unwrap().port();

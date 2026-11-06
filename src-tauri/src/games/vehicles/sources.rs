@@ -215,6 +215,12 @@ impl Reader {
             _ => None,
         }
     }
+    pub(super) fn ownship_retry_deadline(&self) -> Option<Instant> {
+        match self {
+            Self::Dcs { physics: None, physics_retry, .. } => Some(*physics_retry),
+            _ => None,
+        }
+    }
     pub(super) fn expire_assetto(&mut self, now_ms: u64) -> Result<(Option<String>, Capture), String> {
         let Self::Rally { decoder, .. } = self else {
             return Err("Only an Assetto reader has a local capture expiry.".into());
