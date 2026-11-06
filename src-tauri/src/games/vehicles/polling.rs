@@ -5,7 +5,7 @@ pub(crate) struct Qualification {
     id: String,
     generation: u64,
     signature: String,
-    installation: String,
+    installation: Arc<[Value; 5]>,
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
@@ -30,7 +30,7 @@ impl Qualification {
                 && games.iter().any(|game| {
                     game["id"] == self.id
                         && game["installed"] == true
-                        && Tracker::installation(game) == self.installation
+                        && Tracker::installation_matches(&self.installation, game)
                 })
                 && setup_revision(&self.id) == self.setup_revision
                 && self.process.as_ref().is_some_and(|process| self.retained_process || alive(process)),
@@ -126,7 +126,7 @@ impl Tracker {
                     id: id.clone(),
                     generation: entry.generation,
                     signature: entry.signature.clone(),
-                    installation: entry.installation.clone(),
+                    installation: Arc::clone(&entry.installation_fields),
                     setup_revision: entry.setup_revision.clone(),
                     enabled: entry.enabled,
                     process: entry.process.clone(),

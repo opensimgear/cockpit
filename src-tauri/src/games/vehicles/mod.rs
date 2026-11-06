@@ -82,7 +82,7 @@ struct Entry {
     signature: String,
     integration: String,
     installation: String,
-    installation_fields: [Value; 5],
+    installation_fields: Arc<[Value; 5]>,
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
@@ -151,9 +151,17 @@ pub(crate) struct Tracker {
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
-    fn installation_fields(game: &Value) -> [Value; 5] {
-        ["installPath", "executable", "installed", "integrationKey", "provider"].map(|field| game[field].clone())
+    const INSTALLATION_FIELDS: [&'static str; 5] =
+        ["installPath", "executable", "installed", "integrationKey", "provider"];
+
+    fn installation_fields(game: &Value) -> Arc<[Value; 5]> {
+        Arc::new(Self::INSTALLATION_FIELDS.map(|field| game[field].clone()))
     }
+
+    fn installation_matches(known: &[Value; 5], game: &Value) -> bool {
+        known.iter().zip(Self::INSTALLATION_FIELDS).all(|(value, field)| value == &game[field])
+    }
+
     pub(crate) fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
         for entry in self.entries.values_mut() {
             entry.capture_watch = entry.reader.as_ref()

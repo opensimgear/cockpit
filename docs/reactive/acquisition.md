@@ -82,8 +82,10 @@ Their first native page timestamp determines the exact local freshness deadline,
 expires the decoder without another read from the source. Other admitted
 readers still use the separate 100 ms process qualification pass. The pass
 leaves unopened readers and open retries with the context owner. A wake with
-no candidates skips installation validation and catalogue reads. The shared
-Windows process subscription wakes game context on lifecycle events. A live
+no candidates skips installation validation and catalogue reads. Before and
+after detached capture work, qualification checks the installation fields
+directly against a catalogue snapshot taken with the metadata error check.
+The shared Windows process subscription wakes game context on lifecycle events. A live
 subscription lets the context worker reuse a successful batched inventory within
 the same library and event revisions. When X-Plane is the only configured
 integration, the context owner waits for notifications or a pending vehicle

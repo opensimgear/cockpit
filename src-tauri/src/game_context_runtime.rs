@@ -325,20 +325,16 @@ impl Inner {
         value
     }
     fn vehicle_telemetry_games(&self, capture_only: bool) -> Vec<Value> {
-        if self.guard_installation_metadata().is_ok() {
-            self.settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .catalogue
-                .iter()
-                .filter(|game| crate::game_discovery::integration_key(game)
-                    .is_some_and(|key| !capture_only || key.starts_with("assetto-corsa")
-                        || matches!(key, "dcs" | "x-plane-11" | "x-plane-12")))
-                .cloned()
-                .collect()
-        } else {
-            vec![]
+        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        if settings.metadata_error.is_some() {
+            return vec![];
         }
+        settings.catalogue.iter()
+            .filter(|game| crate::game_discovery::integration_key(game)
+                .is_some_and(|key| !capture_only || key.starts_with("assetto-corsa")
+                    || matches!(key, "dcs" | "x-plane-11" | "x-plane-12")))
+            .cloned()
+            .collect()
     }
     fn poll_vehicle_telemetry(&self, capture_only: bool) {
         let candidates = {

@@ -23,7 +23,7 @@ impl Tracker {
         self.entries
             .get(game["id"].as_str()?)
             .filter(|entry| {
-                entry.installation == Self::installation(game)
+                Self::installation_matches(&entry.installation_fields, game)
                     && entry.enabled
                     && (entry.reader.is_some() || entry.polling)
                     && entry.process_current()
@@ -143,7 +143,7 @@ impl Tracker {
         game["currentVehicle"] = self
             .entries
             .get(&id)
-            .filter(|entry| entry.installation_fields.iter().zip(["installPath", "executable", "installed", "integrationKey", "provider"]).all(|(known, field)| known == &game[field]))
+            .filter(|entry| Self::installation_matches(&entry.installation_fields, game))
             .and_then(|_| self.current(&id))
             .unwrap_or(Value::Null);
         game["vehicleStatus"] = json!({"status":if game["currentVehicle"].is_object(){"ready"}else if self.entries.get(&id).is_some_and(|entry|entry.error.is_some()){"unavailable"}else{"waiting"},"message":self.entries.get(&id).and_then(|entry|entry.error.as_deref()).unwrap_or("Waiting for a running game and fresh vehicle telemetry.")});

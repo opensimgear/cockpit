@@ -59,6 +59,9 @@ fn capture_wakes_select_only_verified_streaming_providers() {
         .iter().map(|game| game["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
     assert_eq!(ids(true), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
     assert_eq!(ids(false), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
+    runtime.inner.settings.lock().unwrap().metadata_error = Some("Fixture metadata error".into());
+    assert!(ids(true).is_empty());
+    assert!(ids(false).is_empty());
     runtime.shutdown();
 }
 
