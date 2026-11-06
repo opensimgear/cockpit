@@ -2,6 +2,28 @@ use super::*;
 use osg_streams::NativeWake;
 
 #[test]
+fn visibility_commit_is_retained_without_invalidating_system_inventory() {
+    let runtime = Runtime::new(true);
+    let observations = crate::observations::Runtime::new();
+    runtime.observe(&observations).unwrap();
+    let broker = observations.broker();
+    let mut inventory = broker.subscribe("inventory-test", "ui", TOPIC).unwrap();
+    let mut visibility = broker.subscribe("visibility-test", "mcp", VISIBILITY_TOPIC).unwrap();
+    let _ = inventory.try_recv().unwrap().unwrap();
+    let baseline = visibility.try_recv().unwrap().unwrap();
+    let wake = runtime.wake().observed();
+
+    runtime.visibility_committed();
+
+    let changed = visibility.try_recv().unwrap().unwrap();
+    assert!(changed.revision > baseline.revision);
+    assert!(inventory.try_recv().unwrap().is_none());
+    assert_eq!(runtime.wake().observed(), wake);
+    let mut reopened = broker.subscribe("visibility-reopen", "browser", VISIBILITY_TOPIC).unwrap();
+    assert_eq!(reopened.try_recv().unwrap().unwrap().revision, changed.revision);
+}
+
+#[test]
 fn activity_watch_is_weak_independent_and_wakes_only_on_source_changes() {
     let runtime = Runtime::new(true);
     let worker = runtime.wake().observed();

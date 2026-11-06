@@ -6,6 +6,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | --- | --- | --- |
 | `workspace.state` | Gateway workspace worker publishes topology, connection, configuration and claim changes from its owned caches | App and gateway workspace. Editing renews an existing claim separately. |
 | `controllers.inventory`, `controllers.input.<id>` | Controller registry inventory and typed capture publishers. Input preview is independent of ordered routing. | Devices and assigned profile controller inspectors. |
+| `controllers.visibility` | Successful local visibility preference commits publish a retained revision without driver inspection. | The open Device visibility card and MCP subscribers can re-read the saved preference. |
 | `usb.inventory`, `usb.inputs.<route>`, `usb.metadata.<route>` | Module USB fleet inventory and per-route capture and metadata publishers | USB devices, input panels and setup details. |
 | `can.inputs.<gateway>.<module>` | STM32 panel input capture through the exact gateway and module observation bridge | CAN panel input preview for supported streaming firmware. |
 | `system.inventory` | Supplemental system inventory invalidation through `system_inventory.rs` and gateway topology commits | Devices and Settings Devices read the affected inventory. External driver changes have explicit inspection paths. |

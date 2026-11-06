@@ -22,6 +22,8 @@
   let refreshing = false;
   let refreshPending = false;
   let requestSequence = 0;
+  let visibilityBaselineReady = false;
+  let inventoryBaselineReady = false;
   function intentExecutable(intent: VisibilityIntent) {
     return intent.mode === 'hide-from-process' ? intent.executable : '';
   }
@@ -51,7 +53,7 @@
     finally { busy = false; if (refreshPending) void refresh(); }
   }
   async function refresh() {
-    if (!refreshPending || disposed || document.hidden || busy || refreshing) return;
+    if (!refreshPending || !visibilityBaselineReady || !inventoryBaselineReady || disposed || document.hidden || busy || refreshing) return;
     refreshing = true;
     try {
       while (refreshPending && !busy && !disposed && !document.hidden) {
@@ -63,8 +65,16 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
+    observations.subscribe('controllers.visibility', state => {
+      if (state.status === 'ready' || state.status === 'lost' || state.status === 'error') {
+        visibilityBaselineReady = true;
+        refreshPending = true;
+        void refresh();
+      }
+    });
     observations.subscribe('system.inventory', state => {
-      if (state.status === 'ready' || (!status && (state.status === 'error' || state.status === 'lost'))) {
+      if (state.status === 'ready' || state.status === 'error' || state.status === 'lost') {
+        inventoryBaselineReady = true;
         refreshPending = true;
         void refresh();
       }

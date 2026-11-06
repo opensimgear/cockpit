@@ -4,7 +4,7 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 22] = [
+const FIXED_TOPICS: [(&str, &str); 23] = [
     ("activity.log", "Activity log revision"),
     ("settings.activity", "Committed activity retention settings"),
     ("profiles.library", "Saved profile library"),
@@ -23,6 +23,7 @@ const FIXED_TOPICS: [(&str, &str); 22] = [
     ("companion.presence", "Companion presence and pairing revision"),
     ("companion.firmware", "Companion USB firmware update progress"),
     ("controllers.inventory", "Host controller inventory"),
+    ("controllers.visibility", "Committed controller visibility preferences"),
     ("usb.inventory", "USB module inventory revision"),
     ("system.inventory", "Supplemental system inventory revision"),
     ("settings.desktop", "Committed keyboard and mouse output settings"),
@@ -125,6 +126,7 @@ mod tests {
             "games.telemetry",
             "games.detail.dcs",
             "controllers.inventory",
+            "controllers.visibility",
             "usb.inventory",
             "system.inventory",
             "preferences.remembered",

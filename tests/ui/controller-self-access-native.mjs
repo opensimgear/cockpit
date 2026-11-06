@@ -1,5 +1,6 @@
 // Requires a running Windows Cockpit native dev bridge and supported HidHide.
-// Startup may configure the capture executable; every request here is read-only.
+// Startup may configure the capture executable. Set OSG_TEST_VISIBILITY_SAVE=1
+// only with an isolated database to also exercise a saved preference change.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -66,6 +67,20 @@ test('native startup grants HidHide self-access and Devices displays the same pa
     assert.deepEqual(errors, []);
     const writes = commands.filter(command => /^(?:controller_visibility_(?:save|enable|restore|apply|launch)|controller_(?:forget|reassign|update)|profile_apply)$/.test(command));
     assert.deepEqual(writes, []);
+    if (process.env.OSG_TEST_VISIBILITY_SAVE === '1') {
+      const savedPolicy = page.getByRole('combobox', { name: /^Saved policy/ });
+      const original = initial.visibility.intent;
+      const next = original.mode === 'visible' ? 'hide-all' : 'visible';
+      await expect(savedPolicy).toHaveValue(original.mode);
+      try {
+        const saved = await native({ command: 'controller_visibility_save', sourceId: source.id, intent: { mode: next } });
+        assert.deepEqual(saved.visibility.effective, initial.visibility.effective);
+        await expect(savedPolicy).toHaveValue(next);
+      } finally {
+        await native({ command: 'controller_visibility_save', sourceId: source.id, intent: original });
+      }
+      await expect(savedPolicy).toHaveValue(original.mode);
+    }
     await page.screenshot({ path: resolve(artifacts, 'startup-access.png'), fullPage: true });
     await status.screenshot({ path: resolve(artifacts, 'startup-access-status.png') });
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), endpoint,

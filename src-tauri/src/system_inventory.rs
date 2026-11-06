@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::{sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::{SystemTime, UNIX_EPOCH}};
 
 const TOPIC: &str = "system.inventory";
+const VISIBILITY_TOPIC: &str = "controllers.visibility";
 #[path = "system_inventory_associations.rs"]
 mod associations;
 #[path = "optional_dependencies/installed.rs"]
@@ -18,7 +19,12 @@ pub(crate) struct Runtime {
     wake: Arc<osg_streams::NativeWake>,
     activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    publisher: Mutex<Option<(crate::observations::Runtime, osg_streams::Publisher)>>,
+    publishers: Mutex<Option<Publishers>>,
+}
+struct Publishers {
+    observations: crate::observations::Runtime,
+    inventory: osg_streams::Publisher,
+    visibility: osg_streams::Publisher,
 }
 struct Snapshot {
     value: Value,
@@ -27,7 +33,7 @@ impl Runtime {
     pub(crate) fn new(native: bool) -> Self {
         Self { native, snapshot: Mutex::new(None), capture_gate: Mutex::new(()),
             stopped: Arc::default(), wake: Arc::default(), activity_wake: Mutex::default(),
-            worker: Mutex::new(None), publisher: Mutex::new(None) }
+            worker: Mutex::new(None), publishers: Mutex::new(None) }
     }
     pub(crate) fn start(&self, capture: impl Fn() -> bool + Send + 'static) -> Result<(), String> {
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -55,18 +61,25 @@ impl Runtime {
         }
     }
     pub(crate) fn observe(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
-        let mut slot = self.publisher.lock().unwrap_or_else(|p| p.into_inner());
-        let publisher = observations.broker().register(osg_streams::TopicSpec {
-            topic: TOPIC.into(), source: "system-inventory".into(),
+        let mut slot = self.publishers.lock().unwrap_or_else(|p| p.into_inner());
+        let register = |topic: &str, source: &str| observations.broker().register(osg_streams::TopicSpec {
+            topic: topic.into(), source: source.into(),
             audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
-        }, json!({}), observations.captured_us(), TOPIC.into()).map_err(|error| error.to_string())?;
-        *slot = Some((observations.clone(), publisher));
+        }, json!({}), observations.captured_us(), topic.into()).map_err(|error| error.to_string());
+        *slot = Some(Publishers {
+            observations: observations.clone(),
+            inventory: register(TOPIC, "system-inventory")?,
+            visibility: register(VISIBILITY_TOPIC, "controller-visibility")?,
+        });
         Ok(())
     }
     pub(crate) fn changed(&self) {
         self.wake.notify();
         self.notify_activity();
-        if !self.native { self.publish(); }
+        if !self.native { self.publish(TOPIC, |publishers| &publishers.inventory); }
+    }
+    pub(crate) fn visibility_committed(&self) {
+        self.publish(VISIBILITY_TOPIC, |publishers| &publishers.visibility);
     }
     pub(crate) fn watch_activity(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
@@ -78,10 +91,11 @@ impl Runtime {
         }
     }
     pub(crate) fn wake(&self) -> &Arc<osg_streams::NativeWake> { &self.wake }
-    fn publish(&self) {
-        let slot = self.publisher.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some((observations, publisher)) = slot.as_ref() {
-            let _ = publisher.publish_latest_state(publisher.generation(), json!({}), observations.captured_us(), TOPIC);
+    fn publish(&self, topic: &str, select: impl FnOnce(&Publishers) -> &osg_streams::Publisher) {
+        let slot = self.publishers.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(publishers) = slot.as_ref() {
+            let publisher = select(publishers);
+            let _ = publisher.publish_latest_state(publisher.generation(), json!({}), publishers.observations.captured_us(), topic);
         }
     }
     pub(crate) fn request(&self, request: &Value, controllers: &osg_controller_input::ControllerService, associations:impl FnOnce(&osg_controller_input::registry::ResourceInventory)->Vec<Value>) -> Result<Value, String> {
@@ -152,7 +166,7 @@ impl Runtime {
         }
         *snapshot = Some(Snapshot { value });
         drop(snapshot);
-        self.publish();
+        self.publish(TOPIC, |publishers| &publishers.inventory);
     }
 }
 impl Drop for Runtime {

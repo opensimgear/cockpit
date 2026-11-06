@@ -1555,7 +1555,9 @@ impl GatewayManager {
                     let mut response =
                         self.decorate(json!({"ok":true,"state":empty_state()}), None);
                     response["state"]["controllers"] = state;
-                    if matches!(command.as_str(), "controller_visibility_enable" | "controller_visibility_inspect" | "controller_visibility_restore" | "controller_visibility_save") {
+                    if matches!(command.as_str(), "controller_visibility_enable" | "controller_visibility_save") {
+                        self.system_inventory.visibility_committed();
+                    } else if matches!(command.as_str(), "controller_visibility_inspect" | "controller_visibility_restore") {
                         self.system_inventory_changed();
                     }
                     response
