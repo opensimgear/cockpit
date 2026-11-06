@@ -86,6 +86,7 @@ struct State {
     error: Option<String>,
     cleanup_done: bool,
     phase_wake: Weak<osg_streams::NativeWake>,
+    routing_wake: Weak<osg_streams::NativeWake>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -96,12 +97,20 @@ impl Default for State {
             error: None,
             cleanup_done: false,
             phase_wake: Weak::new(),
+            routing_wake: Weak::new(),
         }
     }
 }
 impl State {
     fn notify_phase(&self) {
         if let Some(wake) = self.phase_wake.upgrade() {
+            wake.notify();
+        }
+        self.notify_routing();
+    }
+
+    fn notify_routing(&self) {
+        if let Some(wake) = self.routing_wake.upgrade() {
             wake.notify();
         }
     }
@@ -119,6 +128,7 @@ impl Shared {
         s.queue.clear();
         s.bind = None;
         self.wake.notify_all();
+        s.notify_routing();
     }
     fn fail(&self, error: String) {
         self.revoke();
@@ -667,6 +677,11 @@ impl PanelActions {
     pub(crate) fn watch_phase(&self, wake: &Arc<osg_streams::NativeWake>) {
         for slot in &self.slots {
             slot.shared.state.lock().unwrap_or_else(|p| p.into_inner()).phase_wake = Arc::downgrade(wake);
+        }
+    }
+    pub(crate) fn watch_routing(&self, wake: &Arc<osg_streams::NativeWake>) {
+        for slot in &self.slots {
+            slot.shared.state.lock().unwrap_or_else(|p| p.into_inner()).routing_wake = Arc::downgrade(wake);
         }
     }
     /// Every dispatched driver is moved into its worker. A retained driver

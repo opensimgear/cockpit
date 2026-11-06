@@ -47,8 +47,9 @@ A pending Windows game launch with notified HID or native panel inputs and
 an optional neutral virtual feeder can wait for retained wakes, feeder renewal,
 or launch expiry. Native panels require a bound baseline and a registered host
 wake. A pre-Start desktop owner has no registration to renew and can also
-park. Companion, visibility, action, and publication work keeps bounded
-service. The hold stays disarmed until Start.
+park. Physical action workers renew their own neutral leases and notify the
+host on loss. Companion, visibility, and publication work keeps bounded service.
+The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline
 selection. Foreground, desktop and session changes notify the parent and helper

@@ -153,6 +153,7 @@ pub(super) fn dispatch(
 impl NativeProfileHost {
     pub(super) fn acquire_actions(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        let routing_wake = self.native_wake.clone();
         if !self.run(owner)?.actions.is_empty() {
             self.report_progress(owner, "acquiring-peripheral-outputs", "Connecting peripheral output controls");
         }
@@ -162,6 +163,9 @@ impl NativeProfileHost {
         }
         let expected = state.admission_epoch;
         Self::check_epoch(&epoch, expected)?;
+        if let Some(wake) = routing_wake.as_ref() {
+            state.actions.watch_routing(wake);
+        }
         state.actions.acquire()?;
         wait(
             &mut state.actions,

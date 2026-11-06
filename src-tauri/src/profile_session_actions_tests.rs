@@ -413,15 +413,24 @@ fn initial_unknown_baseline_is_not_an_action_and_cleanup_error_keeps_receipt_unr
 fn renewal_happens_without_ui_pumping_and_failure_revokes_without_retry() {
     let _serial = SERIAL.lock().unwrap();
     let (p, o, mut a, probes) = fixture(1, false);
-    live(&mut a, &p);
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    a.watch_routing(&routing);
+    a.acquire().unwrap();
+    eventually(|| a.poll().acquired);
+    eventually(|| a.bind_delivery(&p).unwrap());
+    let phase = Arc::new(osg_streams::NativeWake::default());
+    a.watch_phase(&phase);
+    let observed = routing.observed();
     assert_eq!(probes[0].count("renew"), 1);
     *probes[0].fail.lock().unwrap() = Some("renew".into());
     eventually(|| a.poll().stopped);
+    assert!(routing.observed() > observed, "Renewal failure must wake the parked launch host");
+    assert!(phase.observed() > 0, "The phase waiter still receives completion");
     assert_eq!(probes[0].count("renew"), 2);
     assert!(a.poll().required_failed);
     assert!(
-        a.dispatch(&[effect(&o, 0, 1, true)]).is_ok(),
-        "revoked queue ignores later tuples without reopening ownership"
+        a.dispatch(&[effect(&o, 0, 1, true)]).is_err(),
+        "a disarmed hold must reject later tuples without reopening ownership"
     );
     assert_eq!(probes[0].count("invoke"), 0);
     assert_eq!(probes[0].count("claim"), 1);
