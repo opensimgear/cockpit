@@ -30,3 +30,16 @@ remain open under #196.
 The local native suite passed 2,357 tests with 18 existing ignores. The
 desktop settings observation reached 21 of 21 production lines. Seven
 output settings UI tests and all 247 timing dispositions passed.
+
+The Games read-model fixture also passed in native Cockpit and browser-dev.
+Both summary consumers received a background artwork-position commit while
+the exact detail reader was closed. The closed callback stayed unchanged.
+Reopening acquired the current detail revision and both committed coordinates.
+Removal then withdrew the detail and both summary rows. These were read-model
+consumers inside the running app, using an inert catalogue fixture.
+
+Native checks also passed for clean profile editor refresh, protection of a
+dirty draft during a remote rename, attached-controller metadata fan-out and
+companion listener retry readiness. Games coverage passed 37 tests, and the
+30 Games read-model tests reached 94.54% lines, 87.83% branches and 85.29%
+functions.

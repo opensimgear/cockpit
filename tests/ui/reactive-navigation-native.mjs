@@ -1,9 +1,8 @@
 // Running Cockpit lifetime check. Observe native IPC without replacing it.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createRequire} from 'node:module';
 import {dirname, resolve} from 'node:path';
-import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
@@ -15,32 +14,6 @@ const endpoints = new Map([
   ['/api/observe/unsubscribe','unsubscribe'],
   ['/api/observe/ack','ack'],
 ]);
-
-async function browserPage(url) {
-  const require = createRequire(import.meta.url);
-  const {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
-  const browser = await chromium.launch({headless:true, channel:process.env.OSG_BROWSER_CHANNEL});
-  try {
-    const page = await browser.newPage();
-    await page.goto(url);
-    await page.getByRole('navigation', {name:'Main navigation'}).waitFor();
-    const session = await page.context().newCDPSession(page);
-    return {
-      call: (method, args) => session.send(method, args),
-      evaluate: expression => page.evaluate(expression),
-      listen(listener) {
-        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed'];
-        const handlers = methods.map(method => [method, params => listener({method,params})]);
-        for (const [method, handler] of handlers) session.on(method, handler);
-        return () => handlers.forEach(([method, handler]) => session.off(method, handler));
-      },
-      close: () => browser.close(),
-    };
-  } catch (error) {
-    await browser.close();
-    throw error;
-  }
-}
 
 test(`${transport} main view navigation retires observation readers without duplicate baselines`, {timeout:60000}, async () => {
   const page = browserUrl ? await browserPage(browserUrl) : await nativePage();

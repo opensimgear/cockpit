@@ -1,3 +1,31 @@
+import {createRequire} from 'node:module';
+
+export async function browserPage(url) {
+  const require = createRequire(import.meta.url);
+  const {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
+  const browser = await chromium.launch({headless:true, channel:process.env.OSG_BROWSER_CHANNEL});
+  try {
+    const page = await browser.newPage();
+    await page.goto(url);
+    await page.getByRole('navigation', {name:'Main navigation'}).waitFor();
+    const session = await page.context().newCDPSession(page);
+    return {
+      call: (method, args) => session.send(method, args),
+      evaluate: expression => page.evaluate(expression),
+      listen(listener) {
+        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed'];
+        const handlers = methods.map(method => [method, params => listener({method,params})]);
+        for (const [method, handler] of handlers) session.on(method, handler);
+        return () => handlers.forEach(([method, handler]) => session.off(method, handler));
+      },
+      close: () => browser.close(),
+    };
+  } catch (error) {
+    await browser.close();
+    throw error;
+  }
+}
+
 // Activation progress has its own restricted WebView at the same origin.
 // Always select the main entry, independently of DevTools target ordering.
 export function nativeMainTarget(pages) {
