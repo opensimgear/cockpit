@@ -94,6 +94,8 @@ pub(super) enum Reader {
 }
 
 pub(super) enum CaptureWatch {
+    #[cfg(test)]
+    Fixture,
     Assetto { _watch: crate::acr_windows::Watch },
     Xplane {
         _watch: osg_streams::NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::NativeSnapshot>,
@@ -191,6 +193,18 @@ impl Reader {
             Self::Dcs { capture_dirty, .. } => std::mem::take(capture_dirty),
             _ => false,
         }
+    }
+    pub(super) fn assetto_deadline(&self) -> Option<Instant> {
+        match self {
+            Self::Rally { decoder, .. } => decoder.capture_deadline(),
+            _ => None,
+        }
+    }
+    pub(super) fn expire_assetto(&mut self, now_ms: u64) -> Result<(Option<String>, Capture), String> {
+        let Self::Rally { decoder, .. } = self else {
+            return Err("Only an Assetto reader has a local capture expiry.".into());
+        };
+        Ok((None, Capture::assetto(&decoder.tick(now_ms))))
     }
     pub(super) fn inspect(&mut self, game: &str, ids: &[String]) -> Result<(), String> {
         if let Self::Xplane(source) = self {

@@ -3,7 +3,7 @@ use super::{
     Source, SourceIdentity, CHANNELS,
 };
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(crate) struct Session {
     game: Game,
@@ -28,6 +28,12 @@ pub(crate) struct Session {
     exhausted: bool,
 }
 impl Session {
+    pub(crate) fn capture_deadline(&self) -> Option<Instant> {
+        if !self.qualified || !self.live { return None; }
+        let capture = self.capture.as_ref()?;
+        capture.physics.captured_at.checked_add(Duration::from_millis(self.freshness_ms) + Duration::from_nanos(1))
+    }
+
     pub fn new(freshness_ms: u64) -> Result<Self, String> {
         Self::new_for_game(freshness_ms, Game::Rally)
     }

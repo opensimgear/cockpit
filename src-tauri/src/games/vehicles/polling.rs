@@ -11,6 +11,7 @@ pub(crate) struct Qualification {
     process: Option<ProcessIdentity>,
     qualified: Option<bool>,
     capture_changed: bool,
+    capture_expired: bool,
 }
 impl Qualification {
     pub(crate) fn without_renewal(mut self) -> Self {
@@ -61,7 +62,12 @@ impl VehiclePoll {
             }
         }
         let read_ms = self.now_ms.saturating_add(u64::try_from(self.at.elapsed().as_millis()).unwrap_or(u64::MAX));
-        self.result = Some(self.reader.poll_telemetry(read_ms).map(
+        let capture = if self.qualification.capture_expired && !self.qualification.capture_changed {
+            self.reader.expire_assetto(read_ms)
+        } else {
+            self.reader.poll_telemetry(read_ms)
+        };
+        self.result = Some(capture.map(
             |(current, mut capture)| {
                 capture.at = self.at;
                 self.capture_changed = self.previous_capture.as_ref()
@@ -89,6 +95,7 @@ impl Tracker {
         self.candidates(true)
     }
     fn candidates(&mut self, capture_only: bool) -> Vec<Qualification> {
+        let now = Instant::now();
         self.entries
             .iter_mut()
             .filter_map(|(id, entry)| {
@@ -98,7 +105,9 @@ impl Tracker {
                 }
                 let changed = entry.reader.is_some()
                     && entry.capture_watch.as_mut().is_some_and(CaptureBinding::begin_drain);
-                if capture_only && !changed {
+                let expired = entry.capture_watch.is_some()
+                    && entry.reader.as_ref().and_then(Reader::assetto_deadline).is_some_and(|at| now >= at);
+                if capture_only && !changed && !expired {
                     return None;
                 }
                 Some(Qualification {
@@ -111,6 +120,7 @@ impl Tracker {
                     process: entry.process.clone(),
                     qualified: None,
                     capture_changed: changed,
+                    capture_expired: expired,
                 })
             })
             .collect()
@@ -146,6 +156,10 @@ impl Tracker {
             }
             let inspection = entry.inspection.selection(Instant::now()).to_vec();
             if !qualification.capture_changed && entry.capture_watch.is_some() {
+                if matches!(&entry.reader, Some(Reader::Rally { .. })) && !qualification.capture_expired {
+                    self.publish_visible(&qualification.id);
+                    continue;
+                }
                 if let Some(Reader::Xplane(source)) = &entry.reader {
                     // The native owner publishes expiry and terminal changes.
                     // Maintenance still applies inspection lease changes.

@@ -150,8 +150,13 @@ impl Tracker {
     /// Opening/retry work belongs to the context owner. This worker services
     /// only admitted readers, including one temporarily detached for I/O.
     pub(crate) fn maintenance_delay(&self, at: Instant) -> Option<Duration> {
-        self.entries.values().any(|entry| entry.reader.is_some() || entry.polling)
-            .then(|| at.saturating_duration_since(Instant::now()))
+        let process = self.entries.values().any(|entry| entry.reader.is_some() || entry.polling).then_some(at);
+        process.into_iter().chain(self.capture_deadline()).min()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
+    pub(crate) fn capture_deadline(&self) -> Option<Instant> {
+        self.entries.values().filter(|entry| entry.capture_watch.is_some())
+            .filter_map(|entry| entry.reader.as_ref()?.assetto_deadline()).min()
     }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let weak = Arc::downgrade(&changes);
