@@ -47,10 +47,14 @@ impl RetainedBytes for Frame {
 type Stream = NativeStream<Frame, Frame>;
 type Reader = NativeSubscription<Frame, Frame>;
 
-pub(crate) struct Watch(osg_streams::NativeWatch<Frame, Frame>);
+pub(crate) struct Watch(osg_streams::NativeWatch<Frame, Frame>, Option<Weak<crate::xplane::process_events::Monitor>>);
 impl Watch {
     pub(crate) fn is_closed(&self) -> bool {
         self.0.is_closed()
+    }
+    pub(crate) fn process_current(&self) -> Option<bool> {
+        let monitor = self.1.as_ref()?;
+        Some(!self.is_closed() && monitor.upgrade().is_some_and(|monitor| monitor.error().is_none()))
     }
 }
 
@@ -61,6 +65,7 @@ struct Owner {
     worker: Thread,
     terminal_error: Arc<OnceLock<String>>,
     done: Arc<AtomicBool>,
+    monitor: Option<Weak<crate::xplane::process_events::Monitor>>,
 }
 
 struct Slot {
@@ -82,6 +87,7 @@ impl Drop for Shutdown {
 
 impl Owner {
     fn start(identity: ProcessIdentity, source: impl Source + 'static) -> Result<Self, String> {
+        let monitor = source.process_monitor();
         let clock = format!("assetto:{}", uuid::Uuid::new_v4());
         let stream = Stream::new(1, Frame::Waiting, 0, &clock, LIMITS)
             .map_err(|error| format!("{error:?}"))?;
@@ -177,6 +183,7 @@ impl Owner {
             worker: worker.thread().clone(),
             terminal_error,
             done,
+            monitor,
         })
     }
 }
@@ -304,7 +311,7 @@ impl Source for SharedSource {
         self.owner
             .stream
             .watch(wake)
-            .map(|watch| Some(Watch(watch)))
+            .map(|watch| Some(Watch(watch, self.owner.monitor.clone())))
             .map_err(|error| format!("{error:?}"))
     }
 

@@ -95,7 +95,7 @@ pub(super) enum Reader {
 
 pub(super) enum CaptureWatch {
     #[cfg(test)]
-    Fixture,
+    Fixture(Arc<std::sync::atomic::AtomicBool>),
     Assetto { _watch: crate::acr_windows::Watch },
     Xplane {
         _watch: osg_streams::NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::NativeSnapshot>,
@@ -104,6 +104,16 @@ pub(super) enum CaptureWatch {
         _bios: osg_streams::NativeWatch<dcs_bios::decoded::Snapshot, dcs_bios::decoded::Snapshot>,
         _ownship: Option<osg_streams::NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
     },
+}
+impl CaptureWatch {
+    pub(super) fn assetto_process_current(&self) -> Option<bool> {
+        match self {
+            Self::Assetto { _watch } => _watch.process_current(),
+            #[cfg(test)]
+            Self::Fixture(current) => Some(current.load(std::sync::atomic::Ordering::Acquire)),
+            _ => None,
+        }
+    }
 }
 impl Reader {
     pub(super) fn open(

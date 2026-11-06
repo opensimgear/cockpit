@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
-    use std::{collections::VecDeque, sync::atomic::{AtomicUsize, Ordering}};
+    use std::{collections::VecDeque, sync::atomic::{AtomicBool, AtomicUsize, Ordering}};
 
     struct Input(VecDeque<game_telemetry::RawSample>, Arc<AtomicUsize>);
     impl game_telemetry::Source for Input {
@@ -39,14 +39,19 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
         }
     });
     let reads = Arc::new(AtomicUsize::new(0));
+    let process_current = Arc::new(AtomicBool::new(true));
     let wake = Arc::new(osg_streams::NativeWake::default());
     let entry = tracker.entries.get_mut(id).unwrap();
-    entry.capture_watch = Some(CaptureBinding { _watch: sources::CaptureWatch::Fixture, wake: wake.clone(), drained: 0 });
+    entry.capture_watch = Some(CaptureBinding {
+        _watch: sources::CaptureWatch::Fixture(process_current.clone()), wake: wake.clone(), drained: 0,
+    });
     entry.reader = Some(Reader::Rally {
         source: Box::new(Input(samples.into(), reads.clone())),
         decoder: game_telemetry::Session::new(1500).unwrap(),
     });
-    let check = |candidate: Qualification| candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true);
+    let check = |candidate: Qualification| candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| {
+        panic!("The capture owner already monitors this process")
+    });
     for _ in 0..2 {
         wake.notify();
         let candidates = tracker.capture_candidates().into_iter().map(|candidate| check(candidate).without_renewal()).collect();
@@ -57,6 +62,10 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
     assert_eq!(tracker.entries[id].telemetry.as_ref().unwrap().status, "live");
     let deadline = at + Duration::from_millis(1500) + Duration::from_nanos(1);
     assert_eq!(tracker.capture_deadline(), Some(deadline));
+    tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
+    assert!(tracker.telemetry(&game).is_some());
+    let now = Instant::now();
+    assert!(tracker.maintenance_delay(now).is_some_and(|delay| delay > Duration::ZERO && delay <= deadline - now));
     let candidates = tracker.poll_candidates().into_iter().map(check).collect();
     assert!(tracker.begin_polls(candidates).is_empty());
     std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
@@ -67,6 +76,16 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
     assert_eq!(tracker.entries[id].telemetry.as_ref().unwrap().status, "stale");
     assert!(tracker.capture_deadline().is_none());
     assert!(tracker.capture_candidates().is_empty());
+    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+
+    wake.notify();
+    let candidates = tracker.capture_candidates().into_iter().map(check).collect();
+    let poll = tracker.begin_polls(candidates).pop().unwrap();
+    let poll = poll.read();
+    process_current.store(false, Ordering::Release);
+    assert!(tracker.telemetry(&game).is_none(), "Process loss hides cached telemetry during a detached read");
+    tracker.apply_poll(poll);
+    assert!(tracker.entries[id].reader.is_none());
 }
 
 #[test]

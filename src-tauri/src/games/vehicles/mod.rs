@@ -110,6 +110,20 @@ struct CaptureBinding {
     wake: Arc<osg_streams::NativeWake>,
     drained: u64,
 }
+impl Entry {
+    fn assetto_process_current(&self) -> Option<bool> {
+        self.capture_watch.as_ref()?._watch.assetto_process_current()
+    }
+
+    fn process_current(&self) -> bool {
+        self.assetto_process_current().unwrap_or_else(|| self.observed.elapsed() <= Duration::from_secs(2))
+    }
+
+    fn process_deadline(&self) -> Option<Instant> {
+        if self.assetto_process_current().is_some() { return None; }
+        self.observed.checked_add(Duration::from_secs(2) + Duration::from_nanos(1))
+    }
+}
 impl CaptureBinding {
     fn open(reader: &Reader, worker: &Arc<osg_streams::NativeWake>) -> Option<Self> {
         let wake = Arc::new(osg_streams::NativeWake::child(worker.clone()));
@@ -150,9 +164,14 @@ impl Tracker {
     /// Opening/retry work belongs to the context owner. This worker services
     /// only admitted readers, including one temporarily detached for I/O.
     pub(crate) fn maintenance_delay(&self, at: Instant) -> Option<Duration> {
-        let process = self.entries.values().any(|entry| entry.reader.is_some() || entry.polling).then_some(at);
+        let process = self.needs_process_maintenance().then_some(at);
         process.into_iter().chain(self.capture_deadline()).min()
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
+    pub(crate) fn needs_process_maintenance(&self) -> bool {
+        self.entries.values().any(|entry| {
+            (entry.reader.is_some() || entry.polling) && entry.assetto_process_current().is_none()
+        })
     }
     pub(crate) fn capture_deadline(&self) -> Option<Instant> {
         self.entries.values().filter(|entry| entry.capture_watch.is_some())
@@ -210,15 +229,16 @@ impl Tracker {
             if entry.injected { return None; }
             entry.current.as_ref()?;
             let capture = entry.telemetry.as_ref()?;
-            let observed = entry.observed.checked_add(Duration::from_secs(2))?;
+            if !entry.process_current() { return None; }
             let captured = capture.at.checked_add(Duration::from_secs(2))?;
-            let deadline = observed.min(captured);
+            let deadline = entry.process_deadline().map_or(captured, |at| at.min(captured));
             (deadline > now).then_some(deadline)
         }).min()
     }
-    pub(crate) fn telemetry_deadlines(&self) -> Vec<(Instant, Arc<Capture>)> {
+    pub(crate) fn telemetry_deadlines(&self) -> Vec<(Option<Instant>, Arc<Capture>)> {
         self.entries.values().filter_map(|entry| {
-            Some((entry.observed, entry.telemetry.as_ref()?.clone()))
+            if !entry.process_current() { return None; }
+            Some((entry.process_deadline(), entry.telemetry.as_ref()?.clone()))
         }).collect()
     }
     pub(crate) fn take_retired(&mut self) -> RetiredReaders {

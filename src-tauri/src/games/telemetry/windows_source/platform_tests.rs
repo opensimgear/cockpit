@@ -111,6 +111,7 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
             pages: Some(pages),
             capture_owner,
             last_packet: None,
+            process_error: None,
             monitor: std::sync::Arc::new(monitor),
         };
         assert!(source
@@ -141,9 +142,9 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
         physics.packet(1);
         assert!(source.poll().unwrap().is_some());
         assert!(source.pages.is_none());
-        assert!(source.process.is_none());
+        assert_eq!(source.process.as_ref().unwrap().epoch, epoch);
         assert!(source.poll().is_err());
-        assert!(source.process_image().is_none());
+        assert_eq!(source.process.as_ref().unwrap().epoch, epoch);
         assert!(source.last_packet.is_none());
         source.close();
         drop(source);

@@ -196,6 +196,7 @@ pub(crate) struct WindowsSource {
     pages: Option<Pages>,
     capture_owner: CaptureOwner,
     last_packet: Option<u32>,
+    process_error: Option<String>,
     monitor: std::sync::Arc<crate::xplane::process_events::Monitor>,
 }
 impl WindowsSource {
@@ -224,6 +225,7 @@ impl WindowsSource {
             pages: None,
             capture_owner: CaptureOwner::new(),
             last_packet: None,
+            process_error: None,
             monitor,
         })
     }
@@ -253,7 +255,9 @@ impl WindowsSource {
         }
         let process = self.process.as_ref().unwrap();
         if !process.running() {
-            return Err("Selected ACR process exited; telemetry was detached.".into());
+            let error = "Selected ACR process exited; telemetry was detached.".to_owned();
+            self.process_error = Some(error.clone());
+            return Err(error);
         }
         if self.pages.is_none() {
             self.capture_owner.begin_generation()?;
@@ -271,7 +275,9 @@ impl WindowsSource {
             &mut |page| Ok(pages.copy(page)),
         )?;
         if !process.running() {
-            return Err("Selected ACR process exited during telemetry capture.".into());
+            let error = "Selected ACR process exited during telemetry capture.".to_owned();
+            self.process_error = Some(error.clone());
+            return Err(error);
         }
         if let Some(error) = self.monitor.error() { return Err(error); }
         Ok(sample)
@@ -281,7 +287,10 @@ impl WindowsSource {
 // concurrently accessed; the Source trait intentionally has no Sync bound.
 unsafe impl Send for WindowsSource {}
 impl Source for WindowsSource {
-    fn terminal_error(&self) -> Option<String> { self.monitor.error() }
+    fn terminal_error(&self) -> Option<String> { self.monitor.error().or_else(|| self.process_error.clone()) }
+    fn process_monitor(&self) -> Option<std::sync::Weak<crate::xplane::process_events::Monitor>> {
+        Some(std::sync::Arc::downgrade(&self.monitor))
+    }
     fn poll(&mut self) -> Result<Option<RawSample>, String> {
         match self.read() {
             Ok(sample) => {
@@ -289,13 +298,14 @@ impl Source for WindowsSource {
                 if counter_reset(self.last_packet, packet) {
                     // A stage/game reset can replace named mapping objects.
                     // Release our views before acquiring the next baseline.
-                    self.close();
+                    self.pages = None;
                 }
                 self.last_packet = Some(packet);
                 Ok(Some(sample))
             }
             Err(error) => {
-                self.close();
+                self.pages = None;
+                self.last_packet = None;
                 Err(error)
             }
         }

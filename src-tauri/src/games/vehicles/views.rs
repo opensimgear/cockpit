@@ -10,7 +10,7 @@ impl Tracker {
                 if entry.injected {
                     return true;
                 }
-                entry.observed.elapsed() <= Duration::from_secs(2)
+                entry.process_current()
                     && entry
                         .telemetry
                         .as_ref()
@@ -26,7 +26,7 @@ impl Tracker {
                 entry.installation == Self::installation(game)
                     && entry.enabled
                     && (entry.reader.is_some() || entry.polling)
-                    && entry.observed.elapsed() <= Duration::from_secs(2)
+                    && entry.process_current()
             })
             .and_then(|entry| entry.telemetry.clone())
     }

@@ -35,6 +35,33 @@ fn wait_for(mut condition: impl FnMut() -> bool) {
 }
 
 #[test]
+fn process_monitor_proof_exists_before_the_first_capture_and_retires_on_loss() {
+    struct Silent(Weak<crate::xplane::process_events::Monitor>);
+    impl Source for Silent {
+        fn poll(&mut self) -> Result<Option<RawSample>, String> { Ok(None) }
+        fn close(&mut self) {}
+        fn process_monitor(&self) -> Option<Weak<crate::xplane::process_events::Monitor>> { Some(self.0.clone()) }
+        fn terminal_error(&self) -> Option<String> {
+            self.0.upgrade().is_none().then(|| "Process monitor stopped.".into())
+        }
+    }
+
+    let (monitor, _) = crate::xplane::process_events::test_monitor();
+    let monitor = Arc::new(monitor);
+    let identity = ProcessIdentity { pid: 1, epoch: 1, path: "test.exe".into() };
+    let mut source = SharedSource::attach(&identity, Game::Competizione, true, || Ok(Silent(Arc::downgrade(&monitor)))).unwrap();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    let watch = source.watch(wake.clone()).unwrap().unwrap();
+    assert!(source.poll().unwrap().is_none());
+    assert_eq!(watch.process_current(), Some(true));
+    let observed = wake.observed();
+    drop(monitor);
+    assert_eq!(watch.process_current(), Some(false));
+    wait_for(|| wake.observed() != observed && watch.is_closed());
+    assert_eq!(source.poll().unwrap_err(), "Process monitor stopped.");
+}
+
+#[test]
 fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop() {
     let game = Game::Evo;
     let identity = ProcessIdentity {

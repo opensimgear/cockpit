@@ -83,16 +83,15 @@ impl Capture {
             })
     }
 
-    pub(crate) fn next_deadline(&self, observed: Instant, now: Instant) -> Option<Instant> {
+    pub(crate) fn next_deadline(&self, process: Option<Instant>, now: Instant) -> Option<Instant> {
         use crate::native_capture::Validity;
         // Both existing age fences include equality. Native contributor leases
         // are exclusive and must withdraw at their exact original deadline.
         let inclusive = Duration::from_secs(2) + Duration::from_nanos(1);
-        let process = observed.checked_add(inclusive)?;
-        if now >= process { return None; }
+        if process.is_some_and(|process| now >= process) { return None; }
         let cache = self.at.checked_add(inclusive)?;
-        if now >= cache { return Some(process); }
-        let mut deadline = process.min(cache);
+        if now >= cache { return process; }
+        let mut deadline = process.map_or(cache, |process| process.min(cache));
         if self.status == "live" {
             for value in self.values.values().filter(|value| value.is_current(now)) {
                 for contribution in value.contributors().into_iter().flatten() {
@@ -299,8 +298,10 @@ mod tests {
         projection.packet = capture.packet.clone();
         projection.status = "paused".into();
         assert!(!capture.same_observation(&projection));
-        assert_eq!(capture.next_deadline(old, old), Some(expires));
-        assert_eq!(capture.next_deadline(old, expires), Some(old + Duration::from_secs(2) + Duration::from_nanos(1)));
+        let process = old + Duration::from_secs(2) + Duration::from_nanos(1);
+        assert_eq!(capture.next_deadline(Some(process), old), Some(expires));
+        assert_eq!(capture.next_deadline(Some(process), expires), Some(process));
+        assert_eq!(capture.next_deadline(None, expires), Some(process));
         let live=prepared.project(Some(&capture),expires-Duration::from_nanos(1));
         assert_eq!(live[0]["status"],"known");
         assert_eq!(live[0]["value"],0);

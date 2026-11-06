@@ -183,7 +183,9 @@ impl GamesRuntime {
                 {
                     let observed = worker_wake.observed();
                     let now = Instant::now();
-                    if now >= next_maintenance {
+                    let maintenance_due = now >= next_maintenance
+                        && polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).needs_process_maintenance();
+                    if maintenance_due {
                         polling_inner.poll_vehicle_telemetry(false);
                         next_maintenance = Instant::now() + Duration::from_millis(100);
                     } else if observed != drained || polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner())
@@ -329,7 +331,7 @@ impl Inner {
         };
         // Capture wakes check configuration without renewing the process
         // observation or querying Windows for each packet. The independent
-        // maintenance pass still checks process identity.
+        // maintenance pass checks identities without a retained capture owner.
         let alive = |process: &crate::game_discovery::ProcessIdentity| {
             capture_only || self.platform.alive(process).unwrap_or(false)
         };

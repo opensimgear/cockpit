@@ -9,6 +9,7 @@ pub(crate) struct Qualification {
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
+    retained_process: bool,
     qualified: Option<bool>,
     capture_changed: bool,
     capture_expired: bool,
@@ -32,7 +33,7 @@ impl Qualification {
                         && Tracker::installation(game) == self.installation
                 })
                 && setup_revision(&self.id) == self.setup_revision
-                && self.process.as_ref().is_some_and(&mut alive),
+                && self.process.as_ref().is_some_and(|process| self.retained_process || alive(process)),
         );
         self
     }
@@ -107,7 +108,8 @@ impl Tracker {
                     && entry.capture_watch.as_mut().is_some_and(CaptureBinding::begin_drain);
                 let expired = entry.capture_watch.is_some()
                     && entry.reader.as_ref().and_then(Reader::assetto_deadline).is_some_and(|at| now >= at);
-                if capture_only && !changed && !expired {
+                let retained_process = entry.assetto_process_current().is_some();
+                if (capture_only || retained_process) && !changed && !expired {
                     return None;
                 }
                 Some(Qualification {
@@ -118,6 +120,7 @@ impl Tracker {
                     setup_revision: entry.setup_revision.clone(),
                     enabled: entry.enabled,
                     process: entry.process.clone(),
+                    retained_process,
                     qualified: None,
                     capture_changed: changed,
                     capture_expired: expired,
@@ -137,11 +140,11 @@ impl Tracker {
             {
                 continue;
             }
-            if qualification.qualified == Some(true) {
+            if qualification.qualified == Some(true) && !qualification.retained_process {
                 entry.observed = Instant::now();
             }
             if qualification.qualified == Some(false)
-                || entry.observed.elapsed() > Duration::from_secs(2)
+                || (!qualification.retained_process && !entry.process_current())
             {
                 entry.generation = entry.generation.wrapping_add(1);
                 entry.polling = false;
@@ -220,7 +223,7 @@ impl Tracker {
         // A slow read does not make old telemetry fresh on completion.
         if poll.qualification.qualified == Some(false)
             || poll.at.elapsed() > Duration::from_secs(2)
-            || entry.observed.elapsed() > Duration::from_secs(2)
+            || (!entry.process_current() && (entry.assetto_process_current().is_none() || !matches!(poll.result, Some(Err(_)))))
         {
             entry.generation = entry.generation.wrapping_add(1);
             entry.current = None;
