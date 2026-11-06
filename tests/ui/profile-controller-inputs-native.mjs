@@ -62,6 +62,8 @@ test('physical controller settings stay simple and show every real input without
     await expect(inspector.locator('details')).toHaveCount(0);
     for (const text of ['Provider catalogue', 'Connection metadata', 'Learn physical input', 'Controller publication policy']) await expect(inspector).not.toContainText(text);
     const controls = (await request({ command: 'controller_inspect', sourceId: fixture.sourceId, offset: 0 })).controllers;
+    const inputs = inspector.getByRole('region', { name: 'Live inputs' });
+    await expect(inputs).toHaveAttribute('data-controller-source-id', fixture.sourceId);
     await expect.poll(() => inspector.locator('[data-control-id]').count()).toBe(controls.total);
     assert.ok(controls.total > 0);
     await expect(inspector.locator('.button-information')).toHaveCount(0);
@@ -93,6 +95,7 @@ test('physical controller settings stay simple and show every real input without
     await page.locator('.editor-save-actions').getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('.editor-save-actions').getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
     const saved = (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
+    await expect(inputs).toHaveAttribute('data-controller-source-id', fixture.sourceId);
     assert.equal(saved.document.resources.find(resource => resource.id === fixture.nodeId).name, 'Physical controls');
     assert.equal(saved.document.resources.find(resource => resource.id === fixture.nodeId).required, true);
     assert.equal(saved.document.visibility.find(intent => intent.resourceId === fixture.nodeId).mode, 'hidden-while-active');

@@ -115,6 +115,47 @@ fn a_live_hid_source_without_a_report_watch_requires_service() {
 }
 
 #[test]
+fn a_connected_hid_source_stays_known_after_its_last_report_ages() {
+    use osg_mapping::{
+        program::{Endpoint, Program, SourcePort},
+        signal::{PortContract, ScalarSchema},
+    };
+    let (plan, capture, count, wake) = native();
+    let (reader, frames) = HidInputs::capture(&plan, &capture, Some(wake), |_| Ok(())).unwrap();
+    let endpoint = Endpoint { node_id: "pedal".into(), port_id: "raw".into() };
+    let program = Program {
+        sources: vec![SourcePort {
+            endpoint: endpoint.clone(),
+            contract: PortContract::State {
+                schema: ScalarSchema::Number { min: -2048.0, max: 2047.0, unit: None },
+                freshness_ms: 50,
+                fallback: None,
+            },
+        }],
+        nodes: vec![],
+        sinks: vec![],
+        controllers: vec![],
+    };
+    let mut reducer = Phase::new(program, Counter(1), "94a5ece4-4e3a-4395-a69b-3aa79c1ecf12".into()).unwrap();
+    let baseline = capture.snapshot(&[capture.selected.clone()]).unwrap();
+    let original = &baseline.sources[0].baseline;
+    let admitted_at = frames[0].captured_us;
+    let sampled = frames[0].changes[0].sample.clone();
+    reducer.accept_batch(frames, Counter(baseline.captured_us)).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let current = capture.snapshot(&[capture.selected.clone()]).unwrap();
+    let quiet = &current.sources[0].baseline;
+    assert_eq!(quiet.sequence, original.sequence);
+    assert!(capture.page(&baseline.session, baseline.cursor).events.is_empty());
+    assert!(current.captured_us - admitted_at.0 >= 50_000);
+    let now = Counter(current.captured_us);
+    reader.refresh_verified_liveness(&capture, &mut reducer, now).unwrap();
+    reducer.advance(now).unwrap();
+    assert_eq!(reducer.sample(&endpoint), Some(&sampled));
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn native_button_and_encoder_edges_reach_the_reducer_in_order_and_overflow_recovers() {
     use osg_mapping::{
         engine::ReportReason,

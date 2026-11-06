@@ -5,9 +5,9 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria. The ordered input
-and overflow recovery criterion in #191 brings the checked count to 20.
-There are 35 open criteria: 22 software/qualification/governance
+The original #189–198 acceptance list has 55 criteria. The assigned controller
+identity and quiet input criterion in #191 brings the checked count to 21.
+There are 34 open criteria: 21 software/qualification/governance
 criteria and 13 requiring user-operated rig/simulator acceptance. An unchecked criterion can contain
 delivered software plus outstanding qualification; it is not necessarily missing
 implementation.
