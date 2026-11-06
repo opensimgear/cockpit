@@ -143,17 +143,28 @@ test(setupOnly?'X-Plane setup readiness survives the external inspection interva
           const settled=(await gameState()).catalogue.find(game=>game.id===gameId).integrationSetup;
           assert.equal(settled.state,'ready');
           assert.equal(settled.providerSetupRevision,record.setup.providerSetupRevision);
-          const context=async()=> (await gameState()).catalogue.find(game=>game.id===gameId).integrationContext;
-          const original=await wait(async()=> (await context())?.catalogueRevision, name+' SDK baseline unavailable');
-          const sdkFile=resolve(working,'Resources/plugins/DataRefs.txt');
-          const fixtureSdk=await readFile(sdkFile,'utf8');
-          await writeFile(sdkFile,fixtureSdk+'\nsim/opensimgear/sdk_watch_fixture\tfloat\tn\tunit\tWatcher test\n');
-          const replaced=await wait(async()=>{
-            const revision=(await context())?.catalogueRevision;
-            return revision&&revision!==original&&revision;
-          },name+' SDK file change did not update passive context');
-          record.sdkWatch={original,replaced};
-          evidence.checks.push(name+' setup stayed ready and a private SDK write changed the passive catalogue revision.');
+          await cdp.evaluate(`(async()=>{
+            const {observeGameDetails}=await import('/src/lib/game-read-models/shared.ts');
+            const trace=window.__xplaneSdkWatch={revision:null};
+            trace.stop=observeGameDetails(${JSON.stringify(gameId)},state=>{
+              if(state.status==='ready')trace.revision=state.value.value.integrationContext?.catalogueRevision??null;
+            });
+          })()`);
+          try {
+            const revision=()=>cdp.evaluate('window.__xplaneSdkWatch.revision');
+            const original=await wait(revision,name+' SDK subscription baseline unavailable');
+            const sdkFile=resolve(working,'Resources/plugins/DataRefs.txt');
+            const fixtureSdk=await readFile(sdkFile,'utf8');
+            await writeFile(sdkFile,fixtureSdk+'\nsim/opensimgear/sdk_watch_fixture\tfloat\tn\tunit\tWatcher test\n');
+            const replaced=await wait(async()=>{
+              const current=await revision();
+              return current&&current!==original&&current;
+            },name+' SDK file change did not reach the passive detail subscriber');
+            record.sdkWatch={original,replaced,subscription:true};
+            evidence.checks.push(name+' setup stayed ready and a private SDK write changed the subscribed catalogue revision without a fixture gateway read.');
+          } finally {
+            await cdp.evaluate('window.__xplaneSdkWatch.stop(); delete window.__xplaneSdkWatch');
+          }
           continue;
         }
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
