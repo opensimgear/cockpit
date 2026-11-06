@@ -61,6 +61,8 @@ A notified companion feed wakes on committed input and retains its native
 lease deadline. The CAN publication actor wakes the hold on status changes.
 The hold retains the exact publication proof expiry as a deadline. Companion
 feeds and other adapters without a wake keep bounded host service.
+Qualified active profiles use the same publication wake and expiry. Health
+checks the proof before admitting input or dispatching output.
 The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline

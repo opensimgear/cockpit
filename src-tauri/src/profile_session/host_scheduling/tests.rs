@@ -72,6 +72,11 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     assert!(!host.hold_uses_notifications(&run), "A run with a reducer cannot qualify as a hold");
     let supported = || capture_driven(&host, &host.prepared[&key(&owner)], &run);
     assert_eq!(supported(), cfg!(windows));
+    host.run(&owner).unwrap().document.overrides.push(osg_profiles::RuntimeOverride {
+        resource_id: "fixture-module".into(), enabled: false,
+    });
+    assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+    host.run(&owner).unwrap().document.overrides.clear();
     {
         use crate::profile_session_visibility::{tests::{plan, snapshot, Fake}, Visibility};
         let io = Fake::new();

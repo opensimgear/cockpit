@@ -15,15 +15,15 @@ impl Overrides {
         }
     }
 
-    pub(crate) fn hold_uses_notifications(&self) -> bool {
+    pub(crate) fn notification_driven(&self) -> bool {
         self.slots.iter().all(|slot| {
             slot.shared.routing.lock().unwrap_or_else(|p| p.into_inner()).strong_count() > 0
         })
     }
 
-    /// A disarmed hold still checks the original proof expiry if the actor
-    /// cannot publish a terminal result before its current I/O returns.
-    pub(crate) fn hold_deadline(&self) -> Option<Instant> {
+    /// The host checks the original proof expiry even if the actor cannot
+    /// publish a terminal result before its current I/O returns.
+    pub(crate) fn proof_deadline(&self) -> Option<Instant> {
         self.slots.iter().map(|slot| {
             let verified = slot.shared.verified.lock().unwrap_or_else(|p| p.into_inner());
             match verified.as_ref().and_then(|proof| proof.live.as_ref()) {

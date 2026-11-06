@@ -10,7 +10,7 @@ pub(super) fn hold_uses_notifications(host: &NativeProfileHost, state: &NativeRu
         && state.reducer.is_none() && !state.launch_context_installed
         && state.inputs.as_ref().is_some_and(|inputs| inputs.notification_driven())
         && state.panels.notification_driven() && state.companions.notification_driven()
-        && state.publication.hold_uses_notifications()
+        && state.publication.notification_driven()
         && state.output.as_ref().is_none_or(|output| output.renewal_deadline().is_some())
 }
 
@@ -19,7 +19,6 @@ fn document_supported(document: &osg_profiles::ProfileDocument, watched_game: bo
         osg_profiles::ResourceKind::DebugController | osg_profiles::ResourceKind::Device
             | osg_profiles::ResourceKind::Companion)
         || watched_game && resource.kind == osg_profiles::ResourceKind::Game)
-        && document.overrides.is_empty()
         && document.vehicle_tabs.is_empty()
         && (watched_game || document.eligibility.game_ids.is_empty())
 }
@@ -60,7 +59,7 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
         })
         && (watched_game || game.is_none() && state.game_preparation.is_none())
         && state.child_game_owner.is_none() && state.game_resume.is_none()
-        && desktop_notifications(state) && state.actions.notification_driven() && state.publication.is_empty()
+        && desktop_notifications(state) && state.actions.notification_driven() && state.publication.notification_driven()
         && state.companions.notification_driven()
 }
 

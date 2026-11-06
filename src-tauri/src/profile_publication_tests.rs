@@ -423,7 +423,7 @@ fn a_replacement_stream_cannot_resume_an_admitted_publication() {
     let targets = vec![target(0, false)];
     let io = FakeIo::new(&targets);
     let mut actor = prepare(targets, io.clone());
-    assert!(!actor.hold_uses_notifications());
+    assert!(!actor.notification_driven());
     let routing = Arc::new(osg_streams::NativeWake::default());
     routing.bind_thread(thread::current()).unwrap();
     let wait_for_routing = |observed| {
@@ -435,13 +435,13 @@ fn a_replacement_stream_cannot_resume_an_admitted_publication() {
         }
     };
     actor.watch_routing(&routing);
-    assert!(actor.hold_uses_notifications());
+    assert!(actor.notification_driven());
     let initial = routing.observed();
     actor.acquire().unwrap();
     wait_for_routing(initial);
     wait(&actor, |s| s.active);
     let proof = actor.verified(false).unwrap();
-    assert_eq!(actor.hold_deadline(), proof.fences.values().map(|(deadline, _)| *deadline).min());
+    assert_eq!(actor.proof_deadline(), proof.fences.values().map(|(deadline, _)| *deadline).min());
     let observed = routing.observed();
     io.replace_stream();
     assert!(proof.validate().is_err());
