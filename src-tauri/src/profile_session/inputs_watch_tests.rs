@@ -156,13 +156,14 @@ fn a_connected_hid_source_stays_known_after_its_last_report_ages() {
 }
 
 #[test]
-fn native_button_and_encoder_edges_reach_the_reducer_in_order_and_overflow_recovers() {
+fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_after_overflow() {
     use osg_mapping::{
         engine::ReportReason,
         profile::OutputControl,
         program::{ControllerLayout, Endpoint, Program, Sink, SinkKind, SourcePort, VirtualController},
         signal::{PortContract, ScalarSchema},
     };
+    use std::time::{Duration, Instant};
     let (mut plan, capture, _, wake) = native();
     let contact = Control::new(9, 1, 0, 0, 0);
     let encoder = Control::new(9, 2, 0, 0, 1);
@@ -177,6 +178,14 @@ fn native_button_and_encoder_edges_reach_the_reducer_in_order_and_overflow_recov
     let report = |contact, encoder| capture.registry.lock().unwrap()
         .report(&id, 0, &BTreeMap::from([(0, contact), (1, encoder)])).unwrap();
     report(0, 0);
+    let broker = osg_streams::Broker::new("paced-hid-routing".into()).unwrap();
+    let topic = format!("controllers.input.{id}");
+    let observation = capture.registry.lock().unwrap().prepare_observation(&broker, &id).unwrap();
+    let mut stalled = observation.with_subscription(|| {
+        broker.subscribe("stalled-preview", "ui", &topic).map_err(|error| error.to_string())
+    }).unwrap();
+    let initial_preview = stalled.recv().unwrap();
+    assert_eq!(initial_preview.kind, "snapshot");
     let route_id = format!("hid:{id}");
     let first = &mut plan.sources[0];
     first.route.as_mut().unwrap().id = route_id.clone();
@@ -210,18 +219,37 @@ fn native_button_and_encoder_edges_reach_the_reducer_in_order_and_overflow_recov
     admit(&mut reducer, baseline);
     reducer.drain_reports();
     let mut expected = Vec::new();
-    for _ in 0..16 {
-        for (contact, encoder) in [(1, 0), (1, 1), (1, 0), (0, 0)] {
-            report(contact, encoder);
-            report(contact, encoder);
-            expected.push(vec![contact != 0, encoder != 0]);
+    let mut delivered = Vec::new();
+    let started = Instant::now();
+    let edges = [(1, 0), (1, 1), (1, 0), (0, 0)];
+    for tick in 1..=256 {
+        let deadline = started + Duration::from_millis(tick);
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        let (contact, encoder) = edges[(tick as usize - 1) % edges.len()];
+        report(contact, encoder);
+        expected.push(vec![contact != 0, encoder != 0]);
+        if tick % 8 == 0 {
+            capture.registry.lock().unwrap()
+                .report(&capture.other, 0, &BTreeMap::from([(0, tick as u32)])).unwrap();
+        }
+        if tick % 16 == 0 {
+            let (frames, errors) = reader.poll(&capture, |_| Ok(())).unwrap();
+            assert!(errors.is_empty());
+            assert!(admit(&mut reducer, frames).is_empty());
+            delivered.extend(reducer.drain_reports().into_iter().map(|report| report.state.buttons));
         }
     }
-    let (frames, errors) = reader.poll(&capture, |_| Ok(())).unwrap();
-    assert!(errors.is_empty());
-    assert_eq!(frames.len(), expected.len());
-    assert!(admit(&mut reducer, frames).is_empty());
-    assert_eq!(reducer.drain_reports().into_iter().map(|report| report.state.buttons).collect::<Vec<_>>(), expected);
+    assert_eq!(delivered, expected);
+    let fresh = capture.registry.lock().unwrap().prepare_observation(&broker, &id).unwrap();
+    let mut reopened = fresh.with_subscription(|| {
+        broker.subscribe("reopened-preview", "ui", &topic).map_err(|error| error.to_string())
+    }).unwrap();
+    let latest_preview = reopened.recv().unwrap();
+    assert_eq!(latest_preview.kind, "snapshot");
+    let sequence = latest_preview.payload.unwrap()["source"]["sequence"].clone();
+    let snapshot = capture.snapshot(&[id.clone()]).unwrap();
+    assert_eq!(sequence, snapshot.sources[0].baseline.sequence.to_string());
+    drop(stalled);
 
     report(1, 0);
     admit(&mut reducer, reader.poll(&capture, |_| Ok(())).unwrap().0);
