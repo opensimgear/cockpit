@@ -172,7 +172,7 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
 
 #[test]
 fn native_observer_starts_before_first_discovery_and_monitors_an_integration_free_title() {
-    struct EmptyMonitoring;
+    struct EmptyMonitoring(std::sync::atomic::AtomicUsize);
     impl Platform for EmptyMonitoring {
         fn process_monitoring_supported(&self) -> bool {
             true
@@ -196,19 +196,33 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
                 path: game["executable"].as_str().unwrap().into(),
             }))
         }
+        fn find_many(&self, games: &[Value]) -> Vec<Result<Option<crate::game_discovery::ProcessIdentity>, String>> {
+            self.0.fetch_add(1, Ordering::AcqRel);
+            games.iter().map(|game| self.find(game)).collect()
+        }
         fn alive(&self, _: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
             Ok(true)
         }
     }
     let directory = crate::test_directory();
+    let platform = Arc::new(EmptyMonitoring(std::sync::atomic::AtomicUsize::new(0)));
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("No integration calls")),
         Paths::in_directory(directory.path()),
-        Arc::new(EmptyMonitoring),
+        platform.clone(),
     );
     assert!(runtime.inner.settings.lock().unwrap().catalogue.is_empty());
     assert!(runtime.activation_observer.lock().unwrap().is_some());
+    let initial_deadline = Instant::now() + Duration::from_secs(3);
+    while runtime.profile_activation_observations().is_err() {
+        assert!(Instant::now() < initial_deadline, "Empty catalogue was never observed");
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(2100));
+    assert_eq!(platform.0.load(Ordering::Acquire), 1, "Empty catalogue must leave the worker parked");
+    assert!(runtime.profile_activation_observations().unwrap().is_empty());
     runtime.inner.settings.lock().unwrap().catalogue.push(json!({"id":"first-discovered-game","name":"First discovered game","installed":true,"processMonitoringSupported":true,"executable":"C:/Games/First.exe","integrationKey":null,"provider":null}));
+    runtime.inner.changes.mark_library_commit();
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     loop {
         if runtime

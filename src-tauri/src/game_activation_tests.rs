@@ -317,13 +317,13 @@ fn unchanged_process_inventory_wakes_selection_when_freshness_returns() {
     let automatic = Arc::new(osg_streams::NativeWake::default());
     changes.watch_automatic(&automatic);
     observer.watch_changes(changes);
-    observer.observe(&platform, &[]);
+    observer.observe(&platform, &[game()]);
     let fresh = automatic.observed();
-    observer.observe(&platform, &[]);
+    observer.observe(&platform, &[game()]);
     assert_eq!(automatic.observed(), fresh);
     observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE - Duration::from_secs(1));
     assert!(observer.snapshot().is_err());
-    observer.observe(&platform, &[]);
+    observer.observe(&platform, &[game()]);
     assert!(observer.snapshot().unwrap().is_empty());
     assert_ne!(automatic.observed(), fresh);
 }

@@ -52,7 +52,7 @@ pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::si
 impl State {
     fn fresh(&self) -> bool {
         self.continuity.as_ref().map_or_else(
-            || self.at.is_some_and(|at| at.elapsed() <= MAX_AGE),
+            || self.at.is_some_and(|at| self.entries.is_empty() || at.elapsed() <= MAX_AGE),
             |live| live.is_live(),
         )
     }

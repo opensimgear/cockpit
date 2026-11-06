@@ -88,7 +88,7 @@ impl GamesRuntime {
                     let event_owned = continuity.is_some();
                     inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity);
                     if !inner.closed.load(Ordering::Acquire) {
-                        let retry = (!event_owned).then_some(Duration::from_millis(500));
+                        let retry = (!games.is_empty() && !event_owned).then_some(Duration::from_millis(500));
                         wake.wait_scheduled(observed, retry);
                     }
                 }
