@@ -159,10 +159,18 @@ static void per_channel_freshness_test(void){
     speed.number=200;assert(osg_feedback(r,"speed-channel",&speed,500));
     assert(r->samples[3].received_ms==500&&r->samples[1].received_ms==100&&r->samples[1].source_age_ms==0);
     osg_runtime drawn=*r;
+    assert(osg_render_deadline(r,500)==1100);
     osg_damage damage=osg_render_damage(r,&drawn,1099,500);
     assert(!damage.full&&!damage.widgets); /* caution is 999 ms old; both stay fresh. */
     damage=osg_render_damage(r,&drawn,1100,500);
     assert(!damage.full&&damage.widgets==(UINT32_C(1)<<1)); /* only caution expires. */
+    assert(osg_render_deadline(r,1100)==1500);
+    assert(osg_render_deadline(r,1500)==UINT64_MAX);
+    assert(osg_set_page(r,1));
+    assert(osg_render_deadline(r,500)==UINT64_MAX);
+    assert(osg_set_page(r,0));
+    r->screen=OSG_SCREEN_DISCONNECTED;
+    assert(osg_render_deadline(r,500)==UINT64_MAX);
 }
 static uint16_t *pixels;
 static int screen_width, screen_height;

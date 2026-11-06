@@ -37,7 +37,14 @@ bool osg_store_available(void);
 bool osg_store_save(const osg_settings *);
 bool osg_store_load(osg_settings *);
 bool osg_store_forget(void);
-typedef struct { osg_runtime *runtime; SemaphoreHandle_t mutex; bool *dirty; const osg_panel **drawing_panel; bool touch_capable; } osg_network_ui;
+typedef struct {
+    osg_runtime *runtime;
+    SemaphoreHandle_t mutex;
+    bool *dirty;
+    const osg_panel **drawing_panel;
+    bool touch_capable;
+    void (*wake_display)(void);
+} osg_network_ui;
 void osg_network_start(osg_network_ui);
 /* Read-only status probes may arrive while a serial request is in flight. */
 void osg_network_status(const char *request_id);

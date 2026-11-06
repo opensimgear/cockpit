@@ -20,6 +20,9 @@ static osg_runtime runtime, drawing;
 static osg_panel_draw renderer;
 static bool dirty=true;
 static const osg_panel *drawing_panel;
+static TaskHandle_t display_task;
+static void wake_display(void){xTaskNotifyGive(display_task);}
+static uint64_t display_now(void){return (uint64_t)(esp_timer_get_time()/1000);}
 static void render_progress(void *context){osg_network_render_progress(((osg_runtime *)context)->panel);}
 static void touch_task(void *context){
     osg_board *board=context;
@@ -46,13 +49,14 @@ void app_main(void) {
         ESP_LOGE("companion", "Unsupported panel/display profile"); return;
     }
     SemaphoreHandle_t mutex=xSemaphoreCreateMutex();if(!mutex)return;
-    osg_network_start((osg_network_ui){&runtime,mutex,&dirty,&drawing_panel,board.touch!=NULL});
+    display_task=xTaskGetCurrentTaskHandle();
+    osg_network_start((osg_network_ui){&runtime,mutex,&dirty,&drawing_panel,board.touch!=NULL,wake_display});
     if(board.touch&&xTaskCreate(touch_task,"companion-touch",8192,&board,5,NULL)!=pdPASS)
         ESP_LOGE("companion","Touch task allocation failed; live arming stays unavailable");
     uint64_t last_render=0;
-    char last_hash[72]={0};bool retry_full=false;
+    char last_hash[72]={0};uint64_t retry_at=0;
     for (;;) {
-        uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+        uint64_t now=display_now();
         osg_scene_ticket ticket;const osg_panel *candidate=osg_network_candidate_begin(&ticket);
         if(candidate){
             xSemaphoreTake(mutex,portMAX_DELAY);osg_display display=runtime.display;xSemaphoreGive(mutex);
@@ -67,9 +71,11 @@ void app_main(void) {
             osg_network_candidate_finish(ticket,accepted,&diagnostic);
         }
         xSemaphoreTake(mutex,portMAX_DELAY);
+        now=display_now();
         osg_damage damage=osg_render_damage(&runtime,&drawing,now,last_render);
-        if(retry_full||strcmp(last_hash,runtime.panel->publication_hash))damage.full=true;
-        const bool render=dirty||damage.full||damage.widgets;
+        if(retry_at||strcmp(last_hash,runtime.panel->publication_hash))damage.full=true;
+        const bool render=now>=retry_at&&(dirty||damage.full||damage.widgets);
+        uint64_t deadline=retry_at>now?retry_at:osg_render_deadline(&runtime,now);
         if(render){
             drawing=runtime;drawing_panel=drawing.panel;dirty=false;
         }
@@ -79,12 +85,20 @@ void app_main(void) {
         if(render){
             osg_network_render(drawing.panel,false,true);
             const bool success=osg_panel_draw_render(&renderer,&drawing,damage,now);
-            retry_full=!success;
+            retry_at=success?0:display_now()+20;
+            if(!success)deadline=retry_at;
             if(success){last_render=now;memcpy(last_hash,drawing.panel->publication_hash,sizeof(last_hash));}
             osg_network_render(drawing.panel,true,success);
             xSemaphoreTake(mutex,portMAX_DELAY);drawing_panel=NULL;xSemaphoreGive(mutex);
             if(!success)ESP_LOGE("companion","Display rejected/failed: widget=%s layer=%s field=%s required=%u available=%u; live input cancelled",renderer.diagnostic.widget,renderer.diagnostic.layer,renderer.diagnostic.field,(unsigned)renderer.diagnostic.required,(unsigned)renderer.diagnostic.available);
         }
-        vTaskDelay(pdMS_TO_TICKS(20));
+        now=display_now();
+        // Notifications persist while drawing or computing the next deadline.
+        // Only authored feedback expiry or a failed draw needs a timed wake.
+        if(deadline==UINT64_MAX)(void)ulTaskNotifyTake(pdTRUE,portMAX_DELAY);
+        else if(deadline>now){
+            const TickType_t ticks=(TickType_t)(((deadline-now)*configTICK_RATE_HZ+999)/1000);
+            (void)ulTaskNotifyTake(pdTRUE,ticks);
+        }
     }
 }

@@ -175,7 +175,7 @@ These locations use the same pinned ledger.
 | `packages/widget-compiler/src/compiler.ts:87` | Active compiler, yield after a rasterized frame | Keep the cooperative yield and cancellation check. `compiler.test.mjs` covers compilation and bounds. |
 | `apps/companion-esp32/boards/sunton-3248s035r/board.c:71,81`, `apps/companion-esp32/boards/waveshare-lcd7/board.c:160,162,164,166` | Board initialization, reset and display or touch readiness | Keep the one-time hardware settling delays. Physical display bring-up remains in #199. |
 | `apps/companion-esp32/main/app_main.c:27` | Touch worker, read the board every 20 ms | Identify the board interrupt or driver-event bridge for each supported controller. Physical touch cadence and release qualification remain open. |
-| `apps/companion-esp32/main/app_main.c:88` | Display worker, check candidate, dirty render and damage every 20 ms | Replace the unconditional wake with candidate and dirty notifications plus the next animation, expiry or failed-render retry deadline. Verify display damage, feedback expiry and recovery on hardware. |
+| `apps/companion-esp32/main/app_main.c:88` | Former unconditional 20 ms display wake | Replaced with task notifications for candidate and dirty state. Only visible feedback expiry and failed-render retry schedule deadlines. Verify display damage, expiry and recovery on hardware. |
 | `apps/companion-esp32/network/serial_wire.c:82` | Serial worker, retry after an empty stdin read | Use a blocking receive or native serial wake with explicit Stop. `serial_wire_test.c` covers framing. Idle and reconnect qualification remain open. |
 
 At the pinned sibling revisions, the scanner found no direct timing calls in

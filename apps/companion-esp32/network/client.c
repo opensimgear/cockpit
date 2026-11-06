@@ -101,7 +101,8 @@ static void operation_begin(void){
     operation.attempt=operation_attempt<UINT32_MAX?++operation_attempt:operation_attempt;operation.phase="opening";
     report(phases[state]);
 }
-static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);*ui.dirty=true;xSemaphoreGive(ui.mutex);}
+static void display_changed(void){*ui.dirty=true;if(ui.wake_display)ui.wake_display();}
+static void disconnected(void){xSemaphoreTake(ui.mutex,portMAX_DELAY);osg_input_cancel(&input,OSG_INPUT_CANCELLED);osg_connected(ui.runtime,false);display_changed();xSemaphoreGive(ui.mutex);}
 static void stop(void);
 static void cancel_candidate(void){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
@@ -325,7 +326,7 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const uint64_t before=session.feedback_sequence,before_generation=session.binding_generation;const bool seen=session.feedback_seen;
     bool ok=osg_input_monitor(&input,millis())&&osg_ack(reply,&session,sequence,ui.runtime,millis());
-    if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
+    if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)display_changed();}
     xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
 static void apply_feedback(const cJSON *frame){
@@ -333,7 +334,7 @@ static void apply_feedback(const cJSON *frame){
     const uint64_t sequence=session.feedback_sequence,generation=session.binding_generation;
     const bool seen=session.feedback_seen;
     if(osg_feedback_event(frame,&session,ui.runtime,millis())&&
-        (!seen||sequence!=session.feedback_sequence||generation!=session.binding_generation))*ui.dirty=true;
+        (!seen||sequence!=session.feedback_sequence||generation!=session.binding_generation))display_changed();
     xSemaphoreGive(ui.mutex);
 }
 void osg_network_serial_feedback(const cJSON *record){
@@ -436,7 +437,7 @@ static void arm(const cJSON *command){
     bool matched=challenge==input.epoch;
     bool prepared=matched&&osg_input_prepare(&input,millis(),&epoch);
     if(matched&&!prepared&&input.epoch<UINT64_MAX)input.epoch++; /* Consume rejected tickets too. */
-    if(prepared)*ui.dirty=true;
+    if(prepared)display_changed();
     xSemaphoreGive(ui.mutex);
     if(!prepared){report("arm-rejected-release-touch-check-display-and-leases");return;}
     operation_phase("awaiting-neutral");report("arming");
@@ -456,7 +457,7 @@ static void arm(const cJSON *command){
     }
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(ok)ok=osg_input_commit(&input,epoch,started,millis());
-    *ui.dirty=true;xSemaphoreGive(ui.mutex);
+    display_changed();xSemaphoreGive(ui.mutex);
     if(!ok){if(!received)fail_request();else fail("baseline-not-confirmed-or-touch-changed-reconnect-required");return;}
     input_sequence=0;next_input_request=next_request=millis();detail=NULL;operation_phase("ready");report("live-armed");
 }
@@ -520,7 +521,7 @@ static bool adopt_candidate(void){
             if(ok){
                 for(size_t i=0;i<candidate->panel.page_count;i++)if(equal(page,candidate->panel.pages[i].id)){ui.runtime->page=(uint8_t)i;break;}
                 osg_copy(displayed_instance,sizeof(displayed_instance),assigned);panel_render_failed=false;
-                osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());bound_page=ui.runtime->page;remote_armed=false;input_sequence=0;*ui.dirty=true;
+                osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());bound_page=ui.runtime->page;remote_armed=false;input_sequence=0;display_changed();
             }
         }
         if(!ok)osg_scene_banks_cancel(&banks,candidate_ticket);
@@ -624,7 +625,9 @@ static void advance(void){
                 if(load_interrupted){abort_connection();state=OFF;report("panel-load-cancelled");update_screen();return;}
                 disconnected();state=PANEL_ERROR;next_request=millis();report("panel-load-failed");update_screen();return;
             }
-            xSemaphoreTake(ui.mutex,portMAX_DELAY);candidate_pending=true;candidate_finished=candidate_success=false;memset(&candidate_diagnostic,0,sizeof(candidate_diagnostic));xSemaphoreGive(ui.mutex);
+            xSemaphoreTake(ui.mutex,portMAX_DELAY);candidate_pending=true;candidate_finished=candidate_success=false;memset(&candidate_diagnostic,0,sizeof(candidate_diagnostic));
+            if(ui.wake_display)ui.wake_display();
+            xSemaphoreGive(ui.mutex);
             /* The existing preparation phase preserves the host's initial
              * feedback cursor until this candidate becomes the draw runtime. */
             detail="Checking panel fonts and assets";state=PREPARING;next_request=millis();operation_phase("checking-cache");report("preparing-panel");
@@ -692,7 +695,7 @@ static void command(cJSON *v){
         if(cJSON_IsNumber(page)&&page->valuedouble>=0&&page->valuedouble<ui.runtime->panel->page_count&&floor(page->valuedouble)==page->valuedouble){
             if(remote_armed)stop();
             xSemaphoreTake(ui.mutex,portMAX_DELAY);ok=osg_set_page(ui.runtime,(size_t)page->valuedouble);
-            if(ok){if(state==LIVE){osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());bound_page=ui.runtime->page;}*ui.dirty=true;}
+            if(ok){if(state==LIVE){osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());bound_page=ui.runtime->page;}display_changed();}
             xSemaphoreGive(ui.mutex);
             if(ok&&was_live&&state==OFF){state=AUTH;next_request=millis();}
         }
@@ -780,7 +783,7 @@ static void update_screen(void){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(!message)message="";
     if(ui.runtime->screen!=screen||strcmp(ui.runtime->screen_message,message)){
-        ui.runtime->screen=screen;osg_copy(ui.runtime->screen_message,sizeof(ui.runtime->screen_message),message);*ui.dirty=true;
+        ui.runtime->screen=screen;osg_copy(ui.runtime->screen_message,sizeof(ui.runtime->screen_message),message);display_changed();
     }
     xSemaphoreGive(ui.mutex);
 }
@@ -806,13 +809,18 @@ static void network_task(void *arg){
 void osg_network_touch(bool valid,bool down,int x,int y){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     bool was_armed=ui.runtime->armed,was_arming=ui.runtime->arming;int previous=ui.runtime->active;
+    const uint64_t sequence=ui.runtime->sequence;
+    const uint8_t page=ui.runtime->page;
     osg_input_poll(&input,valid,down,x,y,millis());
-    if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active)*ui.dirty=true;
+    if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active||
+       sequence!=ui.runtime->sequence||page!=ui.runtime->page)display_changed();
     xSemaphoreGive(ui.mutex);
 }
 void osg_network_render_progress(const osg_panel *panel){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const bool armed=ui.runtime->armed,arming=ui.runtime->arming;
     osg_input_render_progress(&input,panel,millis());
+    if(armed!=ui.runtime->armed||arming!=ui.runtime->arming)display_changed();
     xSemaphoreGive(ui.mutex);
 }
 void osg_network_render(const osg_panel *panel,bool finished,bool success){

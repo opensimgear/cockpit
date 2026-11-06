@@ -30,6 +30,8 @@ static unsigned input_ack_delay;
 static char requested_type[32];
 static osg_runtime test_runtime;
 static bool test_dirty;
+static unsigned display_wakes;
+static void wake_display(void){display_wakes++;}
 static const osg_panel *test_drawing;
 static cJSON *fixture;
 static const char *mock_serial_input;
@@ -335,14 +337,17 @@ int main(int argc,char **argv){
     static osg_image initial_image;
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&initial_image,800,480));
     assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
-    osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
+    osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true,wake_display});
     serial_feedback_tests();
     pairing_notification_tests();
     setup();advance();assert(state==PAIR_WAIT);fake_ms+=800;const int quiet_requests=requests;advance();assert(state==PAIR_WAIT&&requests==quiet_requests);
     mock_wifi_message=pairing_reply();wifi_feedback();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);
     cmd("{\"command\":\"connect\",\"instanceId\":\"instance\"}");wrong_session=false;advance();advance();assert(state==LIVE);
-    cmd("{\"command\":\"page\",\"page\":1}");assert(test_runtime.page==1);cmd("{\"command\":\"page\",\"page\":9}");
+    const unsigned before_page=display_wakes;
+    cmd("{\"command\":\"page\",\"page\":1}");assert(test_runtime.page==1&&display_wakes>before_page);
+    const unsigned after_page=display_wakes;
+    cmd("{\"command\":\"page\",\"page\":9}");assert(display_wakes==after_page);
     cmd("{\"command\":\"status\"}");cmd("{\"command\":\"stop\"}");assert(state==OFF&&!test_runtime.connected);advance();
     setup();network_ok=false;advance();assert(state==FAULT);
     setup();pair_deadline=0;advance();assert(state==FAULT);

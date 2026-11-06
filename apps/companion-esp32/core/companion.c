@@ -344,6 +344,32 @@ static bool render_stale(const osg_sample *s,uint64_t now){
         (now<s->received_ms || s->source_age_ms>=OSG_STALE_MS ||
          now-s->received_ms>=OSG_STALE_MS-s->source_age_ms));
 }
+static uint64_t sample_deadline(const osg_sample *sample, uint64_t now, uint64_t earliest) {
+    if (!sample->available || render_stale(sample, now)) return earliest;
+    const uint64_t lifetime = OSG_STALE_MS - sample->source_age_ms;
+    if (sample->received_ms > UINT64_MAX - lifetime) return earliest;
+    const uint64_t expiry = sample->received_ms + lifetime;
+    return expiry < earliest ? expiry : earliest;
+}
+uint64_t osg_render_deadline(const osg_runtime *r, uint64_t now) {
+    uint64_t earliest = UINT64_MAX;
+    if (r->screen != OSG_SCREEN_PANEL) return earliest;
+    for (size_t i = 0; i < r->panel->widget_count; i++) {
+        const osg_widget *widget = &r->panel->widgets[i];
+        if (widget->page != r->page) continue;
+        if (widget->kind == OSG_COMPONENT) {
+            const osg_widget_binding *binding = widget->component;
+            for (unsigned p = 0; p < binding->definition->output_count; p++) {
+                const osg_sample *sample = &r->samples[binding->outputs[p].slot];
+                if (sample->source_status == OSG_FEEDBACK_AUTOMATIC)
+                    earliest = sample_deadline(sample, now, earliest);
+            }
+        } else if (widget->kind != OSG_BUTTON) {
+            earliest = sample_deadline(&r->samples[i], now, earliest);
+        }
+    }
+    return earliest;
+}
 static bool component_changed(const osg_runtime *r, const osg_runtime *old, size_t index, uint64_t now, uint64_t before) {
     if ((r->active == (int)index) != (old->active == (int)index) || r->requested[index] != old->requested[index]) return true;
     const osg_widget_binding *binding = r->panel->widgets[index].component;

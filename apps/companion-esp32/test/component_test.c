@@ -122,8 +122,10 @@ static void feedback_checks(osg_runtime *r) {
     value[512] = (char)0xc3; value[514] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString(value)); cJSON_ReplaceItemInObjectCaseSensitive(f, "sequence", cJSON_CreateString("3")); assert(!osg_ack(utf8, &s, "1", r, 800));
     value[242] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString("Valid")); cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "unit", cJSON_CreateString(value)); assert(!osg_ack(utf8, &s, "1", r, 800));
     osg_runtime *previous = malloc(sizeof(*previous)); assert(previous); *previous = *r;
+    assert(osg_render_deadline(r,700)==1700);
     assert(!osg_render_damage(r, previous, 1699, 700).widgets);
     assert(osg_render_damage(r, previous, 1700, 700).widgets == (UINT32_C(1) << 14));
+    assert(osg_render_deadline(r,1700)==UINT64_MAX);
     strcpy(r->samples[text_slot].text, "Changed"); assert(osg_render_damage(r, previous, 700, 700).widgets == (UINT32_C(1) << 14)); free(previous);
     cJSON_Delete(utf8); cJSON_Delete(good);
 }

@@ -50,11 +50,14 @@ static bool decode(const char *source,unsigned char *out,size_t capacity,size_t 
 }
 const osg_crypto osg_platform_crypto={sha,decode};
 cJSON *osg_serial_take_command(void){return NULL;}
+void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)socket;(void)record;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
 bool osg_wifi_clock(void){return true;}
 bool osg_wifi_start(const osg_settings *value){(void)value;return true;}
 void osg_wifi_stop(void){}
+bool osg_wifi_pairing_start(const osg_settings *value,const char *request_id){(void)value;(void)request_id;return false;}
+void osg_wifi_feedback_stop(void){}
 bool osg_trusted_ca(const osg_settings *value,unsigned char *bytes,size_t capacity,size_t *size){(void)value;(void)bytes;(void)capacity;(void)size;return false;}
 bool osg_store_available(void){return false;}
 bool osg_store_save(const osg_settings *value){(void)value;return false;}
@@ -143,7 +146,7 @@ int main(void){
     setvbuf(stdout,NULL,_IOLBF,0);osg_json_init();const osg_render_limits *profile=osg_render_profile_limits();assert(osg_json_configure(profile->json_bytes,profile->reply_bytes,profile->json_nodes));
     assert(osg_init(&screen,&osg_demo_panel,(osg_display){.width=800,.height=480,.fill=initial_fill,.text=initial_text},NULL,NULL));
     assert(osg_panel_draw_init(&renderer,(osg_board){.width=800,.height=480,.write=write_pixels,.present=present},partial,sizeof(partial)));renderer.max_font_size=(uint8_t)profile->font_size;
-    osg_network_start((osg_network_ui){&screen,(void *)1,&dirty,&borrowed,true});
+    osg_network_start((osg_network_ui){&screen,(void *)1,&dirty,&borrowed,true,NULL});
     for(;;){
         cJSON *request=record(4096);if(!request)break;const char *kind=osg_string(request,"command");bool quit=equal(kind,"quit");
         if(equal(kind,"install")){

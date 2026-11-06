@@ -95,6 +95,8 @@ bool osg_feedback_valid(const osg_panel *, const char *channel, const osg_sample
  * must force full damage when replacing/reusing a publication storage slot. */
 typedef struct { bool full; uint32_t widgets; } osg_damage;
 osg_damage osg_render_damage(const osg_runtime *, const osg_runtime *previous, uint64_t now_ms, uint64_t previous_ms);
+/* Earliest visible feedback expiry, or UINT64_MAX when the display can park. */
+uint64_t osg_render_deadline(const osg_runtime *, uint64_t now_ms);
 void osg_widget_rect(const osg_runtime *, size_t index, int *x, int *y, int *width, int *height);
 void osg_panel_widget_rect(const osg_panel *, size_t index, uint16_t display_width, uint16_t display_height, int *x, int *y, int *width, int *height);
 void osg_render(osg_runtime *, uint64_t now_ms);
