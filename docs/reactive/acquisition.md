@@ -54,6 +54,9 @@ An otherwise qualified active profile also uses that wake for owned visibility.
 Active native USB and CAN panel inputs can park when the reader owns the
 exact admitted source ports and tokens. Native capture expiry wakes routing
 with loss, and reducer deadlines still govern individual value freshness.
+Before routing starts, the panel baseline waiter wakes on mailbox changes,
+profile admission changes, or its three-second deadline. The surrounding
+activation phase continues to own prepared output lease renewal.
 Active physical action sinks can park with their exact endpoint workers.
 Those workers own renewals and notify routing on failure. Repeated
 revocation of an already retired action does not wake routing again.

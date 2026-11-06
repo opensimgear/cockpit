@@ -32,13 +32,13 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) context_process_wake:Arc<osg_streams::NativeWake>, pub(crate) context_update_wake:osg_streams::NativeWake, context_process_scope:Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>>, routing_wake:Mutex<Weak<osg_streams::NativeWake>>, activity_wake:Mutex<Weak<osg_streams::NativeWake>>, launch_wake:Mutex<Weak<osg_streams::NativeWake>> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) context_process_wake:Arc<osg_streams::NativeWake>, pub(crate) context_update_wake:osg_streams::NativeWake, context_process_scope:Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>>, routing_wake:Mutex<Weak<osg_streams::NativeWake>>, activity_wake:Mutex<Weak<osg_streams::NativeWake>>, launch_wake:Mutex<Weak<osg_streams::NativeWake>>, profile_admission_wake:Mutex<Weak<osg_streams::NativeWake>> }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),context_process_wake:Default::default(),context_update_wake:Default::default(),context_process_scope:Mutex::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default(),routing_wake:Mutex::default(),activity_wake:Mutex::default(),launch_wake:Mutex::default()}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),context_process_wake:Default::default(),context_update_wake:Default::default(),context_process_scope:Mutex::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default(),routing_wake:Mutex::default(),activity_wake:Mutex::default(),launch_wake:Mutex::default(),profile_admission_wake:Mutex::default()}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
@@ -103,6 +103,16 @@ impl Signal {
     }
     pub(crate) fn wake_launch(&self) {
         if let Some(wake) = self.launch_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
+    }
+    // The coordinator serializes native profile transitions.
+    pub(crate) fn watch_profile_admission(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.profile_admission_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+    pub(crate) fn wake_profile_admission(&self) {
+        self.wake_launch();
+        if let Some(wake) = self.profile_admission_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
     }

@@ -800,7 +800,7 @@ impl GatewayManager {
     }
     fn advance_profile_admission(&self) -> u64 {
         let epoch = self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-        self.games.read_model_signal().wake_launch();
+        self.games.read_model_signal().wake_profile_admission();
         epoch
     }
 
@@ -2157,16 +2157,20 @@ mod tests {
     }
     pub(super) fn manager_fixture() -> Arc<GatewayManager> { setup().0 }
     #[test]
-    fn advancing_profile_admission_wakes_the_launch_waiter() {
+    fn advancing_profile_admission_wakes_both_waiters() {
         let (manager, _) = setup();
         let wake = Arc::new(osg_streams::NativeWake::default());
         manager.games.read_model_signal().watch_launch(&wake);
+        let transition = Arc::new(osg_streams::NativeWake::default());
+        manager.games.read_model_signal().watch_profile_admission(&transition);
         let previous = manager.profile_admission_epoch.load(Ordering::Acquire);
         let revision = wake.observed();
+        let transition_revision = transition.observed();
 
         assert_eq!(manager.advance_profile_admission(), previous + 1);
         assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire), previous + 1);
         assert_ne!(wake.observed(), revision);
+        assert_ne!(transition.observed(), transition_revision);
     }
 
     fn setup() -> (Arc<GatewayManager>, Arc<MockProvider>) {

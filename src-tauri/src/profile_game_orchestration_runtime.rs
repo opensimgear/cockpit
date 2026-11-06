@@ -304,7 +304,7 @@ impl GatewayManager {
                         .map_err(|_| "A newer native control cancelled launch admission.")?
                         .checked_add(1)
                         .ok_or("Native launch admission epoch exhausted.")?;
-                    self.games.read_model_signal().wake_launch();
+                    self.games.read_model_signal().wake_profile_admission();
                     self.rebind_profile_activation_epoch(&activation_id, admission_epoch, held_epoch)?;
                     coordinator.bind_launch_epoch(&owner, held_epoch)?;
                     self.games.read_model_signal().watch_launch(&launch_wake);

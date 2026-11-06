@@ -315,7 +315,7 @@ impl GatewayManager {
             let id=request["activationId"].as_str().filter(|id|operation_id(id)).ok_or("Choose an exact activation operation.")?;
             if request["command"]=="profile_activation_cancel" {
                 self.profile_activations.cancel(id,&self.profile_admission_epoch)?;
-                self.games.read_model_signal().wake_launch();
+                self.games.read_model_signal().wake_profile_admission();
             }
             self.profile_activation_view(id)
         })();
