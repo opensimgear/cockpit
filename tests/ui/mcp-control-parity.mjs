@@ -1,7 +1,50 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-export async function controlParity({page, reader, writer, call, ok, mutation}) {
+export async function controlParity(context) {
+  const {page} = context;
+  await page.evaluate(async () => {
+    const {createNativeObservationTransport} = await import('/src/lib/streams/native.ts');
+    const trace = {slow:0,fast:[],errors:[],abort:new AbortController()};
+    window.__activationIsolation = trace;
+    const transport = createNativeObservationTransport();
+    transport.open('profiles.activation', {
+      frame() { trace.slow++; }, error(message) { trace.errors.push(message); },
+    }, trace.abort.signal);
+    transport.open('profiles.activation', {
+      frame(envelope,ack) {
+        trace.fast.push(envelope.frame.payload);
+        void ack().catch(error => trace.errors.push(String(error)));
+      }, error(message) { trace.errors.push(message); },
+    }, trace.abort.signal);
+  });
+  const trace = () => page.evaluate(() => {
+    const {slow,fast,errors} = window.__activationIsolation;
+    return {slow,fast,errors};
+  });
+  try {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const current = await trace();
+      if (current.slow === 1 && current.fast.length) break;
+      await new Promise(resolve => setTimeout(resolve,25));
+    }
+    const initial = await trace();
+    assert.equal(initial.slow,1);
+    assert.ok(initial.fast.length);
+    const result = await runControlParity(context);
+    const final = await trace();
+    assert.deepEqual(final.errors,[]);
+    assert.equal(final.slow,1,'The stalled activation reader must retain one delivery');
+    assert.ok(final.fast.slice(initial.fast.length).some(frame => frame?.origin === 'recovery' || frame?.origin === 'deactivation'),
+      'The independent reader must receive recovery or deactivation progress');
+    return {...result, stalledActivationReaderIsolated:true};
+  } finally {
+    await page.evaluate(() => { window.__activationIsolation.abort.abort(); delete window.__activationIsolation; });
+  }
+}
+
+async function runControlParity({page, reader, writer, call, ok, mutation}) {
   const runtime = async () => (await page.native({command:'profile_status'})).profiles.profileSession;
   const learning = async (command, args) => (await page.native({command,...args})).profileLearning;
   const nativeResult = (command, args) => page.invoke('gateway_request', {
