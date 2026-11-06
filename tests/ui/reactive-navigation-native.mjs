@@ -141,6 +141,32 @@ test(`${transport} main view navigation retires observation readers without dupl
     }
     await navigate('Overview');
     await until(() => pending.size === 0 && active.size === 0);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await navigate('Companions');
+      await settled(companionTopics, true);
+      await until(() => page.evaluate(`(() => {
+        const button = [...document.querySelectorAll('section[aria-label="Panels"] button')]
+          .find(button => button.textContent.trim() === 'New');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`));
+      await until(() => page.evaluate(`!!document.querySelector('[aria-label="Panel name"]')`));
+      await settled(companionTopics, true);
+      await page.evaluate(`(() => {
+        const confirm = window.confirm;
+        try {
+          window.confirm = message => message === 'Discard unsaved panel changes?';
+          document.querySelector('section.compiled-designer > .page-header .header-back').click();
+        } finally {
+          window.confirm = confirm;
+        }
+      })()`);
+      await until(() => page.evaluate(`!!document.querySelector('section[aria-label="Panels"]')`));
+      await settled(companionTopics, true);
+      await navigate('Overview');
+      await settled([], true);
+    }
     await navigate('Settings');
     const clickTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);

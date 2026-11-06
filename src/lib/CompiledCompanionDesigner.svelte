@@ -184,7 +184,7 @@
 
 <svelte:window onkeydown={keyboard}/>
 <section class="compiled-designer" aria-label="Companion panel designer">
-  <div hidden={!!draft||!!widgetEditor}><CompanionConnections bind:this={connections} {publications} {openSettings} {initialCompanionId} {active} onViewChange={value => details = value} onNavigate={id => onNavigate?.(id ? { kind: 'companion', id } : { kind: 'main' })}/></div>
+  <div hidden={!!draft||!!widgetEditor}><CompanionConnections bind:this={connections} {publications} {openSettings} {initialCompanionId} active={active&&!draft&&!widgetEditor} onViewChange={value => details = value} onNavigate={id => onNavigate?.(id ? { kind: 'companion', id } : { kind: 'main' })}/></div>
   {#if error}<Notification message={error} kind="error"/>{/if}
   {#if message}<Notification {message}/>{/if}
   {#if widgetEditor}{#key widgetEditor.id}<GenericWidgetDesigner bind:this={widgetDesigner} source={widgetEditor} {active} onsave={saveWidget} oncancel={closeWidget}/>{/key}
