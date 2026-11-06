@@ -5,12 +5,10 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria. The assigned controller
-identity and quiet input criterion in #191 brings the checked count to 21.
-There are 34 open criteria: 21 software/qualification/governance
-criteria and 13 requiring user-operated rig/simulator acceptance. An unchecked criterion can contain
-delivered software plus outstanding qualification; it is not necessarily missing
-implementation.
+The original #189–198 acceptance list has 55 criteria, with 22 checked and 33
+open. The open criteria include 20 software, qualification or governance
+criteria and 13 requiring user-operated rig or simulator acceptance. Some open
+criteria have delivered software and outstanding qualification.
 
 #190 (R1, shared stream contracts) is completed and closed. The remaining
 milestones retain their open acceptance boundaries; project statuses for #197
@@ -22,7 +20,7 @@ and #198 are In progress because implementation/qualification is underway.
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
 | #192 | Current integration lifecycle/quality, contention and adapter qualification, including truthful reporting of unavailable Windows notification consent and simulators. |
-| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines; the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining adapter combinations, broader focus/child-loss qualification, first-dispatch/burst timing, mixed-stream fault and affected-owner cleanup matrices, and independent dispatch under stalled consumers remain. Sustained latency qualification is interrupted by WSL foreground takeover. |
+| #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines; the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining adapter combinations, broader focus/child-loss qualification, first-dispatch/burst timing, the affected-owner cleanup matrix, and independent dispatch under stalled consumers remain. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts/server peers and native client reads use event I/O; pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines; unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
@@ -46,6 +44,22 @@ Board compilation and physical transports remain unqualified; the recorded
 ESP-IDF toolchain is unavailable locally. Pico Debug inventory is event-driven
 with an independent watchdog renewal. The older Pico protocol-1 adapter and the
 game's 100 ms process and telemetry maintenance remain original software work.
+
+The mixed-stream recovery criterion in #193 is checked. The reducer tests
+cover loss before timers, fresh baselines without replay and generation
+fencing. Native input overflow recovery and stale script completion checks
+supplement the authored running-Cockpit fixtures. See
+[baseline seeding](../verification/2026-11-03-source-scoped-baselines.md),
+[native capture admission](../verification/2026-11-03-native-port-admission.md)
+and the native overflow regression in commit `246237e2`.
+
+The independent stalled-consumer criterion stays open. The simulator command
+worker stall fixture in `1d3eceb8` verifies virtual lease renewal, mapping and
+Stop during an in-flight simulator job. The active HID publication guard still
+takes resource, gateway cache and USB fleet locks on the profile host before
+command enqueue. Its exact-reader withdrawal also takes the resource lock.
+Those waits need isolation with separate checks for transient contention and
+confirmed publication loss.
 
 ## User-operated qualification stays in #199
 
