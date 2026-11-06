@@ -17,6 +17,12 @@ test('Companion listener settings observe commits and retry readiness without id
   };
   const section = 'document.querySelector(\'[aria-label="Companion listener settings"]\')';
   const badge = () => page.evaluate(`${section}?.querySelector('[role="status"]')?.textContent`);
+  const tab = id => page.evaluate(`document.getElementById(${JSON.stringify('settings-tab-'+id)})?.click()`);
+  const hide = async () => {
+    await tab('general');
+    await until(() => page.evaluate("document.getElementById('settings-panel-companions')?.hidden"));
+    await page.evaluate('window.__listenerReads=0');
+  };
   const disable = async () => native('companion_disable', {
     expectedSettingsRevision: (await native('companion_inventory')).settingsRevision,
   });
@@ -28,7 +34,8 @@ test('Companion listener settings observe commits and retry readiness without id
     const initial = await native('companion_inventory');
     assert.equal(initial.configuredEnabled, false, 'Start with a disabled dev listener.');
     await until(() => page.evaluate(`(()=>{const settings=[...document.querySelectorAll('.sidebar-link')].find(item=>item.textContent.trim()==='Settings');if(!settings)return false;settings.click();return true;})()`));
-    await until(() => page.evaluate(`(()=>{const tab=document.querySelector('#settings-tab-companions');if(!tab)return false;tab.click();return true;})()`));
+    await until(() => page.evaluate("!!document.querySelector('#settings-tab-companions')"));
+    await tab('companions');
     await until(badge, value => value === 'Disabled');
     await page.evaluate('window.__listenerReads=0');
     await page.call('Debugger.enable');
@@ -51,10 +58,17 @@ test('Companion listener settings observe commits and retry readiness without id
     assert.equal(waiting.enabled, false);
     await until(badge, value => value === 'Waiting to start');
     await until(() => page.evaluate('window.__listenerReads'), value => value > 0);
+    await hide();
     await new Promise((resolve, reject) => occupied.close(error => error ? reject(error) : resolve()));
+    await until(() => native('companion_inventory'), value => value.enabled);
+    assert.equal(await page.evaluate('window.__listenerReads'), 0, 'Hidden settings must not read listener state on retry');
+    await tab('companions');
     await until(badge, value => value === 'Listening');
+    await hide();
     await disable();
     configured = false;
+    assert.equal(await page.evaluate('window.__listenerReads'), 0, 'Hidden settings must not read listener state on disable');
+    await tab('companions');
     await until(badge, value => value === 'Disabled');
   } finally {
     try {
