@@ -31,7 +31,7 @@ fn poisoned_panel_mailbox_still_wakes_subscribers_and_revokes_on_stop() {
     assert!(!frames.is_empty());
     assert!(baseline.observed() > baseline_before);
     assert!(runtime.observed() > runtime_before);
-    assert!(!inputs.hold_uses_notifications(), "The polled fixture cannot park the host");
+    assert!(!inputs.notification_driven(), "The polled fixture cannot park the host");
     inputs.start().unwrap();
     assert!(inputs.active.load(Ordering::Acquire));
     assert!(inputs.start().is_err(), "An active reader cannot be admitted twice");

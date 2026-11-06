@@ -9,7 +9,7 @@ pub(super) fn hold_uses_notifications(host: &NativeProfileHost, state: &NativeRu
     cfg!(windows) && host.native && host.native_wake.is_some() && host.input_wake.is_some()
         && state.reducer.is_none() && !state.launch_context_installed
         && state.inputs.as_ref().is_some_and(|inputs| inputs.notification_driven())
-        && state.panels.hold_uses_notifications() && state.companions.notification_driven()
+        && state.panels.notification_driven() && state.companions.notification_driven()
         && state.publication.hold_uses_notifications()
         && state.output.as_ref().is_none_or(|output| output.renewal_deadline().is_some())
 }
@@ -37,6 +37,7 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
         && state.reducer.as_ref().is_some_and(|reducer| reducer.active() && reducer.fault().is_none())
         && document_supported(&state.source_document, watched_game) && document_supported(&state.document, watched_game)
         && state.inputs.as_ref().is_some_and(|inputs| inputs.notification_driven())
+        && state.panels.notification_driven()
         && state.delivery.as_ref().is_some_and(|plan| {
             plan.sources.iter().all(|source| {
                 state.document.resources.iter().any(|resource| resource.id == source.endpoint.node_id
@@ -47,7 +48,9 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
                                 && route.attributes.get("gameId").map(String::as_str)
                                     .or_else(|| route.id.strip_prefix("game:")) == game
                             || state.companions.has_resource(&source.endpoint.node_id)
-                                && matches!(route.transport, Transport::Network | Transport::Usb))
+                                && matches!(route.transport, Transport::Network | Transport::Usb)
+                            || matches!(route.transport, Transport::Usb | Transport::Can)
+                                && state.panels.owns_active_source(source))
             }) && plan.sinks.iter().all(|sink| matches!(sink.adapter,
                 SinkAdapter::VirtualController | SinkAdapter::DesktopInput)
                 || sink.adapter == SinkAdapter::CompanionFeedback

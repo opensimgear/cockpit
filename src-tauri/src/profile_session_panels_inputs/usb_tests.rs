@@ -94,12 +94,12 @@ fn usb_is_passive_quiet_and_activation_anchors_current_metadata_without_replayin
     let (plan, io) = usb_fixture();
     let wake = Arc::new(NativeWake::default());
     let mut inputs = PanelInputs::prepare_io(&plan, io.clone()).unwrap();
-    assert!(!inputs.hold_uses_notifications(), "A hold needs an admitted baseline and a host wake");
+    assert!(!inputs.notification_driven(), "A hold needs an admitted baseline and a host wake");
     inputs.set_wake(Some(wake.clone()));
-    assert!(!inputs.hold_uses_notifications(), "Registering a wake alone cannot admit a hold");
+    assert!(!inputs.notification_driven(), "Registering a wake alone cannot admit a hold");
     inputs.acquire(1_000_000).unwrap();
     let initial = await_usb_baseline(&mut inputs, &plan, false, "quiet fixture inactive acquisition");
-    assert!(inputs.hold_uses_notifications());
+    assert!(inputs.notification_driven());
     assert!(initial[0].captured_us.0 < 1_000_000, "Pre-acquisition capture is preserved by subtraction");
     let (started, origin) = inputs.clock.unwrap();
     let clock = usb_source::Clock { started, origin };
@@ -203,16 +203,33 @@ fn usb_preview_and_live_profile_share_capture_without_owning_each_other() {
 fn repeated_health_retains_liveness_time_then_native_expiry_wakes_a_gap() {
     let (plan, io) = usb_fixture();
     let mut inputs = acquired(&plan, io.clone());
+    let wake = Arc::new(NativeWake::default());
+    wake.bind_thread(thread::current()).unwrap();
+    inputs.set_wake(Some(wake.clone()));
+    assert!(!inputs.owns_active_source(&plan.sources[0]));
     activate(&mut inputs, &plan);
+    assert!(inputs.notification_driven());
+    assert!(plan.sources.iter().all(|source| inputs.owns_active_source(source)));
+    let mut replaced = plan.sources[0].clone();
+    replaced.token.as_mut().unwrap().provider_generation.push_str("-retired");
+    assert!(!inputs.owns_active_source(&replaced));
+    replaced = plan.sources[0].clone();
+    replaced.endpoint.port_id = "different".into();
+    assert!(!inputs.owns_active_source(&replaced));
     let before = inputs.mailbox.lock().unwrap().liveness["logical0"].2;
     io.send(&[], 0, 0);
     thread::sleep(Duration::from_millis(20));
     assert!(inputs.poll(|_| Ok(())).unwrap().frames.is_empty());
     assert_eq!(inputs.mailbox.lock().unwrap().liveness["logical0"].2, before);
-    let lost = eventually(|| {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let lost = loop {
+        let observed = wake.observed();
         let poll = inputs.poll(|_| Ok(())).unwrap();
-        poll.frames.iter().any(|frame| frame.reason == Reason::Gap).then_some(poll)
-    });
+        if poll.frames.iter().any(|frame| frame.reason == Reason::Gap) { break poll; }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "Native USB expiry did not wake routing");
+        wake.wait(observed, remaining);
+    };
     assert!(lost.liveness.is_empty());
     assert!(!io.capture.snapshot().ready);
     inputs.stop();
@@ -246,13 +263,13 @@ fn close_and_revocation_wake_parked_readers_and_drop_both_native_leases() {
     let mut inputs = acquired(&plan, io.clone());
     let wake = Arc::new(NativeWake::default());
     inputs.set_wake(Some(wake.clone()));
-    assert!(inputs.hold_uses_notifications());
+    assert!(inputs.notification_driven());
     let before = wake.observed();
     io.capture.close();
     eventually(|| (wake.observed() > before).then_some(()));
     assert!(!inputs.poll(|_| Ok(())).unwrap().diagnostics.is_empty());
     inputs.stop();
-    assert!(!inputs.hold_uses_notifications());
+    assert!(!inputs.notification_driven());
     let (plan, io) = usb_fixture();
     let mut inputs = acquired(&plan, io.clone());
     inputs.stop();

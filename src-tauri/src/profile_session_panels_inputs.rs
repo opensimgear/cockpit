@@ -13,7 +13,7 @@ use osg_mapping::{
     program::SignalSample,
 };
 use osg_profiles::{
-    compiler_models::{ExecutionPlan, PlanReadiness},
+    compiler_models::{ExecutionPlan, PlanReadiness, SourcePlan},
     resources::{ResourceToken, Route, Transport},
     resources_ports::PortContract,
     PortValue,
@@ -174,7 +174,7 @@ pub(crate) struct PanelInputs {
     bound: bool,
 }
 impl PanelInputs {
-    pub(crate) fn hold_uses_notifications(&self) -> bool {
+    pub(crate) fn notification_driven(&self) -> bool {
         if self.specs.is_empty() {
             return true;
         }
@@ -184,6 +184,15 @@ impl PanelInputs {
         }
         self.bound && !self.revoked.load(Ordering::Acquire)
             && self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).wake.is_some()
+    }
+
+    pub(crate) fn owns_active_source(&self, source: &SourcePlan) -> bool {
+        let Some(token) = source.token.as_ref() else { return false; };
+        self.admitted.load(Ordering::Acquire)
+            && self.tokens.get(&source.endpoint.node_id).is_some_and(|tokens| tokens.contains(token))
+            && self.specs.iter().any(|spec| spec.logical == source.endpoint.node_id
+                && spec.ports.iter().any(|port| port.logical == source.endpoint.port_id
+                    && port.observed == token.port_id))
     }
 
     pub(crate) fn watch_baseline(&self, wake: &Arc<NativeWake>) {
