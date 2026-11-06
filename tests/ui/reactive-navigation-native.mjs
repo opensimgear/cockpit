@@ -1,7 +1,7 @@
 // Running Cockpit lifetime check. Observe native IPC without replacing it.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {dirname, resolve} from 'node:path';
+import {dirname, resolve, toNamespacedPath} from 'node:path';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
@@ -15,12 +15,12 @@ const endpoints = new Map([
   ['/api/observe/ack','ack'],
 ]);
 
-test(`${transport} main view navigation retires observation readers without duplicate baselines`, {timeout:60000}, async () => {
+test(`${transport} main view navigation retires observation readers without duplicate baselines`, {timeout:240000}, async () => {
   const page = browserUrl ? await browserPage(browserUrl) : await nativePage();
-  const addedGames = [];
+  const attemptedGames = new Map();
   const discardDraft = () => page.evaluate(`Array.from(document.querySelectorAll('dialog[open] button'))
     .find(button => button.textContent.trim() === 'Discard and continue')?.click()`);
-  const request = value => page.evaluate(`import('/src/lib/gateway.ts').then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`);
+  const request = (value, timeout) => page.evaluate(`import('/src/lib/gateway.ts').then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`, timeout);
   const pending = new Map();
   const active = new Map();
   const opened = new Map();
@@ -159,9 +159,9 @@ test(`${transport} main view navigation retires observation readers without dupl
       for (const [id, name, path] of fixtures) {
         if (games.catalogue.some(game => game.id === id && game.installed)) continue;
         const executable = resolve(path);
-        const registered = await request({command:'game_add', name, executable, installPath:dirname(executable)});
+        attemptedGames.set(id, toNamespacedPath(executable));
+        const registered = await request({command:'game_add', name, executable, installPath:dirname(executable)}, 45_000);
         assert.ok(registered.games.catalogue.some(game => game.id === id && game.installed));
-        addedGames.push(id);
       }
       await navigate('Profiles');
       const button = label => page.evaluate(`Array.from(document.querySelectorAll('main button'))
@@ -205,7 +205,20 @@ test(`${transport} main view navigation retires observation readers without dupl
     }
     finally {
       stopTrace();
-      try { for (const gameId of addedGames.reverse()) await request({command:'game_remove', gameId}); }
+      try {
+        if (attemptedGames.size) {
+          // A native registration can commit even if its DevTools reply times out.
+          const {games} = await request({command:'game_get_state'});
+          for (const game of games.catalogue) {
+            const executable = attemptedGames.get(game.id);
+            if (executable && game.installations.length === 1
+                && toNamespacedPath(game.installations[0].executable ?? '') === executable) {
+              const removed = await request({command:'game_remove', gameId:game.id}, 45_000);
+              assert.ok(!removed.games.catalogue.some(entry => entry.id === game.id && entry.installed));
+            }
+          }
+        }
+      }
       finally { await page.close(); }
     }
   }

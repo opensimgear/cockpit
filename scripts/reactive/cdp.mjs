@@ -52,14 +52,14 @@ export async function nativePage() {
     if(task){pending.delete(value.id);clearTimeout(task.timer);if(value.error)task.reject(Error(JSON.stringify(value.error)));else task.resolve(value.result);}
     else for(const listener of listeners)listener(value);
   };
-  const call=(method,params={})=>new Promise((resolve,reject)=>{
-    const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(Error(`${method} timed out.`));},15000);
+  const call=(method,params={},timeout=15000)=>new Promise((resolve,reject)=>{
+    const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(Error(`${method} timed out.`));},timeout);
     pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));
   });
   return {
     call,
-    async evaluate(expression){
-      const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
+    async evaluate(expression,timeout){
+      const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},timeout);
       if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails));
       return result.result.value;
     },
