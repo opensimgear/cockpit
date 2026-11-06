@@ -63,12 +63,15 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
         .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true)).collect();
     assert!(tracker.begin_polls(maintenance).is_empty(), "Quiet X-Plane readers need no maintenance projection");
     assert!(tracker.entries["x-plane-12"].observed >= observed);
-    let receipt = Arc::new(());
+    let receipt = Arc::new(crate::observations::TelemetryLease::default());
     tracker.inspect("x-plane-11", "quiet-inspector", vec!["engine_1_rpm".into()], Some(Arc::downgrade(&receipt))).unwrap();
     let _ = tracker.capture_candidates();
+    let before_close = wake.observed();
     drop(receipt);
-    let release = tracker.poll_candidates().into_iter()
-        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true)).collect();
+    assert_ne!(wake.observed(), before_close);
+    assert!(tracker.capture_deadline().is_some_and(|deadline| deadline <= Instant::now()));
+    let release = tracker.capture_candidates().into_iter()
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true).without_renewal()).collect();
     let mut release = tracker.begin_polls(release);
     assert_eq!(release.len(), 1, "Closing a quiet inspection must still update native demand");
     let poll = release.pop().unwrap();

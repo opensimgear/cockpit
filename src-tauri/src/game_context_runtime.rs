@@ -189,7 +189,7 @@ impl GamesRuntime {
                         polling_inner.poll_vehicle_telemetry(false);
                         next_maintenance = Instant::now() + Duration::from_millis(100);
                     } else if observed != drained || polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner())
-                        .capture_deadline().is_some_and(|deadline| now >= deadline)
+                        .capture_deadline().is_some_and(|deadline| Instant::now() >= deadline)
                     {
                         polling_inner.poll_vehicle_telemetry(true);
                     }

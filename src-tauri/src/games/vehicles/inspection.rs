@@ -3,6 +3,7 @@ use std::{
     sync::Weak,
     time::{Duration, Instant},
 };
+use crate::observations::TelemetryLease;
 
 const MAX_CLIENTS: usize = 16;
 const MAX_CHANNELS: usize = 512;
@@ -10,7 +11,7 @@ const LEASE: Duration = Duration::from_secs(5);
 
 struct Lease {
     expires: Instant,
-    observation: Option<Weak<()>>,
+    observation: Option<Weak<TelemetryLease>>,
     channels: Vec<String>,
 }
 
@@ -34,14 +35,18 @@ mod tests {
         demand.update("second", vec!["two".into()], renewed, None, |_| panic!("same selection")).unwrap();
         assert!(demand.update("second", vec!["three".into()], renewed, None, |_| Err("rejected".into())).is_err());
         assert_eq!(demand.selection(renewed), ["one", "two"]);
+        assert_eq!(demand.deadline(renewed), Some(now + LEASE));
         assert_eq!(demand.selection(now + LEASE), ["two"]);
         assert!(demand.selection(renewed + LEASE).is_empty());
+        assert_eq!(demand.deadline(renewed + LEASE), Some(renewed + LEASE));
+        demand.pending(false);
+        assert_eq!(demand.deadline(renewed + LEASE), None);
     }
 
     #[test]
     fn observation_selection_survives_quiet_capture_and_releases_on_close() {
         let now = Instant::now();
-        let observation = std::sync::Arc::new(());
+        let observation = std::sync::Arc::new(TelemetryLease::default());
         let lease = std::sync::Arc::downgrade(&observation);
         let mut demand = Demand::default();
         demand.update("observer", vec!["observed".into()], now, Some(lease.clone()), |_| Ok(())).unwrap();
@@ -75,6 +80,7 @@ mod tests {
 pub(super) struct Demand {
     clients: BTreeMap<String, Lease>,
     selection: Vec<String>,
+    pending: bool,
 }
 
 impl Demand {
@@ -83,7 +89,7 @@ impl Demand {
         client: &str,
         channels: Vec<String>,
         now: Instant,
-        observation: Option<Weak<()>>,
+        observation: Option<Weak<TelemetryLease>>,
         apply: impl FnOnce(&[String]) -> Result<(), String>,
     ) -> Result<(), String> {
         if client.is_empty() || client.len() > 128 || client.chars().any(char::is_control) {
@@ -123,8 +129,21 @@ impl Demand {
         let count = self.clients.len();
         self.clients.retain(|_, lease| lease.active(now));
         if count != self.clients.len() {
+            let previous = self.selection.len();
             self.selection.retain(|id| self.clients.values().any(|lease| lease.channels.contains(id)));
+            self.pending |= previous != self.selection.len();
         }
         &self.selection
     }
+
+    pub(super) fn deadline(&self, now: Instant) -> Option<Instant> {
+        if self.pending { return Some(now); }
+        self.clients.values().filter_map(|lease| match &lease.observation {
+            None => Some(lease.expires),
+            Some(observation) if observation.strong_count() == 0 => Some(now),
+            Some(_) => None,
+        }).min()
+    }
+
+    pub(super) fn pending(&mut self, pending: bool) { self.pending = pending; }
 }

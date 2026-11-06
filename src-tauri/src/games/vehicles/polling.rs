@@ -109,7 +109,8 @@ impl Tracker {
                 let expired = entry.capture_watch.is_some()
                     && entry.reader.as_ref().and_then(Reader::assetto_deadline).is_some_and(|at| now >= at);
                 let retained_process = entry.assetto_process_current().is_some();
-                if (capture_only || retained_process) && !changed && !expired {
+                let inspection_due = entry.reader.is_some() && entry.inspection.deadline(now).is_some_and(|deadline| now >= deadline);
+                if (capture_only || retained_process) && !changed && !expired && !inspection_due {
                     return None;
                 }
                 Some(Qualification {
@@ -168,6 +169,7 @@ impl Tracker {
                     // Maintenance still applies inspection lease changes.
                     let ids = crate::game_channels::native_ids(&entry.integration, &inspection);
                     if source.inspection_matches(&ids) {
+                        entry.inspection.pending(false);
                         self.publish_visible(&qualification.id);
                         continue;
                     }
@@ -177,6 +179,7 @@ impl Tracker {
                 self.publish_visible(&qualification.id);
                 continue;
             };
+            entry.inspection.pending(false);
             entry.detached_physics = match &reader {
                 Reader::Dcs {
                     physics: Some(physics),

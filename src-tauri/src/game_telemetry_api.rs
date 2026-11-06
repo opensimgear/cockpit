@@ -28,7 +28,7 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner())
             .dcs_physics_watch(process, wake)
     }
-    pub(crate) fn inspect_telemetry(&self, request: &Value, observation: Option<std::sync::Weak<()>>) -> Result<Value, String> {
+    pub(crate) fn inspect_telemetry(&self, request: &Value, observation: Option<std::sync::Weak<crate::observations::TelemetryLease>>) -> Result<Value, String> {
         let allowed = [
             "command",
             "clientId",

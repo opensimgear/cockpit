@@ -27,10 +27,25 @@ pub struct Delivery {
 
 struct Session {
     client: String,
-    telemetry: Option<Arc<()>>,
+    telemetry: Option<Arc<TelemetryLease>>,
     cancel: ReaderCancellation,
     acknowledge: mpsc::SyncSender<()>,
     awaiting: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct TelemetryLease(Mutex<Weak<osg_streams::NativeWake>>);
+impl TelemetryLease {
+    pub(crate) fn watch(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+}
+impl Drop for TelemetryLease {
+    fn drop(&mut self) {
+        if let Some(wake) = self.0.get_mut().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
+    }
 }
 
 struct Inner {
@@ -94,7 +109,7 @@ impl Runtime {
         self.inner.broker.clone()
     }
 
-    pub(crate) fn telemetry_lease(&self, id: &str) -> Result<Weak<()>, String> {
+    pub(crate) fn telemetry_lease(&self, id: &str) -> Result<Weak<TelemetryLease>, String> {
         self.inner.sessions.lock().unwrap_or_else(|p| p.into_inner())
             .get(id).and_then(|session| session.telemetry.as_ref()).map(Arc::downgrade)
             .ok_or_else(|| "The telemetry observation has closed.".into())
@@ -143,7 +158,7 @@ impl Runtime {
             token.clone(),
             Session {
                 client: client.into(),
-                telemetry: (topic == "games.telemetry").then(|| Arc::new(())),
+                telemetry: (topic == "games.telemetry").then(|| Arc::new(TelemetryLease::default())),
                 cancel,
                 acknowledge,
                 awaiting: None,

@@ -87,6 +87,9 @@ export, BIOS, catalogue and aircraft files trigger setup reinspection. The
 Saved Games root watch also observes direct DCS profile directory creation,
 removal and rename. Startup and native setup, removal and recovery operations
 publish the ledger state. Safety-sensitive commands still read durable evidence.
+X-Plane passive inspection schedules explicit demand at its lease deadline.
+Closing an observation wakes the vehicle worker to release its channels even
+when the native capture has no updates.
 The two-second pass remains for scopes where native watches could not be
 installed. Assetto
 reinspects the selected executable on native file changes. The Rally and

@@ -90,16 +90,24 @@ impl Tracker {
         view.map(|view| view.watch(wake).map_err(|error| format!("{error:?}")))
             .transpose()
     }
-    pub(crate) fn inspect(&mut self, id: &str, client: &str, channels: Vec<String>, observation: Option<std::sync::Weak<()>>) -> Result<(), String> {
+    pub(crate) fn inspect(&mut self, id: &str, client: &str, channels: Vec<String>, observation: Option<std::sync::Weak<crate::observations::TelemetryLease>>) -> Result<(), String> {
         let Some(entry) = self.entries.get_mut(id).filter(|entry| entry.integration.starts_with("x-plane-")) else {
             return Ok(());
         };
+        let lease = observation.as_ref().and_then(std::sync::Weak::upgrade);
+        if let (Some(lease), Some(wake)) = (&lease, &self.capture_wake) { lease.watch(wake); }
+        let mut deferred = false;
         entry.inspection.update(client, channels, Instant::now(), observation, |selected| {
             if let Some(reader) = &mut entry.reader {
                 reader.inspect(&entry.integration, selected)?;
+            } else {
+                deferred = true;
             }
             Ok(())
-        })
+        })?;
+        if deferred { entry.inspection.pending(true); }
+        if let Some(wake) = &self.capture_wake { wake.notify(); }
+        Ok(())
     }
     pub(crate) fn decorate(&self, game: &mut Value) {
         self.decorate_view(game, false);

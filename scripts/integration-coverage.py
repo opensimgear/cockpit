@@ -84,6 +84,7 @@ def main():
                          'profile_session/activation_heartbeat.rs'])
     module_names.extend(['profile_session/source_admission.rs', 'games/profiles/session_delivery.rs', 'games/vehicles/sources.rs'])
     module_names.extend(['games/profiles/source_wakes.rs', 'games/vehicles/views.rs', 'game_telemetry_api.rs', 'gateways.rs'])
+    module_names.append('games/vehicles/inspection.rs')
     module_names.extend(['profile_read_models/mod.rs', 'profile_read_models/bounds.rs',
                          'profile_read_models/emergency.rs', 'profile_read_models/pages.rs'])
     module_names.extend(['xplane/owner.rs', 'xplane/owner/client.rs', 'xplane/owner/worker.rs',

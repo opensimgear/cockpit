@@ -174,8 +174,12 @@ impl Tracker {
         })
     }
     pub(crate) fn capture_deadline(&self) -> Option<Instant> {
-        self.entries.values().filter(|entry| entry.capture_watch.is_some())
-            .filter_map(|entry| entry.reader.as_ref()?.assetto_deadline()).min()
+        let now = Instant::now();
+        self.entries.values().filter_map(|entry| {
+            let reader = entry.reader.as_ref()?;
+            let deadline = entry.capture_watch.as_ref().and_then(|_| reader.assetto_deadline());
+            deadline.into_iter().chain(entry.inspection.deadline(now)).min()
+        }).min()
     }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let weak = Arc::downgrade(&changes);
