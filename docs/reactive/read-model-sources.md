@@ -95,4 +95,15 @@ The discovery fixture runs against native Cockpit with
 of a known title, a generic executable, same-volume relocation, and explicit
 removal. The browser fixture also covers the first-start results banner.
 
+On November 7, the navigation fixture passed in the running WebView and in
+Edge through the isolated browser-dev gateway built from `65c2c653`. Two
+navigation cycles across Devices, Profiles, Games, Companions, Debug and
+Activity checked reader retirement and single baselines. Both transports
+passed external desktop setting updates while visible and snapshot recovery
+on reopen. Browser-dev also cancelled one in-flight subscription open and
+verified its exact retirement. The initial WebView run reached DevTools before
+the app mounted. The fixture now waits for the navigation control before
+clicking. Logs are `matrix-native.log` and `matrix-browser.log` under
+`.research/reactive/held-launch-schedule/`.
+
 The matrix still needs proof for other external device and filesystem changes, nested consumer teardown and browser parity on native-only settings surfaces. Windows process acquisition retains the documented access-denied fallback. The browser and native companion apps and firmware lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md) and [remaining acceptance](remaining-acceptance.md) track those boundaries.

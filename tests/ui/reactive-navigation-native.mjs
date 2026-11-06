@@ -35,8 +35,13 @@ test(`${transport} main view navigation retires observation readers without dupl
   const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
     const selector = view === 'Settings' ? '.sidebar-bottom button' : 'nav[aria-label="Main navigation"] button';
-    await page.evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
-      .find(button => (button.title || button.textContent.trim()) === ${label}).click()`);
+    await until(() => page.evaluate(`(() => {
+      const target = Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
+        .find(button => (button.title || button.textContent.trim()) === ${label});
+      if (!target) return false;
+      target.click();
+      return true;
+    })()`));
     await until(async () => {
       if (discard) await discardDraft();
       return page.evaluate(`document.querySelector('[aria-label="Breadcrumb"] [aria-current="page"]')?.textContent.trim() === ${label}`);
