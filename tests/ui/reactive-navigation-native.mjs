@@ -122,14 +122,18 @@ test(`${transport} main view navigation retires observation readers without dupl
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
     const deviceTopics = ['settings.desktop', 'system.inventory'];
     const settingsTopics = () => [...active.values()].map(reader => reader.topic)
-      .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener').sort();
+      .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener' || topic === 'settings.mcp').sort();
     await new Promise(resolve => setTimeout(resolve, 200));
     await settled(browserUrl ? [] : ['storage.backups']);
     assert.deepEqual(settingsTopics(), [], 'Hidden settings tabs must not open readers');
     const {desktop} = await request({command:'profile_desktop_status'});
     for (let cycle = 0; cycle < 2; cycle++) {
-      for (const [tab, topics] of [['Devices',deviceTopics], ['Companions',['companion.listener']]]) {
+      for (const [tab, topics] of [['Devices', deviceTopics], ['Companions', ['companion.listener']],
+        ['AI integration', browserUrl ? [] : ['settings.mcp']]]) {
         await clickTab(tab);
+        if (tab === 'AI integration') {
+          await until(() => page.evaluate(`!!document.querySelector('section[aria-label="AI integration settings"]')`));
+        }
         await settled(topics);
         assert.deepEqual(settingsTopics(), topics);
         if (tab === 'Devices') {
