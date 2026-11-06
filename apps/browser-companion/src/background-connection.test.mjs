@@ -31,6 +31,25 @@ test('worker heartbeats continue while the page is frozen and held inputs are re
  assert.equal(h.sent.filter(frame=>frame.type==='heartbeat').length,6);assert.equal(h.feedback.length,0);assert.equal(h.closed,false);
 });
 
+test('the suspended-page release deadline does not send an early heartbeat', async()=>{
+  const h=harness();
+  await armed(h);
+  await h.engine.request({type:'input',...identity,changes:[{controlId:'button',value:true}]});
+  h.setClock(850);
+  await h.engine.tick();
+  assert.equal(h.engine.nextMaintenanceAt(),1000);
+  h.setClock(1000);
+  await h.engine.tick();
+  assert.equal(h.sent.at(-1).type,'input');
+  assert.deepEqual(h.sent.at(-1).changes,[{controlId:'button',value:false}]);
+  assert.equal(h.sent.filter(frame=>frame.type==='heartbeat').length,1);
+  assert.equal(h.engine.nextMaintenanceAt(),1100);
+  h.setClock(1100);
+  await h.engine.tick();
+  assert.equal(h.sent.at(-1).type,'heartbeat');
+  assert.equal(h.sent.at(-1).sequence,'2');
+});
+
 test('page and worker requests share one monotonically ordered heartbeat and input writer',async()=>{
  const h=harness();await armed(h);
  await h.engine.request({type:'heartbeat',...identity,sequence:'87'});h.setClock(250);

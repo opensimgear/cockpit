@@ -76,7 +76,7 @@ export class BackgroundConnection {
         const changes=Object.entries(session.fallback).filter(([id,value])=>session.values[id]!==value).map(([controlId,value])=>({controlId,value}));
         for(let offset=0;offset<changes.length;offset+=64)await this.request({version:1,type:'input',...session.identity,changes:changes.slice(offset,offset+64)},false);
       }
-      if(this.closed||session!==this.session)return;
+      if(this.closed||session!==this.session||this.now()<this.heartbeatAt)return;
       await this.request({version:1,type:'heartbeat',...session.identity,...(session.panelError?{panelError:true}:{}),...(session.operation?{operation:session.operation}:{})},false);
     }finally{this.ticking=false;}
   }
