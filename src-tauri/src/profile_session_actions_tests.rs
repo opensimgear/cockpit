@@ -317,12 +317,17 @@ fn stop_during_claim_is_nonblocking_and_late_claim_cannot_start_or_invoke() {
 fn batch_loss_revokes_every_affected_queue_before_earlier_tuple_but_independent_endpoint_runs() {
     let _serial = SERIAL.lock().unwrap();
     let (p, o, mut a, probes) = fixture(2, false);
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    a.watch_routing(&routing);
     live(&mut a, &p);
+    assert!(a.notification_driven());
+    let observed = routing.observed();
     let mut loss = effect(&o, 0, 3, false);
     loss.reason = ReportReason::SourceLost;
     loss.sample = SignalSample::Stale;
     a.dispatch(&[effect(&o, 0, 1, true), effect(&o, 1, 2, true), loss])
         .unwrap();
+    assert!(routing.observed() > observed);
     eventually(|| probes[0].count("release") == 1 && probes[1].count("invoke") == 1);
     assert_eq!(probes[0].count("invoke"), 0);
     assert!(a.poll().required_failed);
@@ -414,7 +419,9 @@ fn renewal_happens_without_ui_pumping_and_failure_revokes_without_retry() {
     let _serial = SERIAL.lock().unwrap();
     let (p, o, mut a, probes) = fixture(1, false);
     let routing = Arc::new(osg_streams::NativeWake::default());
+    assert!(!a.notification_driven());
     a.watch_routing(&routing);
+    assert!(a.notification_driven());
     a.acquire().unwrap();
     eventually(|| a.poll().acquired);
     eventually(|| a.bind_delivery(&p).unwrap());
@@ -435,6 +442,9 @@ fn renewal_happens_without_ui_pumping_and_failure_revokes_without_retry() {
     assert_eq!(probes[0].count("invoke"), 0);
     assert_eq!(probes[0].count("claim"), 1);
     assert!(a.poll().cleanup_complete);
+    let observed = routing.observed();
+    a.stop().unwrap();
+    assert_eq!(routing.observed(), observed, "Repeated revocation cannot keep routing awake");
 }
 #[test]
 fn optional_unsupported_is_reported_required_unsupported_and_aliases_block_before_mutation() {

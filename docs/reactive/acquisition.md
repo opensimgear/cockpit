@@ -54,6 +54,9 @@ An otherwise qualified active profile also uses that wake for owned visibility.
 Active native USB and CAN panel inputs can park when the reader owns the
 exact admitted source ports and tokens. Native capture expiry wakes routing
 with loss, and reducer deadlines still govern individual value freshness.
+Active physical action sinks can park with their exact endpoint workers.
+Those workers own renewals and notify routing on failure. Repeated
+revocation of an already retired action does not wake routing again.
 A notified companion feed wakes on committed input and retains its native
 lease deadline. The CAN publication actor wakes the hold on status changes.
 The hold retains the exact publication proof expiry as a deadline. Companion

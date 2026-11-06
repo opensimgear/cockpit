@@ -123,12 +123,14 @@ struct Shared {
 }
 impl Shared {
     fn revoke(&self) {
-        self.revoked.store(true, Ordering::Release);
+        let newly_revoked = !self.revoked.swap(true, Ordering::AcqRel);
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         s.queue.clear();
         s.bind = None;
         self.wake.notify_all();
-        s.notify_routing();
+        if newly_revoked {
+            s.notify_routing();
+        }
     }
     fn fail(&self, error: String) {
         self.revoke();
@@ -683,6 +685,12 @@ impl PanelActions {
         for slot in &self.slots {
             slot.shared.state.lock().unwrap_or_else(|p| p.into_inner()).routing_wake = Arc::downgrade(wake);
         }
+    }
+    pub(crate) fn notification_driven(&self) -> bool {
+        self.slots.iter().all(|slot| {
+            slot.shared.state.lock().unwrap_or_else(|p| p.into_inner())
+                .routing_wake.strong_count() > 0
+        })
     }
     /// Every dispatched driver is moved into its worker. A retained driver
     /// proves that this preparation never reached an action I/O worker, even

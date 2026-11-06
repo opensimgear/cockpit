@@ -54,11 +54,13 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
             }) && plan.sinks.iter().all(|sink| matches!(sink.adapter,
                 SinkAdapter::VirtualController | SinkAdapter::DesktopInput)
                 || sink.adapter == SinkAdapter::CompanionFeedback
-                    && state.companions.has_resource(&sink.endpoint.node_id))
+                    && state.companions.has_resource(&sink.endpoint.node_id)
+                || sink.adapter == SinkAdapter::PhysicalAction
+                    && state.actions.owns_endpoint(&sink.endpoint))
         })
         && (watched_game || game.is_none() && state.game_preparation.is_none())
         && state.child_game_owner.is_none() && state.game_resume.is_none()
-        && desktop_notifications(state) && state.actions.is_empty() && state.publication.is_empty()
+        && desktop_notifications(state) && state.actions.notification_driven() && state.publication.is_empty()
         && state.companions.notification_driven()
 }
 
