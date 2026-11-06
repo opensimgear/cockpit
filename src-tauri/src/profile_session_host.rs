@@ -1403,7 +1403,13 @@ impl Host for NativeProfileHost {
     }
     fn hold_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)?;
-        state.output.as_ref()?.renewal_deadline()
+        let companion = state.companions.next_deadline_us().map(|deadline| {
+            let before = Instant::now();
+            let now = self.controllers.monotonic_us();
+            crate::profile_session::scheduling::host_deadline(before, now, deadline)
+        });
+        [companion, state.output.as_ref().and_then(|output| output.renewal_deadline())]
+            .into_iter().flatten().min()
     }
     fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}
     fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}

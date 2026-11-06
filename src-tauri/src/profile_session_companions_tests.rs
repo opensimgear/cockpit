@@ -306,6 +306,32 @@ fn native_companion_heartbeats_refresh_latched_state_for_five_seconds_without_sy
 }
 
 #[test]
+fn disarmed_companion_hold_wakes_on_heartbeat_and_expires_at_the_native_lease_deadline() {
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    let fixture = Fixture::with_wake(Some(wake.clone()));
+    let mut adapter = fixture.prepared();
+    adapter.set_wake(Some(wake.clone()));
+    fixture.acquire(&mut adapter, &[]);
+    let open = fixture.connect();
+    adapter.bind_delivery_plan(&fixture.delivery()).unwrap();
+    assert!(adapter.baseline(&fixture.hub, |_| Ok(()), 100).unwrap().is_some());
+    assert!(adapter.notification_driven());
+    let lease = osg_mapping_host::companions::LEASE_US;
+    assert_eq!(adapter.next_deadline_us(), Some(100 + lease));
+
+    let observed = wake.observed();
+    fixture.clock.store(200, Ordering::Release);
+    let reply = wire(&fixture.hub, fixture.frame(&open, "heartbeat", "1"));
+    assert_eq!(reply["ok"], true);
+    assert!(wake.observed() > observed);
+    assert!(adapter.baseline(&fixture.hub, |_| Ok(()), 200).unwrap().is_some());
+    assert_eq!(adapter.next_deadline_us(), Some(200 + lease));
+
+    fixture.clock.store(200 + lease, Ordering::Release);
+    assert!(adapter.baseline(&fixture.hub, |_| Ok(()), 200 + lease).unwrap().is_none());
+}
+
+#[test]
 fn revalidation_after_acquire_uses_owned_receipt_instead_of_obsolete_unowned_proof() {
     let fixture = Fixture::new();
     let directory = crate::test_directory();

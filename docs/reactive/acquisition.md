@@ -50,7 +50,9 @@ wake. A pre-Start desktop owner has no registration to renew and can also
 park. Physical action workers renew their own neutral leases and notify the
 host on loss. Windows visibility worker changes wake the host and inventory.
 The worker still verifies the device and policy on its own cadence.
-Companion and publication work keeps bounded host service.
+A notified companion feed wakes on committed input and retains its native
+lease deadline. Companion feeds without a wake and CAN publication work
+keep bounded host service.
 The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline
