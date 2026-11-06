@@ -53,6 +53,23 @@ fn fake() -> Fake {
     }
 }
 #[test]
+fn launch_wait_is_notified_when_the_observer_enters_or_leaves_service() {
+    let observer = Observer::default();
+    let signal = Arc::new(crate::game_read_models::signals::Signal::default());
+    observer.watch_changes(signal.clone());
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    signal.watch_launch(&wake);
+    let before = wake.observed();
+    let worker = observer.worker_scope();
+    assert!(observer.worker_live());
+    let running = wake.observed();
+    assert_ne!(running, before);
+    drop(worker);
+    assert!(!observer.worker_live());
+    assert_ne!(wake.observed(), running);
+}
+
+#[test]
 fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
     let platform = fake();
     let observer = Observer::default();
@@ -78,8 +95,6 @@ fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
         assert!(observer.confirmed_process(&identity, &process).is_some());
     });
     assert!(observer.confirmed_process(&identity, &running(2)).is_none());
-    assert_eq!(observer.wait_for_started_identity(&identity, None, Duration::ZERO), Some(process.clone()));
-    assert!(observer.wait_for_started_identity(&identity, Some(&process), Duration::ZERO).is_none());
     assert_eq!(platform.scans.load(Ordering::Relaxed), 2);
 }
 

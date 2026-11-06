@@ -315,33 +315,18 @@ impl GamesRuntime {
     pub(crate) fn wait_profile_launch(
         &self,
         spawned: SpawnedLaunch,
+        wake: &osg_streams::NativeWake,
         still_current: impl FnMut(&RunOwner, u64) -> Result<(), String>,
     ) -> Result<StartedGame, LaunchFailure> {
-        let mut library = self.inner.changes.context_wake.observed();
-        let mut previous = None;
-        self.wait_profile_launch_core(spawned, still_current, STARTUP_TIMEOUT, |spawned, still_current, remaining| {
-            let remaining_started = Instant::now();
-            while !self.inner.closed.load(std::sync::atomic::Ordering::Acquire)
-                && self.inner.changes.context_wake.observed() == library
-            {
-                let budget = remaining.saturating_sub(remaining_started.elapsed());
-                if budget.is_zero() { break; }
-                if self.activation_observer.lock().unwrap_or_else(|p| p.into_inner())
-                    .as_ref().is_none_or(|observer| observer.is_finished())
-                {
-                    std::thread::sleep(budget.min(Duration::from_millis(100)));
-                    break;
-                }
-                if let Some(process) = self.inner.activation.wait_for_started_identity(
-                    &spawned.identity, previous.as_ref(), budget.min(Duration::from_millis(25)),
-                ) {
-                    previous = Some(process);
-                    break;
-                }
-                still_current(&spawned.owner, spawned.admission_epoch)?;
-            }
-            library = self.inner.changes.context_wake.observed();
-            Ok(())
+        let mut observed = wake.observed();
+        self.wait_profile_launch_core(spawned, still_current, STARTUP_TIMEOUT, |remaining| {
+            let wait = if self.inner.activation.worker_live() {
+                remaining
+            } else {
+                remaining.min(Duration::from_millis(100))
+            };
+            wake.wait(observed, wait);
+            observed = wake.observed();
         })
     }
 
@@ -353,9 +338,8 @@ impl GamesRuntime {
         timeout: Duration,
         mut pause: impl FnMut(Duration),
     ) -> Result<StartedGame, LaunchFailure> {
-        self.wait_profile_launch_core(spawned, still_current, timeout, |_, _, remaining| {
+        self.wait_profile_launch_core(spawned, still_current, timeout, |remaining| {
             pause(remaining.min(Duration::from_millis(100)));
-            Ok(())
         })
     }
 
@@ -364,7 +348,7 @@ impl GamesRuntime {
         spawned: SpawnedLaunch,
         mut still_current: impl FnMut(&RunOwner, u64) -> Result<(), String>,
         timeout: Duration,
-        mut pause: impl FnMut(&SpawnedLaunch, &mut dyn FnMut(&RunOwner, u64) -> Result<(), String>, Duration) -> Result<(), String>,
+        mut pause: impl FnMut(Duration),
     ) -> Result<StartedGame, LaunchFailure> {
         let result = (|| loop {
             if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) {
@@ -402,7 +386,7 @@ impl GamesRuntime {
             if let Some(process) = process {
                 return Ok(process);
             }
-            pause(&spawned, &mut still_current, timeout.saturating_sub(elapsed))?;
+            pause(timeout.saturating_sub(elapsed));
         })();
         result
             .map(|process| StartedGame {

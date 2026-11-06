@@ -5,7 +5,7 @@ use osg_profiles::activation::{GameIdentity, VerifiedGame};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{atomic::{AtomicU8, Ordering},Arc,Condvar,Mutex,OnceLock},
+    sync::{atomic::{AtomicBool, AtomicU8, Ordering},Arc,Mutex,OnceLock},
     time::{Duration, Instant},
 };
 
@@ -47,7 +47,7 @@ struct State {
     entries: BTreeMap<String, Entry>,
 }
 #[derive(Default)]
-pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>,Condvar);
+pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>,AtomicBool);
 
 impl State {
     fn fresh(&self) -> bool {
@@ -55,13 +55,6 @@ impl State {
             || self.at.is_some_and(|at| at.elapsed() <= MAX_AGE),
             |live| live.is_live(),
         )
-    }
-
-    fn started_process(&self, identity: &GameIdentity, previous: Option<&ProcessIdentity>) -> Option<&ProcessIdentity> {
-        if !self.fresh() { return None; }
-        self.entries.get(&identity.game_id)?.confirmed.as_ref()
-            .filter(|proof| &proof.identity == identity && Some(&proof.process) != previous)
-            .map(|proof| &proof.process)
     }
 
     fn exact_proof(&self, identity: &GameIdentity, process: &ProcessIdentity) -> Option<&Proof> {
@@ -130,6 +123,19 @@ fn checked_process(
 }
 impl Observer {
     pub(crate) fn watch_changes(&self,changes:Arc<crate::game_read_models::signals::Signal>) {let _=self.1.set(changes);}
+    pub(crate) fn worker_live(&self) -> bool { self.2.load(Ordering::Acquire) }
+    pub(crate) fn worker_scope(&self) -> impl Drop + '_ {
+        struct Running<'a>(&'a Observer);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) { self.0.set_worker_live(false); }
+        }
+        self.set_worker_live(true);
+        Running(self)
+    }
+    fn set_worker_live(&self, live: bool) {
+        self.2.store(live, Ordering::Release);
+        if let Some(signal) = self.1.get() { signal.wake_launch(); }
+    }
     pub(crate) fn view_deadline(&self)->Option<Instant> {
         let state = self.0.lock().unwrap_or_else(|p|p.into_inner());
         if state.continuity.is_some() { return None; }
@@ -276,9 +282,6 @@ impl Observer {
         }
         state.at = Some(Instant::now());
         let changed=state.entries!=previous || state.fresh()!=was_fresh;drop(state);
-        if changed {
-            self.2.notify_all();
-        }
         if let Some(signal)=self.1.get() {
             if changed {signal.mark_process_activation();} else {signal.wake.notify();}
         }
@@ -299,19 +302,6 @@ impl Observer {
             })
             .collect())
     }
-    pub(crate) fn wait_for_started_identity(
-        &self,
-        identity: &GameIdentity,
-        previous: Option<&ProcessIdentity>,
-        budget: Duration,
-    ) -> Option<ProcessIdentity> {
-        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        let (state, _) = self.2.wait_timeout_while(state, budget, |state| {
-            state.started_process(identity, previous).is_none()
-        }).unwrap_or_else(|p| p.into_inner());
-        state.started_process(identity, previous).cloned()
-    }
-
 
     pub(crate) fn confirmed_process(
         &self,

@@ -9,6 +9,13 @@ use std::{
     },
 };
 
+fn launch_wake(runtime: &GamesRuntime) -> Arc<osg_streams::NativeWake> {
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    runtime.inner.changes.watch_launch(&wake);
+    wake
+}
+
 struct PlatformFixture {
     process: Mutex<Option<ProcessIdentity>>,
     spawns: AtomicUsize,
@@ -159,7 +166,7 @@ fn actual_native_stage_and_exact_hardware_run_precede_one_short_spawn_and_read_o
         .unwrap_or_else(|e| panic!("{}", e.message));
     let expected_owner = admission(&candidate).status.owner.unwrap();
     let started = runtime
-        .wait_profile_launch(spawned, |owner, epoch| {
+        .wait_profile_launch(spawned, &launch_wake(&runtime), |owner, epoch| {
             assert_eq!(owner, &expected_owner);
             assert_eq!(epoch, 42);
             Ok(())
@@ -235,7 +242,7 @@ fn arming_requires_exact_ready_snapshot_and_respects_every_native_operator_latch
 fn started_process_proof_is_reverified_without_optional_integration_setup() {
     let (runtime, platform, candidate, _directory) = fixture();
     let started = runtime
-        .wait_profile_launch(spawn(&runtime, &candidate), |_, _| Ok(()))
+        .wait_profile_launch(spawn(&runtime, &candidate), &launch_wake(&runtime), |_, _| Ok(()))
         .unwrap();
     runtime.validate_started_profile_game(&started).unwrap();
     runtime.inner.activation.observe(
@@ -380,7 +387,7 @@ fn stop_during_native_process_read_discards_late_success_without_relaunch_or_kil
     let spawned = spawn(&runtime, &candidate);
     let mut checks = 0;
     let error = runtime
-        .wait_profile_launch(spawned, |_, _| {
+        .wait_profile_launch(spawned, &launch_wake(&runtime), |_, _| {
             checks += 1;
             if checks > 1 {
                 Err("Stop revoked this owner".into())
@@ -411,7 +418,7 @@ fn deadline_and_lost_or_changed_process_never_replay_launch() {
     platform.appears.store(true, Ordering::Release);
     let spawned = spawn(&runtime, &candidate);
     runtime.inner.settings.lock().unwrap().catalogue[0]["launchSupported"] = json!(false);
-    assert!(runtime.wait_profile_launch(spawned, |_, _| Ok(())).is_err());
+    assert!(runtime.wait_profile_launch(spawned, &launch_wake(&runtime), |_, _| Ok(())).is_err());
     assert_eq!(platform.spawns.load(Ordering::Acquire), 2);
     runtime.shutdown();
 }
@@ -440,7 +447,7 @@ fn wait_is_off_admission_and_requires_a_live_valid_native_process() {
     let spawned = spawn(&runtime, &candidate);
     platform.process.lock().unwrap().as_mut().unwrap().pid = 0;
     assert!(runtime
-        .wait_profile_launch(spawned, |_, _| Ok(()))
+        .wait_profile_launch(spawned, &launch_wake(&runtime), |_, _| Ok(()))
         .unwrap_err()
         .message
         .contains("process ID"));

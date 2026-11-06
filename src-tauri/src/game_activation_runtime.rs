@@ -49,6 +49,7 @@ impl GamesRuntime {
                 if wake.bind_thread(thread::current()).is_err() {
                     return;
                 }
+                let _worker = inner.activation.worker_scope();
                 #[cfg(windows)]
                 let mut events: Option<crate::xplane::process_events::InventoryEvents> = None;
                 #[cfg(windows)]
