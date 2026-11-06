@@ -83,10 +83,11 @@ test(`${transport} main view navigation retires observation readers without dupl
       }
     }
   });
-  const settled = async expected => {
+  const settled = async (expected, exact = false) => {
     await until(async () => {
       assert.deepEqual(errors, []);
-      return pending.size === 0 && [...active.values()].every(reader => baselines.get(reader.token) === 1)
+      return pending.size === 0 && (!exact || active.size === expected.length)
+        && [...active.values()].every(reader => baselines.get(reader.token) === 1)
         && (!expected || [...expected].every(topic => [...active.values()].some(reader => reader.topic === topic)));
     });
     return [...active.values()].map(reader => reader.topic).sort();
@@ -117,6 +118,29 @@ test(`${transport} main view navigation retires observation readers without dupl
         await until(async () => pending.size === 0 && active.size === 0);
       }
     }
+    await navigate('Debug');
+    const clickDebugTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Debug sections"] [role="tab"]'))
+      .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
+    const debugTopics = ['profiles.desktop', 'profiles.retired-recovery'];
+    const companionTopics = ['companion.listener', 'companion.presence'];
+    const companionsOpen = open => page.evaluate(`(() => {
+      const summary = [...document.querySelectorAll('.profile-debug details > summary')]
+        .find(row => row.textContent.trim() === 'Companion loading and image cache details');
+      if (summary.parentElement.open !== ${open}) summary.click();
+    })()`);
+    await settled(['games.telemetry']);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await clickDebugTab('Runtime & recovery');
+      await settled(debugTopics, true);
+      await companionsOpen(true);
+      await settled([...debugTopics, ...companionTopics], true);
+      await companionsOpen(false);
+      await settled(debugTopics, true);
+      await clickDebugTab('Incoming telemetry');
+      await settled(['games.telemetry'], true);
+    }
+    await navigate('Overview');
+    await until(() => pending.size === 0 && active.size === 0);
     await navigate('Settings');
     const clickTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
