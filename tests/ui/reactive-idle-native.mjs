@@ -41,7 +41,7 @@ test(`${transport} Cockpit stays idle without periodic gateway reads`, { timeout
           timer = setTimeout(() => reject(Error('Browser workspace observation did not become ready.')), 10_000);
           stop = observeWorkspaceState(state => {
             if (state.status === 'ready') resolve();
-            if (state.status === 'error' || state.status === 'lost') reject(Error(state.error));
+            if (state.status === 'error' || (state.status === 'lost' && !state.loading)) reject(Error(state.error));
           });
         });
       } finally {

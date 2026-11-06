@@ -25,6 +25,12 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 
 The native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
 
-The native artwork regression changes, deletes and restores an owned file and verifies all four image transitions in the exact `games.detail.<id>` subscriber, without fixture gateway reads between mutations. The Activity and AI settings fixtures verify committed changes and a quiet idle interval in the native portal.
+The native artwork regression changes, deletes and restores an owned file and verifies all four image transitions in the exact `games.detail.<id>` subscriber, without fixture gateway reads between mutations. The Activity fixture runs against native Cockpit with
+`OSG_ACTIVITY_OBSERVATION_NATIVE=1` or against the browser development gateway
+with `OSG_ACTIVITY_OBSERVATION_BROWSER_URL` set. It traces the real observation
+and gateway requests. Both runs cover a visible commit, a commit while the
+view is closed, one committed-only read on each of three reopens, and bounded
+search requests. The native AI settings fixture covers committed edits and a
+quiet idle interval.
 
 The matrix still needs proof for other external device and filesystem changes, nested consumer teardown and browser parity on native-only settings surfaces. Windows process acquisition retains the documented access-denied fallback. The browser and native companion apps and firmware lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md) and [remaining acceptance](remaining-acceptance.md) track those boundaries.
