@@ -15,6 +15,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
   const qualifyFeedback=process.env.OSG_COMPANION_FEEDBACK_NATIVE==='1';
   const recoveryProbe=process.env.OSG_COMPANION_RECOVERY_VJOY_PROBE;
   const slowFeedback=process.env.OSG_COMPANION_SLOW_FEEDBACK_NATIVE==='1';
+  const qualifyReplacement=process.env.OSG_COMPANION_REPLACEMENT_NATIVE==='1';
   if(slowFeedback)assert.ok(recoveryProbe,'Slow feedback qualification requires the vJoy probe');
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
@@ -98,10 +99,13 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    await page.goto(url.href,{waitUntil:'domcontentloaded'});
    peer=await until(async()=>(await companion('companion_status')).host.clients.find(row=>!existing.has(row.companionId)),Boolean,15000)
     .catch(async error=>{throw new Error('Browser pairing did not finish: '+await page.locator('body').innerText(),{cause:error});});
-   const bytes=Buffer.from(JSON.stringify(publication));
-   const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
-   for(let offset=0;offset<bytes.length;offset+=8192)await companion('companion_publish_chunk',{uploadId,offset,bytes:[...bytes.subarray(offset,offset+8192)]});
-   await companion('companion_publish_commit',{uploadId,saveAsLatest:false});
+   const publish=async value=>{
+    const bytes=Buffer.from(JSON.stringify(value));
+    const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
+    for(let offset=0;offset<bytes.length;offset+=8192)await companion('companion_publish_chunk',{uploadId,offset,bytes:[...bytes.subarray(offset,offset+8192)]});
+    await companion('companion_publish_commit',{uploadId,saveAsLatest:false});
+   };
+   await publish(publication);
    await companion('companion_assign',{companionId:peer.companionId,instanceId:id,publicationHash:publication.publicationHash});
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    const row=await until(async()=>(await request('profile_resources_list')).profileResources.resources.find(row=>row.attributes?.companionId===peer.companionId),Boolean,10000);
@@ -222,6 +226,28 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    const before=await readInstance();
    assert.equal(before.values['flight-input-0'],true);
    assert.equal(before.profileOwned,true);
+   if(qualifyReplacement){
+    const hiddenAt=await page.evaluate(()=>{
+     const at=performance.now();
+     Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+     document.dispatchEvent(new Event('visibilitychange'));
+     return at;
+    });
+    await page.getByText('Connected · feedback active · controls paused',{exact:true}).waitFor({timeout:7000});
+    await until(readInstance,row=>row?.connected&&row.armed&&row.values['flight-input-0']===false,7000);
+    await until(()=>page.evaluate(at=>window.__feedbackTrace.some(({frame,receivedAt})=>receivedAt>=at&&
+     frame.values.some(value=>value.channelId==='flight-channel-0'&&value.status==='fresh'&&value.value===false)),hiddenAt),Boolean,7000);
+    await page.evaluate(()=>{
+     delete document.visibilityState;
+     document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:7000});
+    assert.equal((await readInstance()).values['flight-input-0'],false);
+    assert.deepEqual((await request('profile_status')).profiles.profileSession.owner,owner);
+    await page.getByRole('button',{name:'probe: press',exact:true}).click();
+    await until(readInstance,row=>row?.armed&&row.values['flight-input-0']===true,7000);
+    t.diagnostic('Browser visibility handling released the held control and resumed neutral on the same profile owner');
+   }
    const streamId=randomUUID();
    const independent=(sequence,value)=>request('profile_debug_controller_input',{owner,nodeId:'independent',
     streamId,sequence:String(sequence),changes:[{portId:'button-1',value}]});
@@ -324,9 +350,38 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     t.diagnostic(`Stop and vJoy slot release observed within ${Math.round(performance.now()-stopStarted)} ms`);
     if(!slowFeedback)await assertRawTransitions([true,false,true,false]);
    }
+   if(qualifyReplacement){
+    const canonical=JSON.parse(publication.canonicalDocument);
+    canonical.ui.title='Replacement flight panel';
+    const canonicalDocument=JSON.stringify(canonical);
+    const replacement={...publication,canonicalDocument,
+     publicationHash:'sha256:'+createHash('sha256').update(canonicalDocument).digest('hex')};
+    await publish(replacement);
+    const neutral=Object.fromEntries(canonical.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
+    const baseline=async hash=>{
+     const row=await until(readInstance,row=>row?.publicationHash===hash&&row.connected&&row.armed&&
+      row.values['flight-input-0']===false,15000);
+     assert.equal(row.companionId,peer.companionId);
+     assert.deepEqual(row.values,neutral);
+    };
+    const press=async hash=>{
+     await page.locator(`[data-publication-hash="${hash}"]`).waitFor({timeout:15000});
+     await page.getByRole('button',{name:'probe: press',exact:true}).click();
+     return until(readInstance,row=>row?.publicationHash===hash&&row.armed&&row.values['flight-input-0']===true,7000);
+    };
+    const assign=hash=>companion('companion_assign',{companionId:peer.companionId,instanceId:id,publicationHash:hash});
+    await baseline(publication.publicationHash);
+    await press(publication.publicationHash);
+    await assign(replacement.publicationHash);
+    await baseline(replacement.publicationHash);
+    await press(replacement.publicationHash);
+    await assign(publication.publicationHash);
+    await baseline(publication.publicationHash);
+    t.diagnostic('Replacing and restoring the connected panel each required a neutral baseline');
+   }
   } finally {
    const cleanupErrors=[];
-   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake||qualifyFeedback||recoveryProbe)cleanupErrors.push(error);}};
+   const cleanup=async work=>{try{await work();}catch(error){if(qualifyHostWake||qualifyFeedback||recoveryProbe||qualifyReplacement)cleanupErrors.push(error);}};
    let stopped=false;
    if(profile||desktopPreferences)await cleanup(async()=>{
     const result=await request('profile_stop');
