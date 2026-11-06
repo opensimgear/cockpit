@@ -84,7 +84,11 @@ const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simu
 const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
 // Event waits can carry a periodic fallback or an exact deadline. Inventory
 // the call sites as well as the lower-level wait that implements them.
-const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject|WaitForMultipleObjects|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
+const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject(?:Ex)?|(?:Msg)?WaitForMultipleObjects(?:Ex)?|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
+const nativeReadiness = {
+  rust: /\b(poll\.poll)\s*\(/g,
+  c: /\b(select|poll|ppoll|epoll_wait|kevent)\s*\(/g,
+};
 const sites = [];
 const revisions = [];
 for (const repository of ['.', '../device-gateway', '../device-template', '../firmware-common']) {
@@ -103,6 +107,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
       && (repository !== '.' || trees.some(tree => file.startsWith(tree))));
   for (const [file, source] of sourcesAt(cwd, productionFiles, revision)) {
     const path = resolve(cwd, file);
+    const readiness = file.endsWith('.rs') ? nativeReadiness.rust : /\.(?:c|h|cpp)$/.test(file) ? nativeReadiness.c : undefined;
     const lines = source.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
@@ -110,6 +115,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
       const kinds = [...new Set([
         ...(line.match(timing) ?? []),
         ...Array.from(line.matchAll(eventWait), match => match[1]),
+        ...(readiness ? Array.from(line.matchAll(readiness), match => match[1]) : []),
       ])];
       if (!kinds.length) continue;
       sites.push({file:relative(root, path).replaceAll('\\','/'), line:index + 1, kinds});

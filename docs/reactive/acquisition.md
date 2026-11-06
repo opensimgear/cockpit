@@ -300,3 +300,16 @@ defined for the supported protocol-1 images. The current protocol-3 debug
 target has a separate sequenced inventory producer. The legacy adapter still
 needs an event-capable upgrade or a sampling decision. See the [Pico firmware
 guide](https://github.com/opensimgear/device-gateway/blob/e761e4d685324f9d7b13a3c2c2527d750fbbd854/simulation/pico/README.md).
+
+### Native readiness primitives
+
+At Cockpit `41e4080e` with the same firmware revisions, the scan includes
+348 sites after adding the four waits below. These waits were absent from
+the earlier 344-site scan. The historical ledger still checks independently.
+
+| Site | Owner and wake |
+| --- | --- |
+| `crates/controller-input/src/windows/worker.rs:47` | Windows Raw Input blocks indefinitely on the message queue or the worker's shutdown event. It does not periodically query controller state. |
+| `crates/companion-service/src/server/listener.rs:30` | Mio wakes on incoming sockets, committed hub deadline changes, peer completion, Stop, or the next hub expiry. |
+| `crates/companion-service/src/server/socket_io.rs:56` | Mio wakes the peer on read/write readiness, cancellation, or the current operation deadline. |
+| `apps/companion-esp32/network/serial_wire.c:98` | The network task drains existing USB console bytes, then waits for UART readiness or the original direct-request deadline. An interrupt resumes the same wait budget. |
