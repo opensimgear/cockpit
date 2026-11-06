@@ -4,6 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import {performance} from 'node:perf_hooks';
+import assert from 'node:assert/strict';
 import {ControllerInputObservations as Current} from '../../src/lib/controller-observations.ts';
 await mkdir('.research/reactive',{recursive:true});
 const baseline=execFileSync('git',['show','a0bf5a3:src/lib/controller-observations.ts'],{encoding:'utf8'})
@@ -42,11 +43,15 @@ for(const [version,Store]of[['before',Before],['after',Current]])for(const chang
     }));
     const packet=frame({session:'capture',source:{...source,sequence:String(n)},reason:'change',values,cursor:String(n),capturedUs:String(n*1000)},n);
     const started=performance.now();receive({status:'ready',frame:packet});const elapsed=performance.now()-started;
-    if(last.status!=='ready'||last.detail.controls[0].value.native!==(changed?n%2:0))throw Error('Invalid benchmark frame');
+    assert.equal(last.status,'ready',last.error);
+    for(const index of [0,128,134]){
+      const row=last.detail.controls[index];
+      assert.deepEqual(row.value,values[row.capability.id]);
+    }
     if(n>=502)times.push(elapsed);
   }
   stop();stopOther();times.sort((a,b)=>a-b);
-  results.push({version,allValuesChanged:changed,samples:times.length,p50Ms:times[times.length/2],p95Ms:times[Math.floor(times.length*.95)]});
+  results.push({version,allValuesChanged:changed,samples:times.length,p50Ms:times[times.length/2],p95Ms:times[Math.floor(times.length*.95)],p99Ms:times[Math.floor(times.length*.99)]});
 }
 await writeFile('.research/reactive/controller-reducer-cost.json',JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
