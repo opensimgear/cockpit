@@ -10,6 +10,8 @@ typedef struct {
     bool (*touch)(void *, bool *down, int *x, int *y);
     /* Optional bounded presentation fence after all writes, outside the state mutex. */
     bool (*present)(void *);
+    /* Optional touch interrupt input. Zero leaves the existing timed reader. */
+    int touch_irq_gpio;
 } osg_board;
 bool osg_board_init(osg_board *);
 #endif

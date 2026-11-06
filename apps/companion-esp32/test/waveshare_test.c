@@ -98,6 +98,7 @@ static void empty(void){assert(!bus_count&&!devices&&!panels&&!semaphores);}
 static osg_board ready(void){
     cleanup(&hardware);empty();operation=fail_at=outputs_count=pending=waits=fail_wait=0;check_no_reuse=wrong_product=wrong_geometry=false;
     psram_bytes=8*1024*1024;osg_board b;assert(osg_board_init(&b));assert(b.width==800&&b.height==480&&b.touch&&b.present&&b.write);
+    assert(b.touch_irq_gpio==4);
     assert(outputs_count==4&&outputs_seen[0]==0x30&&outputs_seen[1]==0x38&&outputs_seen[2]==0x3a&&outputs_seen[3]==0x3e);return b;
 }
 static bool touch(osg_board *b){bool down;int x,y;return b->touch(b->context,&down,&x,&y);}

@@ -5,6 +5,7 @@
 #include "platform.h"
 #include "candidate.h"
 #include "render_profile.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -24,10 +25,35 @@ static TaskHandle_t display_task;
 static void wake_display(void){xTaskNotifyGive(display_task);}
 static uint64_t display_now(void){return (uint64_t)(esp_timer_get_time()/1000);}
 static void render_progress(void *context){osg_network_render_progress(((osg_runtime *)context)->panel);}
+static void touch_interrupt(void *task){
+    BaseType_t woken=pdFALSE;
+    vTaskNotifyGiveFromISR(task,&woken);
+    if(woken)portYIELD_FROM_ISR();
+}
+static bool start_touch_interrupt(int pin){
+    if(!pin)return false;
+    const esp_err_t service=gpio_install_isr_service(0);
+    if(service!=ESP_OK&&service!=ESP_ERR_INVALID_STATE)return false;
+    if(gpio_set_intr_type(pin,GPIO_INTR_ANYEDGE)!=ESP_OK)return false;
+    if(gpio_isr_handler_add(pin,touch_interrupt,xTaskGetCurrentTaskHandle())==ESP_OK)return true;
+    (void)gpio_set_intr_type(pin,GPIO_INTR_DISABLE);
+    return false;
+}
 static void touch_task(void *context){
     osg_board *board=context;
-    for(;;){bool down=false;int x=0,y=0;bool valid=board->touch(board->context,&down,&x,&y);
-        osg_network_touch(valid,down,x,y);vTaskDelay(pdMS_TO_TICKS(20));}
+    const bool interrupt=start_touch_interrupt(board->touch_irq_gpio);
+    if(board->touch_irq_gpio&&!interrupt)ESP_LOGW("companion","Touch interrupt unavailable; using timed reads");
+    bool notified=false;
+    for(;;){
+        bool down=false;int x=0,y=0;
+        const bool valid=board->touch(board->context,&down,&x,&y);
+        osg_network_touch(valid,down,x,y);
+        // GT911 may raise INT before its report is ready. Keep one prompt
+        // follow-up, and retain the existing held-contact and failure checks.
+        // The quiet health read still renews the independent 600 ms lease.
+        const unsigned delay=interrupt&&valid&&!down&&!notified?200:20;
+        notified=ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(delay))!=0;
+    }
 }
 void app_main(void) {
     osg_board board;

@@ -21,6 +21,7 @@
 #define FRAME_BYTES ((size_t)WIDTH * HEIGHT * sizeof(uint16_t))
 #define I2C_TIMEOUT_MS 30
 #define TOUCH_HOLD_MS 200
+#define TOUCH_IRQ_GPIO 4
 /* CH422G IO1 touch reset, IO2 backlight, IO3 LCD reset, IO4 SD CS,
  * IO5 USB select. Keep SD deselected and USB select high throughout. */
 #define OUTPUTS_RESET 0x30
@@ -153,16 +154,16 @@ bool osg_board_init(osg_board *out) {
         !add_device(b, 0x24, &b->config) || !add_device(b, 0x38, &b->outputs) ||
         !add_device(b, 0x5d, &b->touch) || !expander(b->config, 1)) goto failed;
     stage = "reset/address selection";
-    const gpio_config_t irq = {.pin_bit_mask = 1ULL << 4, .mode = GPIO_MODE_OUTPUT,
+    const gpio_config_t irq = {.pin_bit_mask = 1ULL << TOUCH_IRQ_GPIO, .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE, .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE};
-    if (gpio_config(&irq) != ESP_OK || gpio_set_level(4, 0) != ESP_OK ||
+    if (gpio_config(&irq) != ESP_OK || gpio_set_level(TOUCH_IRQ_GPIO, 0) != ESP_OK ||
         !expander(b->outputs, OUTPUTS_RESET)) goto failed;
     vTaskDelay(pdMS_TO_TICKS(20));
     if (!expander(b->outputs, OUTPUTS_LCD_READY)) goto failed;
     vTaskDelay(pdMS_TO_TICKS(100));
     if (!expander(b->outputs, OUTPUTS_TOUCH_READY)) goto failed;
     vTaskDelay(pdMS_TO_TICKS(50));
-    if (gpio_set_direction(4, GPIO_MODE_INPUT) != ESP_OK) goto failed; /* GT911 INT, not a driven output. */
+    if (gpio_set_direction(TOUCH_IRQ_GPIO, GPIO_MODE_INPUT) != ESP_OK) goto failed;
     vTaskDelay(pdMS_TO_TICKS(150));
     stage = "GT911 identity/800x480 geometry";
     uint8_t product[4], geometry[4];
@@ -195,7 +196,7 @@ bool osg_board_init(osg_board *out) {
         !expander(b->outputs, OUTPUTS_LIGHT_ON)) goto failed;
     b->initialized = true;
     *out = (osg_board){.width = WIDTH, .height = HEIGHT, .context = b,
-        .write = write_pixels, .touch = poll_touch, .present = present};
+        .write = write_pixels, .touch = poll_touch, .present = present, .touch_irq_gpio = TOUCH_IRQ_GPIO};
     ESP_LOGI("lcd7", "Waveshare ESP32-S3-Touch-LCD-7 V1.2: RGB565 800x480, GT911, two PSRAM frames");
     return true;
 failed:

@@ -159,7 +159,7 @@ worker and explicit launch and setup checks are separate.
 | Windows process observation | Native process notifications are preferred. Global game activation parks when the catalogue has no installed game with process monitoring support and wakes on a library commit. The 500 ms discovery fallback applies when a monitorable installation exists and event coverage is unavailable. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
 | File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
-| ESP32 companion touch | The common touch task checks both boards every 20 ms. Sunton exposes touch IRQ on GPIO36. Waveshare wires GT911 INT to GPIO4, currently configured as input with interrupts disabled. | Wake the task from the board interrupt and recheck the input after arming to cover a contact already in progress. Drain and clear GT911 ready reports. For Sunton, verify release, debounce and held-motion behavior before disposition of any sampling during contact. |
+| ESP32 companion touch | Waveshare GT911 INT on GPIO4 wakes the touch task. One 20 ms follow-up covers an early interrupt. Held contact, faults and interrupt-registration failure retain the 20 ms cadence. A quiet 200 ms read renews the existing touch safety lease. Sunton continues its 20 ms reads. | Qualify IRQ delivery, release and fault timing on Waveshare. Verify a safe Sunton event path and explicitly disposition remaining touch sampling. |
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
 | ESP32 USB console | On the supported UART console boards, the driver event queue wakes provisioning and retains one unread notification. Direct requests wait for UART readiness with their original deadline. The network task owns both reads and shares one bounded decoder. | Qualify command cancellation, reconnect and physical USB on both boards. Non-UART console builds still use the maintenance wake and have no board qualification. |
 
@@ -171,6 +171,12 @@ The provisioning wake uses the UART driver's bounded event queue. It carries
 readiness only. The driver ring and the network task retain byte ownership.
 The network task still has its separate maintenance wake for other work.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
+
+Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt
+use of GPIO36 with ADC or Wi-Fi/Bluetooth sleep. The existing Sunton reader
+stays active pending a verified event path. The GT911 follow-up covers the
+documented driver behavior where INT can precede a ready report.
+[ESP32 GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/gpio.html) · [Linux Goodix driver](https://github.com/torvalds/linux/blob/master/drivers/input/touchscreen/goodix.c)
 
 The recorded approval applies to the Assetto shared-memory reader. The boundaries above remain open under the original acquisition gate.
 
