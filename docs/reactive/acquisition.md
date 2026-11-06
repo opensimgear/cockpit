@@ -35,17 +35,17 @@ Gateway catalogue and temporary publication checks have a separate scope.
 The remaining CAN publication fallback discovers firmware ownership and layout
 changes. It does not read panel values or feed the input journal.
 
-Qualified Windows controller/internal profiles now service routing from retained
+Qualified Windows controller and internal profiles service routing from retained
 HID report watches, committed resource-token changes and actual deadlines.
-Optional virtual output keeps its independent renewal deadline; pending ordered
-reports request an immediate drain. The 5 ms adapter fallback remains for games,
-desktop output, panels, companions, visibility, publication and physical actions,
-and for hosts without the required native watches.
+Pending virtual reports request an immediate drain. A terminal feeder reply or
+closed reply pipe wakes the profile host, and output leases retain their own
+renewal deadline. Qualified game and desktop adapters also use retained wakes.
+Mixed adapter combinations and missing watches can still require bounded service.
 
-Desktop tap, repeat, moving-pointer and isolated reducer deadlines now join the
-native host's deadline selection. Its parent and worker still retain the 5 ms
-focus/lease service requirement. Native dispatch cost and notification of focus
-discontinuities remain open; exposing deadlines alone does not qualify timing.
+Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline
+selection. Foreground, desktop and session changes notify the parent and helper
+scope owners. The helper also wakes for native commands and release deadlines.
+First-dispatch, burst timing and broader adapter combinations remain open.
 
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. Changes in the serial topology cache,
@@ -119,13 +119,13 @@ worker and explicit launch and setup checks are separate.
 
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
-| App/workspace/gateway | App.svelte 3 s workspace refresh | Gateway worker publishes committed status/module changes; platform serial arrival/removal notifications invalidate inventory |
+| App/workspace/gateway | Workspace publishes committed cached state; platform serial arrival/removal notifications invalidate inventory | Qualify per-provider background delivery, especially external device changes |
 | Controller input | controller-input capture + stream journal | Windows report receive publishes batches; replace Linux/macOS 4 ms backend polling with platform report streams; share journal wakeups and descriptor cache |
 | Controller/device visibility | HostControllers, DeviceVisibility, visibility coordinator | Platform device/process notifications plus acknowledged visibility mutations; quiet controls remain connected |
 | USB/CAN/module inputs | Direct CDC input stream and advertised CAN panel stream with boot/config fences | Verify physical burst continuity, disconnect and rebaseline. Explicit diagnostic journal reads are separate from native acquisition. |
 | Resource/system inventory | Device/process/commit invalidation with retries for unresolved resources and one-shot evidence expiry | Native workers publish committed snapshots. System inventory pages read the cache. Explicit Refresh inspects optional drivers and external virtual-device state. |
 | Profile library/editor/resources/ports | ProfilesPanel and editor previews | Durable document/resource commits and capture topics; revision-pinned pages, query replacement disposal |
-| Runtime/activation/progress | profile_session_host health drain; activation windows 150/200 ms | Source/completion wakeups and next authored deadline; publish health/progress commits; independent Stop, compensation and heartbeat |
+| Runtime/activation/progress | Native profile and activation read models publish committed health and progress; the activation window uses its scoped subscription | Verify cancellation, compensation and independent heartbeat under mixed faults and load |
 | Automatic selection/recovery/learning | UI status loops and native game/process tracking | Process notifications, explicit recovery/learning transitions and captured input; no authority in passive subscribers |
 | Debug/topology/live/path/virtual previews | UI 250 ms–2 s reads | Subscribe to shared native snapshots and reports; virtual preview observes acknowledged output, never drives runtime |
 | DCS-BIOS / managed DCS export | Socket reports plus command-pumped reads | One blocking socket producer publishes source-native batches, context and quality deadlines; separately confirm simulator effects |
@@ -138,10 +138,21 @@ worker and explicit launch and setup checks are separate.
 | Browser companion connection | Assignment and transport events trigger reconnect; transient failures own one retry deadline | Lease renewal and release watchdogs remain timed. Qualify background behavior on each supported client. |
 | Serial/ESP32 firmware | Serial workers + status/control request cadence | Explicit producer/firmware protocol stream, bounded backpressure, publication replacement and held-release evidence per board |
 | Settings/preferences/dependencies/backups | UI preferences and AI settings use native observations | Publish remaining dependency/backup worker progress. AI settings reads status after a private invalidation from listener or credential changes |
-| Activity/debug/notifications | ActivityPanel/DebugPanel 3 s | Append/clear/settings commits publish pinned revisions; notification dismissal remains a real deadline |
+| Activity/debug/notifications | Activity commits and Debug's scoped topics invalidate current reads; notification dismissal has a local deadline | Qualify background changes and nested lifetimes |
 | MCP observation/admin | Gateway commands and HTTP sessions | Shared topic registry/snapshot boundary, negotiated resource notifications and bounded cursor fallback; observe never renews authority |
 | Native/browser-dev transports | gateway.ts IPC; native-gateway-bridge HTTP | Same typed envelopes, atomic subscription boundary, cancellation and overflow, including transport restart |
 | Desktop/virtual/logic workers | Independent bounded pipes, host polls completions | Completion/loss wakeups; do not perform pipe I/O in capture subscriber callbacks |
+
+## Unresolved acquisition boundaries
+
+| Boundary | Current behavior | Remaining gate |
+| --- | --- | --- |
+| Legacy Pico protocol 1 | A connected `LegacyPicoService` combines claim expiry and a `status` snapshot on its two-second heartbeat. Pico Debug selects a different service with sequenced inventory events. | Separate legacy lease deadlines from inventory acquisition. Establish a firmware event path or record an explicit sampling decision. |
+| Windows process observation | Native process notifications are preferred. Global game activation retains the 500 ms discovery fallback when event coverage is unavailable. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
+| File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
+| Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
+
+The recorded approval applies to the Assetto shared-memory reader. The boundaries above remain open under the original acquisition gate.
 
 The inventory includes hidden activation windows, offscreen designers and browser
 workers. Timer sites must be classified during cutover: acquisition/read-model
@@ -170,7 +181,7 @@ Physical controller acquisition is outside this exception.
 | --- | --- | --- |
 | Shared capture worker, 2 ms sampling and 50 ms read-error retry | Approved native mapping acquisition and bounded recovery. A failed process lease retires the worker. | Ordered and latest-reader fixtures, mapping generation tests and failed-lease replacement regression |
 | Manual setup verification | Journal publication, cancellation or the existing verification deadline wakes the probe. | Native tests cover cancellation and outcome handling. Live permission denial and Stop passed. Authorized simulator delivery remains in #199. |
-| Global game activation observer, 500 ms catalogue process scan | Replace with a process-event owner for registered executable identities and initial inventory. | Verify launch, competing processes, process replacement, missed notifications and idle behavior |
+| Global game activation observer | Native process events and initial inventory own the registered executable view. Windows access denial retains the 500 ms discovery fallback. | Authored start and exit passed through the fallback. Native consent, event continuity and live simulator qualification remain open. |
 
 [Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6640472899)
 
