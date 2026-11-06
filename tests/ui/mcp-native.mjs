@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -124,13 +124,26 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const modernResource = await modern('resources/read', { uri: 'cockpit://guide/configuration' }); assert.equal(modernResource.status, 200); assert.ok((await modernResource.json()).result.contents.length);
     const observationUri = 'cockpit://observations/profiles.library';
     const fixedResources = (await reader.listResources()).resources;
+    const contracts = await readFile(new URL('../../docs/mcp-contracts.md', import.meta.url), 'utf8');
+    const observationMatrix = contracts.split('## Reactive observation parity')[1].split('## Tools to native commands')[0];
+    for (const { uri } of fixedResources) {
+      const prefix = 'cockpit://observations/';
+      if (!uri.startsWith(prefix)) continue;
+      const topic = uri.slice(prefix.length);
+      const documented = topic.startsWith('preferences.') ? 'preferences.<key>' : topic;
+      assert.ok(observationMatrix.includes(`\`${documented}\``), `Missing observation parity for ${topic}`);
+    }
+    const templates = await reader.listResourceTemplates();
+    assert.ok(templates.resourceTemplates.some(template => template.uriTemplate === 'cockpit://observations/{topic}'));
     assert.ok(fixedResources.some(resource => resource.uri === observationUri));
     assert.ok(fixedResources.some(resource => resource.uri === 'cockpit://observations/profiles.resources'));
     const controllerUri = 'cockpit://observations/controllers.inventory';
     const observeController = process.env.OSG_MCP_CONTROLLER_OBSERVATION === '1';
     const jobsUri = 'cockpit://observations/games.jobs';
     const observeJobs = process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1';
-    const uris = [observationUri, ...(observeController ? [controllerUri] : []), ...(observeJobs ? [jobsUri] : [])];
+    const activityUri = 'cockpit://observations/activity.log';
+    const observeActivity = process.env.OSG_MCP_ACTIVITY_OBSERVATION === '1';
+    const uris = [observationUri, ...(observeController ? [controllerUri] : []), ...(observeJobs ? [jobsUri] : []), ...(observeActivity ? [activityUri] : [])];
     assert.ok(uris.every(uri => fixedResources.some(resource => resource.uri === uri)));
     const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: uris } });
     assert.equal(observation.status, 200);
@@ -165,13 +178,27 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
         }
       }
       assert.ok(uris.every(uri => baselines.has(uri)));
+      const committedActivity = async (update, document) => {
+        if (update.params.uri !== activityUri) return false;
+        assert.notEqual(update.params._meta['opensimgear.com/observation'].kind, 'loss');
+        const filter = { search: document.name, entityId: document.id };
+        const activity = await ok(reader, 'activity_list', { ...filter, committedOnly: true });
+        if (!activity.events.length) return false;
+        const native = await page.native({ command: 'activity_query', committedOnly: true, activityFilter: filter });
+        assert.deepEqual(activity.events, native.activity.events);
+        assert.equal(activity.events.length, 1);
+        return true;
+      };
       const observedName = `MCP observation ${randomUUID()}`;
       const created = await page.native({ command: 'profile_create', name: observedName });
       profiles.add(created.profiles.document.id);
-      for (;;) {
+      let profileObserved = false, activityObserved = !observeActivity;
+      while (!profileObserved || !activityObserved) {
         const update = await nextObservation();
         assert.equal(update.method, 'notifications/resources/updated');
-        if (update.params.uri === observationUri && JSON.stringify(update.params._meta['opensimgear.com/observation']).includes(observedName)) break;
+        const frame = update.params._meta['opensimgear.com/observation'];
+        if (update.params.uri === observationUri && JSON.stringify(frame).includes(observedName)) profileObserved = true;
+        if (!activityObserved) activityObserved = await committedActivity(update, created.profiles.document);
       }
       const mcpName = `MCP to native observation ${randomUUID()}`;
       await page.evaluate(async () => {
@@ -182,11 +209,16 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       await until(async () => (await library())?.status === 'ready', 'Native library observer did not receive its baseline');
       const saved = await ok(writer, 'profile_create', mutation({ name: mcpName }));
       profiles.add(saved.document.id);
+      if (observeActivity) {
+        let observed = false;
+        while (!observed) observed = await committedActivity(await nextObservation(), saved.document);
+      }
       await until(async () => (await library())?.value?.profiles.some(profile => profile.name === mcpName),
         'Native library observer did not receive the MCP commit');
       const isolatedUnrelatedEdit = await profileEditorObservation({page, writer, ok, mutation, until, library, saved, unrelated:created.profiles.document, mcpName, nextObservation, observationUri});
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
         baseline: true, observedNativeChange: true, observedMcpCommitInNative: true, cleanEditorFollowedMcpCommits: true, staleDirtySaveRejected: true, observedEditorCommitInMcp: true, isolatedUnrelatedEdit };
+      if (observeActivity) evidence.modernObservation.activity = { sameCommittedEvent: true, observedNativeAndMcpActions: true, periodicReads: 0 };
       if (observeController) {
         const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
         assert.ok(source, 'A connected host controller is required for this optional check');

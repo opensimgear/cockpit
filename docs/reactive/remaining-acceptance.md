@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 27 checked and 28
-open. The open criteria include 15 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 28 checked and 27
+open. The open criteria include 14 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -24,7 +24,7 @@ and #198 are In progress because implementation/qualification is underway.
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
-| #197 | Complete manual/MCP state/error/cancel/recovery parity and schema/documentation/negotiation inventory. The desktop output status snapshot is available through MCP. Slow-observer isolation passed in the running app and in bounded native stress fixtures. Sustained socket backpressure remains part of broader load qualification. |
+| #197 | Complete manual and MCP state, error, cancellation and recovery parity. The public observation catalogue is mapped in the MCP contracts, and the running SDK fixture checks discovery and committed Activity records. Native tests cover schemas, negotiation and teardown. Sustained socket backpressure remains part of broader load qualification. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
 
 The active companion feedback publisher now emits an initial snapshot and
