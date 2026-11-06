@@ -57,6 +57,12 @@ restore through the native and browser-dev transports. Two inventory readers
 see the same commit while the selected input reader remains ready. A closed
 reader misses the restore and receives the current name immediately on reopen.
 
+The attached-controller visibility check verifies an external save while the
+detail is open, then closes the detail and observes its reader retire. Restoring
+the saved preference while the detail is closed produces no visibility status
+read. Reopening uses a fresh reader and one opening read to show the restored
+policy. The browser-dev fixture and native WebView trace both passed this check.
+
 The companion listener fixture runs on both transports. It occupies a
 loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates

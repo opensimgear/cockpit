@@ -18,9 +18,22 @@ test('native startup grants HidHide self-access and Devices displays the same pa
   const browser = await chromium.launch({ headless: true, ...(process.env.OSG_BROWSER_CHANNEL ? { channel: process.env.OSG_BROWSER_CHANNEL } : {}) });
   const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
   const commands = [], errors = [];
+  const visibilityOpens = [], visibilityCloses = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => {
-    if (request.method() === 'POST' && request.url().includes('/api/gateway/')) commands.push(request.postDataJSON().command);
+    if (request.method() !== 'POST') return;
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/gateway/') commands.push(request.postDataJSON().command);
+    if (path === '/api/observe/subscribe' && request.postDataJSON().topic === 'controllers.visibility') {
+      const { connectionId, requestId } = request.postDataJSON();
+      visibilityOpens.push(JSON.stringify([connectionId, requestId]));
+    }
+  });
+  page.on('response', response => {
+    if (response.ok() && new URL(response.url()).pathname === '/api/observe/unsubscribe') {
+      const { connectionId, requestId } = response.request().postDataJSON();
+      visibilityCloses.push(JSON.stringify([connectionId, requestId]));
+    }
   });
   const native = request => page.evaluate(async request => {
     const response = await fetch('/api/gateway/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSG-Client': '1' },
@@ -43,7 +56,8 @@ test('native startup grants HidHide self-access and Devices displays the same pa
     assert.deepEqual(initial.visibility.selfAccess, access);
     const visibilityReads = () => commands.filter(command => command === 'controller_visibility_status').length;
     const beforeOpen = visibilityReads();
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
+    const navigation = page.getByRole('navigation', { name: 'Main navigation' });
+    await navigation.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
     const tile = devices.locator(`[data-component-id="controller:${source.id}"]`);
     await expect(tile).toBeVisible({ timeout: 90_000 });
@@ -72,19 +86,34 @@ test('native startup grants HidHide self-access and Devices displays the same pa
       const original = initial.visibility.intent;
       const next = original.mode === 'visible' ? 'hide-all' : 'visible';
       await expect(savedPolicy).toHaveValue(original.mode);
+      const firstReader = visibilityOpens.at(-1);
+      assert.ok(firstReader);
+      let restored = false;
       try {
         const saved = await native({ command: 'controller_visibility_save', sourceId: source.id, intent: { mode: next } });
         assert.deepEqual(saved.visibility.effective, initial.visibility.effective);
         await expect(savedPolicy).toHaveValue(next);
-      } finally {
+        await page.getByRole('button', { name: 'Back to Devices' }).click();
+        await expect(savedPolicy).toHaveCount(0);
+        await expect.poll(() => visibilityCloses.includes(firstReader)).toBe(true);
+        const whileClosed = visibilityReads();
         await native({ command: 'controller_visibility_save', sourceId: source.id, intent: original });
+        restored = true;
+        await expect(tile).toBeVisible();
+        assert.equal(visibilityReads(), whileClosed);
+        await tile.click();
+        await expect(savedPolicy).toHaveValue(original.mode);
+        assert.notEqual(visibilityOpens.at(-1), firstReader);
+        assert.equal(visibilityReads() - whileClosed, 1);
+      } finally {
+        if (!restored) await native({ command: 'controller_visibility_save', sourceId: source.id, intent: original });
       }
-      await expect(savedPolicy).toHaveValue(original.mode);
     }
     await page.screenshot({ path: resolve(artifacts, 'startup-access.png'), fullPage: true });
     await status.screenshot({ path: resolve(artifacts, 'startup-access-status.png') });
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ observedAt: new Date().toISOString(), endpoint,
-      selfAccess: access, sourceId: source.id, effective: initial.visibility.effective, commands, writes, errors }, null, 2) + '\n');
+      selfAccess: access, sourceId: source.id, effective: initial.visibility.effective, commands, writes, errors,
+      visibilityOpens, visibilityCloses }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true });
     throw error;
