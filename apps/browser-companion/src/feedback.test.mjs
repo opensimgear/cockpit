@@ -25,6 +25,22 @@ test('every native identity field and exact unsigned64 counters fence old panels
  assert.equal(view.accept(identity,frame({sequence:'18446744073709551615'}),ui,200),true);assert.throws(()=>view.accept(identity,frame({sequence:'18446744073709551616'}),ui,300));
  assert.equal(view.accept(identity,frame({bindingGeneration:'2',sequence:'0'}),ui,300),true);
 });
+test('a quiet channel expires independently while its peer remains fresh on the same session',()=>{
+ const view=createBrowserFeedback();
+ assert.equal(view.accept(identity,frame(),ui,100),true);
+ const renewed=frame({mode:'delta',sequence:'2',values:[lamp(false)]});
+ delete renewed.bindings;
+ assert.equal(view.accept(identity,renewed,ui,850),true);
+ assert.equal(view.accept(identity,renewed,ui,1000),false);
+ const snapshot=view.snapshot();
+ const text={kind:'text',feedbackIds:['engine-status'],config:{}};
+ const indicator={kind:'indicator',feedbackIds:['altitude-lamp'],config:{}};
+ assert.equal(feedbackPresentation(text,ui,snapshot,1050).value,'Altitude 1000 ft');
+ assert.equal(feedbackPresentation(text,ui,snapshot,1150).available,false);
+ assert.equal(feedbackPresentation(indicator,ui,snapshot,1150).value,false);
+ assert.equal(snapshot.engine.receivedAtMs,100);
+ assert.equal(snapshot.altitude.receivedAtMs,850);
+});
 test('malformed, unbound or incomplete snapshots fail atomically and deltas require a matching current snapshot',()=>{
  const view=createBrowserFeedback(),delta=frame({mode:'delta',sequence:'2',values:[lamp(false)]});delete delta.bindings;assert.throws(()=>view.accept(identity,delta,ui,100),/snapshot/);view.accept(identity,frame(),ui,100);
  for(const input of[frame({values:[lamp()]}),frame({values:[lamp(),lamp()]}),frame({values:[sample({value:123}),lamp()]}),frame({values:[sample({channelId:'forged'}),lamp()]}),frame({unrecognized:true}),frame({values:[sample({provenance:'game-confirmed'}),lamp()]})])assert.throws(()=>view.accept(identity,input,ui,200));
