@@ -54,6 +54,8 @@ impl GamesRuntime {
                 let mut events: Option<crate::xplane::process_events::InventoryEvents> = None;
                 #[cfg(windows)]
                 let mut watched_library = None;
+                #[cfg(windows)]
+                let mut restarted_library = None;
                 while !inner.closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
                     #[cfg(windows)]
@@ -70,10 +72,16 @@ impl GamesRuntime {
                     };
                     #[cfg(windows)]
                     {
-                        if watched_library != Some(library) {
+                        let replacement = watched_library != Some(library);
+                        // Recover once after live continuity is lost. Initial
+                        // permission denial must not become a retry loop.
+                        let restart = !replacement && restarted_library != Some(library)
+                            && events.as_ref().is_some_and(|events| events.failed_after_live());
+                        if replacement || restart {
                             if events.as_ref().is_none_or(|events| events.is_finished()) {
                                 events = inner.platform.watch_activation_processes(&games, [wake.clone(), inner.changes.context_process_wake.clone()]);
                                 watched_library = Some(library);
+                                restarted_library = restart.then_some(library);
                             } else if let Some(events) = &events {
                                 events.retire();
                             }

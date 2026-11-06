@@ -38,6 +38,23 @@ impl InventoryEvents {
         self.worker.is_finished()
     }
 
+    pub(crate) fn failed_after_live(&self) -> bool {
+        self.is_finished() && !self.cancelled.load(Ordering::Acquire) && self.ready.retired_after_live()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_failed_after_live() -> Self {
+        let ready = Arc::new(ProcessContinuity::default());
+        assert!(ready.begin());
+        ready.retire();
+        Self {
+            stop: Arc::new(Handle::event().unwrap()),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            worker: std::thread::spawn(|| {}),
+            ready,
+        }
+    }
+
     pub(crate) fn continuity(&self) -> Option<Arc<ProcessContinuity>> {
         self.ready.is_live().then(|| self.ready.clone())
     }
@@ -143,7 +160,22 @@ mod tests {
         let before = wakes.each_ref().map(|wake| wake.observed());
         drop(Withdraw(&live, &wakes));
         assert!(!live.is_live());
+        assert!(live.retired_after_live());
         assert!(wakes.iter().zip(before).all(|(wake, old)| wake.observed() != old));
+    }
+
+    #[test]
+    fn retirement_keeps_the_difference_between_bootstrap_failure_and_live_loss() {
+        let denied = ProcessContinuity::default();
+        denied.retire();
+        assert!(!denied.begin());
+        assert!(!denied.retired_after_live());
+        let lost = ProcessContinuity::default();
+        assert!(lost.begin());
+        lost.retire();
+        lost.retire();
+        assert!(!lost.begin());
+        assert!(lost.retired_after_live());
     }
 
     #[test]

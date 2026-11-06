@@ -24,7 +24,18 @@ impl ProcessContinuity {
     }
 
     pub(crate) fn retire(&self) {
-        self.0.store(2, Ordering::Release);
+        // Preserve live history after retirement so the owner can distinguish
+        // a lost subscription from one that never acquired permission.
+        let _ = self.0.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| match state {
+            0 => Some(2),
+            1 => Some(3),
+            _ => None,
+        });
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn retired_after_live(&self) -> bool {
+        self.0.load(Ordering::Acquire) == 3
     }
 }
 #[derive(Clone,PartialEq,Eq)]

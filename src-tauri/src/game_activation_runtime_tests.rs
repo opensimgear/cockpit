@@ -172,13 +172,26 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
 
 #[test]
 fn native_observer_starts_before_first_discovery_and_monitors_an_integration_free_title() {
-    struct EmptyMonitoring(std::sync::atomic::AtomicUsize);
+    #[derive(Default)]
+    struct EmptyMonitoring {
+        scans: std::sync::atomic::AtomicUsize,
+        #[cfg(windows)]
+        watches: std::sync::atomic::AtomicUsize,
+    }
     impl Platform for EmptyMonitoring {
         fn process_monitoring_supported(&self) -> bool {
             true
         }
         fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
             vec![]
+        }
+        #[cfg(windows)]
+        fn watch_activation_processes(&self, games: &[Value], _: [Arc<osg_streams::NativeWake>; 2])
+            -> Option<crate::xplane::process_events::InventoryEvents> {
+            games.iter().any(crate::game_activation::process_candidate).then(|| {
+                self.watches.fetch_add(1, Ordering::AcqRel);
+                crate::xplane::process_events::InventoryEvents::test_failed_after_live()
+            })
         }
         fn validate(&self, _: &str, _: &str) -> Result<(), String> {
             Ok(())
@@ -197,7 +210,7 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
             }))
         }
         fn find_many(&self, games: &[Value]) -> Vec<Result<Option<crate::game_discovery::ProcessIdentity>, String>> {
-            self.0.fetch_add(1, Ordering::AcqRel);
+            self.scans.fetch_add(1, Ordering::AcqRel);
             games.iter().map(|game| self.find(game)).collect()
         }
         fn alive(&self, _: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
@@ -205,7 +218,7 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
         }
     }
     let directory = crate::test_directory();
-    let platform = Arc::new(EmptyMonitoring(std::sync::atomic::AtomicUsize::new(0)));
+    let platform = Arc::new(EmptyMonitoring::default());
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("No integration calls")),
         Paths::in_directory(directory.path()),
@@ -219,19 +232,19 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
         thread::sleep(Duration::from_millis(10));
     }
     thread::sleep(Duration::from_millis(2100));
-    assert_eq!(platform.0.load(Ordering::Acquire), 1, "Empty catalogue must leave the worker parked");
+    assert_eq!(platform.scans.load(Ordering::Acquire), 1, "Empty catalogue must leave the worker parked");
     runtime.inner.settings.lock().unwrap().catalogue.extend([
         json!({"id":"missing-game","installed":false,"processMonitoringSupported":true}),
         json!({"id":"unsupported-game","installed":true,"processMonitoringSupported":false}),
     ]);
     runtime.inner.changes.mark_library_commit();
     let quiet_deadline = Instant::now() + Duration::from_secs(3);
-    while platform.0.load(Ordering::Acquire) < 2 {
+    while platform.scans.load(Ordering::Acquire) < 2 {
         assert!(Instant::now() < quiet_deadline, "Library commit did not wake the worker");
         thread::sleep(Duration::from_millis(10));
     }
     thread::sleep(Duration::from_millis(2100));
-    assert_eq!(platform.0.load(Ordering::Acquire), 2, "Catalogue without monitorable games must leave the worker parked");
+    assert_eq!(platform.scans.load(Ordering::Acquire), 2, "Catalogue without monitorable games must leave the worker parked");
     assert!(runtime.profile_activation_observations().unwrap().is_empty());
     runtime.inner.settings.lock().unwrap().catalogue.push(json!({"id":"first-discovered-game","name":"First discovered game","installed":true,"processMonitoringSupported":true,"executable":"C:/Games/First.exe","integrationKey":null,"provider":null}));
     runtime.inner.changes.mark_library_commit();
@@ -253,6 +266,22 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
             "First discovered game was never observed"
         );
         thread::sleep(Duration::from_millis(20));
+    }
+    #[cfg(windows)]
+    {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while platform.scans.load(Ordering::Acquire) < 7 {
+            assert!(Instant::now() < deadline, "Fallback scans stopped after watcher loss");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(platform.watches.load(Ordering::Acquire), 2,
+            "One initial watcher and one recovery watcher per library revision");
+        runtime.inner.changes.mark_library_commit();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while platform.watches.load(Ordering::Acquire) < 4 {
+            assert!(Instant::now() < deadline, "Library commit did not reset the watcher recovery budget");
+            thread::sleep(Duration::from_millis(10));
+        }
     }
     runtime.shutdown();
 }
