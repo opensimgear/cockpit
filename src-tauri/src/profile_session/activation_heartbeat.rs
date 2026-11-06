@@ -163,6 +163,7 @@ impl NativeProfileHost {
             let wake = Arc::new(osg_streams::NativeWake::default());
             wake.bind_thread(std::thread::current())
                 .map_err(|_| "Cannot bind the native game baseline waiter.")?;
+            games.read_model_signal().watch_profile_admission(&wake);
             let game = &mut host.run(owner)?.game;
             let previous_wake = game.notification_wake();
             game.set_wake(Some(wake.clone()));
@@ -199,7 +200,7 @@ impl NativeProfileHost {
                         if remaining.is_zero() {
                             break;
                         }
-                        wake.wait(revision, remaining.min(Duration::from_millis(5)));
+                        wake.wait(revision, remaining);
                     }
                 }
             })();

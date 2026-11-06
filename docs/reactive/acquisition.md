@@ -57,6 +57,10 @@ with loss, and reducer deadlines still govern individual value freshness.
 Before routing starts, the panel baseline waiter wakes on mailbox changes,
 profile admission changes, or its three-second deadline. The surrounding
 activation phase continues to own prepared output lease renewal.
+Game telemetry baselines and publication inventory recapture also wake on
+profile admission changes. Telemetry retains the existing provider retry
+deadline and the bounded fallback for a missing producer watch. Publication
+inventory recapture waits for a gateway commit or its existing deadline.
 Active physical action sinks can park with their exact endpoint workers.
 Those workers own renewals and notify routing on failure. Repeated
 revocation of an already retired action does not wake routing again.

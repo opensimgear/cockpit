@@ -202,6 +202,7 @@ impl NativeProfileHost {
             let wake = Arc::new(osg_streams::NativeWake::default());
             wake.bind_thread(std::thread::current())
                 .map_err(|_| "Cannot bind the native publication inventory waiter.")?;
+            self.games.read_model_signal().watch_profile_admission(&wake);
             let gateways = proof.targets().iter().map(|target| target.gateway.as_str()).collect();
             self.panels.watch_publication_inventory(&gateways, &wake);
             let report = loop {
@@ -211,15 +212,13 @@ impl NativeProfileHost {
                     Err(error) if error == WAITING_CAPABILITY && Instant::now() < deadline => {}
                     Err(error) => return Err(error),
                 }
-                // Stop can revoke the epoch without a gateway update. Recheck
-                // it at the existing cadence without rebuilding the plan.
                 while wake.observed() == revision {
                     self.check_transition(&run.owner)?;
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
                         break;
                     }
-                    wake.wait(revision, remaining.min(Duration::from_millis(5)));
+                    wake.wait(revision, remaining);
                 }
             };
             prepared.plan = report

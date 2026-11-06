@@ -240,6 +240,7 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
         // the required renewals. Backlog recovery is tested at the reader.
         sender.send_to(&crate::profile_session_games::test_baseline_export(1, true), address).unwrap();
         let observed = driver.clone();
+        let admission_wake = games.read_model_signal();
         let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let peer_finished = finished.clone();
         let required_renewals = if cancelled { 1 } else { (LEASE_US / RENEW_US + 1) as usize };
@@ -255,6 +256,7 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
             }
             if cancelled {
                 epoch.fetch_add(1, Ordering::AcqRel);
+                admission_wake.wake_profile_admission();
             } else {
                 // Release fresh telemetry only after actual renewals have kept
                 // the real feeder alive for more than one simulated lease.
