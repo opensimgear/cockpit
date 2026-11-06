@@ -23,6 +23,29 @@ test('Companion listener settings observe commits and retry readiness without id
     await until(() => page.evaluate("document.getElementById('settings-panel-companions')?.hidden"));
     await page.evaluate('window.__listenerReads=0');
   };
+  const openSettings = () => page.evaluate(`[...document.querySelectorAll('.sidebar-link')]
+    .find(item => item.textContent.trim() === 'Settings')?.click()`);
+  const pairForm = 'document.querySelector(\'[aria-label="Pair companion"]\')';
+  const formButton = label => page.evaluate(`[...${pairForm}?.querySelectorAll('button') ?? []]
+    .find(button => button.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+  const pairingDisabled = () => page.evaluate(`[...${pairForm}?.querySelectorAll('button') ?? []]
+    .find(button => button.textContent.trim() === 'Generate pairing QR code')?.disabled`);
+  const openMobilePairing = async () => {
+    await page.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Companions"]').click()`);
+    await until(() => page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('section.companions button')]
+        .find(button => button.textContent.trim() === 'Pair');
+      if (!button || button.disabled) return false;
+      button.click();
+      return true;
+    })()`));
+    await until(() => page.evaluate(`(() => {
+      const mobile = ${pairForm}?.querySelector('input[value="mobile"]');
+      if (!mobile || mobile.disabled) return false;
+      mobile.click();
+      return true;
+    })()`));
+  };
   const disable = async () => native('companion_disable', {
     expectedSettingsRevision: (await native('companion_inventory')).settingsRevision,
   });
@@ -65,9 +88,20 @@ test('Companion listener settings observe commits and retry readiness without id
     await tab('companions');
     await until(badge, value => value === 'Listening');
     await hide();
+    await openMobilePairing();
+    await until(pairingDisabled, value => value === false);
     await disable();
     configured = false;
     assert.equal(await page.evaluate('window.__listenerReads'), 0, 'Hidden settings must not read listener state on disable');
+    await until(pairingDisabled, value => value === true);
+    await formButton('Cancel');
+    await until(() => page.evaluate(`!${pairForm}`));
+    await openMobilePairing();
+    await until(pairingDisabled, value => value === true);
+    await formButton('Cancel');
+    await until(() => page.evaluate(`!${pairForm}`));
+    await openSettings();
+    await until(() => page.evaluate("!!document.querySelector('#settings-tab-companions')"));
     await tab('companions');
     await until(badge, value => value === 'Disabled');
   } finally {
