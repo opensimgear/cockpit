@@ -177,14 +177,23 @@ The running dev Cockpit (SHA-256
 delivered 195 authored edges across three independently applied 65-edge
 bursts. Each run held a preview receipt and stalled an MCP reader. Pooled
 submission-to-receipt p50/p95/p99 were 1.25/1.55/7.99 ms. The first edge of
-each burst took 8.27/7.93/7.99 ms. The first-edge delay is reproducible in
-this fixture and its stage has yet to be isolated. The separately verified
-Stop releases are excluded from these percentiles.
+each burst took 8.27/7.93/7.99 ms. The separately verified Stop releases
+are excluded from these percentiles.
+
+The original probe signaled readiness before its foreground-process lookup
+and message-pump setup. Moving the signal after that work, with the same
+running Cockpit and stalled consumers, reduced the first edges to
+1.80/1.99/2.14 ms. The three corrected 65-edge runs had pooled p50/p95/p99
+of 1.26/1.53/2.14 ms and a maximum of 2.27 ms. This isolates the prior
+first-edge outlier to probe startup. The authored interval target was
+8 ms, with measured submission p95 intervals between 15.16 and 19.72 ms
+across the corrected runs.
 
 The measurement starts just before the test submits an authored debug
 input over the WebView bridge and ends at the Raw Input callback. Physical
 HID acquisition and display presentation are separate measurements. Raw
-samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`.
+samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`
+and `.research/reactive/vjoy-ready-timing/burst-{1,2,3}.json`.
 
 ## User-operated qualification stays in #199
 

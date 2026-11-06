@@ -204,16 +204,17 @@ class RawInputProbe {
         try {
             if(!RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration))))
                 throw new Exception("Background controller registration failed: "+Marshal.GetLastWin32Error());
-            if (observeVjoy) {
-                vjoyCaptureStarted = Stopwatch.GetTimestamp();
-                Console.WriteLine("ready");
-                Console.Out.Flush();
-            }
             uint foregroundPid;
             GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
             string foreground = "unavailable";
             try { foreground=Process.GetProcessById((int)foregroundPid).ProcessName; } catch {}
             var clock=Stopwatch.StartNew();
+            if (observeVjoy) {
+                // The writer may submit immediately after this signal.
+                vjoyCaptureStarted = Stopwatch.GetTimestamp();
+                Console.WriteLine("ready");
+                Console.Out.Flush();
+            }
             while(clock.ElapsedMilliseconds < 5000) {
                 Message message;
                 // Bound one drain to ensure a flood cannot keep the probe alive forever.
