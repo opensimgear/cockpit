@@ -67,6 +67,9 @@ its separate cleanup deadline.
 Active physical action sinks can park with their exact endpoint workers.
 Those workers own renewals and notify routing on failure. Repeated
 revocation of an already retired action does not wake routing again.
+Acquiring and binding those endpoints wait for phase status, admission
+cancellation, or the phase deadline. Restoration waits for status or its
+cleanup deadline. Prepared virtual output renewal stays with activation.
 A notified companion feed wakes on committed input and retains its native
 lease deadline. The CAN publication actor wakes the hold on status changes.
 The hold retains the exact publication proof expiry as a deadline. Companion

@@ -39,16 +39,17 @@ fn wait(
     plan: Option<&ExecutionPlan>,
     timeout: Duration,
     mut guard: impl FnMut() -> Result<(), String>,
-    mut keep_alive: impl FnMut() -> Result<(), String>,
+    watch_admission: impl FnOnce(&Arc<osg_streams::NativeWake>),
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let wake = Arc::new(osg_streams::NativeWake::default());
     wake.bind_thread(std::thread::current())
         .map_err(|_| "Cannot bind the physical output phase waiter.")?;
     actor.watch_phase(&wake);
+    watch_admission(&wake);
     loop {
-        guard()?;
         let revision = wake.observed();
+        guard()?;
         let status = match goal {
             Goal::Restored => actor.stop()?,
             Goal::Bound => {
@@ -79,16 +80,12 @@ fn wait(
                 status.diagnostics.join("; ")
             });
         }
-        loop {
+        while wake.observed() == revision {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(if matches!(goal,Goal::Restored){"Physical output cleanup remains pending; its sealed recovery receipt was retained."}else{"Physical output did not finish current native acquisition and binding before its deadline."}.into());
             }
-            keep_alive()?;
-            if wake.observed() != revision {
-                break;
-            }
-            wake.wait(revision, remaining.min(Duration::from_millis(5)));
+            wake.wait(revision, remaining);
             guard()?;
         }
     }
@@ -153,6 +150,7 @@ pub(super) fn dispatch(
 impl NativeProfileHost {
     pub(super) fn acquire_actions(&mut self, owner: &RunOwner) -> Result<(), String> {
         let epoch = self.admission_epoch.clone();
+        let admission = self.games.read_model_signal();
         let routing_wake = self.native_wake.clone();
         if !self.run(owner)?.actions.is_empty() {
             self.report_progress(owner, "acquiring-peripheral-outputs", "Connecting peripheral output controls");
@@ -173,7 +171,7 @@ impl NativeProfileHost {
             None,
             Duration::from_secs(3),
             || Self::check_epoch(&epoch, expected),
-            || state.output.as_mut().map_or(Ok(()), |o| o.keep_alive()),
+            |wake| admission.watch_profile_admission(wake),
         )?;
         // Hardware invocation tokens are real cached Registry tokens, even when
         // input sources/game commands still await their separate baselines.
@@ -208,6 +206,7 @@ impl NativeProfileHost {
     ) -> Result<(), String> {
         let resources = self.resources.clone();
         let epoch = self.admission_epoch.clone();
+        let admission = self.games.read_model_signal();
         let state = self.run(owner)?;
         if state.actions.is_empty() {
             return Ok(());
@@ -262,7 +261,7 @@ impl NativeProfileHost {
             None,
             Duration::from_secs(3),
             || Self::check_epoch(&epoch, expected),
-            || state.output.as_mut().map_or(Ok(()), |o| o.keep_alive()),
+            |wake| admission.watch_profile_admission(wake),
         )?;
         wait(
             &mut state.actions,
@@ -270,7 +269,7 @@ impl NativeProfileHost {
             Some(plan),
             Duration::from_secs(3),
             || Self::check_epoch(&epoch, expected),
-            || state.output.as_mut().map_or(Ok(()), |o| o.keep_alive()),
+            |wake| admission.watch_profile_admission(wake),
         )
     }
     pub(super) fn prepare_action_recovery(&mut self, run: &OwnedRun) -> Result<(), String> {
@@ -332,7 +331,7 @@ impl NativeProfileHost {
                 None,
                 Duration::from_secs(3),
                 || Ok(()),
-                || Ok(()),
+                |_| {},
             );
         }
         if !has_receipts(&run.receipts) {
@@ -362,7 +361,7 @@ impl NativeProfileHost {
             None,
             Duration::from_secs(3),
             || Ok(()),
-            || Ok(()),
+            |_| {},
         )?;
         self.recovery_actions.remove(&owner_key);
         Ok(())

@@ -573,27 +573,22 @@ fn bounded_phase_wait_honors_pending_cleanup_cancellation_and_failure() {
         ])),
         ..Default::default()
     };
-    let mut keeps = 0;
     wait(
         &mut actor,
         Goal::Acquired,
         None,
         Duration::from_secs(1),
         || Ok(()),
-        || {
-            keeps += 1;
-            Ok(())
-        },
+        |_| {},
     )
     .unwrap();
-    assert_eq!(keeps, 1);
     assert!(wait(
         &mut actor,
         Goal::Acquired,
         None,
         Duration::ZERO,
         || Err("cancelled".into()),
-        || Ok(())
+        |_| {}
     )
     .unwrap_err()
     .contains("cancelled"));
@@ -604,7 +599,7 @@ fn bounded_phase_wait_honors_pending_cleanup_cancellation_and_failure() {
         None,
         Duration::ZERO,
         || Ok(()),
-        || Ok(())
+        |_| {}
     )
     .is_err());
     let mut failed = status(false, false, false, false);
@@ -618,7 +613,7 @@ fn bounded_phase_wait_honors_pending_cleanup_cancellation_and_failure() {
             None,
             Duration::ZERO,
             || Ok(()),
-            || Ok(())
+            |_| {}
         )
         .unwrap_err(),
         "lease lost"
@@ -633,7 +628,7 @@ fn bounded_phase_wait_honors_pending_cleanup_cancellation_and_failure() {
         None,
         Duration::from_secs(1),
         || Ok(()),
-        || Ok(()),
+        |_| {},
     )
     .unwrap();
     assert_eq!(actor.stops, 2);
@@ -644,10 +639,45 @@ fn bounded_phase_wait_honors_pending_cleanup_cancellation_and_failure() {
         None,
         Duration::ZERO,
         || Ok(()),
-        || Ok(())
+        |_| {}
     )
     .unwrap_err()
     .contains("retain"));
+}
+
+#[test]
+fn pending_action_phase_wakes_on_admission_cancellation_without_actor_progress() {
+    let fixture = Fixture::new();
+    let admission = fixture.host.games.read_model_signal();
+    let epoch = fixture.host.admission_epoch.clone();
+    let mut actor = Scripted {
+        states: Mutex::new(VecDeque::from([status(false, false, false, false)])),
+        ..Default::default()
+    };
+    let (ready, waiting) = std::sync::mpsc::channel();
+    let cancel = {
+        let admission = admission.clone();
+        let epoch = epoch.clone();
+        std::thread::spawn(move || {
+            waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+            epoch.store(2, Ordering::Release);
+            admission.wake_profile_admission();
+        })
+    };
+    let mut ready = Some(ready);
+    let started = Instant::now();
+    let result = wait(
+        &mut actor, Goal::Acquired, None, Duration::from_secs(2),
+        || {
+            NativeProfileHost::check_epoch(&epoch, 1)?;
+            if let Some(ready) = ready.take() { ready.send(()).unwrap(); }
+            Ok(())
+        },
+        |wake| admission.watch_profile_admission(wake),
+    );
+    cancel.join().unwrap();
+    assert!(result.unwrap_err().contains("cancelled"));
+    assert!(started.elapsed() < Duration::from_millis(1500));
 }
 
 #[test]
