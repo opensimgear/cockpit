@@ -37,8 +37,11 @@ The Activity fixture runs against native Cockpit with
 with `OSG_ACTIVITY_OBSERVATION_BROWSER_URL` set. It traces the real observation
 and gateway requests. Both runs cover a visible commit, a commit while the
 view is closed, one committed-only read on each of three reopens, and bounded
-search requests. The native AI settings fixture covers committed edits and a
-quiet idle interval.
+search requests. The native AI settings fixture covers a visible credential
+creation, a quiet idle interval and a revocation while the tab is hidden.
+The hidden tab makes no settings reads and reopening shows the current
+credential list. Activity retention settings still read only on mount and
+need their own committed update path.
 
 The profile fixture uses two independent library readers and the runtime
 reader on both transports. An external rename triggers one pinned document

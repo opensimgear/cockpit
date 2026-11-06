@@ -13,13 +13,16 @@ test('AI settings observes committed edits without idle status polling', {
   );
   const section = 'document.querySelector(\'[aria-label="AI integration settings"]\')';
   const status = () => invoke('mcp_settings_get');
+  const selectTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
+    .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
   const revoke = async id => invoke('mcp_credential_revoke', {
     id, expectedSettingsRevision: (await status()).settingsRevision,
   });
   try {
-    await page.evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent.trim()==='Cockpit').click()`);
-    await until(() => page.evaluate(`(()=>{const button=[...document.querySelectorAll('.sidebar-link')].find(item=>item.textContent.trim()==='Settings'); if(!button)return false; button.click(); return true;})()`));
-    await until(() => page.evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.trim()==='AI integration')?.click() ?? !!${section}`));
+    await page.evaluate(`Array.from(document.querySelectorAll('.sidebar-bottom button'))
+      .find(button => (button.title || button.textContent.trim()) === 'Settings').click()`);
+    await until(() => page.evaluate(`!!document.querySelector('[aria-label="Settings sections"]')`));
+    await selectTab('AI integration');
     await until(() => page.evaluate(`!!${section}?.querySelector('[role="switch"]:not(:disabled)')`));
     await page.evaluate('window.__mcpStatusReads=0');
     await page.call('Debugger.enable');
@@ -41,9 +44,18 @@ test('AI settings observes committed edits without idle status polling', {
     credentialId = created;
     await until(() => page.evaluate(`${section}?.innerText.includes(${JSON.stringify(name)})`));
     assert.ok(await page.evaluate('window.__mcpStatusReads') > 0);
-    await revoke(credentialId);
+    await selectTab('General');
+    await until(() => page.evaluate(`!${section}`));
+    const beforeRevoke = await status();
+    await page.evaluate('window.__mcpStatusReads=0');
+    await invoke('mcp_credential_revoke', {id: credentialId, expectedSettingsRevision: beforeRevoke.settingsRevision});
     credentialId = undefined;
-    await until(() => page.evaluate(`!${section}?.innerText.includes(${JSON.stringify(name)})`));
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(await page.evaluate('window.__mcpStatusReads'), 0, 'Hidden AI settings must not read a committed change');
+    await selectTab('AI integration');
+    await until(() => page.evaluate(`!!${section}?.querySelector('[role="switch"]:not(:disabled)')`));
+    assert.equal(await page.evaluate(`${section}.innerText.includes(${JSON.stringify(name)})`), false);
+    assert.ok(await page.evaluate('window.__mcpStatusReads') > 0);
   } finally {
     try {
       if (breakpoint) await page.call('Debugger.removeBreakpoint', { breakpointId: breakpoint });
