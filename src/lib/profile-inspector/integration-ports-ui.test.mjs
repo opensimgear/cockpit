@@ -15,15 +15,15 @@ const transpile = source => ts.transpileModule(source, {
 }).outputText;
 const cache = new Map();
 
-async function component(name) {
-  const key = libModuleName(name, import.meta.url);
+async function component(name, parent = import.meta.url) {
+  const key = libModuleName(name, parent);
   if (cache.has(key)) return cache.get(key);
-  const filename = new URL(name, import.meta.url);
+  const filename = new URL(name, parent);
   const { js } = compile(await readFile(filename, 'utf8'), { filename: filename.pathname, generate: 'server' });
   const dependencies = new Map();
   for (const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) {
     const dependency = libModuleName(match[1], filename);
-    dependencies.set(dependency, { default: await component(dependency) });
+    dependencies.set(dependency, { default: await component(match[1], filename) });
   }
   const exports = {};
   vm.runInNewContext(transpile(js.code), {
@@ -44,11 +44,12 @@ async function component(name) {
 }
 
 await component('../Icon.svelte');
+await component('./ProfilePortFilter.svelte');
 const source = await readFile(new URL('./ProfileIntegrationPorts.svelte', import.meta.url), 'utf8');
 function harness({ ports = [], busy = false, error = '', readOnly = false, query = '', page = 0, direction = 'output', duringRender = () => {} } = {}) {
-  const seeded = source.replace("let query=$state(''),page=$state(0),filterInput:HTMLInputElement;",
-    `let query=$state(${JSON.stringify(query)}),page=$state(${page}),filterInput:HTMLInputElement;`)
-    .replace('</script>', `captureIntegrationPorts({filter,clear,choose,setPage(value){page=value;},get state(){return{query,page};}});</script>`);
+  const seeded = source.replace("let query=$state(''),page=$state(0);",
+    `let query=$state(${JSON.stringify(query)}),page=$state(${page});`)
+    .replace('</script>', `captureIntegrationPorts({filter,choose,setPage(value){page=value;},get state(){return{query,page};}});</script>`);
   assert.notEqual(seeded, source, 'The component state seed must match production source.');
   const compiled = compile(seeded, { filename: new URL('./ProfileIntegrationPorts.svelte', import.meta.url).pathname, generate: 'server' });
   const dependencies = new Map();
@@ -141,10 +142,10 @@ test('loading and errors stay visible, retry is disabled while busy, and browsin
   const snapshots = [];
   const { body, selected, retried } = harness({ ports, busy: true, error: 'Catalogue refresh failed', readOnly: true, query: 'out', page: 4,
     duringRender(handlers) {
-      handlers.filter({ currentTarget: { value: 'updated' } });
+      handlers.filter('updated');
       snapshots.push(handlers.state.page);
       handlers.setPage(3);
-      handlers.clear();
+      handlers.filter('');
       snapshots.push(handlers.state.page);
       handlers.choose(ports[0]);
     },

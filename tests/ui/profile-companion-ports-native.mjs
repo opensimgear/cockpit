@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {mkdir} from 'node:fs/promises';
-import {resolve} from 'node:path';
 
 const require = createRequire(import.meta.url);
 const modulePath = process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright';
@@ -10,21 +8,28 @@ const {chromium} = require(modulePath), {expect} = require(modulePath + '/test')
 
 test('the native companion inspector shows consistent input and output port tiles', {timeout: 60_000}, async () => {
   const browser = await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9222');
+  const page = browser.contexts().flatMap(context => context.pages()).find(candidate => candidate.url().includes(':1420') && !candidate.url().includes('profile-activation-window'));
+  const request = value => page.evaluate(async value => {
+    const {gatewayRequest} = await import('/src/lib/gateway.ts');
+    return gatewayRequest(value);
+  }, value);
+  let fixture;
   try {
-    const page = browser.contexts().flatMap(context => context.pages()).find(candidate => candidate.url().includes(':1420') && !candidate.url().includes('profile-activation-window'));
     assert.ok(page, 'Start the running native dev Cockpit.');
-    if (!await page.getByRole('heading', {name: 'DCS Feature Lab', exact: true}).isVisible()) {
-      await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Profiles', exact: true}).click();
-      const back = page.getByRole('button', {name: 'Back to Profiles', exact: true});
-      if (await back.isVisible()) await back.click();
-      await page.getByRole('button', {name: 'Edit DCS Feature Lab', exact: true}).click();
-    }
-    const panel = page.getByRole('region', {name: 'Companion panel', exact: true});
-    if (!await panel.isVisible()) {
-      await page.getByRole('article', {name: 'Browser panel · DCS controls and feedback · Companion', exact: true}).getByRole('button').first().click();
-    }
-    await expect(panel.getByRole('combobox').nth(1)).toContainText('DCS · WIN Companion');
-    await expect(panel.getByText('Selected panel is missing from the local library.', {exact: true})).toBeHidden();
+    const name = 'Companion port layout fixture ' + Date.now();
+    fixture = (await request({command:'profile_create', name})).profiles.document;
+    const contract = {delivery:'state', schema:{type:'boolean'}, freshnessMs:1000, fallback:false};
+    const document = structuredClone(fixture);
+    document.resources.push({id:'panel', name:'Fixture panel', kind:'companion', required:false, ports:[
+      {id:'lamp', name:'Lamp', direction:'input', contract},
+      {id:'button', name:'Button', direction:'output', contract},
+    ]});
+    fixture = (await request({command:'profile_editor_save', document, assignments:[], expectedRevision:fixture.revision})).profiles.document;
+    await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Profiles', exact:true}).click();
+    const back = page.getByRole('button', {name:'Back to Profiles', exact:true});
+    if (await back.isVisible()) await back.click();
+    await page.getByRole('button', {name:'Edit ' + name, exact:true}).click();
+    await page.getByRole('article', {name:'Fixture panel · Companion', exact:true}).getByRole('button').first().click();
     const inspector = page.getByRole('complementary', {name: 'Selected block inspector'});
     const inputs = inspector.getByRole('region', {name: 'Companion inputs', exact: true});
     const outputs = inspector.getByRole('region', {name: 'Companion outputs', exact: true});
@@ -35,8 +40,18 @@ test('the native companion inspector shows consistent input and output port tile
     await expect(inputs.getByRole('textbox', {name: 'Filter inputs', exact: true})).toBeVisible();
     await expect(outputs.getByRole('textbox', {name: 'Filter outputs', exact: true})).toBeVisible();
     assert.equal(await inspector.locator('details.ports-section').count(), 0);
-    const directory = resolve('.research/companion-port-layout-native');
-    await mkdir(directory, {recursive: true});
-    await page.screenshot({path: resolve(directory, 'inputs-outputs.png'), fullPage: true});
-  } finally { await browser.close(); }
+    const input = inputs.getByRole('textbox', {name:'Filter inputs', exact:true});
+    await input.fill('unmatched');
+    await expect(inputs.getByText('No matching inputs.', {exact:true})).toBeVisible();
+    await expect(outputs.locator('[data-port-id="button"]')).toBeVisible();
+    await inputs.getByRole('button', {name:'Clear input filter', exact:true}).click();
+    await expect(inputs.locator('[data-port-id="lamp"]')).toBeVisible();
+    await expect(input).toBeFocused();
+  } finally {
+    try {
+      if (fixture) await request({command:'profile_delete', id:fixture.id, expectedRevision:fixture.revision});
+    } finally {
+      await browser.close();
+    }
+  }
 });
