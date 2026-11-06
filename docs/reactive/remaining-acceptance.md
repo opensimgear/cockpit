@@ -138,6 +138,32 @@ run observed browser loss and withdrawal after 52 ms and Stop plus the
 committed slot release after 345 ms. These are fixture observations, separate
 from raw input or physical end-to-end latency.
 
+## Integrated Windows checks on November 6
+
+The isolated native candidate passed 2,375 library tests serially with Windows
+access and 18 explicit ignores. The earlier sandboxed parallel run aborted
+with `STATUS_INVALID_HANDLE`. The live MCP suite and both controller and
+shared-stream coverage gates passed. See [#198's run record](https://github.com/opensimgear/cockpit/issues/198#issuecomment-6689971815).
+
+The running dev executable with SHA-256
+`6817D4EFA657AB08E5D3BF8FF79527F7DA46AC0FE3B7E1139AB8D26391BF0692`
+delivered 65 authored vJoy button transitions and the Stop release to Windows
+Raw Input slot 1. A physical preview held its initial receipt while a second
+preview advanced. An MCP reader went unread for 1.77 seconds, and a separate
+MCP client's Stop request returned in 64.7 ms. Submission intervals were 5.55/18.54/20.98 ms
+(p50/p95/p99) against an 8 ms target. Receiver intervals were
+5.42/18.58/21.15 ms. These are cadence observations on separate clocks.
+
+In a separate run, terminating the exact fixture-owned feeder faulted the
+profile and freed slot 1 after three authored transitions and a release.
+The delayed physical preview fixture independently resumed with an absolute
+snapshot at revision 8231 after holding revision 8221. The independent
+preview received ten further reports during the hold. Local artifacts are
+`vjoy-raw-burst-result.json`, `vjoy-feeder-loss-result.json`,
+`controller-latest-state-native.json` and `native-suite-after-clean.log`
+under `.research/reactive/`. Integrated load, physical latency and actual
+simulator confirmation remain open.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
