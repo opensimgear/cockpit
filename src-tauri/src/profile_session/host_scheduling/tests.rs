@@ -148,7 +148,16 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     state.owner.game_id = run.owner.game_id.clone();
     state.game_preparation = Some(proof);
     state.game = game;
+    state.source_document.vehicle_tabs.push(osg_profiles::VehicleTab {
+        id: "fixture-vehicle".into(), game_id: run.owner.game_id.clone().unwrap(),
+        vehicle_id: "fixture".into(), vehicle_name: "Fixture".into(), node_ids: vec![],
+    });
+    assert!(!document_supported(&state.source_document, false));
     assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+    host.prepared.get_mut(&key(&owner)).unwrap().vehicle_paused = true;
+    assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
+    host.prepared.get_mut(&key(&owner)).unwrap().vehicle_paused = false;
+    host.prepared.get_mut(&key(&owner)).unwrap().source_document.vehicle_tabs.clear();
     host.prepared.get_mut(&key(&owner)).unwrap().game_publication.deferred = true;
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
     host.prepared.get_mut(&key(&owner)).unwrap().game_publication.deferred = false;

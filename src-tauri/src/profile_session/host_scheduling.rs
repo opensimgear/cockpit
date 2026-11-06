@@ -19,7 +19,7 @@ fn document_supported(document: &osg_profiles::ProfileDocument, watched_game: bo
         osg_profiles::ResourceKind::DebugController | osg_profiles::ResourceKind::Device
             | osg_profiles::ResourceKind::Companion)
         || watched_game && resource.kind == osg_profiles::ResourceKind::Game)
-        && document.vehicle_tabs.is_empty()
+        && (watched_game || document.vehicle_tabs.is_empty())
         && (watched_game || document.eligibility.game_ids.is_empty())
 }
 
