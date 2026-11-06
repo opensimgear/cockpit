@@ -88,14 +88,23 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
    const row=await until(async()=>(await request('profile_resources_list')).profileResources.resources.find(row=>row.attributes?.companionId===peer.companionId),Boolean,10000);
    const details=await request('profile_resources_inspect',{resourceId:row.id});
-   const selected=details.profileResources.ports.filter(p=>['flight-input-0','feedback:flight-channel-0:flight-output-0'].includes(p.descriptor.id));
-   assert.equal(selected.length,2);
+   const selectedIds=['flight-input-0','feedback:flight-channel-0:flight-output-0'];
+   if(qualifyFeedback)selectedIds.push('feedback:flight-channel-1:flight-output-1');
+   const selected=details.profileResources.ports.filter(p=>selectedIds.includes(p.descriptor.id));
+   assert.equal(selected.length,selectedIds.length);
+   const panelValues=pressed=>qualifyFeedback?[pressed,pressed,'local']:[pressed,pressed];
    const document=(await request('profile_create',{name:'Compiled companion activation '+Date.now()})).profiles.document;
    profile=document;
-   const ports=selected.map(p=>({...p.descriptor,id:p.descriptor.direction==='output'?'button':'lamp'}));
+   const ports=selected.map(p=>({...p.descriptor,id:['button','lamp','text'][selectedIds.indexOf(p.descriptor.id)]}));
    document.resources.push({id:'browser-panel',name:'Compiled browser panel',kind:'companion',required:true,ports});
    document.companionAssignments.push({resourceId:'browser-panel',publicationHash:publication.publicationHash});
    document.bindings.push({id:'button-lamp',from:{nodeId:'browser-panel',portId:'button'},to:{nodeId:'browser-panel',portId:'lamp'}});
+   if(qualifyFeedback){
+    const {contract}=ports.find(port=>port.id==='text');
+    document.processingNodes.push({id:'text-constant',name:'Text constant',operation:{kind:'constant',value:'local'},
+     inputs:[],outputs:[{id:'out',name:'Text',direction:'output',contract}]});
+    document.bindings.push({id:'constant-text',from:{nodeId:'text-constant',portId:'out'},to:{nodeId:'browser-panel',portId:'text'}});
+   }
    if(recoveryProbe){
     slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)
      &&!device.discreteHats&&!device.forceFeedback&&device.buttons+device.axes.length+device.continuousHats<=128);
@@ -131,13 +140,14 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    const applied=await request('profile_apply',{id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null,activationId:randomUUID()});
    assert.equal(applied.profiles.profileSession.state,'running');
    if(slot)await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy',5000);
-   await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
+   await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000})
+    .catch(async error=>{throw new Error('Applied panel did not reconnect: '+await page.locator('body').innerText(),{cause:error});});
    const owner=applied.profiles.profileSession.owner;
    if(qualifyHostWake)await assertHostWake('applied');
    let quietStart;
    if(qualifyFeedback){
-    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
-     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'))),Boolean,7000);
+    await until(()=>page.evaluate(()=>['flight-channel-0','flight-channel-1'].every(channel=>
+     window.__feedbackProbe.some(frame=>frame.values.some(value=>value.channelId===channel&&value.status==='fresh')))),Boolean,7000);
     quietStart=await page.evaluate(()=>({frame:window.__feedbackProbe.at(-1),at:performance.now()}));
     assert.match(quietStart.frame.sequence,/^\d+$/,'Feedback must expose its publisher sequence');
     for(const key of ['clientId','sessionId','generation','controllerInstanceId','publicationHash','bindingGeneration']){
@@ -150,17 +160,23 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     await delay(1100);
     if(qualifyFeedback){
      const quiet=await page.evaluate(start=>{
-      const latest=window.__feedbackTrace.findLast(item=>item.frame.values.some(value=>
-       value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'));
-      return {frames:window.__feedbackTrace.filter(item=>item.receivedAt>=start),at:performance.now(),
-       current:latest&&{sample:latest.frame.values.find(value=>value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'),receivedAt:latest.receivedAt}};
+      const current=['flight-channel-0','flight-channel-1'].map(channel=>{
+       const latest=window.__feedbackTrace.findLast(item=>item.frame.values.some(value=>value.channelId===channel));
+       return latest&&{sample:latest.frame.values.find(value=>value.channelId===channel),receivedAt:latest.receivedAt};
+      });
+      return {frames:window.__feedbackTrace.filter(item=>item.receivedAt>=start),at:performance.now(),current};
      },quietStart.at);
-     assert.ok(quiet.frames.length>=1,'Quiet measurement must receive feedback through live browser heartbeats');
+     if(!quiet.frames.length){
+      const status=(await request('profile_status')).profiles.profileSession;
+      const host=(await companion('companion_status')).host.instances.find(row=>row.instanceId===id);
+      assert.fail(`Quiet feedback did not renew: ${JSON.stringify({quiet,status,connected:host?.connected,armed:host?.armed,panel:await page.locator('body').innerText()})}`);
+     }
      const pinned=quietStart.frame;
      for(const {frame} of quiet.frames){
       for(const key of ['clientId','sessionId','generation','controllerInstanceId','publicationHash','bindingGeneration']){
        assert.equal(frame[key],pinned[key],`Quiet feedback changed its pinned ${key}`);
       }
+      for(const sample of frame.values)assert.equal(sample.status,'fresh',`Quiet feedback withdrew ${sample.channelId}`);
      }
      const after=quiet.frames.at(-1).frame.sequence;
      const difference=BigInt(after)-BigInt(pinned.sequence);
@@ -170,9 +186,11 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
       appHash:process.env.OSG_COMPANION_FEEDBACK_APP_HASH??process.env.OSG_COMPANION_HOST_WAKE_APP_HASH??null}));
      assert.ok(difference>=0n&&difference<=12n,
       `Quiet publisher sequence advanced ${difference} times in ${quietMs}ms; expected at most 12`);
-     assert.equal(quiet.current?.sample.status,'fresh','A quiet connection must retain current widget feedback');
-     assert.ok(quiet.current.sample.sourceAgeMs+quiet.at-quiet.current.receivedAt<1000,
-      'A low publication count must not hide an expired widget');
+     for(const current of quiet.current){
+      assert.equal(current?.sample.status,'fresh','A quiet connection must retain current widget feedback');
+      assert.ok(current.sample.sourceAgeMs+quiet.at-current.receivedAt<1000,
+       'A low publication count must not hide an expired widget');
+     }
     }
     if(qualifyHostWake)await assertHostWake('quiet-1100ms');
    }
@@ -181,7 +199,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'
     &&value.value===true&&value.status==='fresh'&&value.provenance==='local'&&value.sourceKind==='host'))),Boolean,7000);
    const inspection=(await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'})).profileInspection;
-   assert.deepEqual(inspection.ports.map(port=>port.sample.value.value),[true,true]);
+   assert.deepEqual(inspection.ports.map(port=>port.sample.value.value),panelValues(true));
    const readInstance=async()=>(await companion('companion_status')).host.instances.find(row=>row.instanceId===id);
    const before=await readInstance();
    assert.equal(before.values['flight-input-0'],true);
@@ -206,7 +224,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     await until(readInstance,row=>row&&!row.connected&&!row.armed,3000);
     await until(async()=>{
      const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
-     return profileInspection.ports.length===2&&profileInspection.ports.every(port=>port.sample.value?.value!==true);
+     return profileInspection.ports.length===selectedIds.length&&profileInspection.ports.every(port=>port.sample.value?.value!==true);
     },Boolean,1000);
     assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
     t.diagnostic(`Browser loss and affected contribution withdrawal observed within ${Math.round(performance.now()-lossStarted)} ms`);
@@ -218,7 +236,8 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    await until(readInstance,row=>row?.connected&&row.armed&&row.values['flight-input-0']===false,15000);
    await until(async()=>{
     const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
-    return profileInspection.ports.every(port=>port.sample.value?.value===false);
+    const expected=panelValues(false);
+    return profileInspection.ports.length===expected.length&&profileInspection.ports.every((port,index)=>port.sample.value?.value===expected[index]);
    },Boolean,10000);
    if(qualifyHostWake)await assertHostWake('reloaded-neutral-recovery');
    assert.deepEqual((await request('profile_status')).profiles.profileSession.owner,owner,
@@ -230,7 +249,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    await until(()=>page.evaluate(()=>window.__feedbackProbe.some(frame=>frame.values.some(value=>
     value.channelId==='flight-channel-0'&&value.outputId==='flight-output-0'&&value.status==='fresh'&&value.value===true))),Boolean,7000);
    const rearmed=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
-   assert.deepEqual(rearmed.profileInspection.ports.map(port=>port.sample.value.value),[true,true]);
+   assert.deepEqual(rearmed.profileInspection.ports.map(port=>port.sample.value.value),panelValues(true));
    if(slot){
     await independent(2,false);
     await delay(100);
