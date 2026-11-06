@@ -22,30 +22,56 @@
   }
   function stopScan() { generation++; scanning=false; clearTimeout(scanTimer); stream?.getTracks().forEach(t=>t.stop()); stream=undefined; }
   async function submit(payload?: string) {
+    stopScan();
     busy=true; error='';
     try {
       await request(payload?{type:'pair-start',payload,name}:{type:'pair-code-start',code,endpoint,name});
-      code=''; stopScan(); onsubmitted();
+      code=''; onsubmitted();
     } catch(e) {error=String(e);} finally {busy=false;}
   }
   async function scan() {
     error='';
-    const token=++generation;
+    stopScan();
+    const token=generation;
     try {
       const Detector=(window as unknown as {BarcodeDetector?:new(options:{formats:string[]})=>{detect(source:HTMLVideoElement):Promise<{rawValue:string}[]>}}).BarcodeDetector;
       if (!Detector) throw new Error('QR scanning is unavailable on this device. Enter the pairing code instead.');
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
-      if (token!==generation) {stream.getTracks().forEach(t=>t.stop());return;}
-      scanning=true;
-      await tick(); if(!video) throw new Error("Camera preview unavailable"); video.srcObject=stream; await video.play();
-      const detector=new Detector({formats:['qr_code']});
-      const read=async () => {
-        if(token!==generation)return;
-        try {const results=await detector.detect(video!);if(results[0]) {await submit(results[0].rawValue);return;}}
-        catch(e){error=String(e);stopScan();return;}
-        scanTimer=setTimeout(read,200);
-      }; void read();
-    } catch(e) {error=String(e);stopScan();}
+      const acquired = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+      if (token !== generation) {
+        acquired.getTracks().forEach(track => track.stop());
+        return;
+      }
+      stream = acquired;
+      scanning = true;
+      await tick();
+      if (token !== generation) return;
+      const preview = video;
+      if (!preview) throw new Error('Camera preview unavailable');
+      preview.srcObject = acquired;
+      await preview.play();
+      const detector = new Detector({formats:['qr_code']});
+      const read = async () => {
+        if (token !== generation) return;
+        try {
+          const results = await detector.detect(preview);
+          if (token !== generation) return;
+          if (results[0]) {
+            await submit(results[0].rawValue);
+            return;
+          }
+          scanTimer=setTimeout(read,200);
+        } catch (reason) {
+          if (token !== generation) return;
+          error = String(reason);
+          stopScan();
+        }
+      };
+      void read();
+    } catch (reason) {
+      if (token !== generation) return;
+      error = String(reason);
+      stopScan();
+    }
   }
   onDestroy(stopScan);
 </script>
