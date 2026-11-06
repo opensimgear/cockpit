@@ -12,9 +12,9 @@ fn legacy_native_owner_bypasses_only_ui_timeout_and_expired_claim_is_not_revived
     gateway.claims.get_mut(MODULE).unwrap().seen = Instant::now() - gateway.timing.claim_timeout - Duration::from_millis(1);
     assert!(gateway.renew_workspace(CLIENT_A).unwrap().is_empty());
     let abandoned = Instant::now() - gateway.timing.ui_timeout - Duration::from_millis(1);
-    gateway.heartbeat(abandoned);assert!(gateway.connection.is_some());assert!(gateway.claims.is_empty());
+    gateway.maintain_local(abandoned);assert!(gateway.connection.is_some());assert!(gateway.claims.is_empty());
     assert_eq!(gateway.state["running"], false);
-    cache.set_owned(false);gateway.heartbeat(abandoned);assert!(gateway.connection.is_none());
+    cache.set_owned(false);gateway.maintain_local(abandoned);assert!(gateway.connection.is_none());
 }
 
 #[test]

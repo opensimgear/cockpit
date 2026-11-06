@@ -370,11 +370,18 @@ impl LegacyPicoService {
             .spawn(move || {
                 let mut gateway = Gateway::new(factory, timing, cancel.clone(), naming);
                 gateway.workspace = Some(workspace.clone());
-                let mut next_heartbeat = Instant::now() + gateway.timing.heartbeat;
+                let mut next_snapshot = None;
                 let mut ui_seen = Instant::now();
                 while !cancel.load(Ordering::Acquire) {
-                    let wait = next_heartbeat.saturating_duration_since(Instant::now());
-                    match receiver.recv_timeout(wait) {
+                    let message = if gateway.connection.is_some() {
+                        let snapshot = *next_snapshot.get_or_insert_with(|| Instant::now() + gateway.timing.heartbeat);
+                        let deadline = gateway.local_deadline(ui_seen).map_or(snapshot, |local| local.min(snapshot));
+                        receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    } else {
+                        next_snapshot = None;
+                        receiver.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+                    };
+                    match message {
                         Ok(Message::Request(request, response)) => {
                             let result = gateway.request(request);
                             gateway.cache(&latest);
@@ -390,9 +397,13 @@ impl LegacyPicoService {
                         }
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            next_heartbeat = Instant::now() + gateway.timing.heartbeat;
                             if pending.load(Ordering::Acquire) == 0 {
-                                gateway.heartbeat(ui_seen);
+                                gateway.maintain_local(ui_seen);
+                                let now = Instant::now();
+                                if gateway.connection.is_some() && next_snapshot.is_some_and(|deadline| now >= deadline) {
+                                    next_snapshot = Some(now + gateway.timing.heartbeat);
+                                    gateway.sample_status();
+                                }
                                 gateway.cache(&latest);
                             }
                         }
@@ -916,7 +927,7 @@ impl Gateway {
     fn expire_claims(&mut self, client: Option<&str>) {
         let timeout = self.timing.claim_timeout;
         self.claims.retain(|_, claim| {
-            if claim.seen.elapsed() > timeout {
+            if claim.seen.elapsed() >= timeout {
                 return false;
             }
             if client == Some(claim.client.as_str()) {
@@ -1102,15 +1113,25 @@ impl Gateway {
         }
     }
 
-    fn heartbeat(&mut self, ui_seen: Instant) {
-        if self.connection.is_none() {
-            return;
-        }
-        if !self.workspace.as_ref().is_some_and(|cache| cache.owned()) && ui_seen.elapsed() > self.timing.ui_timeout {
+    fn idle_deadline(&self, ui_seen: Instant) -> Option<Instant> {
+        (!self.workspace.as_ref().is_some_and(|cache| cache.owned()))
+            .then(|| ui_seen + self.timing.ui_timeout)
+    }
+
+    fn local_deadline(&self, ui_seen: Instant) -> Option<Instant> {
+        self.claims.values().map(|claim| claim.seen + self.timing.claim_timeout)
+            .chain(self.idle_deadline(ui_seen)).min()
+    }
+
+    fn maintain_local(&mut self, ui_seen: Instant) {
+        if self.idle_deadline(ui_seen).is_some_and(|deadline| Instant::now() >= deadline) {
             self.close_port();
             return;
         }
         self.expire_claims(None);
+    }
+
+    fn sample_status(&mut self) {
         if self
             .exchange(json!({"command":"status"}), self.timing.command)
             .is_ok()
@@ -1678,10 +1699,16 @@ mod tests {
 
     #[test]
     fn expired_claims_can_be_owned_by_another_client() {
-        let (mut gateway, _) = harness();
+        let (mut gateway, context) = harness();
         connect(&mut gateway);
         request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_A);
         gateway.claims.get_mut(MODULE).unwrap().seen = Instant::now() - Duration::from_millis(25);
+        let wire_before = context.lock().unwrap().writes.len();
+        let now = Instant::now();
+        assert!(gateway.local_deadline(now).unwrap() <= now);
+        gateway.maintain_local(now);
+        assert!(gateway.claims.is_empty());
+        assert_eq!(context.lock().unwrap().writes.len(), wire_before);
         assert_eq!(
             request(&mut gateway, "claim", json!({"moduleId":MODULE}), CLIENT_B)["state"]
                 ["claimedModules"],
@@ -1754,7 +1781,7 @@ mod tests {
                     false
                 );
             } else {
-                gateway.heartbeat(Instant::now() - Duration::from_millis(50));
+                gateway.maintain_local(Instant::now() - Duration::from_millis(50));
             }
             assert_eq!(gateway.state["connected"], false);
             assert_eq!(gateway.state["modules"][0]["buttons"], json!([]));

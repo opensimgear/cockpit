@@ -90,7 +90,7 @@ See [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events
 | `src-tauri/src/profile_resources/host_observation.rs:115,116,119,120,122,143,145,149` | Test-only resource publication and quiet windows | Keep fixture bounds. Tests cover independent USB, controller and aggregate wakes. |
 | `src-tauri/src/module_usb.rs:519` | USB configuration worker, bounded settle wait during reconciliation | Keep the hardware deadline and make shutdown wake it directly. Physical USB qualification remains open. |
 | `src-tauri/src/module_usb/test_io.rs:22` | Test helper, wait for a recorded command | Keep the condition-variable deadline. USB fixtures verify exact command counts. |
-| `src-tauri/src/pico.rs:373` | Pico service, wait for command or heartbeat | Preserve lease maintenance and separate periodic snapshot acquisition. Verify physical gateway behavior. |
+| `src-tauri/src/pico.rs:373` | Pico service, wait for command or heartbeat | Disconnected legacy service waits for commands. Connected claim and inactivity deadlines are independent of the two-second protocol 1 snapshot. Snapshot acquisition and physical gateway qualification remain open. |
 | `src-tauri/src/pico.rs:829,835,867,897` | Pico reconnect, initial delay and bounded retry | Keep retry deadlines and make cancellation interrupt the wait. Reconnect tests cover shutdown. |
 | `src-tauri/src/pico.rs:1218,1791,1865,1875` | Test-only serial stalls, shutdown and queue checks | Keep fixture bounds. Tests cover delayed replies and trusted ownership. |
 | `src-tauri/src/pico/workspace.rs:37`, `src-tauri/src/stm32/workspace.rs:112` | Gateway workspace claims, wait for an explicit renewal reply | Keep the request deadline and verify the exact claim survives renewal. |
