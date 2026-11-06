@@ -40,7 +40,8 @@ export class GamePages {
   private cacheBytes = 0;
   private active = 0;
   private waiters = new Set<() => void>();
-  constructor(private getPage: GamePageGetter) {}
+  private readonly getPage: GamePageGetter;
+  constructor(getPage: GamePageGetter) { this.getPage = getPage; }
 
   async resolve(value: unknown, signal: AbortSignal): Promise<unknown> { return (await this.node(value, signal, new Set(), 0)).value; }
   async resolveAsset(reference: GamePageReference, signal: AbortSignal): Promise<string> {

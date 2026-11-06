@@ -255,7 +255,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       }
     }
     if (process.platform === 'win32' && process.env.OSG_MCP_INTEGRATION_OBSERVATION === '1') {
-      evidence.modernObservation.integration = await integrationObservation({ page, modern, ok, writer, mutation, artifacts, until });
+      evidence.modernObservation.integration = await integrationObservation({ page, modern, ok, writer, readClient: reader, mutation, artifacts, until });
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
       for (const name of ['profile_input_learn_status', 'profile_retired_recovery_status', 'controller_visibility_status',

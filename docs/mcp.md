@@ -330,6 +330,12 @@ to read the desired result page.
 
 Use a write credential and a unique operation ID for these integration actions.
 Subscribe to `games.jobs` and `games.detail.<gameId>` before starting a job.
+Game detail updates can carry an immutable `$gamePage` reference in place of
+an inline value. Resolve the reference with the read-only
+`game_read_model_page` tool, starting at offset zero and following
+`nextOffset` until it is null. Verify the UTF-8 byte count and SHA-256 before
+decoding a page, and resolve nested references the same way. If a reference
+has expired, obtain a current observation baseline.
 
 | Cockpit action | MCP tool | Additional arguments |
 | --- | --- | --- |
@@ -380,7 +386,8 @@ integration context. Set `OSG_MCP_OBSERVATION_ONLY=1` and
 `OSG_MCP_INTEGRATION_OBSERVATION=1` in a dev Cockpit with no registered DCS
 installation. The test registers a private executable fixture, subscribes to
 `games.detail.dcs`, and checks the same process session and exit withdrawal
-in both MCP and the native detail observer. It removes the temporary
+in both MCP and the native detail observer. Paged details are resolved through
+MCP with the read credential. It removes the temporary
 registration and restores the prior selection mode. The fixture sends no
 simulator telemetry and exercises no outputs.
 
