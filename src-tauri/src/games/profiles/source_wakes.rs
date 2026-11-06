@@ -33,6 +33,9 @@ impl GameSources {
         };
         if !same {
             self.notifications.clear();
+            let wake = signal.as_ref().map(Arc::downgrade);
+            self.validation.set_wake(wake.clone());
+            self.catalogue_validation.set_wake(wake);
             self.notifications.signal = signal;
         }
     }

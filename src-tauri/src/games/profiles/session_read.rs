@@ -113,7 +113,11 @@ impl GameSources {
         } else if self.game.is_some() {
             if !self.validation.started() {
                 let game = self.game.as_ref().unwrap();
-                self.validation.start(games.profile_validation_task(game.proof.clone(), self.context.clone()));
+                let wake = self.notification_wake().as_ref().map(std::sync::Arc::downgrade);
+                self.validation.start(
+                    wake,
+                    games.profile_validation_task(game.proof.clone(), self.context.clone()),
+                );
             }
             self.start_catalogue_validation();
             match self.validation_ready() {
@@ -164,7 +168,8 @@ impl GameSources {
         if self.catalogue_validation.started() { return; }
         if let Some(Reader::Dcs { catalogue_guard, .. }) = &self.reader {
             let mut guard = catalogue_guard.clone();
-            self.catalogue_validation.start(move || {
+            let wake = self.notification_wake().as_ref().map(std::sync::Arc::downgrade);
+            self.catalogue_validation.start(wake, move || {
                 let began = Instant::now();
                 guard.validate(true)?;
                 Ok(began)

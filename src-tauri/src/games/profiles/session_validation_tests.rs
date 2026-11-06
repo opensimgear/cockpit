@@ -6,7 +6,7 @@ fn blocked_validation_does_not_block_poll_or_refresh_expired_evidence() {
     let (release, blocked) = mpsc::channel();
     let mut validation = Validation::default();
     validation.seed(Instant::now() - FRESH);
-    validation.start(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(Instant::now()) });
+    validation.start(None, move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Ok(Instant::now()) });
     assert!(!validation.poll().unwrap());
     observed.recv_timeout(Duration::from_secs(2)).unwrap();
     let began = Instant::now();
@@ -21,7 +21,7 @@ fn late_success_is_never_redated_to_its_completion() {
     let (requests, _incoming) = mpsc::channel();
     let (completed, results) = mpsc::channel();
     let mut validation = Validation { verified: None, worker: Some(Worker {
-        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: true,
+        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: true, wake: Default::default(),
     }), ..Validation::default() };
     completed.send(Ok(Instant::now() - FRESH)).unwrap();
     assert!(!validation.poll().unwrap());
@@ -32,13 +32,13 @@ fn old_reader_completion_cannot_change_replacement_validation() {
     let (entered, observed) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
     let mut old = Validation::default();
-    old.start(move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Err("old identity failed".into()) });
+    old.start(None, move || { entered.send(()).unwrap(); blocked.recv().unwrap(); Err("old identity failed".into()) });
     assert!(!old.poll().unwrap());
     observed.recv_timeout(Duration::from_secs(2)).unwrap();
     old.cancel();
     let mut replacement = Validation::default();
     replacement.seed(Instant::now());
-    replacement.start(|| Ok(Instant::now()));
+    replacement.start(None, || Ok(Instant::now()));
     release.send(()).unwrap();
     assert!(replacement.poll().unwrap());
 }
@@ -48,7 +48,7 @@ fn actual_validation_failure_is_not_hidden_by_a_fresh_seed() {
     let (requests, _incoming) = mpsc::channel();
     let (completed, results) = mpsc::channel();
     let mut validation = Validation { verified: Some(Instant::now()), worker: Some(Worker {
-        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: true,
+        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: true, wake: Default::default(),
     }), ..Validation::default() };
     completed.send(Err("changed identity".into())).unwrap();
     assert_eq!(validation.poll().unwrap_err(), "changed identity");
@@ -60,7 +60,7 @@ fn worker_returns_process_capture_instead_of_queue_or_catalogue_start() {
     let (release, blocked) = mpsc::channel();
     let (captured, capture) = mpsc::channel();
     let mut validation = Validation::default();
-    validation.start(move || {
+    validation.start(None, move || {
         entered.send(()).unwrap();
         // Model arbitrarily slow queued/catalogue work before native capture.
         blocked.recv().unwrap();
@@ -85,7 +85,7 @@ fn refresh_is_bounded_and_process_capture_still_expires_at_100ms() {
     let (_completed, results) = mpsc::channel();
     let began = Instant::now();
     let mut validation = Validation { verified: Some(began), worker: Some(Worker {
-        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: false,
+        requests, results, cancelled: Arc::new(AtomicBool::new(false)), pending: false, wake: Default::default(),
     }), ..Validation::default() };
     assert!(validation.poll_at(began + REFRESH - Duration::from_nanos(1)).unwrap());
     assert!(incoming.try_recv().is_err());
@@ -130,8 +130,8 @@ fn blocked_catalogue_has_its_own_250ms_horizon_while_process_observations_contin
     let mut catalogue = Validation::catalogue();
     process.seed(began);
     catalogue.seed(began);
-    process.start(move || incoming.recv().map_err(|_| "capture closed".into()));
-    catalogue.start(move || {
+    process.start(None, move || incoming.recv().map_err(|_| "capture closed".into()));
+    catalogue.start(None, move || {
         let capture = Instant::now();
         entered.send(()).unwrap();
         blocked.recv().unwrap();
@@ -168,13 +168,13 @@ fn blocked_process_expires_at_100ms_even_with_fresh_catalogue_evidence() {
     let mut catalogue = Validation::catalogue();
     process.seed(began);
     catalogue.seed(began);
-    process.start(move || {
+    process.start(None, move || {
         let capture = Instant::now();
         entered.send(()).unwrap();
         blocked.recv().unwrap();
         Ok(capture)
     });
-    catalogue.start(|| Ok(Instant::now()));
+    catalogue.start(None, || Ok(Instant::now()));
     assert!(process.poll_with_at(Some(&mut catalogue), began + REFRESH).unwrap());
     observed.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(process.poll_with_at(Some(&mut catalogue), began + FRESH - Duration::from_nanos(1)).unwrap());
@@ -218,11 +218,11 @@ fn catalogue_failure_dominates_pending_process_and_both_proofs_are_polled() {
     let (process_requests, process_incoming) = mpsc::channel();
     let (_process_completed, process_results) = mpsc::channel();
     source.validation.worker = Some(Worker { requests: process_requests, results: process_results,
-        cancelled: Arc::new(AtomicBool::new(false)), pending: false });
+        cancelled: Arc::new(AtomicBool::new(false)), pending: false, wake: Default::default(), });
     let (catalogue_requests, _catalogue_incoming) = mpsc::channel();
     let (catalogue_completed, catalogue_results) = mpsc::channel();
     source.catalogue_validation.worker = Some(Worker { requests: catalogue_requests, results: catalogue_results,
-        cancelled: Arc::new(AtomicBool::new(false)), pending: true });
+        cancelled: Arc::new(AtomicBool::new(false)), pending: true, wake: Default::default(), });
     catalogue_completed.send(Err("catalogue changed".into())).unwrap();
     assert_eq!(source.validation_ready().unwrap_err(), "catalogue changed");
     process_incoming.try_recv().unwrap();
@@ -235,11 +235,11 @@ fn process_failure_still_polls_catalogue_before_retiring_the_reader() {
     let (process_requests, _process_incoming) = mpsc::channel();
     let (process_completed, process_results) = mpsc::channel();
     source.validation.worker = Some(Worker { requests: process_requests, results: process_results,
-        cancelled: Arc::new(AtomicBool::new(false)), pending: true });
+        cancelled: Arc::new(AtomicBool::new(false)), pending: true, wake: Default::default(), });
     let (catalogue_requests, catalogue_incoming) = mpsc::channel();
     let (_catalogue_completed, catalogue_results) = mpsc::channel();
     source.catalogue_validation.worker = Some(Worker { requests: catalogue_requests, results: catalogue_results,
-        cancelled: Arc::new(AtomicBool::new(false)), pending: false });
+        cancelled: Arc::new(AtomicBool::new(false)), pending: false, wake: Default::default(), });
     process_completed.send(Err("process changed".into())).unwrap();
     assert_eq!(source.validation_ready().unwrap_err(), "process changed");
     catalogue_incoming.try_recv().unwrap();
@@ -254,7 +254,7 @@ fn stopping_reader_cancels_both_workers_and_late_completions_cannot_rearm_replac
         let (release, blocked) = mpsc::channel();
         let (entered, observed) = mpsc::channel();
         let (completed, completion) = mpsc::channel();
-        validation.start(move || {
+        validation.start(None, move || {
             let capture = Instant::now();
             entered.send(()).unwrap();
             blocked.recv().unwrap();
@@ -270,7 +270,7 @@ fn stopping_reader_cancels_both_workers_and_late_completions_cannot_rearm_replac
     let (mut replacement, _, _replacement_folder) = crate::profile_session_games::test_baseline_reader();
     for validation in [&mut replacement.validation, &mut replacement.catalogue_validation] {
         validation.seed(Instant::now());
-        validation.start(|| Ok(Instant::now()));
+        validation.start(None, || Ok(Instant::now()));
     }
     for release in releases { release.send(()).unwrap(); }
     for completion in completions { completion.recv_timeout(Duration::from_secs(2)).unwrap(); }
@@ -278,4 +278,30 @@ fn stopping_reader_cancels_both_workers_and_late_completions_cannot_rearm_replac
     assert!(old.validation.verified.is_none() && old.catalogue_validation.verified.is_none());
     assert!(!old.validation.started() && !old.catalogue_validation.started());
     assert!(replacement.validation_ready().unwrap());
+}
+
+#[test]
+fn completed_validation_wakes_host_with_result_ready_to_read() {
+    let wake = Arc::new(NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let mut validation = Validation::default();
+    let (release, blocked) = mpsc::channel();
+    let initial = Arc::new(NativeWake::default());
+    validation.start(Some(Arc::downgrade(&initial)), move || {
+        blocked.recv().unwrap();
+        Err("process exited".into())
+    });
+
+    let observed = wake.observed();
+    assert!(!validation.poll().unwrap());
+    validation.set_wake(Some(Arc::downgrade(&wake)));
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while wake.observed() == observed {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "validation did not wake the host");
+        wake.wait(observed, remaining);
+    }
+    assert_eq!(initial.observed(), 0);
+    assert_eq!(validation.poll().unwrap_err(), "process exited");
 }

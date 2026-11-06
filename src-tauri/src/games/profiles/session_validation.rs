@@ -1,6 +1,7 @@
 //! Independently scheduled process and catalogue proofs share bounded worker
 //! machinery. Their observation ages retain their separate safety horizons.
-use std::sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc};
+use osg_streams::NativeWake;
+use std::sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 const FRESH: Duration = Duration::from_millis(100);
@@ -20,6 +21,7 @@ struct Worker {
     results: mpsc::Receiver<Result<Instant, String>>,
     cancelled: Arc<AtomicBool>,
     pending: bool,
+    wake: Arc<Mutex<Option<Weak<NativeWake>>>>,
 }
 
 #[derive(Default)]
@@ -41,21 +43,36 @@ impl Validation {
 
     pub(super) fn started(&self) -> bool { self.worker.is_some() }
 
-    pub(super) fn start(&mut self, mut validate: impl FnMut() -> Result<Instant, String> + Send + 'static) {
+    pub(super) fn start(
+        &mut self,
+        wake: Option<Weak<NativeWake>>,
+        mut validate: impl FnMut() -> Result<Instant, String> + Send + 'static,
+    ) {
         if self.started() { return; }
         let (requests, incoming) = mpsc::channel();
         let (completed, results) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let stopped = cancelled.clone();
+        let wake = Arc::new(Mutex::new(wake));
+        let completion_wake = wake.clone();
         std::thread::spawn(move || {
             while incoming.recv().is_ok() {
                 if stopped.load(Ordering::Acquire) { break; }
                 let result = validate();
                 if stopped.load(Ordering::Acquire) { break; }
                 if completed.send(result).is_err() { break; }
+                if let Some(wake) = completion_wake.lock().unwrap().as_ref().and_then(Weak::upgrade) {
+                    wake.notify();
+                }
             }
         });
-        self.worker = Some(Worker { requests, results, cancelled, pending: false });
+        self.worker = Some(Worker { requests, results, cancelled, pending: false, wake });
+    }
+
+    pub(super) fn set_wake(&self, wake: Option<Weak<NativeWake>>) {
+        if let Some(worker) = &self.worker {
+            *worker.wake.lock().unwrap() = wake;
+        }
     }
 
     #[cfg(test)]
