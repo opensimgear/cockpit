@@ -255,3 +255,29 @@ for tracking retired sites.
 The comparison counts source sites, including test waits and callback
 declarations. The unresolved acquisition table tracks the firmware, process
 and platform boundaries that still require changes or qualification.
+
+### Native event and firmware waits
+
+At Cockpit `d44ed47f` and the same three firmware revisions, the expanded scan
+found 344 sites. The previous scanner found 259 at these revisions. The 247
+historical dispositions still check against the pinned ledger independently.
+Current scans include native scheduler calls, Windows wait handles, socket
+deadlines, FreeRTOS waits and TinyUSB task calls. The Pico Debug firmware
+source is included even though the gateway repository stores it under
+`simulation/pico`. Fixture directories remain excluded.
+
+| Owner | Disposition of newly inventoried calls |
+| --- | --- |
+| Native scheduler and producer-owned caches | Activity, device inventory, profile read models, companion status, and USB/CAN readers wake on source changes. Explicit deadlines cover retained evidence, request budgets, persistence retry and cleanup. Indefinite waits park the actor. |
+| Game and profile service scheduling | Game read models wake on producer commits and expire captures at their retained deadlines. Global process and context workers can select the 500 ms discovery fallback. The setup and vehicle fallbacks remain in the unresolved table. Profile routing chooses its nearest actual deadline or the service bound when a source has no usable watch. |
+| Native companion peers and local gateway | Peer presence uses a direct wake and a reconnect deadline. Pairing waits for the offer's expiry or its terminal event. Windows serial and socket waits select I/O readiness or the current operation deadline. Local gateway socket timeouts bound individual request reads and writes. |
+| Desktop dispatch and process handles | The dispatch worker waits on command, scope and deadline handles. The audit collector bounds capacity waits by the caller's deadline. Zero-time process handle checks validate identity or exit during an owned operation. The long-running X-Plane process waits also select shutdown. |
+| ESP32 | UART provisioning blocks on a driver queue. Display notification waits also handle explicit expiry and render retry. Touch and connected network maintenance retain the cadences described above. |
+| STM32 module, STM32 gateway and Pico Debug | TinyUSB service runs inside the device loop and owns USB progress. Pico Debug also advances virtual lifecycle and publishes queued inventory; its firmware loop is separate from the host's protocol-1 status checks. |
+
+The legacy Pico compatibility parser handles `hello` and `status` as requests
+and writes replies with the request ID. No unsolicited inventory path is
+defined for the supported protocol-1 images. The current protocol-3 debug
+target has a separate sequenced inventory producer. The legacy adapter still
+needs an event-capable upgrade or a sampling decision. See the [Pico firmware
+guide](https://github.com/opensimgear/device-gateway/blob/e761e4d685324f9d7b13a3c2c2527d750fbbd854/simulation/pico/README.md).

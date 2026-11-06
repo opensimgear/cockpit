@@ -82,6 +82,9 @@ if (process.argv.includes('--check-dispositions')) {
 const trees = ['src/', 'src-tauri/src/', 'crates/', 'apps/', 'packages/', 'scripts/native-gateway-bridge.mjs'];
 const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simulation)(?:\/|$)|(?:[._-](?:tests?|fixtures)\.|\/tests?\.rs$)/;
 const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
+// Event waits can carry a periodic fallback or an exact deadline. Inventory
+// the call sites as well as the lower-level wait that implements them.
+const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject|WaitForMultipleObjects|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
 const sites = [];
 const revisions = [];
 for (const repository of ['.', '../device-gateway', '../device-template', '../firmware-common']) {
@@ -95,7 +98,8 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
   }
   if (revision) revisions.push(`${repository} ${revision}`);
   const productionFiles = [...new Set(files)].sort().filter(file =>
-    /\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) && !excluded.test(file)
+    /\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file)
+      && (!excluded.test(file) || (repository === '../device-gateway' && file.startsWith('simulation/pico/firmware/src/')))
       && (repository !== '.' || trees.some(tree => file.startsWith(tree))));
   for (const [file, source] of sourcesAt(cwd, productionFiles, revision)) {
     const path = resolve(cwd, file);
@@ -103,7 +107,10 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
       if (/^\s*(?:\/\/|\*|#)/.test(line)) continue;
-      const kinds = [...new Set(line.match(timing) ?? [])];
+      const kinds = [...new Set([
+        ...(line.match(timing) ?? []),
+        ...Array.from(line.matchAll(eventWait), match => match[1]),
+      ])];
       if (!kinds.length) continue;
       sites.push({file:relative(root, path).replaceAll('\\','/'), line:index + 1, kinds});
     }
