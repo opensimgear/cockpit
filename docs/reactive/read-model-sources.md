@@ -68,6 +68,13 @@ renders the backup, then an external removal clears the row. Browser-dev
 displays the desktop-only management notice without opening the native
 storage subscription.
 
+Devices Settings uses the inventory subscription baseline for its initial
+read and ignores superseded replies. The native and browser-dev navigation
+fixtures count one initial inventory read on each reopen. The native vJoy
+fixture also opens the view on a free slot, verifies that a profile lease
+updates the visible row to busy, stops the profile while the view is closed,
+and verifies the free slot on reopen.
+
 The discovery fixture runs against native Cockpit with
 `OSG_GAME_DISCOVERY_NATIVE=1` or browser development with
 `OSG_GAME_DISCOVERY_BROWSER_URL`. Both wait for the exact committed

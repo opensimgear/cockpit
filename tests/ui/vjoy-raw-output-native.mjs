@@ -10,6 +10,7 @@ import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 const probeExecutable=process.env.OSG_VJOY_RAW_PROBE;
 const slowPreview=process.env.OSG_VJOY_SLOW_PREVIEW==='1';
+const settingsInventory=process.env.OSG_VJOY_SETTINGS_INVENTORY==='1';
 // Opt in with the full executable path of the dedicated dev Cockpit at the CDP URL.
 const faultApp=process.env.OSG_VJOY_FAULT_APP;
 
@@ -60,11 +61,24 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
   };
   const status=async()=>(await request({command:'profile_status'})).profiles.profileSession;
   const inventory=async()=>(await request({command:'system_inventory'})).systemInventory.virtualDevices;
+  const overview=()=>page.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Overview"]').click()`);
+  const devicesSettings=async()=>{
+    await page.evaluate(`Array.from(document.querySelectorAll('.sidebar-bottom button'))
+      .find(button => (button.title || button.textContent.trim()) === 'Settings').click()`);
+    await until(()=>page.evaluate(`!!document.querySelector('[aria-label="Settings sections"]')`));
+    await page.evaluate(`document.querySelector('#settings-tab-outputs').click()`);
+  };
+  const visibleSlot=name=>page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Configured virtual controllers"] li'))
+    .find(row => row.querySelector('strong')?.textContent === ${JSON.stringify(name)})?.querySelector('span')?.textContent`);
   try {
     if(faultApp)assert.notEqual(process.env.OSG_MCP_SLOW_VJOY,'1','Run feeder loss and MCP Stop as separate scenarios');
     assert.equal((await status()).owner,null);
     const slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback&&device.buttons+device.axes.length+device.continuousHats<=128);
     assert.ok(slot,'A compatible free vJoy slot is required');
+    if(settingsInventory){
+      await devicesSettings();
+      await until(()=>visibleSlot(slot.name), value=>value==='free');
+    }
     saved=(await request({command:'profile_create',name:'Temporary vJoy lease '+randomUUID()})).profiles.document;
     const layout={
       buttons:Array.from({length:slot.buttons},(_,index)=>'button-'+(index+1)),
@@ -86,6 +100,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const started=(await request({command:'profile_apply',id:saved.id,expectedRevision:saved.revision,expectedActiveOwner:null})).profiles.profileSession;
     assert.equal(started.owner?.profileId,saved.id,JSON.stringify(started));
     assert.ok(['running','degraded'].includes(started.state),JSON.stringify(started));
+    if(settingsInventory)await until(()=>visibleSlot(slot.name), value=>value?.startsWith('busy'));
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy');
     await new Promise(resolve=>setTimeout(resolve,600));
     if(process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
@@ -152,6 +167,10 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       assert.deepEqual(preview.errors,[]);
       assert.ok(BigInt(preview.fast)>BigInt(previewBefore),'Independent physical preview must advance while vJoy is active');
     }
+    if(settingsInventory){
+      await overview();
+      await until(()=>page.evaluate(`!document.querySelector('[aria-label="Controller and desktop output settings"]')`));
+    }
     const stopReplyMs=observation?await observation.stop():null;
     if(faultApp){
       await terminateFixtureFeeder();
@@ -161,6 +180,10 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       assert.equal((await status()).owner,null);
     }
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free');
+    if(settingsInventory){
+      await devicesSettings();
+      await until(()=>visibleSlot(slot.name), value=>value==='free');
+    }
     const slowReader=observation?await observation.resumeSlow():null;
     assert.equal(await exited,0);
     const report=JSON.parse(trace.at(-1));
@@ -210,6 +233,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
         try {
           if(slowPreview)await page.evaluate(`(()=>{const s=window.__vjoySlowPreview;
             s?.abort.abort();s?.stop?.();delete window.__vjoySlowPreview;})()`);
+          if(settingsInventory)await overview().catch(()=>{});
         } finally {probe?.kill();page.close();}
       }
     }

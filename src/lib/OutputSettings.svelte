@@ -18,6 +18,7 @@
   let inventory = $state.raw<NativeSystemInventory | null>(null);
   let busy = $state(''), error = $state('');
   let disposed = false;
+  let inventoryRequest = 0;
   const nativeApp = isTauri();
   const vjoyDriver = $derived(inventory?.drivers?.vjoy);
   const hidHideDriver = $derived(inventory?.drivers?.hidhide);
@@ -65,19 +66,27 @@
   }
 
   async function loadInventory(inspect = false) {
-    const result = await gatewayRequest({ command: 'system_inventory', ...(inspect ? { refresh: true } : {}) });
-    if (!result.systemInventory) throw new Error('Virtual controller inspection is unavailable.');
-    if (!disposed) inventory = result.systemInventory;
+    const request = ++inventoryRequest;
+    try {
+      const result = await gatewayRequest({ command: 'system_inventory', ...(inspect ? { refresh: true } : {}) });
+      if (disposed || request !== inventoryRequest) return;
+      if (!result.systemInventory) throw new Error('Virtual controller inspection is unavailable.');
+      inventory = result.systemInventory;
+    } catch (reason) {
+      if (!disposed && request === inventoryRequest) throw reason;
+    }
+  }
+  async function loadVisibility() {
+    const result = await gatewayRequest({ command: 'controller_visibility_status' });
+    if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
+    if (!disposed) visibility = result.controllers.visibility;
   }
   async function refresh(inspect = false) {
     if (busy) return;
     busy = 'refresh'; error = '';
     const results = await Promise.allSettled([
       loadInventory(inspect),
-      gatewayRequest({ command: 'controller_visibility_status' }).then(result => {
-        if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
-        if (!disposed) visibility = result.controllers.visibility;
-      }),
+      loadVisibility(),
     ]);
     if (!disposed) {
       error = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => String(result.reason instanceof Error ? result.reason.message : result.reason)).join(' ');
@@ -108,11 +117,15 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
+    const showError = (reason: unknown) => { if (!disposed) error = String(reason); };
     observations.subscribe('settings.desktop', observeDesktopSettings);
     observations.subscribe('system.inventory', state => {
-      if (state.status === 'ready') void loadInventory().catch(reason => { if (!disposed) error = String(reason); });
+      const unavailable = state.status === 'error' || state.status === 'lost';
+      if (state.status === 'ready' || (unavailable && inventoryRequest === 0)) {
+        void loadInventory().catch(showError);
+      }
     });
-    void refresh();
+    void loadVisibility().catch(showError);
     return () => { disposed = true; observations.close(); };
   });
 </script>

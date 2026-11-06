@@ -31,6 +31,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const retired = new Set();
   const abortedOpens = new Map();
   let companionReads = 0;
+  let systemInventoryReads = 0;
   const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
     const selector = view === 'Settings' ? '.sidebar-bottom button' : 'nav[aria-label="Main navigation"] button';
@@ -47,6 +48,7 @@ test(`${transport} main view navigation retires observation readers without dupl
       if (path === '/gateway_request' || path === '/api/gateway/') {
         const body = JSON.parse(params.request.postData);
         if ((body.request ?? body).command === 'companion_status') companionReads++;
+        if ((body.request ?? body).command === 'system_inventory') systemInventoryReads++;
       }
       const operation = endpoints.get(path);
       if (!operation) return;
@@ -322,6 +324,7 @@ test(`${transport} main view navigation retires observation readers without dupl
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [tab, topics] of [['Devices', deviceTopics], ['Companions', ['companion.listener']],
         ['AI integration', browserUrl ? [] : ['settings.mcp']]]) {
+        const beforeInventory = systemInventoryReads;
         await clickTab(tab);
         if (tab === 'AI integration') {
           await until(() => page.evaluate(`!!document.querySelector('section[aria-label="AI integration settings"]')`));
@@ -329,6 +332,8 @@ test(`${transport} main view navigation retires observation readers without dupl
         await settled(topics);
         assert.deepEqual(settingsTopics(), topics);
         if (tab === 'Devices') {
+          await until(() => systemInventoryReads > beforeInventory);
+          assert.equal(systemInventoryReads - beforeInventory, 1, 'The inventory baseline owns the initial read');
           const keyboard = 'section[aria-label="Keyboard and mouse"]';
           const read = () => page.evaluate(`(() => {
             const card = document.querySelector('${keyboard}');
