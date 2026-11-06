@@ -13,7 +13,8 @@ pub(crate) struct Observation {
 
 fn snapshot(settings: &Settings, native: bool) -> Value {
     json!({"enabled":settings.value.enabled,"scope":settings.value.scope,
-        "qualified":native && super::qualified(),"reason":super::reason(),
+        "qualified":native && super::qualified(),
+        "reason":if native { super::reason() } else { "Keyboard and mouse output requires the native Cockpit app." },
         "error":settings.error})
 }
 
@@ -22,7 +23,7 @@ impl Observation {
         let settings = if native { Settings::native() } else { Settings::open(None) };
         let initial = snapshot(&settings, native);
         let publisher = runtime.broker().register(TopicSpec {
-            topic: TOPIC.into(), source: "desktop-settings".into(), audiences: vec!["ui".into(), "mcp".into()],
+            topic: TOPIC.into(), source: "desktop-settings".into(), audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
         }, initial.clone(), runtime.captured_us(), TOPIC.into()).map_err(|error| error.to_string())?;
         Ok(Self { publisher, previous: Mutex::new(initial) })
     }
@@ -46,8 +47,14 @@ mod tests {
         let observation = Observation::register(&runtime, false).unwrap();
         let broker = runtime.broker();
         let mut ui = broker.subscribe("desktop-settings-ui", "ui", TOPIC).unwrap();
+        let mut browser = broker.subscribe("desktop-settings-browser", "browser", TOPIC).unwrap();
         let mut mcp = broker.subscribe("desktop-settings-mcp", "mcp", TOPIC).unwrap();
-        let _ = ui.try_recv().unwrap().unwrap();
+        let initial = ui.try_recv().unwrap().unwrap();
+        let browser_initial = browser.try_recv().unwrap().unwrap();
+        assert_eq!(initial.payload, browser_initial.payload);
+        let browser_initial = browser_initial.payload.unwrap();
+        assert_eq!(browser_initial["qualified"], false);
+        assert_eq!(browser_initial["reason"], "Keyboard and mouse output requires the native Cockpit app.");
         let _ = mcp.try_recv().unwrap().unwrap();
         let directory = crate::test_directory();
         let mut settings = Settings::open(Some(directory.path().join("desktop.json")));

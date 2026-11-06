@@ -50,15 +50,19 @@ test(`${transport} main view navigation retires observation readers without dupl
   const request = value => page.evaluate(`import('/src/lib/gateway.ts').then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`);
   const pending = new Map();
   const active = new Map();
+  const opened = new Map();
   const baselines = new Map();
   const errors = [];
   const retired = new Set();
-  const navigate = async view => {
+  const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
     const selector = view === 'Settings' ? '.sidebar-bottom button' : 'nav[aria-label="Main navigation"] button';
     await page.evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(selector)}))
       .find(button => (button.title || button.textContent.trim()) === ${label}).click()`);
-    await until(() => page.evaluate(`document.querySelector('[aria-label="Breadcrumb"] [aria-current="page"]')?.textContent.trim() === ${label}`));
+    await until(async () => {
+      if (discard) await discardDraft();
+      return page.evaluate(`document.querySelector('[aria-label="Breadcrumb"] [aria-current="page"]')?.textContent.trim() === ${label}`);
+    });
   };
   const stopTrace = page.listen(({method, params}) => {
     if (method === 'Network.requestWillBeSent' && params.request.postData) {
@@ -67,13 +71,20 @@ test(`${transport} main view navigation retires observation readers without dupl
       pending.set(params.requestId, {operation, body:JSON.parse(params.request.postData)});
     } else if (method === 'Network.responseReceived') {
       const entry = pending.get(params.requestId);
-      if (entry) entry.accepted = params.response.status === 200;
+      if (entry) entry.status = params.response.status;
     } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
       const entry = pending.get(params.requestId);
       if (!entry) return;
-      if (!entry.accepted || method === 'Network.loadingFailed') {
-        pending.delete(params.requestId);
-        errors.push(entry.operation);
+      if (entry.status !== 200 || method === 'Network.loadingFailed') {
+        const detail = [entry.operation, entry.body.topic, entry.status, params.errorText].filter(Boolean).join(' ');
+        if (method === 'Network.loadingFailed') {
+          errors.push(detail);
+          pending.delete(params.requestId);
+        } else {
+          void page.call('Network.getResponseBody', {requestId:params.requestId})
+            .then(({body}) => errors.push(detail + ' ' + body), () => errors.push(detail))
+            .finally(() => pending.delete(params.requestId));
+        }
       } else if (entry.operation === 'subscribe') {
         void page.call('Network.getResponseBody', {requestId:params.requestId}).then(({body}) => {
           const response = JSON.parse(body);
@@ -82,6 +93,8 @@ test(`${transport} main view navigation retires observation readers without dupl
           // Bridge cancellation identifies the opening request. Baselines
           // still acknowledge the resulting native subscription token.
           const id = browserUrl ? entry.body.requestId : token;
+          assert.ok(!opened.has(token), 'An observation token must identify one reader lifetime');
+          opened.set(token, entry.body.topic);
           if (!retired.has(id)) active.set(id, {topic:entry.body.topic, token});
         }).catch(error => errors.push(error.message)).finally(() => pending.delete(params.requestId));
       } else {
@@ -134,17 +147,33 @@ test(`${transport} main view navigation retires observation readers without dupl
     await navigate('Settings');
     const clickTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
+    const deviceTopics = ['settings.desktop', 'system.inventory'];
     const settingsTopics = () => [...active.values()].map(reader => reader.topic)
-      .filter(topic => topic === 'system.inventory' || topic === 'companion.listener').sort();
+      .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener').sort();
     await new Promise(resolve => setTimeout(resolve, 200));
     await settled(browserUrl ? [] : ['storage.backups']);
     assert.deepEqual(settingsTopics(), [], 'Hidden settings tabs must not open readers');
-    for (const [tab, topic] of [['Devices','system.inventory'], ['Companions','companion.listener']]) {
-      await clickTab(tab);
-      await settled([topic]);
-      assert.deepEqual(settingsTopics(), [topic]);
-      await clickTab('General');
-      await until(async () => pending.size === 0 && settingsTopics().length === 0);
+    const {desktop} = await request({command:'profile_desktop_status'});
+    for (let cycle = 0; cycle < 2; cycle++) {
+      for (const [tab, topics] of [['Devices',deviceTopics], ['Companions',['companion.listener']]]) {
+        await clickTab(tab);
+        await settled(topics);
+        assert.deepEqual(settingsTopics(), topics);
+        if (tab === 'Devices') {
+          const keyboard = 'section[aria-label="Keyboard and mouse"]';
+          const read = () => page.evaluate(`(() => {
+            const card = document.querySelector('${keyboard}');
+            const toggle = card?.querySelector('[role="switch"]');
+            return toggle && {checked:toggle.checked, disabled:toggle.disabled,
+              note:card.querySelector('.status-note')?.textContent.trim()};
+          })()`);
+          await until(read, state => state?.checked === desktop.enabled
+            && state.disabled === (!desktop.qualified || !!desktop.error)
+            && (desktop.qualified || state.note === desktop.reason));
+        }
+        await clickTab('General');
+        await until(async () => pending.size === 0 && settingsTopics().length === 0);
+      }
     }
     await navigate('Overview');
     await until(async () => pending.size === 0 && active.size === 0);
@@ -172,26 +201,34 @@ test(`${transport} main view navigation retires observation readers without dupl
         context.value = 'x-plane-11';
         context.dispatchEvent(new Event('change', {bubbles:true}));
       })()`);
-      await settled(['games.detail.x-plane-11']);
-      await page.evaluate("window.dispatchEvent(new CustomEvent('osg:open-game-settings', {detail:{gameId:'x-plane-12'}}))");
-      await settled(['games.detail.x-plane-12']);
-      await until(async () => ![...active.values()].some(reader => reader.topic === 'games.detail.x-plane-11'));
-      await navigate('Profiles');
-      await settled(['games.detail.x-plane-11']);
-      assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(select)}).value`), 'x-plane-11');
+      const profileTopic = 'games.detail.x-plane-11';
+      const settingsTopic = 'games.detail.x-plane-12';
+      const exactQuery = async topic => {
+        await settled([topic]);
+        await until(async () => {
+          const details = [...active.values()].filter(reader => reader.topic.startsWith('games.detail.'));
+          return details.length === 1 && details[0].topic === topic;
+        });
+      };
+      await exactQuery(profileTopic);
+      for (let cycle = 0; cycle < 3; cycle++) {
+        await page.evaluate("window.dispatchEvent(new CustomEvent('osg:open-game-settings', {detail:{gameId:'x-plane-12'}}))");
+        await exactQuery(settingsTopic);
+        await navigate('Profiles');
+        await exactQuery(profileTopic);
+        assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(select)}).value`), 'x-plane-11');
+      }
+      assert.equal([...opened.values()].filter(topic => topic === profileTopic).length, 4);
+      assert.equal([...opened.values()].filter(topic => topic === settingsTopic).length, 3);
       await button('Cancel');
-      await navigate('Overview');
+      await navigate('Overview', true);
       await until(async () => pending.size === 0 && active.size === 0);
     }
     assert.deepEqual(errors, []);
     assert.ok([...baselines.values()].every(count => count === 1));
   } finally {
     try {
-      await discardDraft();
-      const navigation = navigate('Overview');
-      await page.evaluate('new Promise(resolve => setTimeout(resolve, 150))');
-      await discardDraft();
-      await navigation;
+      await navigate('Overview', true);
     }
     finally {
       stopTrace();
