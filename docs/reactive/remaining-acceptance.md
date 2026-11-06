@@ -233,6 +233,12 @@ logs, generated settings, flash manifests and all three images named by each
 manifest. No device was flashed. Boot, transport, touch and timing checks
 remain in #199.
 
+The same three images per board were bundled under
+`.research/reactive/esp32-board-builds/installer-bundles/` with their build
+commit, board identity, offsets and segment hashes. Both version `2026.10.22.7`
+bundles passed Cockpit's local manifest validator and native installer image
+validator. The bundles are local qualification artifacts.
+
 ## User-operated qualification stays in #199
 
 The 13 original criteria requiring physical devices, actual simulators, rig
