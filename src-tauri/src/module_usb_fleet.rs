@@ -21,7 +21,7 @@ pub(crate) mod metadata_observations;
 mod metadata_observations_tests;
 #[cfg(test)]
 #[path="module_usb_fleet/input_observations_tests.rs"]
-mod input_observations_tests;
+pub(crate) mod input_observations_tests;
 
 pub(crate) type SerialPorts = Arc<dyn Fn() -> Result<Vec<PortInfo>, String> + Send + Sync>;
 const MAX_PRESENT: usize = 32;

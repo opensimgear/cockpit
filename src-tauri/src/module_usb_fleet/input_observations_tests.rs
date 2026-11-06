@@ -23,17 +23,25 @@ fn frame(capture:&Capture,sequence:u32,kind:&str,body:Value){
 }
 fn fixture()->(Arc<Fleet>,Arc<FakeInput>,Arc<Capture>){
     let capture=Capture::new(route(1)).unwrap();
+    let (fleet, fake) = endpoint_fixture(KEY, capture.clone());
+    (fleet, fake, capture)
+}
+pub(crate) fn fleet_with_capture(key: &str, capture: Arc<Capture>) -> Arc<Fleet> {
+    endpoint_fixture(key, capture).0
+}
+fn endpoint_fixture(key: &str, capture: Arc<Capture>) -> (Arc<Fleet>, Arc<FakeInput>) {
+    let route = capture.snapshot().route;
     let fake=Arc::new(FakeInput{capture:Mutex::new(Some(capture.clone())),snapshot:Mutex::new(UsbSnapshot{
-        connected:true,port:Some("COM8".into()),route:Some(route(1)),..Default::default()}),
+        connected:true,port:Some("COM8".into()),route:Some(route),..Default::default()}),
         requests:AtomicUsize::new(0),wakes:Mutex::new(Vec::new())});
     let f=fake.clone();
     let fleet=Arc::new(Fleet::with_create(Arc::new(||Ok(Vec::new())),false,
         Arc::new(move||f.clone())));
-    fleet.state.lock().unwrap().slots.insert(KEY.into(),Slot{port:PortInfo{path:"COM8".into(),serial_number:Some("00112233445566778899aabb".into()),
+    fleet.state.lock().unwrap().slots.insert(key.into(),Slot{port:PortInfo{path:"COM8".into(),serial_number:Some("00112233445566778899aabb".into()),
         vendor_id:None,product_id:None,manufacturer:None,friendly_name:None},present:true,automatic:false,ambiguous:false,
         suppressed:false,service:Some(fake.clone()),cached:fake.snapshot(),retiring_service:None,
         busy:Arc::new(AtomicBool::new(false)),closing:Arc::new(AtomicBool::new(false))});
-    (fleet,fake,capture)
+    (fleet,fake)
 }
 #[derive(Default)]
 struct FakeInput { capture:Mutex<Option<Arc<Capture>>>,snapshot:Mutex<UsbSnapshot>,requests:AtomicUsize,
@@ -46,7 +54,10 @@ impl Endpoint for FakeInput {
     fn shutdown(&self){if let Some(capture)=self.capture.lock().unwrap().take(){capture.close();}}
 }
 fn subscribe(fleet:&Arc<Fleet>,runtime:&observations::Runtime,client:&'static str)->(String,mpsc::Receiver<observations::Delivery>){
-    let topic=input_observations::topic(KEY);let(tx,rx)=mpsc::channel();let rt=runtime.clone();let client_owned=client.to_owned();
+    subscribe_to(fleet, runtime, client, KEY)
+}
+pub(crate) fn subscribe_to(fleet:&Arc<Fleet>,runtime:&observations::Runtime,client:&str,key:&str)->(String,mpsc::Receiver<observations::Delivery>){
+    let topic=input_observations::topic(key);let(tx,rx)=mpsc::channel();let rt=runtime.clone();let client_owned=client.to_owned();
     let token=fleet.with_input_observation(&topic,runtime.broker(),|wake|runtime.watch_reader_lifecycle(wake),||
         rt.subscribe(&client_owned,"ui",&topic,move|delivery|tx.send(delivery).map_err(|e|e.to_string()))).unwrap();
     (token,rx)
@@ -100,7 +111,7 @@ fn retired(fleet:&Arc<Fleet>){
         std::thread::yield_now();
     }
 }
-fn ready(runtime:&observations::Runtime,client:&str,rx:&mpsc::Receiver<observations::Delivery>)->observations::Delivery{
+pub(crate) fn ready(runtime:&observations::Runtime,client:&str,rx:&mpsc::Receiver<observations::Delivery>)->observations::Delivery{
     loop{
         let delivery=recv(rx);
         let matches=delivery.frame.payload.as_ref().is_some_and(|payload|payload["ready"]==true);

@@ -146,6 +146,57 @@ fn usb_button_edges_and_final_axis_keep_original_capture_times() {
 }
 
 #[test]
+fn usb_preview_and_live_profile_share_capture_without_owning_each_other() {
+    use crate::module_usb_fleet::input_observations_tests::{fleet_with_capture, ready, subscribe_to};
+    const KEY: &str = "panel0";
+    const CLIENT: &str = "shared-usb-profile-preview";
+    let (plan, io) = usb_fixture();
+    let fleet = fleet_with_capture(KEY, io.capture.clone());
+    assert!(Arc::ptr_eq(&fleet.input_capture(KEY).unwrap(), &io.capture));
+    let runtime = crate::observations::Runtime::new();
+    let (subscription, preview) = subscribe_to(&fleet, &runtime, CLIENT, KEY);
+    let _ = ready(&runtime, CLIENT, &preview);
+    let mut inputs = acquired(&plan, io.clone());
+    activate(&mut inputs, &plan);
+
+    let mut source = io.capture.subscribe().unwrap();
+    assert!(matches!(source.recv().unwrap(), osg_streams::Delivery::Snapshot(_)));
+    io.producer.lock().unwrap().axis = 12345;
+    let at = io.send(&[true, false], 1, 0);
+    let osg_streams::Delivery::Event(event) = source.recv().unwrap() else {
+        panic!("expected a shared capture update");
+    };
+    let update = ready(&runtime, CLIENT, &preview);
+    assert_eq!(update.frame.captured_us, event.captured_us.to_string());
+    assert_eq!(update.frame.clock_id, event.clock_id);
+    assert_eq!(event.value.witnessed_at, at);
+    let state = &update.frame.payload.as_ref().unwrap()["state"];
+    assert_eq!(state["axes"][0], 12345);
+    assert!(state.get("events").is_none(), "Preview exposes absolute state only");
+
+    let (started, origin) = inputs.clock.unwrap();
+    let clock = usb_source::Clock { started, origin };
+    let frames = eventually(|| {
+        let frames = inputs.poll(|_| Ok(())).unwrap().frames;
+        (!frames.is_empty()).then_some(frames)
+    });
+    assert_eq!(frames.last().unwrap().captured_us.0, clock.at(at).unwrap());
+    assert_eq!(sample(frames.last().unwrap(), "axis:0"), Some(&SignalSample::scalar(PortValue::Number(12345.0))));
+
+    runtime.unsubscribe(CLIENT, &subscription).unwrap();
+    io.producer.lock().unwrap().axis = 23456;
+    let at = io.send(&[], 1, 0);
+    let next = eventually(|| inputs.poll(|_| Ok(())).unwrap().frames.into_iter().last());
+    assert_eq!(next.captured_us.0, clock.at(at).unwrap());
+    assert_eq!(sample(&next, "axis:0"), Some(&SignalSample::scalar(PortValue::Number(23456.0))));
+    assert_eq!(io.captures.load(Ordering::Acquire), 1);
+    assert_eq!(io.legacy.calls.load(Ordering::Acquire), 0);
+    inputs.stop();
+    runtime.close();
+    fleet.shutdown();
+}
+
+#[test]
 fn repeated_health_retains_liveness_time_then_native_expiry_wakes_a_gap() {
     let (plan, io) = usb_fixture();
     let mut inputs = acquired(&plan, io.clone());
