@@ -49,21 +49,38 @@ test('native file notifications replace prepared artwork without read-side colle
     const managed=resolve(root,'game-artwork');asset=resolve(managed,`${hash}.jpg`);
     assert.ok(asset.startsWith(managed+sep));assert.deepEqual(await readFile(asset),original);
     for(let count=0;count<8;count++)assert.equal(find(await read()).background.image,image);
+    await page.evaluate(`(async()=>{
+      const {observeGameDetails}=await import('/src/lib/game-read-models/shared.ts');
+      const probe=window.__preparedArtworkProbe={images:[]};
+      probe.stop=observeGameDetails(${JSON.stringify(gameId)},state=>{
+        if(state.status==='ready')probe.images.push(state.value.value.background?.image??null);
+      });
+    })()`);
+    const observedImages=()=>page.evaluate('window.__preparedArtworkProbe.images');
+    const reference=(await until(observedImages,images=>Boolean(images.at(-1)))).at(-1);
+    assert.match(reference,/^game-asset:[a-f0-9]{64}:\d+$/);
+    // DevTools reads the subscriber's memory. No fixture gateway read can
+    // trigger the invalidation or supply the new artwork between mutations.
     modified=true;await writeFile(asset,Buffer.from('Owned invalidation fixture'));
-    await until(async()=>!find(await read()).background?.image,Boolean,15000);
+    await until(observedImages,images=>images.at(-1)===null,15000);
     await unlink(asset);await writeFile(asset,original);
-    await until(async()=>find(await read()).background?.image===image,Boolean,15000);
+    await until(observedImages,images=>images.at(-1)===reference,15000);
     await unlink(asset);
-    await until(async()=>!find(await read()).background?.image,Boolean,15000);
+    await until(observedImages,images=>images.at(-1)===null,15000);
     await writeFile(asset,original);modified=false;
-    await until(async()=>find(await read()).background?.image===image,Boolean,15000);
+    await until(observedImages,images=>images.at(-1)===reference,15000);
+    const history=await observedImages();
+    const transitions=history.slice(history.indexOf(reference)).filter((value,index,images)=>index===0||value!==images[index-1]);
+    assert.deepEqual(transitions,[reference,null,reference,null,reference]);
     assert.equal((await request({command:'profile_status'})).profiles.profileSession.owner,null);
     await writeFile(resolve(directory,'evidence.json'),JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,
       noGameLaunch:true,noPhysicalOutputs:true,asset,hash,stableReadCount:8,
-      nativeTamperWithdrawal:true,deleteAndRestore:true,readSideCommands:['game_get_state'],
+      nativeTamperWithdrawal:true,deleteAndRestore:true,transitions,fixtureReadsDuringMutations:0,
       profileRemainsStopped:true,physicalLatencyQualified:false},null,2)+'\n');
   }finally{
     try{
+      try{await page.evaluate('window.__preparedArtworkProbe?.stop();delete window.__preparedArtworkProbe;');}
+      catch(error){cleanupErrors.push(String(error));}
       if(modified&&asset&&original)try{await writeFile(asset,original);}catch(error){cleanupErrors.push(String(error));}
       if(gameId)try{await request({command:'game_remove',gameId});}catch(error){cleanupErrors.push(String(error));}
       await writeFile(resolve(directory,'cleanup.json'),JSON.stringify({cleanupErrors},null,2)+'\n');
