@@ -239,6 +239,40 @@ test(`${transport} main view navigation retires observation readers without dupl
     await new Promise(resolve => setTimeout(resolve, 200));
     await settled(browserUrl ? [] : ['storage.backups']);
     assert.deepEqual(settingsTopics(), [], 'Hidden settings tabs must not open readers');
+    const backupReader = () => [...active.values()].find(reader => reader.topic === 'storage.backups')?.token;
+    const backupRow = id => page.evaluate(`Array.from(document.querySelectorAll('[data-backup-id]'))
+      .some(row => row.dataset.backupId === ${JSON.stringify(id)})`);
+    if (browserUrl) {
+      assert.equal(backupReader(), undefined);
+      assert.ok(await page.evaluate(`document.querySelector('[aria-label="Backups"]')
+        ?.textContent.includes('Open the desktop Cockpit to manage backups.')`));
+    } else {
+      const previousReader = backupReader();
+      const {storage: before} = await request({command:'storage_status'});
+      assert.ok(before.backups.length < before.maximumBackups, 'The dev Cockpit needs one free backup slot');
+      await clickTab('Devices');
+      await until(() => pending.size === 0 && !backupReader());
+      let backup;
+      try {
+        const {storage: created} = await request({command:'storage_create', expectedRevision:before.revision}, 45_000);
+        backup = created.backup;
+        assert.ok(backup?.id);
+        assert.equal(backupReader(), undefined, 'A hidden backup view must have no active reader');
+        assert.equal(await backupRow(backup.id), false);
+        await clickTab('General');
+        await settled(['storage.backups']);
+        assert.notEqual(backupReader(), previousReader);
+        await until(() => backupRow(backup.id));
+      } finally {
+        if (backup?.id) {
+          const {storage: current} = await request({command:'storage_status'});
+          const {storage: removed} = await request({command:'storage_remove', id:backup.id, expectedRevision:current.revision}, 45_000);
+          assert.equal(removed.filesRemoved, true);
+        }
+      }
+      await until(() => backupRow(backup.id), visible => !visible);
+      await until(() => pending.size === 0 && settingsTopics().length === 0);
+    }
     const {desktop} = await request({command:'profile_desktop_status'});
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [tab, topics] of [['Devices', deviceTopics], ['Companions', ['companion.listener']],

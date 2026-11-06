@@ -57,7 +57,7 @@
   </section>
   <ProgressNotificationSettings />
   <ActivitySettings />
-  <BackupSettings />
+  {#if selected === 'general'}<BackupSettings />{/if}
 </div>
 
 <div class="settings-content" id="settings-panel-styling" role="tabpanel" aria-labelledby="settings-tab-styling" tabindex="0" hidden={selected !== 'styling'}>

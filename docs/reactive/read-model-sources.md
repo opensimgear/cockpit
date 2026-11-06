@@ -56,6 +56,13 @@ loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates
 the pairing form while the hidden listener settings make no reads.
 
+The navigation fixture verifies that native Settings releases its Backups
+subscription when General is hidden. An external create commits while no
+Backups reader is open. Returning to General opens a fresh baseline and
+renders the backup, then an external removal clears the row. Browser-dev
+displays the desktop-only management notice without opening the native
+storage subscription.
+
 The discovery fixture runs against native Cockpit with
 `OSG_GAME_DISCOVERY_NATIVE=1` or browser development with
 `OSG_GAME_DISCOVERY_BROWSER_URL`. Both wait for the exact committed
