@@ -11,6 +11,8 @@ struct Probe {
     fail_install: bool,
     fail_start: bool,
     fail_health: bool,
+    notified_hold: bool,
+    hold_deadline: Option<Instant>,
 }
 struct Fake(Arc<Mutex<Probe>>);
 fn compile(candidate: &Candidate) -> Prepared {
@@ -74,6 +76,12 @@ impl Host for Fake {
     }
     fn supports_launch_hold(&self) -> bool {
         true
+    }
+    fn hold_uses_notifications(&self, _: &OwnedRun) -> bool {
+        self.0.lock().unwrap().notified_hold
+    }
+    fn hold_deadline(&self, _: &OwnedRun) -> Option<Instant> {
+        self.0.lock().unwrap().hold_deadline
     }
     fn hold_health(&mut self, _: &OwnedRun) -> Result<Health, String> {
         let mut p = self.0.lock().unwrap();
@@ -216,6 +224,24 @@ fn pending_launch_rejects_replacement_or_modified_candidate_and_epoch_adoption()
     assert_eq!(c.status.state, State::AwaitingGame);
     assert!(c.cancel_launch(&owner).unwrap());
 }
+#[test]
+fn notified_hold_uses_the_earlier_lease_or_launch_deadline_without_service_ticks() {
+    let (mut c, probe) = fixture(None);
+    let owner = c.begin_launch(hardware_candidate()).unwrap();
+    let expires = c.launch.as_ref().unwrap().deadline;
+    assert_eq!(c.service_interval(), Some(Duration::from_millis(5)));
+    assert_eq!(c.next_deadline(), Some(expires));
+    let renew = expires - Duration::from_secs(1);
+    probe.lock().unwrap().notified_hold = true;
+    probe.lock().unwrap().hold_deadline = Some(renew);
+    assert_eq!(c.service_interval(), None);
+    assert_eq!(c.next_deadline(), Some(renew));
+    probe.lock().unwrap().hold_deadline = Some(expires + Duration::from_secs(1));
+    assert_eq!(c.next_deadline(), Some(expires));
+    c.cancel_launch(&owner).unwrap();
+    assert_eq!(c.next_deadline(), None);
+}
+
 #[test]
 fn lost_health_or_deadline_compensates_without_start_or_replay() {
     for expired in [false, true] {

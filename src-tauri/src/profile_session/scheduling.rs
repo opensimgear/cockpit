@@ -4,13 +4,19 @@ use std::time::{Duration, Instant};
 
 impl<H: Host> Coordinator<H> {
     pub(crate) fn service_interval(&self) -> Option<Duration> {
-        if self.launch.is_some() { return Some(Duration::from_millis(5)); }
+        if let Some(held) = &self.launch {
+            let notified = self.held_run(&held.owner).is_ok_and(|run| self.host.hold_uses_notifications(run));
+            return (!notified).then_some(Duration::from_millis(5));
+        }
         self.status.owner.as_ref()?;
         self.manifest.active.as_ref().filter(|run| self.validates(&run.owner))
             .map_or(Some(Duration::from_millis(5)), |run| self.host.service_interval(run))
     }
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        if let Some(held) = &self.launch { return Some(held.deadline); }
+        if let Some(held) = &self.launch {
+            let host = self.held_run(&held.owner).ok().and_then(|run| self.host.hold_deadline(run));
+            return Some(host.map_or(held.deadline, |deadline| deadline.min(held.deadline)));
+        }
         let run = self.manifest.active.as_ref().filter(|run| self.validates(&run.owner))?;
         self.host.next_deadline(run)
     }

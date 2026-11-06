@@ -7,6 +7,40 @@ use osg_profiles::{
 use std::sync::Condvar;
 
 #[test]
+fn poisoned_panel_mailbox_still_wakes_subscribers_and_revokes_on_stop() {
+    let (plan, io) = fixture(true, 1);
+    let mut inputs = PanelInputs::prepare_io(&plan, io).unwrap();
+    assert!(!inputs.is_empty());
+    let mailbox = inputs.mailbox.clone();
+    assert!(thread::spawn(move || {
+        let _guard = mailbox.lock().unwrap();
+        panic!("Simulate an interrupted panel mailbox update");
+    }).join().is_err());
+    assert!(inputs.mailbox.is_poisoned());
+
+    let baseline = Arc::new(NativeWake::default());
+    let runtime = Arc::new(NativeWake::default());
+    inputs.watch_baseline(&baseline);
+    inputs.set_wake(Some(runtime.clone()));
+    let baseline_before = baseline.observed();
+    let runtime_before = runtime.observed();
+
+    inputs.acquire(0).unwrap();
+    assert!(inputs.acquire(0).is_err(), "A reader cannot acquire a second clock origin");
+    let frames = inputs.wait_baseline(&plan, Duration::from_secs(2), |_| Ok(()), || false).unwrap();
+    assert!(!frames.is_empty());
+    assert!(baseline.observed() > baseline_before);
+    assert!(runtime.observed() > runtime_before);
+    inputs.start().unwrap();
+    assert!(inputs.active.load(Ordering::Acquire));
+    assert!(inputs.start().is_err(), "An active reader cannot be admitted twice");
+    inputs.stop();
+    assert!(inputs.revoked.load(Ordering::Acquire));
+    assert!(!inputs.active.load(Ordering::Acquire));
+    assert!(!inputs.admitted.load(Ordering::Acquire));
+}
+
+#[test]
 fn capture_can_commit_loss_while_host_validates_the_route() {
     let (plan, io) = fixture(true, 1);
     let mut inputs = PanelInputs::prepare_io(&plan, io).unwrap();

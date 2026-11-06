@@ -35,7 +35,7 @@ impl<H: Host> Coordinator<H> {
             .owner
             .clone())
     }
-    fn held_run(&self, owner: &RunOwner) -> Result<&OwnedRun, String> {
+    pub(super) fn held_run(&self, owner: &RunOwner) -> Result<&OwnedRun, String> {
         let held = self
             .launch
             .as_ref()

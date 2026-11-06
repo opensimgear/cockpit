@@ -174,6 +174,8 @@ pub(crate) struct PanelInputs {
     bound: bool,
 }
 impl PanelInputs {
+    pub(crate) fn is_empty(&self) -> bool { self.specs.is_empty() }
+
     pub(crate) fn watch_baseline(&self, wake: &Arc<NativeWake>) {
         self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).baseline_wake = Arc::downgrade(wake);
     }

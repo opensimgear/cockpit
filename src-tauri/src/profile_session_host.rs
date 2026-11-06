@@ -1395,6 +1395,15 @@ impl Host for NativeProfileHost {
         if let Some(state)=self.prepared.get_mut(&key(owner)){state.vehicle_error=Some(message.into());}
     }
     fn hold_health(&mut self, run:&OwnedRun)->Result<Health,String> {self.held_health(run)}
+    fn hold_uses_notifications(&self, run: &OwnedRun) -> bool {
+        self.prepared.get(&key(&run.owner)).is_some_and(|state| {
+            state.owner == run.owner && host_scheduling::hold_uses_notifications(self, state)
+        })
+    }
+    fn hold_deadline(&self, run: &OwnedRun) -> Option<Instant> {
+        let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)?;
+        state.output.as_ref()?.renewal_deadline()
+    }
     fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}
     fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}
     fn discard_preparation(&mut self, owner: &RunOwner) {

@@ -208,6 +208,8 @@ pub(crate) trait Host: Send {
     /// was absent at activation. Ordinary inventory revisions are not triggers.
     fn peripheral_change(&self, _: &RunOwner) -> Result<Option<String>, ()> { Ok(None) }
     fn supports_launch_hold(&self) -> bool { false }
+    fn hold_uses_notifications(&self, _: &OwnedRun) -> bool { false }
+    fn hold_deadline(&self, _: &OwnedRun) -> Option<std::time::Instant> { None }
     fn hold_health(&mut self, _: &OwnedRun) -> Result<Health, String> {
         Err("This native adapter cannot renew a pending game launch.".into())
     }
