@@ -611,9 +611,11 @@ impl GatewayManager {
         }));
         let native_observer = manager.profile_read_models.native_observer();
         let wake = manager.profile_automatic.wake.clone();
+        let game_changes = manager.games.read_model_signal();
         manager.profile_session.lock().unwrap_or_else(|p| p.into_inner()).observe_status(Arc::new(move |snapshot| {
             native_observer(snapshot);
             wake.notify();
+            game_changes.wake_launch();
         }));
         manager.profile_automatic.observe_read_model(manager.profile_read_models.automatic_observer());
         if let Err(error) = manager.profile_read_models.start() {
@@ -789,7 +791,7 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
-    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
+    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.games.read_model_signal().wake_launch();self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
         if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile activation or mode changes to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
@@ -1731,6 +1733,7 @@ impl GatewayManager {
     pub fn shutdown(&self) {
         if let Some(publisher) = &self.debug_inputs_observation { self.observations.broker().retire(publisher); }
         self.closed.store(true,Ordering::Release);
+        self.games.read_model_signal().wake_launch();
         self.workspace.shutdown();
         self.system_inventory.shutdown();
         for adapter in self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values(){adapter.set_workspace_owned(false);}

@@ -285,7 +285,10 @@ impl GatewayManager {
                 return current.map(|id|self.profile_activation_view(&id)).unwrap_or(Ok(Value::Null));
             }
             let id=request["activationId"].as_str().filter(|id|operation_id(id)).ok_or("Choose an exact activation operation.")?;
-            if request["command"]=="profile_activation_cancel" {self.profile_activations.cancel(id,&self.profile_admission_epoch)?;}
+            if request["command"]=="profile_activation_cancel" {
+                self.profile_activations.cancel(id,&self.profile_admission_epoch)?;
+                self.games.read_model_signal().wake_launch();
+            }
             self.profile_activation_view(id)
         })();
         match result {Ok(view)=>json!({"ok":true,"state":{"profileActivation":view}}),Err(error)=>json!({"ok":false,"error":error})}

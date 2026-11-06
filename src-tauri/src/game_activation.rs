@@ -299,21 +299,6 @@ impl Observer {
             })
             .collect())
     }
-    /// Matches an already observed native launch without advancing debounce or
-    /// substituting another instance of the same executable.
-    pub(crate) fn wait_for_process(
-        &self,
-        identity: &GameIdentity,
-        process: &ProcessIdentity,
-        budget: Duration,
-    ) -> bool {
-        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        let (state, _) = self.2.wait_timeout_while(state, budget, |state| {
-            state.exact_proof(identity, process).is_none()
-        }).unwrap_or_else(|p| p.into_inner());
-        state.exact_proof(identity, process).is_some()
-    }
-
     pub(crate) fn wait_for_started_identity(
         &self,
         identity: &GameIdentity,

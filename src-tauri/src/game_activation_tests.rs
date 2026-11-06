@@ -60,12 +60,24 @@ fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
     let process = running(1);
     *platform.current.lock().unwrap() = Ok(Some(process.clone()));
     observer.observe(&platform, &[game()]);
-    assert!(!observer.wait_for_process(&identity, &process, Duration::ZERO));
+    let signal = Arc::new(crate::game_read_models::signals::Signal::default());
+    observer.watch_changes(signal.clone());
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    signal.watch_launch(&wake);
+    let initial = wake.observed();
+    assert!(observer.confirmed_process(&identity, &process).is_none());
     std::thread::scope(|scope| {
         scope.spawn(|| observer.observe(&platform, &[game()]));
-        assert!(observer.wait_for_process(&identity, &process, Duration::from_secs(1)));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while wake.observed() == initial {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "The committed process did not notify the launch waiter");
+            wake.wait(initial, remaining);
+        }
+        assert!(observer.confirmed_process(&identity, &process).is_some());
     });
-    assert!(!observer.wait_for_process(&identity, &running(2), Duration::ZERO));
+    assert!(observer.confirmed_process(&identity, &running(2)).is_none());
     assert_eq!(observer.wait_for_started_identity(&identity, None, Duration::ZERO), Some(process.clone()));
     assert!(observer.wait_for_started_identity(&identity, Some(&process), Duration::ZERO).is_none());
     assert_eq!(platform.scans.load(Ordering::Relaxed), 2);

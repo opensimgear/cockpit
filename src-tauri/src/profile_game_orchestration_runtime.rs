@@ -257,6 +257,8 @@ impl GatewayManager {
             let mut attempted = false;
             let mut actual_decision = None;
             let mut completed_response = None;
+            let confirmation_wake = Arc::new(osg_streams::NativeWake::default());
+            let _ = confirmation_wake.bind_thread(std::thread::current());
             let result = (|| {
                 let armed = {
                     let _admission = self
@@ -304,6 +306,7 @@ impl GatewayManager {
                         .ok_or("Native launch admission epoch exhausted.")?;
                     self.rebind_profile_activation_epoch(&activation_id, admission_epoch, held_epoch)?;
                     coordinator.bind_launch_epoch(&owner, held_epoch)?;
+                    self.games.read_model_signal().watch_launch(&confirmation_wake);
                     self.games.arm_profile_launch(
                         prepared,
                         &crate::games::launch::LaunchAdmission {
@@ -363,19 +366,17 @@ impl GatewayManager {
                 self.note_profile_activation(held_epoch, "launching", &format!("Verifying the {game_name} process…"));
                 let deadline = Instant::now() + Duration::from_secs(3);
                 let confirmed = loop {
+                    let observed = confirmation_wake.observed();
                     self.launch_held(&capture, &started.owner, held_epoch)?;
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
+                    if Instant::now() >= deadline {
                         return Err("The native watcher did not confirm the exact launched process before its deadline.".into());
                     }
-                    // Keep cancellation checks responsive without scanning the
-                    // process inventory again until the observer has proof.
-                    if self.games.wait_for_started_profile_process(&started, remaining.min(Duration::from_millis(25))) {
-                        self.launch_held(&capture, &started.owner, held_epoch)?;
+                    if self.games.has_started_profile_process_proof(&started) {
                         if let Some(confirmed) = self.games.confirm_started_profile_activation(&started)? {
                             break confirmed;
                         }
                     }
+                    confirmation_wake.wait(observed, deadline.saturating_duration_since(Instant::now()));
                 };
                 let decision = self.launch_decision(&capture, &confirmed)?;
                 self.note_profile_activation(held_epoch, "configuring-game-context", &format!("Connecting {game_name} mappings and telemetry…"));

@@ -118,12 +118,11 @@ impl GamesRuntime {
             .activation
             .confirmed_process(&started.identity, &started.process))
     }
-    pub(crate) fn wait_for_started_profile_process(
+    pub(crate) fn has_started_profile_process_proof(
         &self,
         started: &super::launch::StartedGame,
-        budget: Duration,
     ) -> bool {
-        self.inner.activation.wait_for_process(&started.identity, &started.process, budget)
+        self.inner.activation.confirmed_process(&started.identity, &started.process).is_some()
     }
     pub(crate) fn profile_activation_identity(
         &self,
