@@ -6,7 +6,6 @@ const intervals = new Map([
   ['src/lib/CompanionConnections.svelte', [
     "()=>{secondsLeft=Math.max(0,Math.ceil((expires-Date.now())/1000));if(!secondsLeft&&pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}},1000",
   ]],
-  ['src/lib/Esp32Companions.svelte', ['refresh,1000']],
   ['src/lib/ProfileDesktopControls.svelte', ['refresh,1500']],
 ]);
 
@@ -35,12 +34,8 @@ const timeouts = new Map([
     '()=>{now=performance.now();},Math.max(0,Math.ceil(deadline-performance.now()))',
   ]],
   ['packages/widget-compiler/src/compiler.ts', ['resolve,0']],
-  // User-initiated firmware workflow deadlines, including dormant source.
+  // User-initiated firmware workflow deadlines.
   ['src/lib/CompanionConnections.svelte', ['resolve,1500']],
-  ['src/lib/Esp32Companions.svelte', [
-    "()=>{if(port===selectedPort&&detecting)finishDetection('No firmware response received within 5 seconds. The board might be in bootloader mode. Tap RESET without holding BOOT, then retry detection. Also check the USB connection.');},5000",
-    'resolve,1500',
-  ]],
   // Debounce, dismissal, resource disposal and explicit operation deadlines.
   ['src/lib/activity/ActivityPanel.svelte', ['()=>settledSearch=value,250']],
   ['src/lib/companion-settings.ts', ['()=>{timer=undefined;void start();},Math.max(0,due-Date.now())']],
@@ -83,7 +78,7 @@ function scripts(file, source) {
 export function checkUiTimers(sources) {
   const violations = [];
   for (const [file, source] of sources) {
-    for (const dormant of ['Esp32Companions', 'ProfileDesktopControls']) {
+    for (const dormant of ['ProfileDesktopControls']) {
       if (file !== `src/lib/${dormant}.svelte` && source.includes(dormant)) {
         violations.push(`${file}: dormant ${dormant} has a production reference`);
       }

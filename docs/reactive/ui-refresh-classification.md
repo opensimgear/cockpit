@@ -60,7 +60,7 @@ use the following sources.
 | Applied debug controls | Exact runtime owner and committed debug-input revision. |
 | Physical input learning | Active editor subscribes to the native learning revision. The native learner wakes on reports, catalogue changes and its expiry. |
 | Retained recovery | Native recovery revision, including provisioning job transitions. |
-| `Esp32Companions.svelte` and `ProfileDesktopControls.svelte` | No production imports. Their intervals are dormant. The latter still has a direct component test. |
+| `ProfileDesktopControls.svelte` | No production imports. Its interval is dormant and it has a direct component test. |
 
 Browser companion assignments arrive over a subscription. Reconnect uses
 transport events and a single retry deadline. The worker owns steady-state
@@ -144,7 +144,7 @@ The companion app and firmware rows are tracked separately.
 | `CompanionConnections.svelte:192` | Open pairing dialog, expiry countdown | Keep local countdown rendering. The browser and native idle traces verify no steady-state requests. |
 | `CompanionConnections.svelte:213` | User-started flash, wait for serial re-enumeration | Keep the one-time settle delay pending physical reconnect qualification in #199. |
 | `CompiledCompanionDesigner.svelte:164`, `GenericWidgetDesigner.svelte:194`, `ProfileLibraryTools.svelte:17` | Each export handler, after the user downloads a blob | Keep one-time object URL revocation. Export flow is covered separately from data observation. |
-| `Esp32Companions.svelte:28,103,121` | Dormant ESP32 component, request timeout, flash settle delay and status refresh | No production import. The timer guard fails if this component gains a caller. |
+| `Esp32Companions.svelte:28,103,121` | Former ESP32 component, request timeout, flash settle delay and status refresh | Removed. The active companion view receives firmware progress from its own observation and retains explicit operation deadlines. |
 | `game-read-models/test-fixture.mjs:37` | Test helper, wait for authored observation settlement | Test-only. Keep it out of production imports. |
 | `gateway-workspace.ts:65,66` | Workspace client, renew an existing editing claim | Keep the deadline while a claim exists. `gateway-workspace.test.mjs` covers renewal and retired claims. |
 | `notifications.ts:15,29` | Notification owner, dismissal for a visible notification | Keep the dismissal deadline. `notifications.test.mjs` covers pause and resume. |
