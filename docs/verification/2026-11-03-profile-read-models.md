@@ -63,9 +63,12 @@ timers remain outside this delivery.
 
 ## Open qualification
 
-System integration inventory still reads `profile_status` during workspace
-refresh, as observed in the actual native network recording. Whole-app R7 is
-unfinished. Other R5 source families, cross-client MCP application acceptance,
+The 2026-11-06 repeat of the native recording found zero `profile_status` reads
+during an idle window spanning two of the former workspace refresh cycles.
+System integration inventory now consumes the shared `profiles.runtime` stream.
+The regression also checks library and automatic status reads and confirms that
+independent consumers still see mutations while preserving dirty authoring.
+Whole-app R7, other R5 source families, cross-client MCP application acceptance,
 slow-consumer application acceptance and broader cancellation/background-job
 acceptance remain open. Hardware/simulator acceptance remains #199 at the top
 of the progress lane. This work neither measures nor qualifies physical preview

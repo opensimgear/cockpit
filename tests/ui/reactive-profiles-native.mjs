@@ -57,18 +57,17 @@ test('native profile streams update independent consumers and preserve dirty aut
   await until(()=>page.evaluate(`(()=>{const s=window.__profileReadModelAcceptance;return [s.library,s.other].every(list=>list.at(-1)?.value?.profiles.find(row=>row.id===${JSON.stringify(id)})?.name==='Stream remote change')})()`));
   const dirty=await page.evaluate(`(()=>{const s=window.__profileReadModelAcceptance;return {name:s.store.state.editor.document.name,epoch:s.store.editorEpoch,dirtyEpoch:s.dirtyEpoch,reads:s.reads.length,saves:s.saves}})()`);
   assert.equal(dirty.name,'Unsaved local draft');assert.equal(dirty.epoch,dirty.dirtyEpoch);assert.equal(dirty.reads,dirtyReads);assert.deepEqual(dirty.saves,[]);
-  // Observe an idle interval long enough to catch the removed 1s/1.5s/3s reads.
-  await new Promise(resolve=>setTimeout(resolve,3500));
-  const forbidden=calls.filter(call=>['profile_list','profile_automatic_status','profile_game_candidates'].includes(call.command));
-  assert.deepEqual(forbidden,[],'Profile library and automatic surfaces must use observations while idle.');
+  // Cover two of the former 3s workspace refresh cycles.
+  await new Promise(resolve=>setTimeout(resolve,7000));
+  const forbidden=calls.filter(call=>['profile_list','profile_status','profile_automatic_status','profile_game_candidates'].includes(call.command));
+  assert.deepEqual(forbidden,[],'Profile library, runtime and automatic surfaces must use observations while idle.');
   await request({command:'profile_delete',id,expectedRevision:revision});id=null;
   await until(()=>page.evaluate(`(()=>{const s=window.__profileReadModelAcceptance;return [s.library,s.other].every(list=>!list.at(-1)?.value?.profiles.some(row=>row.name==='Stream remote change'))})()`));
   await mkdir('.research/reactive',{recursive:true});
   const executable=await readFile('src-tauri/target/debug/osg-cockpit.exe');
   await writeFile('.research/reactive/profiles-native.json',JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,
    executableSha256:createHash('sha256').update(executable).digest('hex'),baseline,dirty,calls,
-   independentConsumers:true,noExternalOutputs:true,hardwareLatencyQualified:false,
-   remainingPolling:'System integration inventory still reads profile_status during workspace refresh; whole-app R7 is unfinished.'},null,2)+'\n');
+   independentConsumers:true,noExternalOutputs:true,hardwareLatencyQualified:false},null,2)+'\n');
  }finally{
   recording=false;
   if(id)await request({command:'profile_delete',id,expectedRevision:revision}).catch(()=>{});
