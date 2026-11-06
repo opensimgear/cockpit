@@ -104,6 +104,13 @@ impl Tracker {
                 if entry.injected {
                     return None;
                 }
+                // Admission and open retries belong to the context owner.
+                // A fallback reader must not qualify unrelated cold entries.
+                if entry.reader.is_none() && !entry.polling
+                    && entry.current.is_none() && entry.telemetry.is_none()
+                {
+                    return None;
+                }
                 let changed = entry.reader.is_some()
                     && entry.capture_watch.as_mut().is_some_and(CaptureBinding::begin_drain);
                 let expired = entry.capture_watch.is_some()

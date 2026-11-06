@@ -80,7 +80,9 @@ monitor already owned by the capture source. Process loss withdraws the cached
 view even during a detached read. Assetto readers drain on capture notifications.
 Their first native page timestamp determines the exact local freshness deadline, which
 expires the decoder without another read from the source. Other admitted
-readers still use the separate 100 ms process qualification pass. The shared
+readers still use the separate 100 ms process qualification pass. The pass
+leaves unopened readers and open retries with the context owner. A wake with
+no candidates skips installation validation and catalogue reads. The shared
 Windows process subscription wakes game context on lifecycle events. A live
 subscription lets the context worker reuse a successful batched inventory within
 the same library and event revisions. When X-Plane is the only configured

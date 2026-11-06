@@ -45,6 +45,7 @@ fn quiet_reader_admission_wakes_idle_maintenance_and_withdrawal_parks_it() {
     assert!(tracker.maintenance_delay(Instant::now()).is_none());
     let opening = read(work(&mut tracker, 1));
     assert!(tracker.maintenance_delay(Instant::now()).is_none(), "Opening runs on the context owner");
+    assert!(tracker.poll_candidates().is_empty(), "Another reader's fallback must not qualify this opening");
     tracker.apply_observation(opening);
     assert_ne!(wake.observed(), baseline, "A quiet provider must wake admission without a packet");
     assert_eq!(tracker.maintenance_delay(Instant::now()), Some(Duration::ZERO));
@@ -73,6 +74,7 @@ fn failed_reader_open_does_not_schedule_vehicle_maintenance() {
     tracker.apply_observation(failed);
     assert!(tracker.maintenance_delay(Instant::now()).is_none());
     assert!(tracker.entries["x-plane-12"].error.is_some());
+    assert!(tracker.poll_candidates().is_empty(), "Open retries are scheduled by the context owner");
 }
 #[test]
 fn detached_observation_publishes_only_matching_current_identity_and_epoch() {

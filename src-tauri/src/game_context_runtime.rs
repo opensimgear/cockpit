@@ -341,11 +341,14 @@ impl Inner {
         }
     }
     fn poll_vehicle_telemetry(&self, capture_only: bool) {
-        let games = self.vehicle_telemetry_games(capture_only);
         let candidates = {
             let mut vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
             if capture_only { vehicles.capture_candidates() } else { vehicles.poll_candidates() }
         };
+        if candidates.is_empty() {
+            return;
+        }
+        let games = self.vehicle_telemetry_games(capture_only);
         // Capture wakes check configuration without renewing the process
         // observation or querying Windows for each packet. The independent
         // maintenance pass checks identities without a retained capture owner.
