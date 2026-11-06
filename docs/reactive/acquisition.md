@@ -161,7 +161,11 @@ worker and explicit launch and setup checks are separate.
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
 | ESP32 companion touch | The common touch task checks both boards every 20 ms. Sunton exposes touch IRQ on GPIO36. Waveshare wires GT911 INT to GPIO4, currently configured as input with interrupts disabled. | Wake the task from the board interrupt and recheck the input after arming to cover a contact already in progress. Drain and clear GT911 ready reports. For Sunton, verify release, debounce and held-motion behavior before disposition of any sampling during contact. |
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
-| ESP32 USB console | Provisioning drains nonblocking stdin. Direct requests retry empty reads and use an absolute response deadline. | Route UART or USB receive readiness to one bounded decoder. Let pending requests wait on bytes, cancellation or their deadline. Preserve exact link and reply identity through reconnect. |
+| ESP32 USB console | Direct requests drain buffered stdin and wait for UART readiness with the original absolute response deadline. Provisioning still drains nonblocking stdin on the network task's maintenance wake. Both paths share the bounded record decoder. | Wake provisioning on UART receive readiness and qualify command cancellation, reconnect and physical USB on both boards. |
+
+The pinned ESP-IDF console forwards readiness registration to its primary
+device. The UART driver signals receive readiness on interrupt and checks
+already buffered bytes during registration. [Console VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_vfs_console/vfs_console.c) · [UART VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_uart/src/uart_vfs.c)
 
 The recorded approval applies to the Assetto shared-memory reader. The boundaries above remain open under the original acquisition gate.
 

@@ -1,9 +1,13 @@
 /* Exercise the real serial reader with status probes interleaved with replies. */
 #include <stdio.h>
+#include <sys/select.h>
 static int serial_getchar(void);
+static int serial_select(int,fd_set *,fd_set *,fd_set *,struct timeval *);
 #define getchar serial_getchar
+#define select serial_select
 #include "../network/serial_wire.c"
 #undef getchar
+#undef select
 #include <assert.h>
 #include <stdlib.h>
 #include <openssl/sha.h>
@@ -21,9 +25,24 @@ const osg_crypto osg_platform_crypto={sha,decode};
 static const char *incoming;
 static unsigned probes, feedback_events;
 static int64_t now;
+static unsigned waits;
+static int select_error;
+static const char *arriving;
 static int serial_getchar(void){return *incoming?(unsigned char)*incoming++:EOF;}
 int64_t esp_timer_get_time(void){return now;}
-void vTaskDelay(unsigned ms){now+=(int64_t)ms*1000;}
+static int serial_select(int count,fd_set *readable,fd_set *writeable,fd_set *errors,struct timeval *wait){
+    assert(count==STDIN_FILENO+1&&FD_ISSET(STDIN_FILENO,readable)&&!writeable&&!errors);
+    waits++;
+    if(select_error){
+        errno=select_error;select_error=0;now+=2000;return -1;
+    }
+    if(arriving){
+        assert(wait->tv_sec==0&&wait->tv_usec==8000);
+        now+=1000;incoming=arriving;arriving=NULL;return 1;
+    }
+    now+=(int64_t)wait->tv_sec*1000000+wait->tv_usec;
+    return 0;
+}
 void esp_fill_random(void *p,size_t n){memset(p,42,n);}
 void mbedtls_platform_zeroize(void *p,size_t n){memset(p,0,n);}
 void osg_network_status(const char *id){
@@ -109,8 +128,10 @@ int main(void){
     assert(!osg_serial_take_command());
     /* Status replies must not extend the request deadline indefinitely. */
     incoming="{\"command\":\"status\",\"requestId\":\"probe-5\"}\n";
+    const unsigned before_timeout=waits;
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
     assert(probes==5&&!reply&&now==10000&&!strcmp(socket.request_error,"USB response timed out"));
+    assert(waits==before_timeout+1);
     incoming="bad json\n";
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
     assert(!strcmp(socket.request_error,"Invalid USB reply JSON"));
@@ -183,6 +204,17 @@ int main(void){
     const char *rejected="{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"ok\":false,\"error\":\"Pairing expired\"}}";
     terminal=osg_json_parse(rejected,strlen(rejected));assert(terminal);
     osg_serial_receive_feedback(&socket,terminal);assert(feedback_events==terminal_before+2);cJSON_Delete(terminal);
+    incoming="";
+    snprintf(frames,sizeof(frames),"{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n",socket.serial_sequence+1);
+    const unsigned before_ready=waits;
+    const int64_t started=now;
+    arriving=frames;select_error=EINTR;
+    assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(waits==before_ready+2&&now-started==3000);
+    cJSON_Delete(reply);
+    select_error=EIO;
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    assert(!reply&&!strcmp(socket.request_error,"USB console receive failed"));
     assert(!osg_json_allocated());
     puts("Serial status probes remain responsive; fragmented records survive idle/request handoffs and timeouts");
 }

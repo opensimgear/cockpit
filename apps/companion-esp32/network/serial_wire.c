@@ -4,9 +4,12 @@
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "mbedtls/platform_util.h"
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/select.h>
+#include <unistd.h>
 static cJSON *deferred;
 static osg_transfer feedback_transfer;
 
@@ -82,8 +85,21 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     osg_transfer transfer={.bytes=osg_transport_reply,.capacity=osg_transport_reply_capacity};
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     while(esp_timer_get_time()<deadline){
+        // Drain bytes already buffered by stdio before waiting on the UART.
         int c=getchar();
-        if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(1));continue;}
+        if(c==EOF){
+            clearerr(stdin);
+            const int64_t remaining=deadline-esp_timer_get_time();
+            if(remaining<=0)break;
+            struct timeval wait={.tv_sec=remaining/1000000,.tv_usec=remaining%1000000};
+            fd_set readable;
+            FD_ZERO(&readable);
+            FD_SET(STDIN_FILENO,&readable);
+            const int ready=select(STDIN_FILENO+1,&readable,NULL,NULL,&wait);
+            if(ready>0 || (ready<0 && errno==EINTR))continue;
+            if(ready<0)s->request_error="USB console receive failed";
+            break;
+        }
         osg_serial_record record=osg_serial_json_byte(c,&v);
         if(record==OSG_SERIAL_INCOMPLETE)continue;
         if(record==OSG_SERIAL_TOO_LARGE){s->request_error="USB reply exceeds buffer";break;}

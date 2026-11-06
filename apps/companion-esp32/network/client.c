@@ -798,7 +798,8 @@ static void network_task(void *arg){
         else if(!osg_wifi_clock())fail("trusted-clock-invalid");
         else {state=AUTH;next_request=millis();report("restoring-saved-setup");}
     }
-    (void)fcntl(fileno(stdin),F_SETFL,O_NONBLOCK);report("serial-provisioning-ready");
+    if(fcntl(fileno(stdin),F_SETFL,O_NONBLOCK)<0){fail("serial-nonblocking-mode-failed");return;}
+    report("serial-provisioning-ready");
     for(;;){
         cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
         if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
