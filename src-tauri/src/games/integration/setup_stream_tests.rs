@@ -9,12 +9,16 @@ fn unchanged_publication_reuses_views_and_summary_omits_large_collections() {
     let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true});
     let record = runtime.inner.provider_snapshot("dcs").0;
     let status = json!({"state":"ready","verified":true,"candidates":["large"],"aircraftExports":["large"],"checkPreview":{"state":"ready"}});
+    let context = signal.context_update_wake.observed();
     runtime.inner.publish_setup(&game, &record, status.clone());
+    let published = signal.context_update_wake.observed();
+    assert_ne!(published, context);
     let before = signal.wake.observed();
     let key = source_scope(&game, "dcs");
     let first = runtime.inner.views.lock().unwrap().entries[&key].1.clone();
     runtime.inner.publish_setup(&game, &record, status);
     assert_eq!(signal.wake.observed(), before);
+    assert_eq!(signal.context_update_wake.observed(), published);
     assert!(Arc::ptr_eq(&first, &runtime.inner.views.lock().unwrap().entries[&key].1));
     let summary = runtime.inner.cached_setup_summary(&game, "dcs");
     assert_eq!(summary["verified"], true);

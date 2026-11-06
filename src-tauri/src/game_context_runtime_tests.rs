@@ -129,12 +129,19 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
 
     let mut catalogue = platform.catalogue(&BTreeMap::new());
     catalogue.push(json!({"id":"dcs","provider":"dcs-bios","integrationKey":"dcs",
-        "integrationCompatible":true,"installed":true}));
+        "integrationCompatible":true,"executable":"DCS.exe"}));
     *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(catalogue);
     wait_for_setup();
     assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), false)
         .is_some_and(|delay| delay > Duration::from_millis(500)));
+    runtime.inner.setup.set_dcs_discovery_watch(true);
+    assert!(delay(false).is_some(), "Discovery alone cannot cover DCS setup files");
+    runtime.inner.setup.set_setup_watch("dcs", true);
+    assert_eq!(delay(false), None, "Fully watched idle DCS can park");
+    assert!(delay(true).is_some(), "Pending DCS inspection needs a retry");
+    runtime.inner.setup.set_dcs_discovery_watch(false);
+    assert!(delay(false).is_some(), "Watching setup files alone cannot cover discovery");
     runtime.shutdown();
 }
 

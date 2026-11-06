@@ -238,6 +238,10 @@ impl GameIntegrationSetup {
             .map(|target| (target.to_path_buf(), install.map(Path::to_path_buf)))
     }
 
+    pub(crate) fn dcs_setup_fully_watched(&self) -> bool {
+        self.inner.dcs_discovery_watched.load(Ordering::Acquire) && self.catalogue_watched("dcs")
+    }
+
     pub(crate) fn set_dcs_discovery_watch(&self, active: bool) {
         self.inner.dcs_discovery_watched.store(active, Ordering::Release);
     }

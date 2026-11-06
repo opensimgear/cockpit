@@ -88,12 +88,13 @@ integration, the context owner waits for notifications or a pending vehicle
 reader retry. X-Plane SDK changes use their own file watch. The 500 ms pass
 remains when process coverage is unavailable or an
 inventory read fails. Each game's installation and runtime checks still apply.
-For a watched DCS
-installation, native changes to the selected
-export, BIOS, catalogue and aircraft files trigger setup reinspection. The
-Saved Games root watch also observes direct DCS profile directory creation,
-removal and rename. Startup and native setup, removal and recovery operations
-publish the ledger state. Safety-sensitive commands still read durable evidence.
+For DCS, native changes to the selected export, BIOS, catalogue and aircraft
+files trigger setup reinspection. The Saved Games root watch observes direct
+DCS profile directory creation, removal and rename. A committed setup change
+wakes the context owner to replace watches when the selected folder changes.
+With both watches and live process notifications, the context owner parks
+between events and pending retries. Safety-sensitive commands still read
+durable evidence.
 X-Plane passive inspection schedules explicit demand at its lease deadline.
 Closing an observation wakes the vehicle worker to release its channels even
 when the native capture has no updates.

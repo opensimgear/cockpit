@@ -13,7 +13,7 @@ pub(super) struct DcsWatch {
 }
 
 impl DcsWatch {
-    pub(super) fn refresh(&mut self, inner: &Inner) {
+    pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
         let game = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
             .catalogue.iter().find(|game| crate::game_discovery::integration_key(game) == Some("dcs")).cloned();
         let installed = game.as_ref().is_some_and(|game| game["installed"] == true);
@@ -36,7 +36,7 @@ impl DcsWatch {
         });
         if self.source.refresh_with_children(self.paths.clone(), children) {
             self.pending = self.source.active();
-            inner.setup.set_setup_watch("dcs", self.pending);
+            inner.setup.set_setup_watch("dcs", self.pending && self.scope.is_some());
             inner.setup.set_dcs_discovery_watch(self.pending && children.is_some());
             if !self.pending { inner.changes.mark_resources(); }
         }
@@ -46,6 +46,7 @@ impl DcsWatch {
                 if !self.pending { inner.changes.mark_resources(); }
             }
         }
+        self.pending
     }
 }
 

@@ -58,6 +58,7 @@ impl Inner {
     pub(super) fn changed(&self) {
         if let Some(changes) = self.changes.get() {
             changes.mark(crate::game_read_models::signals::Domain::Setup);
+            changes.context_update_wake.notify();
             changes.mark_resources();
         }
     }
