@@ -77,6 +77,32 @@ test('workspace updates reproject gateways and discovery loss without provider r
  h.controller.dispose();
 });
 
+test('a committed remembered revision reprojects Devices without reading providers or saving an echo', async () => {
+  let committed = null, reads = 0, writes = 0;
+  const h = harness({ storage: {
+    refresh() { reads++; },
+    getItem() { return committed; },
+    setItem(_key, value) { writes++; committed = value; },
+  } });
+  try {
+    await h.controller.refresh();
+    const memory = JSON.parse(committed);
+    memory.components.push({ ...h.component('host'), id: 'external', name: 'External memory', provider: 'unavailable' });
+    committed = JSON.stringify(memory);
+    const before = { reads, writes, requests: h.requests.length };
+    await h.controller.rememberedChanged();
+    assert.equal(h.component('external').presence, 'unknown');
+    assert.equal(h.component('external').forget.allowed, false);
+    assert.equal(h.component('host').presence, 'connected');
+    assert.deepEqual({ reads, writes, requests: h.requests.length }, before);
+    memory.components.pop();
+    committed = JSON.stringify(memory);
+    await h.controller.rememberedChanged();
+    assert.equal(h.component('external'), undefined);
+    assert.deepEqual({ reads, writes, requests: h.requests.length }, before);
+  } finally { h.controller.dispose(); }
+});
+
 test('discovery artwork does not reproject or persist remembered inventory', async () => {
  const memory = storage(), writes = [];
  const h = harness({ games: { catalogue: [game()] }, storage: {

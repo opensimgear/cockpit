@@ -138,6 +138,7 @@ export class SystemInventoryController {
   private projectedControllers?: ControllerInventoryState;
   private projecting?: Promise<SystemSnapshot>;
   private projectionQueued = false;
+  private rememberProjection = false;
   constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; gatewayError?: () => string; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
     this.gatewayError = options.gatewayError ?? (() => '');
@@ -182,6 +183,10 @@ export class SystemInventoryController {
   workspaceChanged(): Promise<SystemSnapshot> {
     if (this.disposed || !this.readyProjection) return Promise.resolve(this.snapshot);
     return this.projectCurrent();
+  }
+  rememberedChanged(): Promise<SystemSnapshot> {
+    if (this.disposed || !this.readyProjection) return Promise.resolve(this.snapshot);
+    return this.projectCurrent(false);
   }
   async refreshCompanions(): Promise<void> {
     if (this.disposed) return;
@@ -286,12 +291,18 @@ export class SystemInventoryController {
     this.readyProjection = true;
     return this.projectCurrent();
   }
-  private projectCurrent(): Promise<SystemSnapshot> {
+  private projectCurrent(remember = true): Promise<SystemSnapshot> {
     this.projectionQueued = true;
+    this.rememberProjection ||= remember;
     if (this.projecting) return this.projecting;
     const task = (async () => {
       try {
-        do { this.projectionQueued = false; await this.projectOnce(); } while (this.projectionQueued && !this.disposed);
+        do {
+          const remember = this.rememberProjection;
+          this.projectionQueued = false;
+          this.rememberProjection = false;
+          await this.projectOnce(remember);
+        } while (this.projectionQueued && !this.disposed);
         return this.snapshot;
       } finally {
         this.projecting = undefined;
@@ -300,7 +311,7 @@ export class SystemInventoryController {
     this.projecting = task;
     return task;
   }
-  private async projectOnce(): Promise<SystemSnapshot> {
+  private async projectOnce(remember: boolean): Promise<SystemSnapshot> {
     const projectionId = ++this.projectionId;
     this.projectedControllers = this.controllerState;
     const resourceVersion = this.resourceVersion;
@@ -397,7 +408,7 @@ export class SystemInventoryController {
       if (c && visibility) aliases[`visibility:pnp:${visibility.id.toLowerCase()}`] = c.id;
       if (c) aliases[visibilityIds.get(h)!] = c.id;
     }
-    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases);
+    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases, remember);
     this.projectedResourceVersion = resourceVersion;
     if (!this.disposed && !this.projectionQueued && projectionId === this.projectionId) this.onChange(snapshot);
     return snapshot;

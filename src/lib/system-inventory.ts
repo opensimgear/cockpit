@@ -131,12 +131,15 @@ export class SystemInventoryRegistry {
   private remembered(c: SystemComponent): SystemComponent {
     return { ...c, presence: 'unknown', stale: true, owner: null, inputOwner: null, configurationOwner: null, configurationRoute: null, capture: 'unknown', connections: c.connections.map(x => ({ ...x, current: false })), forget: { ...c.forget, allowed: false, reason: 'Refresh this provider before forgetting a remembered component.' } };
   }
-  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}): Promise<SystemSnapshot> {
-    return this.serialize(() => this.updateNow(observations, completeProviders, diagnostics, now, aliases));
+  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}, remember = true): Promise<SystemSnapshot> {
+    return this.serialize(() => this.updateNow(observations, completeProviders, diagnostics, now, aliases, remember));
   }
-  private async updateNow(observations: SystemObservation[], completeProviders: string[], diagnostics: string[], now: number, aliases: Record<string, string>): Promise<SystemSnapshot> {
+  private async updateNow(observations: SystemObservation[], completeProviders: string[], diagnostics: string[], now: number, aliases: Record<string, string>, remember: boolean): Promise<SystemSnapshot> {
     let readError = '';
-    try { await this.storage?.refresh?.(); this.reloadMemory(); } catch { readError = 'Remembered inventory could not be loaded. Durable cleanup is unavailable.'; }
+    try {
+      if (remember) await this.storage?.refresh?.();
+      this.reloadMemory();
+    } catch { readError = 'Remembered inventory could not be loaded. Durable cleanup is unavailable.'; }
     if (new Set(observations.map(c => c.id)).size !== observations.length) throw new Error('System inventory contains duplicate logical identities.');
     const candidate = cloneMemory(this.memory);
     // Positive provider identity evidence supersedes remembered sightings. This
@@ -194,7 +197,7 @@ export class SystemInventoryRegistry {
     }
     for (const [id, tombstone] of Object.entries(candidate.forgotten)) if (!seen.has(id) && (!tombstone.provider || completeProviders.includes(tombstone.provider))) tombstone.sawAbsent = true;
     candidate.components = pruneGatewayRoutes(next, forgottenGateways(candidate)).components;
-    this.storageError = readError || await this.persist(candidate);
+    this.storageError = readError || (remember ? await this.persist(candidate) : this.storageError);
     // Live inspection remains usable if remembering it fails. Destructive
     // cleanup below requires persistence to succeed before publishing anything.
     this.memory = candidate;

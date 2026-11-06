@@ -2,6 +2,7 @@
   import { inventoryStorage } from './persistence/inventory-storage';
   import { uiPreference } from './persistence/ui-preferences';
   const devicesMode = uiPreference('devices-mode');
+  const rememberedInventory = uiPreference('remembered');
   import PageHeader from './PageHeader.svelte';
 
   import { onMount, tick, untrack, type Snippet } from 'svelte';
@@ -139,6 +140,12 @@
     const updateMotion = () => { reducedMotion = motion.matches; };
     updateMotion(); motion.addEventListener('change', updateMotion);
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage: inventoryStorage, onChange: next => { snapshot = next; oninventory(next); } });
+    let rememberedRevision = rememberedInventory.get().revision;
+    const stopRemembered = rememberedInventory.subscribe(entry => {
+      if (!entry.ready || entry.revision <= rememberedRevision) return;
+      rememberedRevision = entry.revision;
+      void controller.rememberedChanged().catch(reason => { error = String(reason); });
+    });
     const stopResources = observeProfileResources((page, error) => { void controller.observeResources(page?.resources ?? null, error); });
     const refreshCompanions = () => { void controller.refreshCompanions().catch(reason => { error = String(reason); }); };
     const observations = companionObservations();
@@ -159,7 +166,7 @@
     inventoryObservations.subscribe('system.inventory', state => {
       if (state.status === 'ready') void controller.refreshNative().catch(reason => { error = String(reason); });
     });
-    return () => { reviewEpoch++; cleanupAbort?.abort(); stopResources(); stopCompanions(); stopListener(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); stopResources(); stopCompanions(); stopListener(); stopRemembered(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 
