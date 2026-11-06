@@ -30,7 +30,6 @@ impl GatewayManager {
             }
             "selection-mode" | "game-rule" | "game-preference" => {
                 let captured = self.profile_automatic.settings_snapshot();
-                let revision = revision(&captured);
                 let saved = &captured["settings"];
                 let settings = match scope {
                     "selection-mode" => json!({"mode":saved["mode"],"readOnly":captured["readOnly"]}),
@@ -40,7 +39,12 @@ impl GatewayManager {
                     }
                     _ => json!({"profileId":saved["preferredProfiles"][game(request)?],"readOnly":captured["readOnly"]}),
                 };
-                (settings, revision)
+                let token = if scope == "game-preference" {
+                    revision(&json!({"scope":scope,"gameId":request["gameId"],"settings":settings}))
+                } else {
+                    revision(&captured)
+                };
+                (settings, token)
             }
             _ => return Err("Unknown local settings scope.".into()),
         };
