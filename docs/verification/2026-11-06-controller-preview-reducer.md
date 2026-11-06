@@ -29,3 +29,23 @@ The full 130-test system inventory suite and the inventory and USB coverage
 gates passed. The running native Cockpit passed its navigation trace and
 reported zero USB setup endpoints. Physical USB ownership and controller
 motion-to-display and virtual-controller timing remain in #199.
+
+## Frame scheduling
+
+Both controller inspectors apply the newest continuous report at the next
+display frame. The initial baseline, replacement and loss are immediate.
+Closing the view cancels its pending frame. Raw observers and native routing
+keep their independent delivery paths. The fake frame-clock regression
+checks coalescing, immediate loss, baseline recovery and cleanup.
+
+The visible native Cockpit rendered all 125 matched reports in a ten-second
+passive VKB Gladiator trace. The estimated journal-to-DOM median was 11.9 ms
+and p95 was 13.6 ms, with 2.25 ms clock alignment uncertainty. The p95 to
+the following measured frame opportunity was 20.1 ms. This was a passive
+software trace without a controlled sweep, baseline comparison, physical
+display measurement or virtual output.
+
+The running Cockpit passed delayed preview receipt and output-free routing.
+All 17 controller observer tests and 130 inventory tests passed. Observer
+coverage was 98.68% lines, 96.74% branches and 97.37% functions, with zero
+Svelte diagnostics on the isolated candidate.

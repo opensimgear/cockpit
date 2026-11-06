@@ -43,7 +43,7 @@ function harness({ seeded = false, detailsOnly = true, error = '', actionError =
         const observer = { listener, stopped: false }; inventoryObservers.push(observer); listener({ status: 'connecting' });
         return () => { observer.stopped = true; };
       } };
-      if (name === './controller-observations') return { observeControllerInputs(id, listener) {
+      if (name === './controller-observations') return { observeControllerPreview(id, listener) {
         const observer = { id, listener, stopped: false }; inputObservers.push(observer);
         listener({ status: 'connecting' }); return () => { observer.stopped = true; };
       } };

@@ -10,6 +10,10 @@ export interface ControllerInputState {
   readonly error?: string;
 }
 type Listener = (state: ControllerInputState) => void;
+type PreviewClock = {
+  requestAnimationFrame(callback: FrameRequestCallback): number;
+  cancelAnimationFrame(id: number): void;
+};
 type RecordValue = Record<string, unknown>;
 type Snapshot = DeepReadonly<ControllerResult & { cursor: string; capturedUs: string }>;
 type ControlView = DeepReadonly<ControllerControl>;
@@ -193,6 +197,41 @@ export class ControllerInputObservations {
   private readonly observations: SharedObservations;
   constructor(observations = new SharedObservations()) { this.observations = observations; }
 
+  /** Presentation only. Transport receipts and other listeners remain immediate. */
+  observePreview(sourceId: string, listener: Listener, clock: PreviewClock = globalThis): () => void {
+    let rendered: ControllerInputState | undefined;
+    let pending: ControllerInputState | undefined;
+    let frame: number | undefined;
+    const cancel = () => {
+      if (frame !== undefined) clock.cancelAnimationFrame(frame);
+      frame = undefined;
+      pending = undefined;
+    };
+    const stop = this.observe(sourceId, state => {
+      const previous = rendered?.detail;
+      const detail = state.detail;
+      if (state.status !== 'ready' || !detail?.source?.baselineReady
+        || rendered?.status !== 'ready' || !previous?.source?.baselineReady
+        || previous.session !== detail.session || previous.source.generation !== detail.source.generation) {
+        cancel();
+        rendered = state;
+        this.notify(listener, state);
+        return;
+      }
+      pending = state;
+      frame ??= clock.requestAnimationFrame(() => {
+        frame = undefined;
+        const next = pending;
+        pending = undefined;
+        if (next) {
+          rendered = next;
+          this.notify(listener, next);
+        }
+      });
+    });
+    return () => { stop(); cancel(); };
+  }
+
   observe(sourceId: string, listener: Listener): () => void {
     if (!uuid.test(sourceId)) {
       this.notify(listener, { status: 'error', error: 'Choose an exact physical controller.' });
@@ -256,4 +295,9 @@ let shared: ControllerInputObservations | undefined;
 export function observeControllerInputs(sourceId: string, listener: Listener): () => void {
   shared ??= new ControllerInputObservations();
   return shared.observe(sourceId, listener);
+}
+
+export function observeControllerPreview(sourceId: string, listener: Listener): () => void {
+  shared ??= new ControllerInputObservations();
+  return shared.observePreview(sourceId, listener);
 }

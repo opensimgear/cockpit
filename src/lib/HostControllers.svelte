@@ -8,11 +8,11 @@
   import { controllerRoles, type ControllerResult, type HostController } from './controllers';
   import { observeControllerInventory, type ControllerInventoryState } from './controller-read-models/shared';
   import type { DeepReadonly } from './profiles';
-  import { observeControllerInputs, type ControllerInputDetail } from './controller-observations';
+  import { observeControllerPreview, type ControllerInputDetail } from './controller-observations';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
   let inventory = $state<DeepReadonly<ControllerResult>>({ sources: [], offset: 0, total: 0, limit: 256 });
   let inventoryState = $state<ControllerInventoryState>({ status: 'connecting' });
-  let detail = $state<ControllerInputDetail | null>(null);
+  let detail = $state.raw<ControllerInputDetail | null>(null);
   let selected = $state('');
   let name = $state('');
   let role = $state('controller');
@@ -79,7 +79,7 @@
     const sourceId = selected;
     if (!mounted || !sourceId) return;
     detail = null;
-    return untrack(() => observeControllerInputs(sourceId, state => {
+    return untrack(() => observeControllerPreview(sourceId, state => {
       if (disposed || selected !== sourceId) return;
       detail = state.detail ?? null;
       error = state.error ?? '';

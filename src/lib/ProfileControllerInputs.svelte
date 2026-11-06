@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import SystemControllerInputs from './SystemControllerInputs.svelte';
   import { controllerSourceId } from './controller-inputs';
-  import { observeControllerInputs } from './controller-observations';
+  import { observeControllerPreview } from './controller-observations';
   import type { ControllerControl } from './controllers';
   import type { DeepReadonly } from './profiles';
   import type { ResourceSummary } from './profile-inventory';
@@ -19,7 +19,7 @@
     void generation;
     controls = []; error = ''; ready = false; observedOnline = undefined;
     if (!mounted || !active || !id) return;
-    return untrack(() => observeControllerInputs(id, state => {
+    return untrack(() => observeControllerPreview(id, state => {
       if (state.detail?.source) {
         observedOnline = state.detail.source.online;
         controls = state.detail.controls ?? [];

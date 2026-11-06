@@ -67,6 +67,41 @@ test('shares reduction, late snapshot, immutable consumer isolation and referenc
   assert.equal(states.length, before);
 });
 
+test('preview renders only the latest continuous report per frame and clears immediately on loss', () => {
+  const { client, states, send } = setup();
+  const previews = [], frames = new Map();
+  let nextFrame = 0;
+  const stop = client.observePreview(id, state => previews.push(state), {
+    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame(handle) { frames.delete(handle); },
+  });
+  send();
+  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  assert.equal(frames.size, 0);
+  send(change());
+  send(change({ source: controller({ sequence: '3' }), cursor: '3', capturedUs: '12' }));
+  assert.equal(states.at(-1).detail.source.sequence, '3');
+  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  assert.equal(frames.size, 1);
+  const present = frames.get(nextFrame);
+  frames.delete(nextFrame);
+  present();
+  assert.equal(previews.at(-1).detail.source.sequence, '3');
+  assert.equal(frames.size, 0);
+  send(change({ source: controller({ sequence: '4' }), cursor: '4', capturedUs: '13' }));
+  assert.equal(frames.size, 1);
+  send(undefined, { kind: 'loss', reason: 'overflow' });
+  assert.equal(previews.at(-1).status, 'lost');
+  assert.equal(previews.at(-1).detail.controls[0].value, null);
+  assert.equal(frames.size, 0);
+  send(snapshot({ source: controller({ sequence: '5' }), cursor: '5', capturedUs: '14' }), { kind: 'snapshot' });
+  assert.equal(previews.at(-1).detail.source.sequence, '5');
+  send(change({ source: controller({ sequence: '6' }), cursor: '6', capturedUs: '15' }));
+  assert.equal(frames.size, 1);
+  stop();
+  assert.equal(frames.size, 0);
+});
+
 test('published values, rows and descriptors remain immutable even in delayed consumers', async () => {
   const { states, send } = setup();
   const payload = snapshot();
