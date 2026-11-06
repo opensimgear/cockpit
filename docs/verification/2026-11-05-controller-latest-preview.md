@@ -56,3 +56,27 @@ controls the run never emitted and is not an equivalent optimization.
 Full-app reactive qualification remains open under #188/#198. Physical latency
 and actual simulator acceptance remain #199, verified first in Progress. CI
 remains deferred until implementation is complete, as requested.
+
+## Shared capture with an applied profile
+
+A second running-Cockpit test on 2026-11-06 paired the production preview subscriber
+with an output-free applied profile on the same 137-control VKBsim Gladiator EVO R.
+Preview alone left the profile stopped. Both consumers reported native axis value
+3493 and capture time 540120239 microseconds from generation 1. The preview
+identified report 6746. The comparison uses the profile input endpoint because
+the derived mirror output has a graph evaluation timestamp.
+
+After unsubscribe, the preview received no more frames. The profile kept a
+known output across a 1,750 ms quiet interval, survived same-profile replacement
+with a new owner, and rejected inspection after Stop. The fixture removed its
+temporary profile. No desktop, virtual or physical output was configured.
+
+All five running checks passed in one serial run. They covered the shared capture
+test, passive subscription sharing and reopening, delayed preview recovery, and
+passive USB and CAN admission. Module capture while routing, physical controller
+latency and actual destination receipt remain open.
+
+Tested executable SHA-256:
+`bfc0f71a23b850aff4901d0d4b26c123ea7c60fc99ccfe91d43f0d3e8c1f45ea`.
+Native source commit: `e12557aa0a01a23e913c4a26b68a7aae2bad35e8`.
+Evidence: `.research/reactive/profile-source-wakes-native/1793930945405/evidence.json`.

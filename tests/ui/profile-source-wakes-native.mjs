@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
-test('physical input reader activates, survives same-profile replacement and stops without previews',{
+test('physical routing shares capture with preview and survives preview closure and profile replacement',{
  skip:process.env.OSG_PROFILE_SOURCE_WAKES_NATIVE!=='1',timeout:120000,
 },async()=>{
  const page=await nativePage(),directory=`.research/reactive/profile-source-wakes-native/${Date.now()}`;
@@ -34,11 +34,10 @@ test('physical input reader activates, survives same-profile replacement and sto
     inputs:[{id:'in',name:'Input',direction:'input',contract:port.contract}],outputs:[{id:'out',name:'Output',direction:'output',contract:port.contract}]}];
    draft.document.bindings=[{id:'physical-mirror',from:{nodeId:input.id,portId:port.id},to:{nodeId:'mirror',portId:'in'}}];
    const saved=(await gatewayRequest({command:'profile_editor_save',...draft,expectedRevision:null})).profiles.document;
-   return {profile:saved,sourceId:controllerSourceId(resource),nodeId:'mirror'};
+   return {profile:saved,sourceId:controllerSourceId(resource),controlId:observed.descriptor.id,inputId:input.id,nodeId:'mirror'};
   })()`);
   profile=fixture.profile;
   assert.equal(profile.virtualOutputs.length,0);assert.equal((profile.desktopOutputs??[]).length,0);
-  // No controller preview subscription is opened by this test.
   const apply=async expected=>{
    const state=(await request({command:'profile_apply',id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:expected})).profiles.profileSession;
    assert.equal(state.state,'running',JSON.stringify(state));owner=state.owner;return state;
@@ -51,17 +50,53 @@ test('physical input reader activates, survives same-profile replacement and sto
    }
    return pages;
   };
+  const previewState=()=>page.evaluate('window.__sourceWakePreview');
+  const closePreview=()=>page.evaluate(`(()=>{window.__sourceWakePreviewStop?.();
+    delete window.__sourceWakePreviewStop;})()`);
+  await page.evaluate(`(async()=>{
+    const {observeControllerInputs}=await import('/src/lib/controller-observations.ts');
+    const sourceId=${JSON.stringify(fixture.sourceId)}, controlId=${JSON.stringify(fixture.controlId)};
+    window.__sourceWakePreview={frames:[],error:null};
+    window.__sourceWakePreviewStop=observeControllerInputs(sourceId,value=>{
+      const state=window.__sourceWakePreview;
+      if(value.status==='error')state.error=value.error;
+      if(value.status!=='ready')return;
+      const {source,controls,capturedUs}=value.detail;
+      const control=controls.find(control=>control.capability.id===controlId);
+      if(!control?.value)return;
+      state.frames.push({generation:source.generation,sequence:source.sequence,capturedUs,native:control.value.native});
+      if(state.frames.length>128)state.frames.shift();
+    });
+  })()`);
+  const previewBefore=await until(previewState,state=>state.frames.length>0);
+  assert.equal((await request({command:'profile_status'})).profiles.profileSession.owner,null,
+    'Preview alone must leave the profile stopped.');
   const active=await apply(null);
   const output=pages=>pages.flatMap(page=>page.ports).find(port=>port.endpoint.portId==='out');
   const initial=await until(inspect,pages=>output(pages)?.sample.status==='known');
   const axis=output(initial);
   assert.equal(axis.contract.schema.type,'integer');assert.ok(Number.isInteger(axis.sample.value.value));
   assert.ok(axis.sample.value.value>=axis.contract.schema.min&&axis.sample.value.value<=axis.contract.schema.max);
+  let latest;
+  const shared=await until(async()=>{
+    const result=(await request({command:'profile_runtime_inspect',owner,nodeId:fixture.inputId,offset:0,limit:64})).profileInspection;
+    const sample=result.ports.find(port=>port.endpoint.portId===fixture.controlId);
+    const preview=await previewState();
+    assert.equal(preview.error,null);
+    latest={sample,frames:preview.frames.slice(-3)};
+    const frame=preview.frames.find(frame=>frame.capturedUs===sample?.observedUs
+      && frame.native===sample?.sample.value?.value);
+    return frame?{frame,sample}:null;
+  }).catch(error=>{throw new Error(`No shared capture matched: ${JSON.stringify(latest)}`,{cause:error});});
+  assert.equal(shared.frame.generation,previewBefore.frames[0].generation);
+  await closePreview();
+  const closedPreview=await previewState();
   const quietMs=axis.contract.freshnessMs+250;
   assert.ok(Number.isSafeInteger(quietMs)&&quietMs>250&&quietMs<=10000,'Bounded native freshness window required');
   await new Promise(resolve=>setTimeout(resolve,quietMs));
   const held=await inspect();
   assert.equal(output(held)?.sample.status,'known','Quiet native liveness must survive its scheduled freshness deadline');
+  assert.deepEqual(await previewState(),closedPreview,'The closed preview must receive no more frames.');
   assert.equal((await request({command:'profile_status'})).profiles.profileSession.state,'running');
   const previous=owner;
   const replacement=await apply(previous);
@@ -73,9 +108,11 @@ test('physical input reader activates, survives same-profile replacement and sto
   const late=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({command:'profile_runtime_inspect',clientId:'source-watch-native-acceptance',owner,nodeId:fixture.nodeId,offset:0,limit:64})}})`);
   assert.equal(late.ok,false);
   await writeFile(`${directory}/evidence.json`,JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,
-   profile:profile.id,sourceId:fixture.sourceId,active,initial,quietMs,held,replacement,replaced,stopped,lateOwnerRejected:true,
-   noExternalOutputs:true,noPreviewSubscription:true,rawInputLatencyQualified:false,virtualLatencyQualified:false},null,2)+'\n');
+   profile:profile.id,sourceId:fixture.sourceId,previewBefore,active,initial,shared,quietMs,held,replacement,replaced,stopped,lateOwnerRejected:true,
+   noExternalOutputs:true,previewClosedBeforeReplacement:true,rawInputLatencyQualified:false,virtualLatencyQualified:false},null,2)+'\n');
  }finally{
+  await page.evaluate(`(()=>{window.__sourceWakePreviewStop?.();delete window.__sourceWakePreviewStop;
+    delete window.__sourceWakePreview;})()`).catch(()=>{});
   try{
    const current=(await request({command:'profile_status'})).profiles.profileSession.owner;
    if(owner&&current?.session===owner.session&&current.generation===owner.generation)await request({command:'profile_stop'});
