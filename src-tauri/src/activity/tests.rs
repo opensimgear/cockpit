@@ -99,6 +99,28 @@ fn activity_revision_follows_durable_append_and_clear() {
 }
 
 #[test]
+fn retention_observation_only_follows_committed_settings() {
+    let directory = crate::test_directory();
+    let runtime = Runtime::new(&directory.path().join("config.json"));
+    let observations = crate::observations::Runtime::new();
+    runtime.observe_revision(&observations).unwrap();
+    let broker = observations.broker();
+    let mut reader = broker.subscribe("retention", "mcp", "settings.activity").unwrap();
+    assert_eq!(reader.try_recv().unwrap().unwrap().payload.unwrap()["retentionDays"], 7);
+
+    runtime.sender.send(Message::Event(event("system", "fixture", "info", "Event".into(), None, None))).unwrap();
+    runtime.flush().unwrap();
+    assert!(runtime.request(&json!({"command":"activity_settings_save","retentionDays":0})).is_err());
+    assert!(reader.try_recv().unwrap().is_none());
+    runtime.request(&json!({"command":"activity_settings_save","retentionDays":30})).unwrap();
+    assert_eq!(reader.try_recv().unwrap().unwrap().payload.unwrap()["retentionDays"], 30);
+    drop(reader);
+    runtime.request(&json!({"command":"activity_settings_save","retentionDays":31})).unwrap();
+    let mut reopened = broker.subscribe("retention", "mcp", "settings.activity").unwrap();
+    assert_eq!(reopened.try_recv().unwrap().unwrap().payload.unwrap()["retentionDays"], 31);
+}
+
+#[test]
 fn runtime_flush_query_settings_and_clear_share_durable_authority() {
     let directory=crate::test_directory();let runtime=Runtime::new(&directory.path().join("config.json"));
     assert!(runtime.audit(&json!({"command":"game_save","gameId":"racing","name":"Racing","clientId":"test-cockpit-client"}),&json!({"ok":true})));

@@ -19,6 +19,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `games.jobs`, `games.telemetry` | Game read-model worker publishes job changes and telemetry invalidation | Discovery and artwork progress, and selected telemetry inspection. |
 | `companion.listener`, `companion.presence`, `companion.firmware` | Companion host publishes listener lifecycle, pairing and presence, and USB firmware progress separately | Companion connections, listener settings, designer and firmware workflows. |
 | `activity.log` | Activity log revision published after log and source updates | Activity log reads and filters. |
+| `settings.activity` | Activity retention publisher serializes committed retention changes | General Settings follows the committed value on native and browser-dev while preserving a local draft. |
 | `storage.backups` | Persistence backup owner publishes operation and inventory state | Native Settings backup controls. |
 | `preferences.<key>` | UI persistence owner publishes committed `theme`, `devices-mode`, `canvas-navigation`, `canvas-styling`, `tray` and `progress` values | Shared preference consumers on native and browser-dev. |
 | `preferences.remembered` | Native, browser-dev and MCP `ui_preferences_save` commit the `inventory/remembered` SQLite record. Its observation carries only the committed revision, so the record may exceed the change-frame budget. | The shared preference adapter fetches the single record after its revision advances. Mounted Devices reprojects it with cached provider state without saving it back. Live native and browser-dev fixtures verified that another client can add and remove a remembered row without extra record revisions. |
@@ -40,8 +41,9 @@ view is closed, one committed-only read on each of three reopens, and bounded
 search requests. The native AI settings fixture covers a visible credential
 creation, a quiet idle interval and a revocation while the tab is hidden.
 The hidden tab makes no settings reads and reopening shows the current
-credential list. Activity retention settings still read only on mount and
-need their own committed update path.
+credential list. The navigation fixture also verifies that Activity retention
+follows external commits, preserves a local draft and opens a fresh snapshot
+after General was hidden.
 
 The profile fixture uses two independent library readers and the runtime
 reader on both transports. An external rename triggers one pinned document

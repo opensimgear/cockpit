@@ -54,7 +54,7 @@ fn persisted_reopen_facets_and_clear_keep_ids_monotonic() {
 }
 
 #[test]
-fn retention_defaults_persists_and_prunes_writes_reads_settings_and_periodic() {
+fn retention_settings_read_is_passive_and_retention_prunes_on_schedule() {
     let (_dir, db) = setup();
     assert_eq!(db.activity_settings().unwrap(), ActivitySettings::default());
     let mut old = event("Old");
@@ -82,6 +82,11 @@ fn retention_defaults_persists_and_prunes_writes_reads_settings_and_periodic() {
             [old.occurred_at],
         )
         .unwrap();
+    assert_eq!(db.activity_settings().unwrap().retention_days, 7);
+    assert_eq!(
+        connection.query_row("SELECT count(*) FROM activity_events", [], |row| row.get::<_, i64>(0)).unwrap(),
+        1
+    );
     assert_eq!(all(&db).total, 0);
     db.activity_append(&[event("Periodic")]).unwrap();
     connection

@@ -137,6 +137,10 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     assert.ok(templates.resourceTemplates.some(template => template.uriTemplate === 'cockpit://observations/{topic}'));
     assert.ok(fixedResources.some(resource => resource.uri === observationUri));
     assert.ok(fixedResources.some(resource => resource.uri === 'cockpit://observations/profiles.resources'));
+    const retentionUri = 'cockpit://observations/settings.activity';
+    assert.ok(fixedResources.some(resource => resource.uri === retentionUri));
+    const retention = JSON.parse((await reader.readResource({uri: retentionUri})).contents[0].text);
+    assert.deepEqual(retention.frame.payload, await ok(reader, 'activity_settings_get'));
     const controllerUri = 'cockpit://observations/controllers.inventory';
     const observeController = process.env.OSG_MCP_CONTROLLER_OBSERVATION === '1';
     const jobsUri = 'cockpit://observations/games.jobs';

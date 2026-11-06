@@ -26,6 +26,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const active = new Map();
   const opened = new Map();
   const baselines = new Map();
+  const activityDeliveries = new Map();
   const errors = [];
   const retired = new Set();
   const abortedOpens = new Map();
@@ -93,6 +94,8 @@ test(`${transport} main view navigation retires observation readers without dupl
           active.delete(id);
         } else if (delivery === '1') {
           baselines.set(subscriptionId, (baselines.get(subscriptionId) ?? 0) + 1);
+        } else if (opened.get(subscriptionId) === 'settings.activity') {
+          activityDeliveries.set(subscriptionId, delivery);
         }
       }
     }
@@ -237,8 +240,50 @@ test(`${transport} main view navigation retires observation readers without dupl
     const settingsTopics = () => [...active.values()].map(reader => reader.topic)
       .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener' || topic === 'settings.mcp').sort();
     await new Promise(resolve => setTimeout(resolve, 200));
-    await settled(browserUrl ? [] : ['storage.backups']);
+    await settled(browserUrl ? ['settings.activity'] : ['settings.activity', 'storage.backups']);
     assert.deepEqual(settingsTopics(), [], 'Hidden settings tabs must not open readers');
+    const activityReader = () => [...active.values()].find(reader => reader.topic === 'settings.activity')?.token;
+    const retentionInput = () => page.evaluate(`document.querySelector('[aria-label="Activity retention days"]:not(:disabled)')?.valueAsNumber`);
+    const {activitySettings: retention} = await request({command:'activity_settings_get'});
+    await until(retentionInput, days => days === retention.retentionDays);
+    const firstActivityReader = activityReader();
+    assert.ok(retention.retentionDays < 3649, 'The dev Cockpit needs two higher retention values for this fixture');
+    const changedDays = retention.retentionDays + 1;
+    try {
+      await request({command:'activity_settings_save', retentionDays:changedDays});
+      await until(retentionInput, days => days === changedDays);
+      const draftDays = changedDays + 1;
+      await page.evaluate(`(() => {
+        const input = document.querySelector('[aria-label="Activity retention days"]');
+        input.valueAsNumber = ${draftDays};
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+      })()`);
+      const beforeDraftCommit = activityDeliveries.get(firstActivityReader);
+      await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
+      await until(() => activityDeliveries.get(firstActivityReader) !== beforeDraftCommit);
+      assert.equal(await retentionInput(), draftDays, 'An external commit must not overwrite the draft');
+      const beforeSave = activityDeliveries.get(firstActivityReader);
+      await page.evaluate(`document.querySelector('[aria-label="Activity retention"] button').click()`);
+      await until(() => page.evaluate(`document.querySelector('[aria-label="Activity retention"] [role="status"]')
+        ?.textContent.includes('Retention saved')`));
+      await until(() => activityDeliveries.get(firstActivityReader) !== beforeSave);
+      await clickTab('Devices');
+      await until(() => pending.size === 0 && !activityReader());
+      await request({command:'activity_settings_save', retentionDays:changedDays});
+      assert.equal(activityReader(), undefined);
+      await clickTab('General');
+      await settled(['settings.activity']);
+      assert.notEqual(activityReader(), firstActivityReader);
+      await until(retentionInput, days => days === changedDays);
+    } finally {
+      const {activitySettings: current} = await request({command:'activity_settings_get'});
+      if (current.retentionDays === changedDays || current.retentionDays === changedDays + 1) {
+        const reader = activityReader();
+        const beforeRestore = activityDeliveries.get(reader);
+        await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
+        if (reader) await until(() => activityDeliveries.get(reader) !== beforeRestore);
+      }
+    }
     const backupReader = () => [...active.values()].find(reader => reader.topic === 'storage.backups')?.token;
     const backupRow = id => page.evaluate(`Array.from(document.querySelectorAll('[data-backup-id]'))
       .some(row => row.dataset.backupId === ${JSON.stringify(id)})`);
@@ -296,6 +341,7 @@ test(`${transport} main view navigation retires observation readers without dupl
             && (desktop.qualified || state.note === desktop.reason));
         }
         await clickTab('General');
+        await settled(['settings.activity']);
         await until(async () => pending.size === 0 && settingsTopics().length === 0);
       }
     }

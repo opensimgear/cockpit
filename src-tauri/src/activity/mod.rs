@@ -8,6 +8,7 @@ mod capture;
 mod writer;
 pub(crate) mod metadata;
 mod revision;
+mod settings_stream;
 mod session;
 mod inventory;
 mod effects;
@@ -49,6 +50,7 @@ pub(crate) struct Runtime {
     metadata: Mutex<()>,
     registry:Arc<Mutex<reconcile::Reconciler>>,
     revision: Arc<revision::Revision>,
+    settings_stream: settings_stream::SettingsStream,
     wake: Arc<osg_streams::NativeWake>,
     metadata_wakes: metadata::Signals,
 }
@@ -73,11 +75,12 @@ impl Runtime {
         let writer_wake=wake.clone();
         let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry,&writer_revision,writer_wake)).expect("start native activity worker");
         let metadata_wakes = metadata::Signals::new(wake.clone());
-        Self { database, sender:MainSender{sender,wake:wake.clone()}, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision,wake,metadata_wakes }
+        Self { database, sender:MainSender{sender,wake:wake.clone()}, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision,wake,metadata_wakes,settings_stream:settings_stream::SettingsStream::default() }
     }
     pub(crate) fn observe_revision(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
-        self.database.as_ref().map_err(Clone::clone)?;
-        self.revision.observe(observations)
+        let database = self.database.as_ref().map_err(Clone::clone)?;
+        self.revision.observe(observations)?;
+        self.settings_stream.observe(observations, database)
     }
     pub(crate) fn metadata_wake(&self, group: metadata::Group) -> Arc<osg_streams::NativeWake> {
         self.metadata_wakes.get(group).clone()
@@ -154,7 +157,7 @@ impl Runtime {
             "activity_settings_get" => Ok(json!({"activitySettings":database.activity_settings()?})),
             "activity_settings_save" => {
                 let days = request["retentionDays"].as_u64().and_then(|value| u32::try_from(value).ok()).ok_or("Choose a retention period from 1 to 3650 days.")?;
-                let settings = database.activity_settings_save(days)?;
+                let settings = self.settings_stream.save(database, days)?;
                 self.revision.changed();
                 Ok(json!({"activitySettings":settings}))
             }

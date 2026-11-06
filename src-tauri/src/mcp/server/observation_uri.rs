@@ -4,8 +4,9 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 21] = [
+const FIXED_TOPICS: [(&str, &str); 22] = [
     ("activity.log", "Activity log revision"),
+    ("settings.activity", "Committed activity retention settings"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
     ("profiles.desktop", "Keyboard and mouse output readiness"),

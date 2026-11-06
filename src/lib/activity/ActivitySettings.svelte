@@ -1,19 +1,60 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import Icon from '../Icon.svelte';
   import { gatewayRequest } from '../gateway';
-  import { ActivityClient } from './model';
+  import { SharedObservations } from '../streams/shared';
+  import { ActivityClient, type ActivitySettings } from './model';
   const client = new ActivityClient(gatewayRequest);
-  let retentionDays = $state(7), ready = $state(false), busy = $state(false), error = $state(''), message = $state('');
-  async function read() { busy = true; error = ''; try { retentionDays = (await client.settings()).retentionDays; ready = true; } catch (reason) { error = String(reason); } finally { busy = false; } }
-  async function save() { busy = true; error = ''; message = ''; try { retentionDays = (await client.saveSettings(retentionDays)).retentionDays; message = 'Retention saved. Older activity has been deleted.'; } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); } finally { busy = false; } }
-  onMount(() => { void read(); });
+  let { active }: { active: boolean } = $props();
+  let observations: SharedObservations | undefined;
+  let committed = $state.raw<ActivitySettings>();
+  let draft = $state<number | undefined>();
+  let busy = $state(false), streamError = $state(''), error = $state(''), message = $state('');
+  const retentionDays = $derived(draft ?? committed?.retentionDays);
+  function observe() {
+    observations?.close();
+    streamError = '';
+    observations = new SharedObservations();
+    observations.subscribe('settings.activity', state => {
+      if (state.status === 'ready') {
+        committed = state.frame?.payload as ActivitySettings;
+        streamError = '';
+      } else if (state.status === 'error' || state.status === 'lost') {
+        committed = undefined;
+        streamError = state.error ?? 'Activity retention settings are unavailable.';
+      }
+    });
+  }
+  async function save() {
+    if (retentionDays === undefined || !committed || busy) return;
+    const before = committed;
+    busy = true;
+    error = '';
+    message = '';
+    try {
+      const saved = await client.saveSettings(retentionDays);
+      if (committed === before) committed = saved;
+      draft = undefined;
+      message = 'Retention saved. Older activity has been deleted.';
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      busy = false;
+    }
+  }
+  $effect(() => {
+    if (!active) return;
+    observe();
+    return () => {
+      observations?.close();
+      committed = undefined;
+    };
+  });
 </script>
 
 <section class="panel preferences-panel activity-settings" aria-label="Activity retention">
   <div class="panel-heading"><h2>Activity</h2></div>
-  <div class="preference-row"><div><strong>Retention period</strong><p id="activity-retention-help">Keep activity for this many days. The default is 7 days. Older events are deleted automatically; shortening this period deletes older events immediately.</p></div><div class="retention-field"><label><span class="field-label">Days</span><input class="text-input" aria-label="Activity retention days" aria-describedby="activity-retention-help" type="number" min="1" max="3650" step="1" disabled={!ready || busy} bind:value={retentionDays}/></label><button class="secondary-button" disabled={!ready || busy} onclick={save}><Icon name="save" size={14}/>{busy ? 'Saving…' : 'Save'}</button></div></div>
-  {#if error}<div class="preference-row"><p class="settings-error" role="alert">{error}</p>{#if !ready}<button class="secondary-button" disabled={busy} onclick={read}><Icon name="refresh" size={14}/>Retry</button>{/if}</div>{:else if message}<div class="preference-row"><p role="status">{message}</p></div>{/if}
+  <div class="preference-row"><div><strong>Retention period</strong><p id="activity-retention-help">Keep activity for this many days. The default is 7 days. Older events are deleted automatically; shortening this period deletes older events immediately.</p></div><div class="retention-field"><label><span class="field-label">Days</span><input class="text-input" aria-label="Activity retention days" aria-describedby="activity-retention-help" type="number" min="1" max="3650" step="1" disabled={!committed || busy} value={retentionDays} oninput={event => { draft = event.currentTarget.valueAsNumber; }}/></label><button class="secondary-button" disabled={!committed || busy} onclick={save}><Icon name="save" size={14}/>{busy ? 'Saving…' : 'Save'}</button></div></div>
+  {#if streamError}<div class="preference-row"><p class="settings-error" role="alert">{streamError}</p><button class="secondary-button" disabled={busy} onclick={observe}><Icon name="refresh" size={14}/>Retry</button></div>{:else if error}<div class="preference-row"><p class="settings-error" role="alert">{error}</p></div>{:else if message}<div class="preference-row"><p role="status">{message}</p></div>{/if}
 </section>
 
 <style>

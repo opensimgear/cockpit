@@ -56,7 +56,7 @@
     {#if $canvasNavigation.storageError}<div class="preference-row"><p class="storage-error" role="alert">{$canvasNavigation.storageError}</p></div>{/if}
   </section>
   <ProgressNotificationSettings />
-  <ActivitySettings />
+  <ActivitySettings active={selected === 'general'} />
   {#if selected === 'general'}<BackupSettings />{/if}
 </div>
 

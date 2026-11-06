@@ -244,8 +244,10 @@ impl Database {
         Ok(deleted)
     }
     pub fn activity_settings(&self) -> Result<ActivitySettings, String> {
-        self.activity_prune()?;
-        settings(&self.connection()?)
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(failure)?;
+        self.verify_epoch(&tx)?;
+        settings(&tx)
     }
     pub fn activity_settings_save(&self, retention_days: u32) -> Result<ActivitySettings, String> {
         if !(1..=3650).contains(&retention_days) {
