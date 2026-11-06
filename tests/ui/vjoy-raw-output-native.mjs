@@ -40,6 +40,13 @@ async function terminateFixtureFeeder() {
   });
 }
 
+function summarizeMilliseconds(values) {
+  const sorted = [...values].sort((a,b) => a-b);
+  assert.ok(sorted.length && sorted.every(value => Number.isFinite(value) && value >= 0));
+  const at = percentile => sorted[Math.ceil(sorted.length * percentile) - 1];
+  return { count: sorted.length, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: sorted.at(-1) };
+}
+
 test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact Windows Raw Input slot':
   'authored vJoy button transitions reach the exact Windows Raw Input slot',{
   skip:process.platform!=='win32'||!probeExecutable,timeout:60000,
@@ -117,11 +124,14 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const burst=process.env.OSG_VJOY_RAW_BURST==='1';
     const levels=Array.from({length:burst?65:3},(_,index)=>index%2===0);
     const intervalMs=burst?8:250;
-    const startedAt=performance.now();
+    const startedAt=performance.now(), submissions=[], gatewayRoundTrips=[];
     for(const [index,value] of levels.entries()){
       const remaining=startedAt+index*intervalMs-performance.now();
       if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
+      const submitted=performance.now();
+      submissions.push(submitted);
       await request({command:'profile_debug_controller_input',owner:started.owner,nodeId:'debug',streamId,sequence:String(index+1),changes:[{portId:'button-1',value}]});
+      gatewayRoundTrips.push(performance.now()-submitted);
       await observation?.sample(value);
     }
     const authoredSpanMs=performance.now()-startedAt;
@@ -155,11 +165,22 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     assert.ok(events.every(event=>event.status===0x00110000),'HID button decoding must succeed');
     assert.equal(new Set(events.map(event=>event.device)).size,1,'The exact slot must appear on one Raw Input device');
     assert.deepEqual(events.map(event=>event.pressed),[...levels,false]);
+    assert.ok(Number.isSafeInteger(report.receiverTickHz) && report.receiverTickHz > 0,
+      'Rebuild RawInputProbe from the current source to collect receiver timing');
+    assert.ok(events.every((event,index) => Number.isSafeInteger(event.receivedTicks)
+      && event.receivedTicks >= 0 && (index === 0 || event.receivedTicks >= events[index-1].receivedTicks)));
+    const intervals = values => values.slice(1).map((value,index) => value - values[index]);
+    const receiverMs = events.slice(0,-1).map(event => event.receivedTicks * 1000 / report.receiverTickHz);
+    const timing = {
+      submissionIntervalsMs: summarizeMilliseconds(intervals(submissions)),
+      gatewayRoundTripMs: summarizeMilliseconds(gatewayRoundTrips),
+      receiverIntervalsMs: summarizeMilliseconds(intervals(receiverMs)),
+    };
     await mkdir('.research/reactive',{recursive:true});
     const resultFile=faultApp?'vjoy-feeder-loss-result.json':burst?'vjoy-raw-burst-result.json':'vjoy-raw-output-result.json';
     await writeFile('.research/reactive/'+resultFile,JSON.stringify({
       slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,
-      authoredTransitions:levels.length,requestedIntervalMs:intervalMs,authoredSpanMs,
+      authoredTransitions:levels.length,requestedIntervalMs:intervalMs,authoredSpanMs,timing,
       releasedAfter:faultApp?'feeder-loss':'stop',...report,
     },null,2));
   } finally {

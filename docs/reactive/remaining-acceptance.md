@@ -107,6 +107,26 @@ cancellation. The rebuilt Cockpit passes MCP and Windows vJoy burst checks
 with a stalled preview. Live simulator effects and physical latency remain
 in #199.
 
+On November 6, the instrumented Raw Input test delivered all 65 authored vJoy
+button transitions and the Stop release to slot 1 in the running Cockpit
+(SHA-256 `DBD39F4B3572446E3DE7CFFF7EF88C217D3ACAC3C6E64AA175C36708E6FCC0AA`).
+The slow physical preview subscriber held its first delivery and a separate
+preview advanced. Submission intervals were 11.55/15.27/15.53 ms
+(p50/p95/p99), Windows receiver intervals were 11.77/15.17/15.85 ms, and
+gateway round trips were 1.86/2.17/3.01 ms. The authored interval target was
+8 ms. The fixture measures cadence on each clock separately and cannot
+establish input-to-output latency. Rebuild the Raw Input probe for these
+fields. The logs and timing samples are in
+`.research/reactive/current-vjoy-timing/`.
+
+The separate controller registry diagnostic
+(`cargo run --manifest-path crates/controller-input/Cargo.toml --example report_cost -- --paced`)
+preserved 300 ordered synthetic encoder-button transitions at each of 124.97
+and 997.28 reports/s. The faster run carried 37 reports from a concurrent
+125 Hz source and recovered a neutral baseline after overrun. The registry
+diagnostic and the vJoy fixture cover different stages. The combined
+physical and software load gates remain open.
+
 The running-Cockpit Stop and recovery criterion in #193 is checked. The
 compiled browser companion fixture explicitly disconnects while its input
 and feedback are held. The affected samples withdraw under the same profile

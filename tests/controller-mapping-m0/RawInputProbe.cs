@@ -36,6 +36,8 @@ class RawInputProbe {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool PeekMessage(out Message message, IntPtr hwnd, uint min, uint max, uint remove);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref Message message);
+    [DllImport("user32.dll", SetLastError=true)]
+    static extern uint MsgWaitForMultipleObjectsEx(uint count, IntPtr handles, uint timeout, uint wakeMask, uint flags);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
@@ -48,10 +50,11 @@ class RawInputProbe {
     static List<object> vjoyButtons = new List<object>();
     static Dictionary<IntPtr,bool> lastButton = new Dictionary<IntPtr,bool>();
     static WndProc callback = Handle;
+    static long vjoyCaptureStarted;
     static uint HeaderSize { get { return (uint)(8 + IntPtr.Size * 2); } }
     static string Hash(byte[] bytes) { using(var hash=SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-","").Substring(0,16); }
 
-    static void ObserveVjoyButton(IntPtr device, string name, IntPtr bytes, uint item, uint count) {
+    static void ObserveVjoyButton(IntPtr device, string name, IntPtr bytes, uint item, uint count, long receivedTicks) {
         uint size = 0;
         if (DeviceInfo(device, RIDI_PREPARSEDDATA, IntPtr.Zero, ref size) == uint.MaxValue
             || size == 0 || size > 65536) return;
@@ -67,7 +70,7 @@ class RawInputProbe {
                 bool pressed = status == 0x00110000 && Array.IndexOf(usages, (ushort)1, 0, (int)length) >= 0;
                 bool previous;
                 if (status != 0x00110000 || !lastButton.TryGetValue(device, out previous) || previous != pressed) {
-                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, status=status });
+                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, status=status, receivedTicks=receivedTicks });
                     lastButton[device] = pressed;
                 }
             }
@@ -76,6 +79,7 @@ class RawInputProbe {
 
     static IntPtr Handle(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam) {
         if (message == 0xff) {
+            long receivedTicks = Stopwatch.GetTimestamp() - vjoyCaptureStarted;
             uint size = 0;
             GetRawInputData(lParam, RID_INPUT, IntPtr.Zero, ref size, HeaderSize);
             if (size >= HeaderSize + 8 && size <= 65536) {
@@ -91,7 +95,7 @@ class RawInputProbe {
                             if (item > 0 && (ulong)item * count <= size - HeaderSize - 8) {
                                 reports[name] += (int)count;
                                 if (vjoyButtons.Count < 256 && vjoyDevices.Contains(device)) {
-                                    ObserveVjoyButton(device, name, IntPtr.Add(buffer, (int)HeaderSize + 8), item, count);
+                                    ObserveVjoyButton(device, name, IntPtr.Add(buffer, (int)HeaderSize + 8), item, count, receivedTicks);
                                 }
                                 if (changes.Count < 256) {
                                     byte[] bytes = new byte[item * count];
@@ -200,7 +204,11 @@ class RawInputProbe {
         try {
             if(!RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration))))
                 throw new Exception("Background controller registration failed: "+Marshal.GetLastWin32Error());
-            if (observeVjoy) { Console.WriteLine("ready"); Console.Out.Flush(); }
+            if (observeVjoy) {
+                vjoyCaptureStarted = Stopwatch.GetTimestamp();
+                Console.WriteLine("ready");
+                Console.Out.Flush();
+            }
             uint foregroundPid;
             GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
             string foreground = "unavailable";
@@ -210,11 +218,18 @@ class RawInputProbe {
                 Message message;
                 // Bound one drain to ensure a flood cannot keep the probe alive forever.
                 for(int i=0;i<256 && PeekMessage(out message,IntPtr.Zero,0,0,1);++i) DispatchMessage(ref message);
-                Thread.Sleep(1);
+                if (observeVjoy) {
+                    uint remaining = (uint)Math.Max(0, 5000 - clock.ElapsedMilliseconds);
+                    const uint allInput = 0x04ff, inputAvailable = 4;
+                    if (MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, remaining, allInput, inputAvailable) == uint.MaxValue)
+                        throw new Exception("Raw Input message wait failed: " + Marshal.GetLastWin32Error());
+                } else {
+                    Thread.Sleep(1);
+                }
             }
             var serializer = new JavaScriptSerializer();
             if (observeVjoy) {
-                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons}));
+                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons, receiverTickHz=Stopwatch.Frequency}));
             } else {
                 Console.WriteLine(serializer.Serialize(new {
                     devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,
