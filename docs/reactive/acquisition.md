@@ -32,8 +32,9 @@ and loss qualification remain in [#199](https://github.com/opensimgear/cockpit/i
 | Linux and macOS host controllers | The shared polling worker runs only from the explicit qualification probe. Ordinary Cockpit startup does not start native capture on these platforms. | Acquisition remains unaccepted until report and topology event adapters replace the probe polling and pass platform qualification. |
 
 Gateway catalogue and temporary publication checks have a separate scope.
-The remaining CAN publication fallback discovers firmware ownership and layout
-changes. It does not read panel values or feed the input journal.
+Sequenced gateway invalidations wake ownership and layout readback. The
+temporary CAN publication actor uses those invalidations and explicit lease
+and cleanup deadlines. Its former 20 ms State/Inspect loop is retired.
 
 Qualified Windows controller and internal profiles service routing from retained
 HID report watches, committed resource-token changes and actual deadlines.
@@ -140,28 +141,27 @@ worker and explicit launch and setup checks are separate.
 | Resource/system inventory | Device/process/commit invalidation with retries for unresolved resources and one-shot evidence expiry | Native workers publish committed snapshots. System inventory pages read the cache. Explicit Refresh inspects optional drivers and external virtual-device state. |
 | Profile library/editor/resources/ports | ProfilesPanel and editor previews | Durable document/resource commits and capture topics; revision-pinned pages, query replacement disposal |
 | Runtime/activation/progress | Native profile and activation read models publish committed health and progress; the activation window uses its scoped subscription | Verify cancellation, compensation and independent heartbeat under mixed faults and load |
-| Automatic selection/recovery/learning | UI status loops and native game/process tracking | Process notifications, explicit recovery/learning transitions and captured input; no authority in passive subscribers |
-| Debug/topology/live/path/virtual previews | UI 250 ms–2 s reads | Subscribe to shared native snapshots and reports; virtual preview observes acknowledged output, never drives runtime |
-| DCS-BIOS / managed DCS export | Socket reports plus command-pumped reads | One blocking socket producer publishes source-native batches, context and quality deadlines; separately confirm simulator effects |
-| X-Plane | xplane bounded datagram poll/resubscription | Blocking socket receive; protocol subscription renewal remains timed; source expiry distinct from connection |
+| Automatic selection/recovery/learning | Committed context and control wakes, captured input, registry release and retry deadlines | Qualify recovery and learning through context loss and reconnect. Passive subscribers have no authority. |
+| Debug/topology/live/path/virtual previews | Shared observation snapshots and report updates | Verify nested lifetimes and current snapshots on reopen. Virtual preview observes acknowledged output. |
+| DCS-BIOS / managed DCS export | Native UDP readiness publishes source captures. Freshness and source recovery have independent deadlines. | Qualify simulator effects, exact process watch lifetime and uncovered setup/vehicle scopes. |
+| X-Plane | Shared RREF owner receives datagrams on socket readiness. Timed subscription renewal and component freshness have separate deadlines. | Qualify selected version, process consent and simulator expiry/recovery. |
 | Shared-memory telemetry | games/telemetry/windows_source double-copy sample | One native sampler per active game is approved at the shared-memory boundary. Downstream consumers subscribe to committed captures |
 | Games/rules/catalogues/setup | game_get_state, GameProfileRule, jobs | Publish process/context, committed rules, catalogue replacement and background job completion; explicit rescan remains a command |
 | Discovery/artwork/metadata | Async workers, UI completion refresh | Worker progress/completion publishes revision, rejects old query/job generations; bounded immutable page reads |
 | Companion presence/pairing/listeners | UI roster/listener subscriptions; OS-backed listener and peer I/O readiness, exact Hub/connection deadlines and direct cancellation | Native client reads also use readiness, scoped cancellation and absolute operation deadlines. Pending native pairing now receives a terminal host event on the original socket, with exact offer expiry; manual/serial status requests remain available. See [pairing events](../verification/2026-11-05-pairing-events.md) and [native client](../verification/2026-11-05-native-client-event-io.md), [listener](../verification/2026-11-05-companion-listener-readiness.md) and [peer I/O verification](../verification/2026-11-05-companion-peer-io.md). |
 | Panels/designer/publication | Browser display reports follow publication, page and size changes; authenticated assignment and feedback streams | Preserve exact publication generation and native renderer ownership. Finish cross-client qualification. |
 | Browser companion connection | Assignment and transport events trigger reconnect; transient failures own one retry deadline | Lease renewal and release watchdogs remain timed. Qualify background behavior on each supported client. |
-| Serial/ESP32 firmware | Serial workers + status/control request cadence | Explicit producer/firmware protocol stream, bounded backpressure, publication replacement and held-release evidence per board |
+| Serial and ESP32 firmware | Direct module USB input and metadata use CDC streams. Pico Debug requires CDC3 with inventory events. ESP32 host provisioning and companion transport have separate readiness and lease owners. | Qualify publication replacement, bounded backpressure and held release on each board. Remaining touch and console acquisition are listed below. |
 | Settings/preferences/dependencies/backups | Committed preferences, Activity retention, and backup state use observations. AI settings reads status after a private invalidation from listener or credential changes. | Verify remaining dependency progress and reopen behavior. |
 | Activity/debug/notifications | Activity commits and Debug's scoped topics invalidate current reads; notification dismissal has a local deadline | Qualify background changes and nested lifetimes |
 | MCP observation/admin | Gateway commands and HTTP sessions | Shared topic registry/snapshot boundary, negotiated resource notifications and bounded cursor fallback; observe never renews authority |
 | Native/browser-dev transports | gateway.ts IPC; native-gateway-bridge HTTP | Same typed envelopes, atomic subscription boundary, cancellation and overflow, including transport restart |
-| Desktop/virtual/logic workers | Independent bounded pipes, host polls completions | Completion/loss wakeups; do not perform pipe I/O in capture subscriber callbacks |
+| Desktop/virtual/logic workers | Independent bounded pipes with completion and loss wakes. Authored actions and output leases retain their own deadlines. | Qualify mixed adapters and faults under load. Capture subscribers do not own output pipe I/O. |
 
 ## Unresolved acquisition boundaries
 
 | Boundary | Current behavior | Remaining gate |
 | --- | --- | --- |
-| Retired Pico protocol 1 | Cockpit rejects the old handshake before creating a gateway worker. Automatic connection parks on the upgrade error until the endpoint changes or an operator reconnects. Current Pico Debug requires the protocol-3 inventory stream. | Physical protocol-3 board qualification remains in #199. |
 | Windows process observation | Native process notifications are preferred. Global game activation parks when the catalogue has no installed game with process monitoring support and wakes on a library commit. After a live catalogue watcher exits, the owner attempts one replacement per library revision. The 500 ms discovery fallback applies when a monitorable installation exists and event coverage is unavailable. Initial access denial does not restart the watcher. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | The Windows regression checks the recovery limit and its reset on a library commit. Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
 | File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
@@ -315,3 +315,18 @@ the earlier 344-site scan. The historical ledger still checks independently.
 | `crates/companion-service/src/server/listener.rs:30` | Mio wakes on incoming sockets, committed hub deadline changes, peer completion, Stop, or the next hub expiry. |
 | `crates/companion-service/src/server/socket_io.rs:56` | Mio wakes the peer on read/write readiness, cancellation, or the current operation deadline. |
 | `apps/companion-esp32/network/serial_wire.c:98` | The network task drains existing USB console bytes, then waits for UART readiness or the original direct-request deadline. An interrupt resumes the same wait budget. |
+
+### Protocol retirement and launch scheduler comparison
+
+The committed scan at Cockpit `9d11e267`, with the same firmware revisions,
+found 338 sites. The ten removals from the 348-site readiness scan all belong
+to the retired protocol-1 Pico service and workspace, including their fixtures.
+Automatic connection parks on the upgrade error until the endpoint changes or
+an operator reconnects. The current protocol-3 board still needs physical
+qualification in #199.
+
+Qualified held launches now wait on existing native watches, an optional
+neutral vJoy feeder renewal, or the exact launch expiry. The source scan still
+finds the fallback primitive because holds with other adapters retain the 5 ms
+service bound. This is an acquisition boundary to resolve or disposition under
+#189. The 247 historical timing entries still have exactly one disposition each.
