@@ -5,9 +5,9 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria. The navigation and
-subscription lifetime criterion in #196 brings the checked count to 15.
-There are 40 open criteria: 27 software/qualification/governance
+The original #189–198 acceptance list has 55 criteria. The live bidirectional
+editing and stale-state criterion in #194 brings the checked count to 16.
+There are 39 open criteria: 26 software/qualification/governance
 criteria and 13 requiring user-operated rig/simulator acceptance. An unchecked criterion can contain
 delivered software plus outstanding qualification; it is not necessarily missing
 implementation.
