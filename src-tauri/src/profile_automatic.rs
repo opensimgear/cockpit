@@ -816,7 +816,7 @@ impl GatewayManager {
                     Ok((admission, game_admission))
                 },
                 || {
-                    self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel);
+                    self.advance_profile_admission();
                 },
             )
         })();

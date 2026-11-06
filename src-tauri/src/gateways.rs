@@ -703,7 +703,7 @@ impl GatewayManager {
                         profiles.request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}))?;
                         Ok((admission, game_admission))
                     },
-                    || { self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
+                    || { self.advance_profile_admission(); },
                     expected_owner.as_ref(),
                 )?;
             },
@@ -798,7 +798,13 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
-    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.games.read_model_signal().wake_launch();self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
+    fn advance_profile_admission(&self) -> u64 {
+        let epoch = self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        self.games.read_model_signal().wake_launch();
+        epoch
+    }
+
+    fn invalidate_learning(&self)->u64{let epoch=self.advance_profile_admission();self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
         if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile activation or mode changes to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
@@ -1754,7 +1760,7 @@ impl GatewayManager {
         self.observations.close();
         self.can_input_observations.close();
         self.closed.store(true, Ordering::Release);
-        self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
+        self.advance_profile_admission();
         self.profile_closed.store(true,Ordering::Release);
         self.profile_wake.notify();
         self.profile_automatic.wake.notify();
@@ -2150,6 +2156,19 @@ mod tests {
         }
     }
     pub(super) fn manager_fixture() -> Arc<GatewayManager> { setup().0 }
+    #[test]
+    fn advancing_profile_admission_wakes_the_launch_waiter() {
+        let (manager, _) = setup();
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        manager.games.read_model_signal().watch_launch(&wake);
+        let previous = manager.profile_admission_epoch.load(Ordering::Acquire);
+        let revision = wake.observed();
+
+        assert_eq!(manager.advance_profile_admission(), previous + 1);
+        assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire), previous + 1);
+        assert_ne!(wake.observed(), revision);
+    }
+
     fn setup() -> (Arc<GatewayManager>, Arc<MockProvider>) {
         let provider = Arc::new(MockProvider {
             ports: Mutex::new(vec![
