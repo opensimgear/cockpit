@@ -418,6 +418,15 @@ impl GamesRuntime {
         self.inner.changes.mark_library_commit();
         self.inner.prepare_online_artwork();
     }
+    #[cfg(test)]
+    pub(crate) fn stop_test_context_observer(&self) {
+        self.inner.closed.store(true, Ordering::Release);
+        self.inner.changes.context_wake.notify();
+        if let Some(worker) = self.observer.lock().unwrap().take() {
+            worker.join().unwrap();
+        }
+        self.inner.closed.store(false, Ordering::Release);
+    }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);

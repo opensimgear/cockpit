@@ -1105,6 +1105,9 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
         paths,
         platform.clone(),
     );
+    // The context watcher's first filesystem inspection may invalidate the
+    // catalogue while this fixture is checking synchronous admission ordering.
+    games.stop_test_context_observer();
     let game = games.prepare_profile_game_context("dcs").unwrap().unwrap();
     let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
     let mut plan = empty_plan();
@@ -1131,62 +1134,68 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     network.multicast_group = None;
     network.multicast_interface = std::net::Ipv4Addr::LOCALHOST;
     *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
-    let address = transport.as_ref().unwrap().local_addr().unwrap();
+    let receiver = transport.as_ref().unwrap();
+    let address = receiver.local_addr().unwrap();
+    let mut publications = receiver.subscribe().unwrap();
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut send_and_wait = |counter| {
+        sender.send_to(&bytes(counter, true), address).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let delivery = publications.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap().expect("Isolated UDP counter publication");
+            let snapshot = match delivery {
+                osg_streams::Delivery::Snapshot(snapshot) => snapshot.value,
+                osg_streams::Delivery::Event(event) => event.value,
+                osg_streams::Delivery::Loss(loss) => {
+                    assert_eq!(loss.reason, osg_streams::LossReason::GenerationReplaced);
+                    continue;
+                }
+            };
+            if snapshot.counter == Some(u16::from(counter)) { break; }
+        }
+    };
     platform.armed.store(true, Ordering::SeqCst);
+    let checks_at_sample = std::cell::Cell::new(0);
     let clock = || {
-        assert_eq!(
-            platform.process_checks.swap(0, Ordering::SeqCst),
-            2,
-            "Sample the clock after this poll validates both process identity and liveness"
-        );
+        checks_at_sample.set(platform.process_checks.swap(0, Ordering::SeqCst));
         platform.clock.load(Ordering::SeqCst)
     };
-    sender.send_to(&bytes(1, true), address).unwrap();
+    let assert_guarded = |poll: &GamePoll| {
+        assert_eq!(
+            checks_at_sample.replace(0),
+            2,
+            "Sample the clock after validating process identity and liveness: {:?}",
+            poll.diagnostics
+        );
+    };
+    send_and_wait(1);
     let first = reader.baseline(&games, clock);
+    assert_guarded(&first);
     assert!(!first.fresh);
-    platform.validation_cost.store(0, Ordering::SeqCst);
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while reader.witness.is_none() {
-        assert!(
-            Instant::now() < deadline,
-            "The first isolated UDP counter was not received"
-        );
-        assert!(!reader.poll_baseline(&games, clock).fresh);
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    assert!(reader.witness.is_some(), "The first committed counter must arm the baseline witness");
     platform.validation_cost.store(10_000, Ordering::SeqCst);
-    sender.send_to(&bytes(2, true), address).unwrap();
-    let mut baseline = reader.poll_baseline(&games, clock);
-    platform.validation_cost.store(0, Ordering::SeqCst);
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !baseline.fresh {
-        assert!(
-            Instant::now() < deadline,
-            "The advancing isolated UDP counter was not received: {:?}",
-            baseline.diagnostics
-        );
-        baseline = reader.poll_baseline(&games, clock);
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    send_and_wait(2);
+    let baseline = reader.poll_baseline(&games, clock);
+    assert_guarded(&baseline);
+    assert!(baseline.fresh, "{:?}", baseline.diagnostics);
     assert_eq!(direct_frame(&baseline.frames[0]).captured_us.0, 2_010_000,
         "Reducer admission follows validation; native capture age stays in decoder evidence");
     platform.validation_cost.store(101_000, Ordering::SeqCst);
-    assert!(reader.poll_baseline(&games, clock).fresh,
-        "The reducer clock cannot expire a still-fresh native capture");
+    let retained = reader.poll_baseline(&games, clock);
+    assert_guarded(&retained);
+    assert!(retained.fresh, "The reducer clock cannot expire a still-fresh native capture");
     // Native capture freshness uses Instant; the fake reducer clock exercises
     // validation ordering without inventing native elapsed time.
     std::thread::sleep(Duration::from_millis(110));
-    assert!(
-        !reader.poll_baseline(&games, clock).fresh,
-        "Validation cannot extend a silent decoder's native lease"
-    );
+    let expired = reader.poll_baseline(&games, clock);
+    assert_guarded(&expired);
+    assert!(!expired.fresh, "Validation cannot extend a silent decoder's native lease");
     platform.validation_cost.store(10_000, Ordering::SeqCst);
     sender.send_to(&bytes(2, true), address).unwrap();
-    assert!(
-        !reader.poll_baseline(&games, clock).fresh,
-        "A frozen old counter cannot become a new baseline"
-    );
+    let replay = reader.poll_baseline(&games, clock);
+    assert_guarded(&replay);
+    assert!(!replay.fresh, "A frozen old counter cannot become a new baseline");
 
     let selected = catalogue.join("CommonData.json");
     let original = fs::read(&selected).unwrap();
