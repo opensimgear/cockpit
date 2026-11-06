@@ -7,6 +7,34 @@ use osg_profiles::{
 use std::sync::Condvar;
 
 #[test]
+fn capture_can_commit_loss_while_host_validates_the_route() {
+    let (plan, io) = fixture(true, 1);
+    let mut inputs = PanelInputs::prepare_io(&plan, io).unwrap();
+    inputs.bound = true;
+    let mailbox = inputs.mailbox.clone();
+    let logical = inputs.specs[0].logical.clone();
+    inputs.tokens.insert(logical.clone(), plan.sources.iter()
+        .filter(|source| source.endpoint.node_id == logical)
+        .filter_map(|source| source.token.clone())
+        .collect());
+    let lost = std::cell::Cell::new(false);
+
+    let result = inputs.poll(|_| {
+        if !lost.replace(true) {
+            mailbox.try_lock().expect("Capture cannot wait behind route validation")
+                .loss(&logical, "Capture lost continuity during route validation.").unwrap();
+        }
+        Ok(())
+    }).unwrap();
+
+    assert!(lost.get());
+    assert_eq!(result.frames.len(), 1);
+    assert_eq!(result.frames[0].source, logical);
+    assert_eq!(result.frames[0].reason, Reason::Gap);
+    assert_eq!(result.diagnostics, ["Capture lost continuity during route validation."]);
+}
+
+#[test]
 fn native_baseline_keeps_raw_axis_and_event_occurrences_unknown_until_actual_sample_advances() {
     for can in [true] {
         let (plan, io) = fixture(can, 1);

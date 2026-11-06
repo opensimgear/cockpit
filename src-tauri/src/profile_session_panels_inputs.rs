@@ -279,6 +279,12 @@ impl PanelInputs {
         if !self.bound {
             return Err("Admit native panel baselines before polling.".into());
         }
+        // Route validation must not hold the mailbox needed by capture and loss.
+        let blocked = self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).blocked.clone();
+        let rejected = self.tokens.iter()
+            .filter(|(spec, tokens)| !blocked.contains(*spec) && tokens.iter().any(|token| validate(token).is_err()))
+            .map(|(spec, _)| spec)
+            .collect::<Vec<_>>();
         let at = self
             .clock
             .map(|(start, origin)| {
@@ -317,10 +323,8 @@ impl PanelInputs {
                 });
             }
         }
-        for (spec, tokens) in &self.tokens {
-            if !state.blocked.contains(spec) && tokens.iter().any(|token| validate(token).is_err())
-            {
-                state.blocked.insert(spec.clone());
+        for spec in rejected {
+            if state.blocked.insert(spec.clone()) {
                 state.control();
                 let (generation, seq, previous) =
                     self.accepted.get(spec).copied().unwrap_or((1, 0, 0));
