@@ -498,6 +498,17 @@ impl Tools {
                 }
                 Ok(self.guarded(name, selected(&["sourceId","jobId","sessionId"]), client, &args["expectedActiveOwner"], Some("controllers"))?["visibility"].clone())
             }
+            "profile_desktop_status" => {
+                let status = forward(name, &[], Some("desktop"))?;
+                let mut summary = select(&status, &["enabled", "qualified", "state", "reason", "scope", "error"]);
+                summary["runtime"] = if status["runtime"].is_object() {
+                    select(&status["runtime"], &["state", "error", "scopeError", "waitingNeutral",
+                        "dispatchPending", "scopeNotifications", "serviceIntervalMs"])
+                } else {
+                    Value::Null
+                };
+                Ok(summary)
+            }
             "profile_debug_controller_status" => forward("profile_debug_controller_status", &["owner","nodeId"],Some("debugController")),
             "profile_debug_controller_input" => forward("profile_debug_controller_input", &["owner","nodeId","streamId","sequence","changes"],Some("debugController")),
             "applied_ports_inspect" => forward(
@@ -954,3 +965,7 @@ mod ui_preferences_tests;
 #[cfg(test)]
 #[path = "mcp_tools/process_monitor_tests.rs"]
 mod process_monitor_tests;
+
+#[cfg(test)]
+#[path = "mcp_tools/desktop_status_tests.rs"]
+mod desktop_status_tests;

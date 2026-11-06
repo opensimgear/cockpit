@@ -5,9 +5,9 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria. This reconciliation accepts
-the passive telemetry authority criterion in #192, bringing the checked count
-from 12 to 13. There are 42 open criteria: 29 software/qualification/governance
+The original #189–198 acceptance list has 55 criteria. The passive telemetry
+authority criterion in #192 and slow-observer isolation criterion in #197
+bring the checked count to 14. There are 41 open criteria: 28 software/qualification/governance
 criteria and 13 requiring user-operated rig/simulator acceptance. An unchecked criterion can contain
 delivered software plus outstanding qualification; it is not necessarily missing
 implementation.
@@ -26,7 +26,7 @@ and #198 are In progress because implementation/qualification is underway.
 | #194 | Complete producer/read-model and cancellation/lock matrices. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches; see the Activity source matrix and qualification record. Wider application coverage and the denied-process-event fallback remain explicit. |
 | #195 | Companion publication/reconnect/backgrounding, per-widget expiry and slow-consumer qualification. Listener accepts/server peers and native client reads use event I/O; pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines; unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Nested navigation/query/editor lifetime and background/reopen matrices; consistent component review. |
-| #197 | Complete manual/MCP state/error/cancel/recovery parity, sustained socket backpressure and schema/documentation/negotiation inventory. |
+| #197 | Complete manual/MCP state/error/cancel/recovery parity and schema/documentation/negotiation inventory. The desktop output status snapshot is available through MCP. Slow-observer isolation passed in the running app and in bounded native stress fixtures. Sustained socket backpressure remains part of broader load qualification. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
 
 The active companion feedback publisher now emits an initial snapshot and
