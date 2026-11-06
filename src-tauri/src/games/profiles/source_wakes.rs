@@ -57,6 +57,11 @@ impl GameSources {
                     self.notifications.assetto.as_ref().is_some_and(|watch| !watch.is_closed()),
                 Some(Reader::Xplane { source: Some(_), .. }) =>
                     self.notifications.xplane.as_ref().is_some_and(|watch| !watch.is_closed()),
+                Some(Reader::Dcs { transport: Some(_), physics_outputs, .. }) =>
+                    self.bios_retry_at.is_none() && self.catalogue_validation.started()
+                        && self.notifications.bios.as_ref().is_some_and(|watch| !watch.is_closed())
+                        && (physics_outputs.is_empty()
+                            || self.notifications.physics.as_ref().is_some_and(|watch| !watch.is_closed())),
                 _ => false,
             }
     }

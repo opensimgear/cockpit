@@ -104,6 +104,15 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     assert!(wake.observed() > observed, "A native X-Plane commit must wake the profile host");
     host.prepared.get_mut(&key(&owner)).unwrap().game.stop();
     assert!(!capture_driven(&host, &host.prepared[&key(&owner)], &run));
+    let (game, proof, _catalogue) = crate::profile_session_games::watched_dcs_scheduling_fixture(
+        &games, host.native_wake.clone().unwrap(),
+    );
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    run.owner.game_id = Some(proof.proof.game_id.clone());
+    state.owner.game_id = run.owner.game_id.clone();
+    state.game_preparation = Some(proof);
+    state.game = game;
+    assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }

@@ -76,6 +76,39 @@ pub(crate) fn watched_xplane_scheduling_fixture(
     (source, prepared, publish)
 }
 
+pub(crate) fn watched_dcs_scheduling_fixture(
+    games: &GamesRuntime,
+    wake: Arc<osg_streams::NativeWake>,
+) -> (GameSources, PreparedGame, tempfile::TempDir) {
+    let fixture = Dcs::new();
+    let mut source = fixture.sources();
+    let Some(Reader::Dcs { network, transport, decoder, .. }) = &mut source.reader else { panic!() };
+    network.listen_port = 0;
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
+    source.set_wake(Some(wake.clone()));
+    source.refresh_source_wakes(games).unwrap();
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    assert!(!source.watched_game_source(), "DCS also requires a catalogue proof worker");
+    source.catalogue_validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    (source, fixture.game, fixture.folder)
+}
+
+#[test]
+fn dcs_scheduling_requires_ownship_watch_when_selected_and_no_bios_retry() {
+    let folder = crate::test_directory();
+    let games = wake_test_games(folder.path());
+    let (mut source, _, _catalogue) =
+        watched_dcs_scheduling_fixture(&games, Arc::new(osg_streams::NativeWake::default()));
+    assert!(source.watched_game_source());
+    let Some(Reader::Dcs { physics_outputs, .. }) = &mut source.reader else { panic!() };
+    physics_outputs.push(json!({"id":"fixture-ownship"}));
+    assert!(!source.watched_game_source(), "Ownship must wake independently of BIOS");
+    let Some(Reader::Dcs { physics_outputs, .. }) = &mut source.reader else { panic!() };
+    physics_outputs.clear();
+    source.bios_retry_at = Some(Instant::now());
+    assert!(!source.watched_game_source(), "Pending BIOS retry retains fallback");
+}
+
 #[test]
 fn passive_physics_api_cannot_acquire_an_unobserved_process_or_manufacture_a_wake() {
     let folder = crate::test_directory();
