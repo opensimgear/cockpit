@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
+  import ProfilePortTile from './ProfilePortTile.svelte';
   import ProfilePortPager from './ProfilePortPager.svelte';
   import ProfilePortFilter from './ProfilePortFilter.svelte';
   import {integrationPortPage,integrationPortTypeLabel,portContractLabel} from '../profile-canvas';
@@ -25,10 +26,10 @@
   {#if error}<div class="error" role="alert"><span>{error}</span><button type="button" class="retry" disabled={busy} onclick={retry}><Icon name="refresh" size={14}/>Retry</button></div>{/if}
   <div class="port-list" aria-label={direction==='input'?'Input signals':'Output signals'} aria-busy={busy}>
     {#each results.rows as port (port.key)}
-      <button type="button" class="port-tile" class:unavailable={!port.current} data-port-key={port.key} disabled={readOnly||busy||!!error}
-        aria-label={`Connect ${port.name}`} title={`${port.name} · ${port.observed?.descriptor.id??port.id} · ${portContractLabel(port.contract)}${port.current?'':' · Unavailable'}`} onclick={()=>choose(port)}>
-        <strong>{port.name}</strong><span class="type">{integrationPortTypeLabel(port.contract)}</span><Icon name="link" size={13}/>
-      </button>
+      <ProfilePortTile name={port.name} type={integrationPortTypeLabel(port.contract)} portKey={port.key}
+        unavailable={!port.current} title={`${port.name} · ${port.observed?.descriptor.id??port.id} · ${portContractLabel(port.contract)}${port.current?'':' · Unavailable'}`} disabled={readOnly||busy||!!error} action={()=>choose(port)}>
+        <Icon name="link" size={13}/>
+      </ProfilePortTile>
     {:else}{#if !busy}<p class="status" role="status">{query.trim()?`No matching ${label.toLowerCase()}.`:`No ${label.toLowerCase()} available.`}</p>{/if}{/each}
   </div>
   <ProfilePortPager label={label.toLowerCase()} page={results.page} pages={results.pages}
@@ -41,9 +42,6 @@
   h4{margin:0;color:var(--soft);font-size:var(--ui-heading-size);font-weight:570}
   button{font-size:var(--ui-text-size);cursor:pointer}
   .port-list{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--ui-input-cell-gap);min-width:0}
-  .port-tile{display:flex;align-items:center;gap:7px;box-sizing:border-box;width:100%;min-width:0;min-height:var(--ui-input-cell-height);padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:var(--input-bg);color:var(--soft);text-align:left}
-  .port-tile strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:570}.type{max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:var(--ui-action-size)}
-  .port-tile:hover:enabled{border-color:var(--accent)}.port-tile.unavailable{border-style:dashed}.port-tile :global(svg){flex-shrink:0;color:var(--muted)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button:disabled{cursor:default;opacity:.5}
   .status{min-width:0;margin:0;color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height);overflow-wrap:anywhere}.error{display:grid;gap:6px;color:var(--danger,#e67979);font-size:var(--ui-text-size);overflow-wrap:anywhere}.retry{display:inline-flex;align-items:center;justify-self:start;gap:5px;padding:3px 0;border:0;background:transparent;color:var(--accent)}
 </style>

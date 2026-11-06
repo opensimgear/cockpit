@@ -46,6 +46,7 @@ async function component(name, parent = import.meta.url) {
 await component('../Icon.svelte');
 await component('./ProfilePortFilter.svelte');
 await component('./ProfilePortPager.svelte');
+await component('./ProfilePortTile.svelte');
 const source = await readFile(new URL('./ProfileIntegrationPorts.svelte', import.meta.url), 'utf8');
 function harness({ ports = [], busy = false, error = '', readOnly = false, query = '', page = 0, direction = 'output', duringRender = () => {} } = {}) {
   const seeded = source.replace("let query=$state(''),page=$state(0);",

@@ -40,6 +40,11 @@ test('the native companion inspector shows consistent input and output port tile
     await expect(outputs.getByRole('heading', {name: 'Outputs', exact: true})).toBeVisible();
     assert.ok(await inputs.locator('.port-tile').count() > 0);
     assert.ok(await outputs.locator('.port-tile').count() > 0);
+    const appearance = row => row.evaluate(element => {
+      const style = getComputedStyle(element);
+      return [style.minHeight, style.fontSize, style.backgroundColor, style.borderRadius];
+    });
+    assert.deepEqual(await appearance(inputs.locator('.port-tile').first()), await appearance(outputs.locator('.port-tile').first()));
     await expect(inputs.getByRole('textbox', {name: 'Filter inputs', exact: true})).toBeVisible();
     await expect(outputs.getByRole('textbox', {name: 'Filter outputs', exact: true})).toBeVisible();
     assert.equal(await inspector.locator('details.ports-section').count(), 0);
