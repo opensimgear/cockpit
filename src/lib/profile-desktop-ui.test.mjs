@@ -13,7 +13,7 @@ const {desktopBlock}=modules.get('./profile-desktop-blocks'),plain=value=>JSON.p
 async function component(name,send,selection=''){
  const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8'),handlers;
  source=source.replace("selectedId=$state('')",`selectedId=$state(${JSON.stringify(selection)})`);
- source=source.replace('</script>',name.includes('Editor')?'captureDesktopUI({update,field,mode,scope,get state(){return{selectedId,error}}});</script>':'captureDesktopUI({request,configure,get state(){return{status,busy,error}}});</script>');
+ source=source.replace('</script>','captureDesktopUI({update,field,mode,scope,get state(){return{selectedId,error}}});</script>');
  const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureDesktopUI:value=>handlers=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name==='./Icon.svelte')return{default:()=>{}};if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:send};throw Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
  return{render(props={}){return{html:render(exports.default,{props}).body,get handlers(){return handlers;}};}};
@@ -47,12 +47,4 @@ test('mouse settings show only relevant pointer, wheel and button values',async(
   if(id==='button-left'){h.mode('mouse-click');assert.equal(changes[0].actions[0].action.kind,'mouse-click');}
   if(id==='scroll-down'){h.field('vertical',-3);assert.equal(changes[0].actions.find(item=>item.portId===id).action.vertical,-3);}
  }
-});
-test('desktop controls keep preferences separate, send exact stop and ignore an older status after Stop',async()=>{
- const calls=[];let resolveOld;const stopped={enabled:false,qualified:false,state:'paused',reason:'Explicit Stop',scope:{kind:'application'},application:null,runtime:null};
- let delayed=true;const settingsRevision=`sha256:${'1'.repeat(64)}`;
- const view=await component('./ProfileDesktopControls.svelte',async request=>{calls.push(plain(request));if(request.command.startsWith('profile_local_settings_'))return{localSettings:{scope:'desktop',gameId:null,revision:settingsRevision,settings:{enabled:false,scope:stopped.scope},profileSession:{owner:null}}};if(request.command==='profile_desktop_status'&&delayed){delayed=false;return new Promise(resolve=>resolveOld=resolve);}return{desktop:stopped};});
- const{html,handlers:h}=view.render({requested:true});assert.deepEqual(calls,[]);assert.match(html,/requires keyboard and mouse output/);assert.match(html,/Deactivate profile outputs/);assert.match(html,/releases its outputs/);assert.doesNotMatch(html,/Pause|Clear pause|Start profile|Stop keyboard and mouse output/);
- const old=h.request({command:'profile_desktop_status'});await h.request({command:'profile_desktop_stop'});resolveOld({desktop:{...stopped,state:'active'}});await old;assert.equal(h.state.status.state,'paused');assert.equal(h.state.error,'');
- h.configure(false);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls.find(call=>call.command==='profile_local_settings_save'),{command:'profile_local_settings_save',scope:'desktop',expectedSettingsRevision:settingsRevision,expectedActiveOwner:null,settings:{enabled:false,scope:{kind:'application'}}});assert.ok(calls.every(request=>!Object.hasOwn(request,'document')&&!Object.hasOwn(request,'pid')&&!Object.hasOwn(request,'executable')));assert.doesNotMatch(html,/Application scope|Use last focused external application|Native owners/);
 });

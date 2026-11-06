@@ -39,12 +39,6 @@ test('whitespace in timer arguments is ignored only outside string literals', ()
   assert.throws(() => checkUiTimers([[file, connect]]), /stale setTimeout/);
 });
 
-test('dormant timers cannot silently gain a production caller', () => {
-  assert.throws(() => checkUiTimers([['src/App.svelte',
-    '<script>import Desktop from "./lib/ProfileDesktopControls.svelte";</script>']]),
-  /dormant ProfileDesktopControls has a production reference/);
-});
-
 test('a frame loop requires a reviewed rendering owner', () => {
   for (const callee of ['requestAnimationFrame', 'window.requestAnimationFrame', 'window["requestAnimationFrame"]']) {
     assert.throws(() => checkUiTimers([['src/Repeat.ts',

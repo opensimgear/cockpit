@@ -69,6 +69,14 @@ by file and primitive. The complete current acquisition gate remains open.
 | Desktop feeder serve and wait, mapping-host desktop output worker | Bounded feeder completion, pending-command notifications and exact deadlines, and output lease renewal. The feeder wait file also contains a test delay. |
 | Gateway and process exit watch | Inline regression barriers and an authored test process exit delay. |
 | Controller observations | One frame callback declaration and one render callback scheduled when a new sample arrives. |
+
+A second committed scan at `1d1ef33b` used the same firmware revisions and
+found 262 matches. The three removed sites were the unreferenced ESP32 view's
+two timeouts and one status interval. The game-context scheduler changes
+replaced or narrowed existing deadlines without adding a periodic query.
+Removing the unused desktop status component retires one further interval.
+The pinned ledger keeps both removed components for historical traceability.
+
 ## Native crate timing sites
 
 | Ledger site | Owner and trigger | Disposition and verification |

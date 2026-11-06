@@ -21,7 +21,7 @@ inside interval callbacks. An interval may have more than one responsibility.
 | Browser companion `App.svelte`, owner poll | Update presence and assignments, recover connectivity, renew active panel ownership | Separate assignment and presence observations from lease renewal and reconnect. Preserve focus and stale-owner fencing. |
 | Browser companion `connection-worker.ts` | Renew the panel lease and release held inputs if the page stalls | Keep the watchdog and heartbeat with the connection owner. Qualify feedback delivery separately. |
 | Native companion `App.svelte` | Poll native status and renew the active panel lease on separate timers | Replace the status timer with native notifications. Keep the lease timer with the current ownership checks. |
-| Cockpit `ProfileDesktopControls.svelte` | Refresh desktop output status in an unreferenced component | No live caller found. Count it as dormant source until removed or wired to a live route. |
+| Cockpit `ProfileDesktopControls.svelte` | Former desktop output status interval | Removed with the unreferenced component. Settings and Debug subscribe to committed desktop state. |
 | Cockpit `ProfileInputLearning.svelte` | Refresh capture status in an unreferenced component | No live caller found. The native learning commands remain separate from this dormant UI. |
 
 The wider R0 inventory still requires confirming the remaining native and
@@ -60,7 +60,7 @@ use the following sources.
 | Applied debug controls | Exact runtime owner and committed debug-input revision. |
 | Physical input learning | Active editor subscribes to the native learning revision. The native learner wakes on reports, catalogue changes and its expiry. |
 | Retained recovery | Native recovery revision, including provisioning job transitions. |
-| `ProfileDesktopControls.svelte` | No production imports. Its interval is dormant and it has a direct component test. |
+| `ProfileDesktopControls.svelte` | Retired. The active desktop views use separate settings and runtime observations. |
 
 Browser companion assignments arrive over a subscription. Reconnect uses
 transport events and a single retry deadline. The worker owns steady-state
@@ -152,7 +152,7 @@ The companion app and firmware rows are tracked separately.
 | `profile-vehicle-conflicts.ts:14` | Profile conflict evaluator, debounce a changed editor draft | Keep the cancellable edit debounce. `profile-vehicle-conflicts.test.mjs` covers superseded compile results. |
 | `ProfileCanvas.svelte:59,398` | Canvas camera animation and active pointer gesture | Keep dirty frame scheduling. Camera and canvas tests cover animation completion and gesture updates. |
 | `ProfileCanvas.svelte:69,248` | Connection gesture, distinguish a single click from a double click | Keep the one-time selection delay. Canvas tests cover connection selection. |
-| `ProfileDesktopControls.svelte:11` | Dormant desktop component, status interval | No production import. The timer guard prevents a caller from restoring the interval. |
+| `ProfileDesktopControls.svelte:11` | Former desktop component, status interval | Removed. The frontend timer guard permits no replacement interval. |
 
 ## Companion application and shared widget timing sites
 
