@@ -216,8 +216,22 @@ suite serially with 2,377 passes, zero failures and 18 ignores. The topology
 test passed on that revision. ESP32 host suites on the same archive passed for
 serial, workspace, network, core and storage. The Sunton and Waveshare adapter
 fault-injection suites passed with 100% line coverage each. These suites use
-host mocks. Board images, hardware timing, the final integrated soak and other
-platform suites still require evidence.
+host mocks. Hardware timing, the final integrated soak and other platform
+suites still require evidence.
+
+Both physical board profiles cross-built locally from the clean `e7f592db`
+archive using ESP-IDF v5.5.2. The generated configurations enable the UART
+console. Each application fits its 2 MiB partition with about 21% free.
+
+| Board profile | MCU | Application bytes | Application SHA-256 |
+| --- | --- | ---: | --- |
+| `sunton-3248s035r` | ESP32 | 1,651,120 | `6ba929647f496d678986950d0295f169aec333c6ac6f7877d4d37872d2a90cce` |
+| `waveshare-lcd7-s3` | ESP32-S3 | 1,665,776 | `d5b84bced1db29e240d0abbd639ef06b4ed26713626329b7448f3d4b9e2c8ea0` |
+
+The local `.research/reactive/esp32-board-builds/` directory holds the build
+logs, generated settings, flash manifests and all three images named by each
+manifest. No device was flashed. Boot, transport, touch and timing checks
+remain in #199.
 
 ## User-operated qualification stays in #199
 
