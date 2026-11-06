@@ -33,6 +33,7 @@ static osg_scene_banks banks;
 static osg_scene_ticket candidate_ticket, checking_ticket;
 static bool candidate_pending, candidate_finished, candidate_success;
 static const osg_panel *checking_panel;
+static const osg_panel *opening_draw_wait;
 static osg_panel_source_diagnostic candidate_diagnostic;
 static char displayed_instance[65];
 static uint8_t bound_page;
@@ -109,6 +110,7 @@ static void cancel_candidate(void){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     if(candidate_pending)osg_scene_banks_cancel(&banks,candidate_ticket);
     candidate_pending=candidate_finished=false;
+    opening_draw_wait=NULL;
     /* A cancelled reader keeps both its bank identity and cache pins until a
      * later prepare sees the cleared display fence and reuses that same slot. */
     xSemaphoreGive(ui.mutex);
@@ -502,6 +504,20 @@ static bool choose(const cJSON *reply){
     disconnected();state=OPEN;detail="Opening assigned panel";operation_begin();return true;
 }
 static bool open_socket(void){return connection.ws||connection.direct||osg_socket_open(&connection,&settings);}
+/* Caller holds ui.mutex. Only a borrow of the inactive bank blocks opening. */
+static const osg_panel *opening_draw_borrow(void){
+    const unsigned slot=banks.active_valid?1-banks.active:0;
+    const osg_scene *scene=banks.slots[slot].scene;
+    return scene&&*ui.drawing_panel==&scene->panel?&scene->panel:NULL;
+}
+/* Caller holds ui.mutex. Wake only an opener waiting on this exact borrow. */
+static bool release_draw(const osg_panel *panel){
+    if(*ui.drawing_panel!=panel)return false;
+    *ui.drawing_panel=NULL;
+    if(opening_draw_wait!=panel)return false;
+    opening_draw_wait=NULL;
+    return true;
+}
 static void source_problem(const osg_panel_source_diagnostic *diagnostic){
     operation.diagnostic=*diagnostic;
     snprintf(fault_detail,sizeof(fault_detail),"Panel %s: %.64s (required %u, available %u)",diagnostic->code==OSG_PANEL_SOURCE_BUDGET?"budget exceeded":"unsupported or invalid",diagnostic->field,(unsigned)diagnostic->required,(unsigned)diagnostic->available);
@@ -597,7 +613,7 @@ static void advance(void){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
         const unsigned slot=banks.active_valid?1-banks.active:0;
-        bool busy=banks.slots[slot].scene&&*ui.drawing_panel==&banks.slots[slot].scene->panel;
+        bool busy=opening_draw_borrow()!=NULL;
         xSemaphoreGive(ui.mutex);if(busy)return;
         v=message("open");cJSON_AddStringToObject(v,"instanceId",assigned);cJSON_AddStringToObject(v,"publicationHash",publication);cJSON_AddBoolToObject(v,"takeover",false);cJSON_AddBoolToObject(v,"externalImages",true);
         ok=request(v,&reply,3000)&&identity(reply,"session-open");
@@ -791,7 +807,15 @@ static void update_screen(void){
 static unsigned network_wait(void){
     if(osg_serial_has_wake()){
         if(state==OFF||state==FAULT)return portMAX_DELAY;
-        if(state==PAIR_WAIT||state==WAIT_ASSIGNMENT||state==PREPARING||state==PANEL_ERROR||state==LIVE){
+        if(state==OPEN){
+            xSemaphoreTake(ui.mutex,portMAX_DELAY);
+            opening_draw_wait=opening_draw_borrow();
+            const bool busy=opening_draw_wait!=NULL;
+            xSemaphoreGive(ui.mutex);
+            if(busy)return portMAX_DELAY;
+        }
+        if(state==PAIR_BEGIN||state==PAIR_WAIT||state==AUTH||state==WAIT_ASSIGNMENT||state==OPEN||
+            state==PREPARING||state==PANEL_ERROR||state==LIVE){
             const uint64_t now=millis();
             uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
             if((state==LIVE||(state==WAIT_ASSIGNMENT&&primary_connection[0]))&&!connection.direct&&connection.ws&&
@@ -873,7 +897,8 @@ void osg_network_render(const osg_panel *panel,bool finished,bool success){
     osg_input_render(&input,panel,finished,success,millis());
     if(finished&&!success&&panel==ui.runtime->panel&&ui.runtime->screen==OSG_SCREEN_PANEL)panel_render_failed=true;
     if(!success)*ui.dirty=true;
-    const TaskHandle_t wake=(was_ready!=input.display_ready||was_failed!=panel_render_failed||mode!=input.mode)?network_owner:NULL;
+    const bool released=finished&&release_draw(panel);
+    const TaskHandle_t wake=(released||was_ready!=input.display_ready||was_failed!=panel_render_failed||mode!=input.mode)?network_owner:NULL;
     xSemaphoreGive(ui.mutex);
     if(wake)xTaskNotifyGive(wake);
 }
@@ -894,7 +919,7 @@ void osg_network_candidate_finish(osg_scene_ticket ticket,bool success,const osg
             candidate_diagnostic=diagnostic?*diagnostic:(osg_panel_source_diagnostic){0};
             wake=network_owner;
         }
-        if(*ui.drawing_panel==checking_panel)*ui.drawing_panel=NULL;
+        if(release_draw(checking_panel))wake=network_owner;
         checking_panel=NULL;
     }
     xSemaphoreGive(ui.mutex);

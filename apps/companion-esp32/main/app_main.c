@@ -115,7 +115,6 @@ void app_main(void) {
             if(!success)deadline=retry_at;
             if(success){last_render=now;memcpy(last_hash,drawing.panel->publication_hash,sizeof(last_hash));}
             osg_network_render(drawing.panel,true,success);
-            xSemaphoreTake(mutex,portMAX_DELAY);drawing_panel=NULL;xSemaphoreGive(mutex);
             if(!success)ESP_LOGE("companion","Display rejected/failed: widget=%s layer=%s field=%s required=%u available=%u; live input cancelled",renderer.diagnostic.widget,renderer.diagnostic.layer,renderer.diagnostic.field,(unsigned)renderer.diagnostic.required,(unsigned)renderer.diagnostic.available);
         }
         now=display_now();

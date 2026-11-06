@@ -129,7 +129,7 @@ static void tick(void){
     }
     if(state==LIVE){
         osg_runtime drawing=screen;borrowed=drawing.panel;osg_network_render(drawing.panel,false,true);
-        bool ok=osg_panel_draw_render(&renderer,&drawing,(osg_damage){.full=true},millis());borrowed=NULL;osg_network_render(drawing.panel,true,ok);
+        bool ok=osg_panel_draw_render(&renderer,&drawing,(osg_damage){.full=true},millis());osg_network_render(drawing.panel,true,ok);
         assert(ok);
     }
     osg_network_touch(pointer_valid,pointer_down,pointer_x,pointer_y);arm_when_ready();

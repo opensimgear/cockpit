@@ -180,8 +180,10 @@ direct link without assignment push retains its existing reauthentication
 deadline. Live UART builds wake on queued input, changes in touch or render
 readiness, faults, and UART or Wi-Fi events. The wait also covers the earliest
 heartbeat, feedback reconnect, pending batch and input safety expiry. The
-10 ms batch spacing still applies when edges are queued. Other connected
-states and non-UART console acquisition retain the maintenance wake.
+10 ms batch spacing still applies when edges are queued. Pairing startup and
+authentication wait until their request deadline. Opening waits for the exact
+renderer borrow to be released when the inactive scene bank is busy. Non-UART
+console acquisition retains the 10 ms maintenance wake.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
 Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt

@@ -308,12 +308,15 @@ static void candidate_handoff_tests(void){
     assert(next_request==fake_ms+250&&network_wait()==pdMS_TO_TICKS(250)&&network_wakes==0);
     stop();assert(!candidate_pending&&test_drawing==pending_panel&&!test_runtime.armed);
     cmd("{\"command\":\"connect\"}");advance();assert(state==OPEN);int before=requests;(advance)();assert(state==OPEN&&requests==before);
-    osg_network_candidate_finish(ticket,true,NULL);assert(!test_drawing&&!candidate_finished);
+    assert(network_wait()==portMAX_DELAY&&network_wakes==0);
+    osg_network_candidate_finish(wrong,true,NULL);assert(test_drawing==pending_panel&&network_wakes==0);
+    osg_network_candidate_finish(ticket,true,NULL);assert(!test_drawing&&!candidate_finished&&network_wakes==1);
+    assert(network_wait()==0);
     (advance)();assert(state==PREPARING);osg_scene_ticket newer;assert(osg_network_candidate_begin(&newer)&&newer.generation>ticket.generation);
     osg_network_candidate_finish(ticket,true,NULL);assert(test_drawing&&candidate_pending&&!candidate_finished);
-    assert(network_wakes==0);
+    assert(network_wakes==1);
     osg_panel_source_diagnostic rejected={.code=OSG_PANEL_SOURCE_BUDGET,.required=128,.available=48};strcpy(rejected.widget,"master-widget");strcpy(rejected.layer,"caption");strcpy(rejected.field,"fontSize");
-    osg_network_candidate_finish(newer,false,&rejected);assert(network_wakes==1);memset(&rejected,0,sizeof(rejected));(advance)();update_screen();
+    osg_network_candidate_finish(newer,false,&rejected);assert(network_wakes==2);memset(&rejected,0,sizeof(rejected));(advance)();update_screen();
     assert(state==PANEL_ERROR&&test_runtime.panel==old&&!test_runtime.armed&&test_runtime.screen==OSG_SCREEN_PANEL);
     assert(!strcmp(operation.diagnostic.field,"fontSize")&&operation.diagnostic.required==128&&operation.diagnostic.available==48);
     assert(!memcmp(snapshot,banks.slots[active].arena.data,bytes)&&baseline_requests==baselines);free(snapshot);
