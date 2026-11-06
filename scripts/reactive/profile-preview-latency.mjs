@@ -29,9 +29,15 @@ try{
   const before=await calibrate(),samples=[],dom=[],errors=[],controller=new AbortController();
   let snapshotCount=0,changeCount=0;
   let axes=[],generation,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
+  const axisValues=new Map(), axisLabels=new Map();
+  const wireSignature=()=>axes.map(id=>String(axisValues.get(id))).join('|');
   const domSignature=()=>axes.map(id=>{
-   const slot=[...inspector.querySelectorAll('[data-control-id]')].find(slot=>slot.dataset.controlId===id);
-   return slot?.querySelector('.heading .value')?.textContent;
+   let label=axisLabels.get(id);
+   if(!label||!inspector.contains(label)){
+    label=inspector.querySelector('[data-control-id="'+CSS.escape(id)+'"] .heading .value');
+    if(label)axisLabels.set(id,label);
+   }
+   return label?.textContent;
   }).join('|');
   const captureDom=()=>{
    if(!inspector.isConnected||inspector.dataset.controllerSourceId!==sourceId){errors.push('Visible inspector was replaced.');return;}
@@ -64,13 +70,18 @@ try{
      if(frame.kind==='change')changeCount++;
      const controls=snapshot?(payload?.controls??[]):[];
      const snapshotAxes=controls.filter(c=>c.capability.kind==='axis').map(c=>c.capability.id).sort();
-     const values=snapshot?new Map(controls.map(c=>[c.capability.id,c.value?.normalized])):undefined;
+     if(snapshot){
+      axisValues.clear();
+      for(const control of controls)if(control.capability.kind==='axis')axisValues.set(control.capability.id,control.value?.normalized);
+     }else{
+      for(const id of axes)if(Object.hasOwn(payload?.values??{},id))axisValues.set(id,payload.values[id]?.normalized);
+     }
      if(generation===undefined&&snapshot){
       generation=payload?.source?.generation;
       nativeSequence=BigInt(payload.source.sequence);
       axes=snapshotAxes;
       if(payload?.source?.id!==sourceId||!payload.source.baselineReady||!axes.length)errors.push('Wrong controller, no ready baseline or no axes.');
-      previousWire=axes.map(id=>String(values.get(id))).join('|');
+      previousWire=wireSignature();
       // Never timestamp pre-existing DOM as a new report transition.
       previousDom=domSignature();
      }else if(generation!==undefined&&(snapshot||frame.kind==='change')){
@@ -79,7 +90,7 @@ try{
       const sequence=BigInt(payload.source.sequence),expected=nativeSequence+(payload.reason==='metadata'?0n:1n);
       if(sequence!==expected)errors.push('Native controller report continuity changed.');
       nativeSequence=sequence;
-      const signature=axes.map(id=>String(snapshot?values.get(id):payload?.values?.[id]?.normalized)).join('|');
+      const signature=wireSignature();
       // Equal consecutive values do not establish a new visible transition.
       if(signature!==previousWire){
        if(samples.length<5000)samples.push({signature,sequence:payload?.source?.sequence,captured:Number(BigInt(frame.capturedUs))/1000+before.offset,received});
