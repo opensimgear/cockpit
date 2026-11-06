@@ -50,7 +50,11 @@ test('Debug telemetry retains its stream through query changes and closes on exi
     await until(currentSummary);
     const tab = name => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Debug sections"] [role="tab"]')).find(button=>button.textContent.trim()===${JSON.stringify(name)}).click()`);
     await tab('Profile inspection');
-    await until(trace,state=>state.closed.includes(observationId));
+    const hidden=await until(trace,state=>state.closed.includes(observationId));
+    await new Promise(resolve=>setTimeout(resolve,600));
+    const settledHidden=await trace();
+    assert.equal(settledHidden.opens,hidden.opens,'Hidden telemetry must not acquire another reader');
+    assert.equal(settledHidden.reads.length,hidden.reads.length,'Hidden telemetry must not issue inspection reads');
     await tab('Incoming telemetry');
     const reopened=await until(trace,state=>state.opens===2&&state.reads.some(read=>read.observationId!==observationId));
     const freshId=reopened.reads.at(-1).observationId;
