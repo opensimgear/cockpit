@@ -22,6 +22,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     let address = source.local_addr().unwrap();
     tracker.observe(&dcs, &connection(5010), Some(process()), "setup", false, 2);
     tracker.entries.get_mut("flight-title").unwrap().reader = Some(Reader::Dcs {
+        process_exit: None,
         source,
         decoder,
         guard,
@@ -233,6 +234,9 @@ fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
     let mut tracker = Tracker::new(directory.path().join("vehicles.json"));
     let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs",
         "provider":"dcs-bios","installed":true,"executable":"DCS.exe"});
+    #[cfg(windows)]
+    let process = crate::xplane::process_events::ExitWatch::current_process_fixture();
+    #[cfg(not(windows))]
     let process = ProcessIdentity { pid: 1, epoch: 1, path: "DCS.exe".into() };
     tracker.begin_observation(&game, &connection, Some(process.clone()), "setup", true, 1).unwrap();
     let mut reader = Reader::open("dcs", &connection, &process).unwrap();
@@ -241,6 +245,12 @@ fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
     let deadline = Instant::now() + Duration::from_secs(1);
     *physics_retry = deadline;
     tracker.entries.get_mut("dcs").unwrap().reader = Some(reader);
+    #[cfg(windows)]
+    {
+        tracker.watch_captures(Arc::new(osg_streams::NativeWake::default()));
+        assert!(!tracker.needs_process_maintenance());
+        assert_eq!(tracker.capture_candidates().len(), 1, "Drain the watch's initial wake");
+    }
     assert_eq!(tracker.capture_deadline(), Some(deadline));
     assert!(tracker.capture_candidates().is_empty());
     let entry = tracker.entries.get_mut("dcs").unwrap();

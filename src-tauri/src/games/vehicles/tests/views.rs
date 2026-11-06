@@ -117,6 +117,7 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     let (decoder, guard, catalogue) = dcs_profile::passive_telemetry_sources(&fixtures(), "A-10C", 1500).unwrap();
     let bios = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
     tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
+        process_exit: None,
         source: bios, decoder, guard, connection: connection(5010), module: "A-10C".into(),
         catalogue, physics: Some(physics), physics_error: None, physics_retry: Instant::now(),
         resolved_aircraft: None, capture_dirty: false,

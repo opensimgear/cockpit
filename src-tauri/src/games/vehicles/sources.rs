@@ -75,6 +75,7 @@ pub(super) fn xplane_catalogue(game: &Value) -> Vec<Value> {
 pub(super) enum Reader {
     Dcs {
         source: dcs_bios::decoded::Source,
+        process_exit: Option<crate::xplane::process_events::ExitWatch>,
         decoder: dcs_profile::ExportSession,
         guard: dcs_profile::DcsCatalogueGuard,
         connection: Value,
@@ -104,6 +105,7 @@ pub(super) enum CaptureWatch {
     Dcs {
         _bios: osg_streams::NativeWatch<dcs_bios::decoded::Snapshot, dcs_bios::decoded::Snapshot>,
         _ownship: Option<osg_streams::NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
+        process_exit: Option<crate::xplane::process_events::ExitEvidence>,
     },
 }
 impl CaptureWatch {
@@ -114,6 +116,7 @@ impl CaptureWatch {
                 let monitor = monitor.as_ref()?;
                 Some(!_watch.is_closed() && monitor.upgrade().is_some_and(|monitor| monitor.error().is_none()))
             }
+            Self::Dcs { process_exit, .. } => Some(process_exit.as_ref()?.current()),
             #[cfg(test)]
             Self::Fixture(current) => Some(current.load(std::sync::atomic::Ordering::Acquire)),
             _ => None,
@@ -151,6 +154,7 @@ impl Reader {
                 };
                 Ok(Self::Dcs {
                     source,
+                    process_exit: crate::xplane::process_events::ExitWatch::open(process).ok(),
                     decoder,
                     guard,
                     connection: connection.clone(),
@@ -197,10 +201,18 @@ impl Reader {
                 .map(|watch| watch.map(|watch| CaptureWatch::Assetto { _watch: watch })),
             Self::Xplane(source) => source.watch(wake)
                 .map(|watch| Some(CaptureWatch::Xplane { _watch: watch, monitor: source.process_monitor() })),
-            Self::Dcs { source, physics, .. } => Ok(Some(CaptureWatch::Dcs {
-                _bios: source.watch(wake.clone())?,
-                _ownship: physics.as_ref().and_then(|physics| physics.view().watch(wake).ok()),
-            })),
+            Self::Dcs { source, physics, process_exit, .. } => {
+                let bios = source.watch(wake.clone())?;
+                if let Some(process_exit) = process_exit { process_exit.watch(&wake); }
+                let ownship = physics.as_ref().and_then(|physics| physics.view().watch(wake).ok());
+                // Preserve maintenance if an active ownship owner could not register a wake.
+                let process_exit = process_exit.as_ref().filter(|_| physics.is_none() || ownship.is_some());
+                Ok(Some(CaptureWatch::Dcs {
+                    _bios: bios,
+                    _ownship: ownship,
+                    process_exit: process_exit.map(crate::xplane::process_events::ExitWatch::evidence),
+                }))
+            }
         }
     }
     pub(super) fn take_capture_change(&mut self) -> bool {
@@ -250,6 +262,7 @@ impl Reader {
                 physics_retry,
                 physics_error,
                 capture_dirty,
+                ..
             } => {
                 guard.validate(false)?;
                 decoder.accept_shared(source.snapshot()?)?;

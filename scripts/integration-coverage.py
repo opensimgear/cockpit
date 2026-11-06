@@ -115,7 +115,7 @@ def main():
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',
                              'xplane/process_events/bridge.rs', 'xplane/process_events/bridge/protocol.rs',
                              'xplane/process_events/bridge/security.rs', 'xplane/process_events/bridge/wait.rs',
-                             'xplane/process_events/bridge/launch.rs'])
+                             'xplane/process_events/bridge/launch.rs', 'xplane/process_events/exit_watch.rs'])
     module_names.extend(['stm32/publication_feed.rs', 'stm32_panel_serial.rs',
                          'stm32_publication.rs', 'profile_publication_actor.rs'])
     module_names.extend(['stm32/inventory_service.rs', 'stm32/workspace.rs',

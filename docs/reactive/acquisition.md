@@ -92,6 +92,9 @@ Closing an observation wakes the vehicle worker to release its channels even
 when the native capture has no updates.
 DCS ownship acquisition retries at its own deadline, even when no BIOS packets
 arrive. The retry does not renew the separate process qualification.
+Watched DCS readers use an interruptible wait on the exact selected Windows
+process handle. When the required watches are available, capture, retry, and
+process exit each have independent wakes without a vehicle liveness timer.
 The two-second pass remains for scopes where native watches could not be
 installed. Assetto
 reinspects the selected executable on native file changes. The Rally and

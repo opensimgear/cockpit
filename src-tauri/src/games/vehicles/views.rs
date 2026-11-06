@@ -38,7 +38,7 @@ impl Tracker {
             entry.integration == "dcs"
                 && entry.enabled
                 && entry.process.as_ref() == Some(process)
-                && entry.observed.elapsed() <= Duration::from_secs(2)
+                && entry.process_current()
         })?;
         if entry.polling {
             // A slow BIOS read must not freeze independently acquired ownship
@@ -66,7 +66,7 @@ impl Tracker {
             entry.integration == "dcs"
                 && entry.enabled
                 && entry.process.as_ref() == Some(process)
-                && entry.observed.elapsed() <= Duration::from_secs(2)
+                && entry.process_current()
         }) else {
             return Ok(None);
         };
