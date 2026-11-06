@@ -31,8 +31,8 @@ and receipt sender and wakes the worker. A stalled sink cannot block a producer 
 another reader. Session, generation and subscription identities fence old work.
 
 Tauri derives the audience and client identity from the owned window. The main
-window can observe the six preference topics; the activation window can observe
-only theme and progress preferences. Navigation start, destruction and application
+window can observe all seven preference topics. The activation window can observe
+theme and progress preferences. Navigation start, destruction and application
 shutdown release leases. Observation controls cannot invoke general gateway
 commands or choose another client's identity.
 
@@ -61,8 +61,6 @@ remains explicit; subsequent updates apply the committed frame directly. Prefere
 row revisions, topic stream revisions and transport receipt ordinals are distinct.
 Epoch fences prevent late reads or saves from replacing a newer observed value.
 
-Remembered UI state and windows remain outside this migration. Large remembered
-state needs the R5 pinned model. This milestone does not remove the cockpit's
-other polling paths, qualify simulator freshness, implement the remaining producer
-topics or finish MCP observation integration. See the dated verification record
-for the checks actually performed.
+`preferences.remembered` carries a committed inventory revision. Consumers fetch
+that single record on revision advance because the inventory can exceed the
+change-frame budget. Window geometry remains owned by its native window writer.

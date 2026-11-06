@@ -1,5 +1,4 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { gatewayRequest } from '../gateway';
 import { SharedObservations } from '../streams/index.ts';
 import { uiPreferences, UI_KEYS, OBSERVED_UI_KEYS, type UiKey, type UiSnapshot } from './ui-preferences';
@@ -17,10 +16,13 @@ export async function bootstrapUiPreferences(): Promise<() => void> {
       const state = await gatewayRequest({ command: 'ui_preferences_save', key, expectedRevision, value });
       return state.uiPreferences as { revision: number; value: unknown };
     },
+    async readRemembered() {
+      const state = await gatewayRequest({ command: 'ui_preferences_get', key: 'remembered' });
+      return state.uiPreferences as UiSnapshot['entries']['remembered'];
+    },
   });
   let disposed = false;
   let observations: SharedObservations | undefined;
-  let unlisten: (() => void) | undefined;
   const focus = () => {
     if (disposed) return;
     const hydrating = uiPreferences.hydrate();
@@ -32,7 +34,6 @@ export async function bootstrapUiPreferences(): Promise<() => void> {
     if (disposed) return;
     disposed = true;
     observations?.close();
-    unlisten?.();
     window.removeEventListener('focus', focus);
     window.removeEventListener('pagehide', cleanup);
     // Fence a bootstrap/focus read still resolving after window disposal.
@@ -65,14 +66,6 @@ export async function bootstrapUiPreferences(): Promise<() => void> {
   // Start the single explicit read before subscription callbacks can overtake it.
   const hydrating = uiPreferences.hydrate();
   subscribe();
-  if (native) {
-    try {
-      const stop = await listen<{ key: UiKey; revision: number }>('ui-preferences-changed', event => {
-        if (!disposed && event.payload.key === 'remembered') void uiPreferences.changed('remembered', event.payload.revision);
-      });
-      if (disposed) stop(); else unlisten = stop;
-    } catch { /* Explicit focus reconciliation also covers the remembered inventory. */ }
-  }
   if (!disposed) {
     window.addEventListener('focus', focus);
     await hydrating;

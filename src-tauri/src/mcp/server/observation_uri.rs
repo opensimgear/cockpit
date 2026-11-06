@@ -126,6 +126,7 @@ mod tests {
             "controllers.inventory",
             "usb.inventory",
             "system.inventory",
+            "preferences.remembered",
             "controllers.input.11111111-1111-4111-8111-111111111111",
             "can.inputs.0123456789abcdef01234567.0123456789abcdef0123456789abcdef",
         ] {
@@ -144,7 +145,7 @@ mod tests {
             "cockpit://observations/",
             "cockpit://observations/games",
             "cockpit://observations/preferences.windows",
-            "cockpit://observations/preferences.remembered",
+            "cockpit://observations/preferences.remembered.extra",
             "cockpit://observations/settings.mcp",
             "cockpit://observations/games.detail.",
             "cockpit://observations/games.detail.bad/id",

@@ -1,13 +1,13 @@
 use super::*;
 
-// The large remembered inventory gets its own revision-pinned read model later.
-// These typed preferences are each bounded to 8 KiB by their authoritative owner.
-pub(crate) const OBSERVED_KEYS: [&str; 6] = [
-    "theme", "devices-mode", "canvas-navigation", "canvas-styling", "tray", "progress",
+// Remembered inventory exceeds the change frame budget, so publish its revision.
+pub(crate) const OBSERVED_KEYS: [&str; 7] = [
+    "theme", "devices-mode", "canvas-navigation", "canvas-styling", "tray", "progress", "remembered",
 ];
 
-pub(super) fn payload(entry: Result<&Entry, &String>) -> Value {
+pub(super) fn payload(key: &str, entry: Result<&Entry, &String>) -> Value {
     match entry {
+        Ok(entry) if key == "remembered" => json!({"ready":true,"revision":entry.revision.to_string()}),
         Ok(entry) => json!({"ready":true,"revision":entry.revision.to_string(),"value":entry.value}),
         Err(error) => json!({"ready":false,"error":error}),
     }
@@ -20,7 +20,7 @@ impl Preferences {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         for key in OBSERVED_KEYS {
             let fallback = Entry {revision:0,value:defaults(key)};
-            let initial = payload(match state.errors.get(key) {
+            let initial = payload(key, match state.errors.get(key) {
                 Some(error) => Err(error),
                 None => Ok(state.entries.get(key).unwrap_or(&fallback)),
             });

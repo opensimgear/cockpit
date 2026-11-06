@@ -122,8 +122,9 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
           }
           const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const profile = typeof payload?.command === 'string' && payload.command.startsWith('profile_');
+          const remembered = payload?.command === 'ui_preferences_save' && payload.key === 'remembered';
           if (profile && payload.command !== 'profile_editor_save' && bodySize > profileRequestLimit) throw new Error('Profile request exceeds its size limit.');
-          if (!profile && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
+          if (!profile && !remembered && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
           res.end(JSON.stringify(await request(payload)));
         } catch (error) {
           res.statusCode = 400;

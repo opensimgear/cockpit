@@ -292,9 +292,11 @@ observation URIs. Use `cockpit://observations/` followed by a topic such as
 `workspace.state`, `games.state`,
 `games.jobs` or `controllers.inventory`. Use `controller_update` with a write
 credential to change a controller's saved name and role by source ID.
-The six streamed UI preferences appear as `preferences.theme`,
+The streamed UI preferences appear as `preferences.theme`,
 `preferences.devices-mode`, `preferences.canvas-navigation`,
-`preferences.canvas-styling`, `preferences.tray` and `preferences.progress`.
+`preferences.canvas-styling`, `preferences.tray`, `preferences.progress`
+and `preferences.remembered`. Remembered inventory frames carry the committed
+revision. Use `ui_preferences_get` with key `remembered` to fetch the record.
 Read or subscribe to the exact preference URI and use `ui_preferences_save`
 with its expected revision to commit a change.
 For an on-demand observation read, optionally send

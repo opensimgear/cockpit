@@ -105,6 +105,21 @@ test('oversized browser requests are rejected before starting a native service',
   bridge.close();
 });
 
+test('remembered inventory reaches native validation above the generic browser limit', async () => {
+  const payload = { command: 'ui_preferences_save', key: 'remembered', expectedRevision: 1,
+    value: { components: [], forgotten: Object.fromEntries(Array.from({ length: 900 }, (_, index) =>
+      [`device-${index}`, { signature: 'remembered-controller', sawAbsent: false, type: 'controller' }])) } };
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) > 65_536);
+  const bridge = fixture((envelope, process) => {
+    assert.deepEqual(envelope.request, payload);
+    process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId, response: { ok: true } })}\n`);
+  });
+  try {
+    assert.equal((await bridge.request(payload)).status, 200);
+    assert.equal((await bridge.request({ ...payload, key: 'theme' })).status, 400);
+  } finally { bridge.close(); }
+});
+
 test('oversized native responses fail the bounded stream and reject the pending caller', async () => {
   const bridge = fixture((envelope, process) => process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId,
     response: { ok: true, state: { modules: [], invalid: 'x'.repeat(140_000) } } })}\n`));

@@ -42,7 +42,7 @@ impl Preferences {
             state.errors.remove(key);state.entries.insert(key.into(),entry.clone());
             if changed {
                 if let (Some(publisher),Some(clock))=(state.streams.get(key),state.observation_clock.as_ref()) {
-                    let payload=streams::payload(Ok(&entry));
+                    let payload=streams::payload(key,Ok(&entry));
                     if publisher.publish(1,payload.clone(),payload,clock.captured_us(),"cockpit-state").is_err(){publisher.close();}
                 }
                 state.observer.clone()

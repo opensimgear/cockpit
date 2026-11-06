@@ -168,6 +168,27 @@ fn preference_commits_publish_full_values_without_querying_or_authority() {
 }
 
 #[test]
+fn remembered_inventory_publishes_only_its_committed_revision() {
+    let manager = crate::gateways::GatewayManager::mcp_test_manager();
+    let runtime = manager.observation_runtime();
+    let mut browser = runtime.broker().subscribe("browser", "browser", "preferences.remembered").unwrap();
+    let mut mcp = runtime.broker().subscribe("mcp-reader", "mcp", "preferences.remembered").unwrap();
+    let initial = json!({"ready":true,"revision":"0"});
+    assert_eq!(browser.recv().unwrap().payload, Some(initial.clone()));
+    assert_eq!(mcp.recv().unwrap().payload, Some(initial));
+    let value = json!({"components":[],"forgotten":{"offline":{"signature":"known","sawAbsent":false}}});
+    manager.ui_preferences.write("remembered", 0, value.clone()).unwrap();
+    assert!(manager.ui_preferences.write("remembered", 0, json!(null)).is_err());
+    for reader in [&mut browser, &mut mcp] {
+        let frame = reader.recv().unwrap();
+        assert_eq!(frame.kind, "change");
+        assert_eq!(frame.payload, Some(json!({"ready":true,"revision":"1"})));
+    }
+    assert_eq!(manager.ui_preferences.read("remembered").unwrap().value, value);
+    manager.shutdown();
+}
+
+#[test]
 fn browser_controls_cannot_select_another_principal_or_general_dispatch() {
     let (runtime, _) = setup();
     for request in [

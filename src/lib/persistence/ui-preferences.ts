@@ -1,7 +1,7 @@
 /** Revisioned preferences shared by the native and browser service transports. */
 export const UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'remembered', 'tray', 'progress'] as const;
 export type UiKey = typeof UI_KEYS[number];
-export const OBSERVED_UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'tray', 'progress'] as const;
+export const OBSERVED_UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'tray', 'progress', 'remembered'] as const;
 export type UiValues = {
   theme: boolean;
   'devices-mode': 'list' | 'topology';
@@ -15,6 +15,7 @@ export type UiEntry<K extends UiKey = UiKey> = { revision: number; value: UiValu
 export type UiSnapshot = { entries: Record<UiKey, { revision: number; value: unknown }> };
 export type UiTransport = {
   read(): Promise<UiSnapshot>;
+  readRemembered?(): Promise<UiSnapshot['entries']['remembered']>;
   write(key: UiKey, expectedRevision: number, value: unknown): Promise<{ revision: number; value: unknown }>;
 };
 const defaults: UiValues = {
@@ -23,6 +24,8 @@ const defaults: UiValues = {
   tray: { closeToTray: false, minimizeToTray: false }, progress: { delivery: 'system', position: 'bottom-right' },
 };
 const revision = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+const wireRevision = (value: unknown): value is string =>
+  typeof value === 'string' && /^(0|[1-9][0-9]{0,15})$/.test(value) && revision(Number(value));
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
   return object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -68,16 +71,20 @@ export class UiPreferences {
       try { listener(this.get(key)); } catch { /* A consumer cannot block the committed state. */ }
     }
   }
-  /** Stream values are committed evidence; never query storage to apply a delivery. */
+  /** Small values are delivered directly. The inventory stream carries only its revision. */
   applyObservation(key: UiKey, payload: unknown): void {
     if (!OBSERVED_UI_KEYS.includes(key as typeof OBSERVED_UI_KEYS[number])) return;
     try {
       if (exact(payload, ['ready', 'error']) && payload.ready === false && typeof payload.error === 'string' && payload.error) {
         this.observationError(key, payload.error); return;
       }
+      if (key === 'remembered') {
+        if (!exact(payload, ['ready', 'revision']) || payload.ready !== true || !wireRevision(payload.revision)) throw Error('Invalid observed UI preference revision.');
+        void this.changed(key, Number(payload.revision));
+        return;
+      }
       if (!exact(payload, ['ready', 'revision', 'value']) || payload.ready !== true
-          || typeof payload.revision !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(payload.revision)
-          || BigInt(payload.revision) > BigInt(Number.MAX_SAFE_INTEGER)) throw Error('Invalid observed UI preference revision.');
+          || !wireRevision(payload.revision)) throw Error('Invalid observed UI preference revision.');
       const nextRevision = Number(payload.revision);
       const value = validateUiValue(key, payload.value);
       if (nextRevision < this.get(key).revision) return;
@@ -102,10 +109,16 @@ export class UiPreferences {
     const epochs = new Map(keys.map(key => [key, this.observations.get(key) ?? 0]));
     const unchanged = (key: UiKey) => epochs.get(key) === (this.observations.get(key) ?? 0);
     try {
-      const snapshot = await this.transport!.read();
-      if (!object(snapshot) || !exact(snapshot.entries, [...UI_KEYS])) throw Error('The native UI preference snapshot is incomplete.');
+      const transport = this.transport!;
+      const entries = keys.length === 1 && keys[0] === 'remembered' && transport.readRemembered
+        ? { remembered: await transport.readRemembered() }
+        : await transport.read().then(snapshot => {
+          if (!object(snapshot) || !exact(snapshot.entries, [...UI_KEYS])) throw Error('The native UI preference snapshot is incomplete.');
+          return snapshot.entries;
+        });
       const rows = keys.map(key => {
-        const row = snapshot.entries[key]; if (!object(row) || !revision(row.revision)) throw Error('The native UI preference revision is invalid.');
+        const row: unknown = (entries as Partial<UiSnapshot['entries']>)[key];
+        if (!object(row) || !revision(row.revision)) throw Error('The native UI preference revision is invalid.');
         return { key, revision: row.revision, value: validateUiValue(key, row.value === null ? defaults[key] : row.value) };
       });
       for (const row of rows) if (unchanged(row.key) && row.revision >= this.entries.get(row.key)!.revision) this.update(row.key, { revision: row.revision, value: row.value, ready: true, error: '' });
@@ -118,7 +131,11 @@ export class UiPreferences {
   async changed(key: UiKey, nextRevision: number): Promise<void> {
     if (!UI_KEYS.includes(key) || !revision(nextRevision)) return;
     // An event may overtake an already pending read of the previous snapshot.
-    for (let attempt = 0; attempt < 2 && nextRevision > this.get(key).revision; attempt++) if (!await this.hydrate([key])) break;
+    const epoch = this.observations.get(key);
+    for (let attempt = 0; attempt < 2 && epoch === this.observations.get(key); attempt++) {
+      const entry = this.entries.get(key)!;
+      if ((entry.ready && nextRevision <= entry.revision) || !await this.hydrate([key])) break;
+    }
   }
   async save<K extends UiKey>(key: K, value: UiValues[K]): Promise<UiEntry<K>> {
     const current = this.get(key); value = validateUiValue(key, value);
