@@ -36,6 +36,7 @@
   let disposed = false, epoch = 0, reading = false, refreshQueued = false;
   let build = $state<AbortController>();
   const store = new CompiledWorkspaceStore();
+  const panelVisible = $derived(!!draft && !widgetEditor);
   const sources = $derived(workspace.sources);
   const publications = $derived(workspace.drafts.flatMap(d => workspace.publications[d.id]?.slice(-1) ?? []));
   const page = $derived(draft?.pages.find(page => page.id === pageId) ?? draft?.pages[0]);
@@ -68,7 +69,7 @@
   const loaded = new Promise<void>(resolve => { resolveLoaded = resolve; });
   async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) { const result = (await gatewayRequest({ command, companion })).companions; if (!result) throw new Error('This operation requires the native Cockpit.'); host = { ...host, ...result }; return result; }
   async function refresh() {
-    if (disposed || !active) return;
+    if (disposed || !active || !panelVisible) return;
     if (reading) { refreshQueued = true; return; }
     reading = true;
     refreshQueued = false;
@@ -79,7 +80,7 @@
     }
   }
   $effect(() => {
-    if (!active) return;
+    if (!active || !panelVisible) return;
     const observations = new SharedObservations();
     for (const topic of ['companion.presence', 'companion.listener']) {
       observations.subscribe(topic, state => {
@@ -100,10 +101,20 @@
   function openPanel(id: string, record = true) {
     if (!leave()) return;
     const saved = workspace.drafts.find(draft => draft.id === id); if (!saved) { error = 'This panel is no longer available.'; return; }
+    const visibleState = !draft ? connections?.getHostState() : undefined;
     invalidate(); draft = structuredClone(saved); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = false;
     compiled = workspace.publications[id]?.at(-1);
     const hashes = new Set((workspace.publications[id] ?? []).map(p => p.publicationHash));
-    selectedCompanions = (host.host?.instances ?? []).filter(i => hashes.has(String(i.publicationHash))).map(i => String(i.companionId));
+    const assignments = (state: CompanionHostState) => (state.host?.instances ?? [])
+      .filter(instance => hashes.has(String(instance.publicationHash))).map(instance => String(instance.companionId));
+    if (visibleState?.host) host = visibleState;
+    selectedCompanions = assignments(host);
+    if (!host.host) {
+      const opened = epoch;
+      void refresh().then(() => {
+        if (!disposed && epoch === opened && !dirty) selectedCompanions = assignments(host);
+      });
+    }
     details = false; error = ''; message = ''; if (record) onNavigate?.({ kind: 'panel', id });
   }
   function createPanel() { if (!leave()) return; invalidate(); draft = newCompiledDraft(); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = true; selectedCompanions = []; onNavigate?.({ kind: 'panel', id: draft.id }); }

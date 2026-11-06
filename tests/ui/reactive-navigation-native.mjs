@@ -27,6 +27,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const baselines = new Map();
   const errors = [];
   const retired = new Set();
+  let companionReads = 0;
   const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
     const selector = view === 'Settings' ? '.sidebar-bottom button' : 'nav[aria-label="Main navigation"] button';
@@ -39,7 +40,12 @@ test(`${transport} main view navigation retires observation readers without dupl
   };
   const stopTrace = page.listen(({method, params}) => {
     if (method === 'Network.requestWillBeSent' && params.request.postData) {
-      const operation = endpoints.get(new URL(params.request.url).pathname);
+      const path = new URL(params.request.url).pathname;
+      if (path === '/gateway_request' || path === '/api/gateway/') {
+        const body = JSON.parse(params.request.postData);
+        if ((body.request ?? body).command === 'companion_status') companionReads++;
+      }
+      const operation = endpoints.get(path);
       if (!operation) return;
       pending.set(params.requestId, {operation, body:JSON.parse(params.request.postData)});
     } else if (method === 'Network.responseReceived') {
@@ -98,7 +104,7 @@ test(`${transport} main view navigation retires observation readers without dupl
       ['Devices', []],
       ['Profiles', []],
       ['Games', ['games.jobs']],
-      ['Companions', ['companion.listener','companion.presence']],
+      ['Companions', []],
       ['Debug', ['games.telemetry']],
       ['Activity', ['activity.log']],
     ];
@@ -142,8 +148,12 @@ test(`${transport} main view navigation retires observation readers without dupl
     await navigate('Overview');
     await until(() => pending.size === 0 && active.size === 0);
     for (let cycle = 0; cycle < 2; cycle++) {
+      const before = companionReads;
       await navigate('Companions');
-      await settled(companionTopics, true);
+      await settled([], true);
+      await until(() => companionReads > before);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      assert.ok(companionReads - before <= 2, 'The visible list alone reads companion status at open');
       await until(() => page.evaluate(`(() => {
         const button = [...document.querySelectorAll('section[aria-label="Panels"] button')]
           .find(button => button.textContent.trim() === 'New');
@@ -163,7 +173,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         }
       })()`);
       await until(() => page.evaluate(`!!document.querySelector('section[aria-label="Panels"]')`));
-      await settled(companionTopics, true);
+      await settled([], true);
       await navigate('Overview');
       await settled([], true);
     }

@@ -165,6 +165,7 @@
     if(draft){editedName=draft.name;editedPanel=draft.panelHash;}
     if (recordNavigation) onNavigate?.(selectedId);
   }
+  export function getHostState(): CompanionHostState { return hostState; }
   export function getCompanionId(): string { return pendingCompanionId || selectedId; }
   export function showCompanion(companionId: string): void {
     void settingsAutosave.flush();
