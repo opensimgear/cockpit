@@ -791,11 +791,18 @@ static void update_screen(void){
 static unsigned network_wait(void){
     if(osg_serial_has_wake()){
         if(state==OFF||state==FAULT)return portMAX_DELAY;
-        if(state==PAIR_WAIT||state==WAIT_ASSIGNMENT||state==PREPARING||state==PANEL_ERROR){
+        if(state==PAIR_WAIT||state==WAIT_ASSIGNMENT||state==PREPARING||state==PANEL_ERROR||state==LIVE){
             const uint64_t now=millis();
             uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
-            if(state==WAIT_ASSIGNMENT&&!connection.direct&&connection.ws&&primary_connection[0]&&
+            if((state==LIVE||(state==WAIT_ASSIGNMENT&&primary_connection[0]))&&!connection.direct&&connection.ws&&
                 !osg_wifi_feedback_running()&&next_feedback_connect<deadline)deadline=next_feedback_connect;
+            if(state==LIVE){
+                xSemaphoreTake(ui.mutex,portMAX_DELAY);
+                const uint64_t safety=osg_input_deadline(&input,millis());
+                if(safety<deadline)deadline=safety;
+                if(remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&next_input_request<deadline)deadline=next_input_request;
+                xSemaphoreGive(ui.mutex);
+            }
             if(now>=deadline)return 0;
             const unsigned ticks=pdMS_TO_TICKS(deadline-now);
             return ticks?ticks:1;
@@ -836,24 +843,39 @@ void osg_network_touch(bool valid,bool down,int x,int y){
     bool was_armed=ui.runtime->armed,was_arming=ui.runtime->arming;int previous=ui.runtime->active;
     const uint64_t sequence=ui.runtime->sequence;
     const uint8_t page=ui.runtime->page;
-    osg_input_poll(&input,valid,down,x,y,millis());
+    const uint64_t now=millis();
+    const bool could_arm=osg_input_can_arm(&input,now);
+    const bool was_valid=input.touch_valid;
+    const osg_input_mode mode=input.mode;
+    osg_input_poll(&input,valid,down,x,y,now);
     if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active||
        sequence!=ui.runtime->sequence||page!=ui.runtime->page)display_changed();
+    const TaskHandle_t wake=(sequence!=ui.runtime->sequence||page!=ui.runtime->page||mode!=input.mode||
+        was_valid!=input.touch_valid||(!could_arm&&osg_input_can_arm(&input,now)))?network_owner:NULL;
     xSemaphoreGive(ui.mutex);
+    if(wake)xTaskNotifyGive(wake);
 }
 void osg_network_render_progress(const osg_panel *panel){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const bool armed=ui.runtime->armed,arming=ui.runtime->arming;
+    const osg_input_mode mode=input.mode;
     osg_input_render_progress(&input,panel,millis());
     if(armed!=ui.runtime->armed||arming!=ui.runtime->arming)display_changed();
+    const TaskHandle_t wake=mode!=input.mode?network_owner:NULL;
     xSemaphoreGive(ui.mutex);
+    if(wake)xTaskNotifyGive(wake);
 }
 void osg_network_render(const osg_panel *panel,bool finished,bool success){
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const bool was_ready=input.display_ready;
+    const bool was_failed=panel_render_failed;
+    const osg_input_mode mode=input.mode;
     osg_input_render(&input,panel,finished,success,millis());
     if(finished&&!success&&panel==ui.runtime->panel&&ui.runtime->screen==OSG_SCREEN_PANEL)panel_render_failed=true;
     if(!success)*ui.dirty=true;
+    const TaskHandle_t wake=(was_ready!=input.display_ready||was_failed!=panel_render_failed||mode!=input.mode)?network_owner:NULL;
     xSemaphoreGive(ui.mutex);
+    if(wake)xTaskNotifyGive(wake);
 }
 const osg_panel *osg_network_candidate_begin(osg_scene_ticket *ticket){
     if(!ticket)return NULL;

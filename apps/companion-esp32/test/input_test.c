@@ -17,7 +17,22 @@ static uint64_t arm(uint64_t now){
     uint64_t epoch;assert(osg_input_prepare(&input,now,&epoch));assert(runtime.arming&&!runtime.armed);
     assert(osg_input_commit(&input,epoch,now,now));assert(runtime.armed&&runtime.live_input&&!runtime.arming);return epoch;
 }
+static void deadline_tests(void){
+    setup();assert(osg_input_deadline(&input,102)==UINT64_MAX);arm(102);
+    assert(osg_input_deadline(&input,102)==700);
+    osg_input_render(&input,runtime.panel,false,true,103);
+    osg_input_poll(&input,true,false,0,0,150);
+    assert(osg_input_deadline(&input,150)==703);
+    osg_input_poll(&input,true,true,100,100,151);
+    assert(osg_input_deadline(&input,151)==401&&osg_input_deadline(&input,401)==401);
+    assert(!osg_input_monitor(&input,401)&&osg_input_deadline(&input,402)==402);
+    setup();arm(102);osg_input_poll(&input,true,false,0,0,500);osg_input_poll(&input,true,false,0,0,900);
+    assert(osg_input_deadline(&input,900)==1102);
+    input.last_poll_ms=input.last_ack_ms=UINT64_MAX-10;
+    assert(osg_input_deadline(&input,UINT64_MAX-10)==UINT64_MAX);
+}
 int main(void){
+    deadline_tests();
     setup();uint64_t epoch=arm(102);osg_input_poll(&input,true,true,100,100,103);assert(input.count==1&&runtime.active==0);
     osg_input_poll(&input,true,true,100,100,104);assert(input.count==1);osg_input_poll(&input,true,false,100,100,105);assert(input.count==2);
     osg_input_edge edges[16];size_t n=0;uint64_t observed=0;

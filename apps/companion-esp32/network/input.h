@@ -30,6 +30,7 @@ void osg_input_render(osg_input *, const osg_panel *, bool finished, bool succes
 /* A completed display write renews progress, never arming or completing a frame. */
 void osg_input_render_progress(osg_input *, const osg_panel *, uint64_t now);
 bool osg_input_monitor(osg_input *, uint64_t now);
+uint64_t osg_input_deadline(const osg_input *, uint64_t now);
 bool osg_input_can_arm(const osg_input *, uint64_t now);
 bool osg_input_prepare(osg_input *, uint64_t now, uint64_t *epoch);
 bool osg_input_commit(osg_input *, uint64_t epoch, uint64_t request_ms, uint64_t now);

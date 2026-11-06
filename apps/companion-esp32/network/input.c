@@ -54,6 +54,21 @@ bool osg_input_monitor(osg_input *q, uint64_t now) {
     else if (q->count && elapsed(now, q->queue[q->head].created_ms, OSG_INPUT_MAX_AGE_MS)) osg_input_cancel(q, OSG_INPUT_BACKLOG);
     return q->mode != OSG_INPUT_BLOCKED;
 }
+static uint64_t earlier_expiry(uint64_t deadline, uint64_t start, uint64_t budget, uint64_t now) {
+    if (elapsed(now, start, budget)) return now;
+    if (start > UINT64_MAX - budget) return deadline;
+    const uint64_t expiry = start + budget;
+    return expiry < deadline ? expiry : deadline;
+}
+uint64_t osg_input_deadline(const osg_input *q, uint64_t now) {
+    if (q->mode == OSG_INPUT_BLOCKED) return now;
+    if (!active(q)) return UINT64_MAX;
+    uint64_t deadline = earlier_expiry(UINT64_MAX, q->last_poll_ms, OSG_TOUCH_LEASE_MS, now);
+    deadline = earlier_expiry(deadline, q->last_ack_ms, OSG_ACK_LEASE_MS, now);
+    if (q->rendering) deadline = earlier_expiry(deadline, q->render_start_ms, OSG_TOUCH_LEASE_MS, now);
+    if (q->count) deadline = earlier_expiry(deadline, q->queue[q->head].created_ms, OSG_INPUT_MAX_AGE_MS, now);
+    return deadline;
+}
 void osg_input_poll(osg_input *q, bool valid, bool down, int x, int y, uint64_t now) {
     (void)osg_input_monitor(q, now); /* A late poll cannot hide a missed lease. */
     q->now_ms = now; q->last_poll_ms = now; q->touch_valid = valid;

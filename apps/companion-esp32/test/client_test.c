@@ -168,6 +168,22 @@ static void arm_text(char out[1024]){
     snprintf(out,1024,"{\"command\":\"arm\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\",\"armEpoch\":\"%" PRIu64 "\"}",session.session,session.generation,session.publication,input.epoch);
 }
 static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED&&!strcmp(operation.phase,"ready"));advance();}
+static void live_wake_tests(void){
+    live_ready();
+    network_owner=xTaskGetCurrentTaskHandle();network_wakes=0;
+    input.display_ready=false;
+    osg_network_render(test_runtime.panel,true,true);assert(network_wakes==1);
+    live_arm();mock_pairing_running=true;network_wakes=0;
+    assert(network_wait()==pdMS_TO_TICKS(250));
+    osg_network_touch(true,false,0,0);assert(network_wakes==0);
+    next_input_request=fake_ms+OSG_INPUT_BATCH_INTERVAL_MS;
+    osg_network_touch(true,true,100,100);
+    assert(network_wakes==1&&input.count==1&&network_wait()==pdMS_TO_TICKS(OSG_INPUT_BATCH_INTERVAL_MS));
+    fake_ms=next_input_request;assert(network_wait()==0);
+    osg_network_touch(false,false,0,0);
+    assert(network_wakes==2&&input.mode==OSG_INPUT_BLOCKED&&network_wait()==0);
+    network_owner=NULL;mock_pairing_running=false;stop();
+}
 #include "client_feedback_delta.inc"
 #include "client_pairing_tests.inc"
 static void live_input_tests(void){
@@ -558,7 +574,7 @@ int main(int argc,char **argv){
     usb_assignments();assert(state==OPEN&&!remote_armed);
     cJSON_Delete(assignment_event);mock_serial_assignments=false;
     stop();
-    candidate_handoff_tests();portable_delivery_tests();
+    live_wake_tests();candidate_handoff_tests();portable_delivery_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     osg_scene_banks_destroy(&banks);cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }
