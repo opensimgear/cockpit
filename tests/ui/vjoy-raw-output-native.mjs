@@ -56,23 +56,32 @@ test('authored vJoy button transitions reach the exact Windows Raw Input slot',{
     const exited=new Promise((resolve,reject)=>{probe.once('error',reject);probe.once('close',resolve);});
     await Promise.race([ready,exited.then(()=>{throw Error('Raw Input probe ended before registering');})]);
     const streamId=randomUUID();
-    for(const [index,value] of [true,false,true,false].entries()){
+    for(const [index,value] of [true,false,true].entries()){
       await request({command:'profile_debug_controller_input',owner:started.owner,nodeId:'debug',streamId,sequence:String(index+1),changes:[{portId:'button-1',value}]});
       await observation?.sample(value);
       await new Promise(resolve=>setTimeout(resolve,250));
     }
+    // Hold for several renewals and more than one complete 250 ms feeder
+    // lease. The final release must come from Stop, not the input fixture.
+    const heldMs=750;
+    await new Promise(resolve=>setTimeout(resolve,heldMs));
+    assert.equal((await status()).owner?.profileId,saved.id);
+    assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
+    const stopReplyMs=observation?await observation.stop():null;
+    if(!observation)await request({command:'profile_stop'});
+    assert.equal((await status()).owner,null);
+    await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free');
+    const slowReader=observation?await observation.resumeSlow():null;
     assert.equal(await exited,0);
     const report=JSON.parse(trace.at(-1));
-    await mkdir('.research/reactive',{recursive:true});
-    await writeFile('.research/reactive/vjoy-raw-output-result.json',JSON.stringify({slot:slot.slot,...report},null,2));
     const events=report.buttonEvents.filter(event=>event.report===slot.slot);
     assert.ok(events.every(event=>event.status===0x00110000),'HID button decoding must succeed');
     assert.equal(new Set(events.map(event=>event.device)).size,1,'The exact slot must appear on one Raw Input device');
     assert.deepEqual(events.map(event=>event.pressed),[true,false,true,false]);
-    if(observation)await observation.stop();
-    else await request({command:'profile_stop'});
-    assert.equal((await status()).owner,null);
-    await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='free');
+    await mkdir('.research/reactive',{recursive:true});
+    await writeFile('.research/reactive/vjoy-raw-output-result.json',JSON.stringify({
+      slot:slot.slot,heldMs,stopReplyMs,slowReader,stopReleasedHeldButton:true,...report,
+    },null,2));
   } finally {
     try {
       if(saved){

@@ -33,6 +33,11 @@ export async function mcpVjoyObservation(page, owner) {
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
   );
   const initial = await invoke('mcp_settings_get');
+  const physicalSources = () => page.evaluate(`(async()=>{
+    const {gatewayRequest}=await import('/src/lib/gateway.ts');
+    const {controllers}=await gatewayRequest({command:'controller_list',offset:0,limit:32});
+    return controllers.sources.filter(source=>source.online&&source.baselineReady&&source.vendorId!==0x1234);
+  })()`);
   const settings = async enabled => {
     const current = await invoke('mcp_settings_get');
     return invoke('mcp_settings_update', {settings:{enabled, port:initial.port, expectedSettingsRevision:current.settingsRevision}});
@@ -90,7 +95,10 @@ export async function mcpVjoyObservation(page, owner) {
       return stream;
     };
     const slow = await subscribe(); // Keep the first response open with no further reads until Stop.
+    const slowPausedAt = performance.now();
+    const captureBefore = (await physicalSources()).sort((a,b) => b.controlCount-a.controlCount)[0];
     const fast = await subscribe();
+    const retired = event => event.params?.uri === uri && sampleFrame(event)?.kind === 'loss';
     return {
       async sample(value) {
         await fast.next(event => event.params?.uri === uri && sampleFrame(event)?.payload?.ports?.some(
@@ -98,12 +106,19 @@ export async function mcpVjoyObservation(page, owner) {
         ));
       },
       async stop() {
+        const startedAt = performance.now();
         const response = await post('tools/call', {name:'profile_stop', arguments:{operationId:randomUUID()}});
         assert.equal(response.status, 200);
         assert.equal((await response.json()).result.structuredContent.ok, true);
-        const retired = event => event.params?.uri === uri && sampleFrame(event)?.kind === 'loss';
+        const stopReplyMs = performance.now() - startedAt;
         await fast.next(retired);
+        return stopReplyMs;
+      },
+      async resumeSlow() {
+        const captureAfter = captureBefore && (await physicalSources()).find(source => source.id === captureBefore.id);
+        const unreadMs = performance.now() - slowPausedAt;
         await slow.next(retired);
+        return {unreadMs, captureBefore, captureAfter};
       },
       close,
     };
