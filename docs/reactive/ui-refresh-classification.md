@@ -164,7 +164,7 @@ These locations use the same pinned ledger.
 | `apps/browser-companion/src/App.svelte:41,267` | Direct browser connection, next lease or unassigned ping | Keep only while the direct connection is active. Transport tests cover the deadlines. |
 | `apps/browser-companion/src/App.svelte:44,150` | Preparing panel owner, renew until the initial baseline or cancellation | Keep the preparation lease deadline. Qualify its minimum margin on actual clients. |
 | `apps/browser-companion/src/connection-worker.ts:8,19` | Shared worker, next maintenance deadline for its connection | Keep one deadline per worker. `connection-worker.test.mjs` covers scheduling and cancellation. |
-| `apps/browser-companion/src/connection-worker.ts:41` | Shared worker startup, retry after a failed connection | Keep failure backoff. The worker test covers transport failure. |
+| `apps/browser-companion/src/connection-worker.ts:41` | Shared worker startup, retry after a failed connection | Keep one failure backoff per worker. Closing clears the pending retry and repeated connect messages share the same attempt. The worker regression covers both. |
 | `apps/browser-companion/src/socket-transport.ts:31,41,65` | Socket owner, connection and outstanding reply deadlines | Keep protocol timeouts and close on failure. Transport tests cover cleanup. |
 | `apps/browser-companion/src/transport.ts:32,63` | Transport bootstrap, stalled SharedWorker startup | Keep the one-time direct fallback. `worker-transport.test.mjs` covers fallback. |
 | `apps/companion/src-tauri/src/status_events.rs:32,35,37,40` | Test-only receive bounds for status observation | No production timer. The fixture verifies one outstanding notification and acknowledgment. |

@@ -6,10 +6,11 @@ worker.onconnect=event=>{
   const port=event.ports[0],socket=new SocketTransport();
   let closed=false,connected=false,maintaining=false;
   let timer:ReturnType<typeof setTimeout>|undefined,deadline:number|undefined;
+  let connecting=false,retry:ReturnType<typeof setTimeout>|undefined;
   let visuals:SocketTransport|undefined;
   const send=(message:Record<string,unknown>)=>{if(!closed)port.postMessage(message);};
   const connection=new BackgroundConnection(socket,()=>performance.now(),(reply,id)=>send({type:'feedback',id,reply}));
-  const stop=()=>{if(closed)return;send({type:'closed'});closed=true;clearTimeout(timer);visuals?.close();connection.close();port.close();};
+  const stop=()=>{if(closed)return;send({type:'closed'});closed=true;clearTimeout(timer);clearTimeout(retry);visuals?.close();connection.close();port.close();};
   const schedule=()=>{
     if(closed||!connected||maintaining)return;
     const next=connection.nextMaintenanceAt();
@@ -24,6 +25,19 @@ worker.onconnect=event=>{
     finally{maintaining=false;schedule();}
   };
   socket.onclose=()=>{if(connected)stop();};
+  const connect=async()=>{
+    if(closed||connected||connecting||retry!==undefined)return;
+    connecting=true;
+    try{
+      await connection.connect();
+      if(closed)return;
+      connected=true;
+      schedule();
+      send({type:'connected'});
+    }catch{
+      if(!closed)retry=setTimeout(()=>{retry=undefined;void connect();},1000);
+    }finally{connecting=false;}
+  };
   port.onmessage=async({data})=>{
     if(data.type==='close'){stop();return;}
     if(data.type==='page-activity'){
@@ -35,11 +49,7 @@ worker.onconnect=event=>{
     }
     if(data.type==='feedback-ack'){try{await connection.acknowledgeFeedback(data.id);}catch{stop();}return;}
     if(data.type==='connect'){
-      // The worker's retry timer continues when the document is unfocused.
-      while(!closed){
-        try{await connection.connect();if(closed)return;connected=true;schedule();send({type:'connected'});return;}
-        catch{if(!closed)await new Promise(resolve=>setTimeout(resolve,1000));}
-      }
+      await connect();
     }else if(data.type==='subscribe-feedback'){
       try{
         const previous=visuals;

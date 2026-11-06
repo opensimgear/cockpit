@@ -16,7 +16,7 @@ const timeouts = new Map([
     'runMaintenance,Math.ceil(delay)',
     'sendPreparationHeartbeat,Math.max(0,Math.ceil(sentAt+500-performance.now()))',
   ]],
-  ['apps/browser-companion/src/connection-worker.ts', ['resolve,1000','maintain,Math.max(0,Math.ceil(next-performance.now()))']],
+  ['apps/browser-companion/src/connection-worker.ts', ['()=>{retry=undefined;void connect();},1000','maintain,Math.max(0,Math.ceil(next-performance.now()))']],
   ['apps/browser-companion/src/transport.ts', ['()=>this.fallbackDirect(worker),WORKER_STARTUP_TIMEOUT_MS']],
   ['apps/browser-companion/src/socket-transport.ts', [
     "()=>{socket.close();reject(new Error('Cockpit connection timed out'));},3000",

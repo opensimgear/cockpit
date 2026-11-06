@@ -61,3 +61,17 @@ test('worker entry renews the socket without document messages and reports disco
  await h.send({type:'feedback-ack',id:envelope.id});assert.equal(h.received.at(-1).reply.feedback.mode,'snapshot');
  h.sockets[0].onclose();assert.equal(h.port.closed,true);assert.equal(h.timeouts.size,0);assert.equal(h.received.at(-1).type,'closed');
 });
+
+test('duplicate connects share one attempt and closing during backoff cancels the retry',async()=>{
+ const h=harness(2);
+ await Promise.all([h.send({type:'connect'}),h.send({type:'connect'})]);
+ assert.equal(h.sockets[0].connects,1);
+ assert.equal(h.timeouts.size,1);
+ await h.send({type:'connect'});
+ assert.equal(h.sockets[0].connects,1);
+ await h.send({type:'close'});
+ assert.equal(h.timeouts.size,0);
+ h.setClock(1000);await h.tick();await flush();
+ assert.equal(h.sockets[0].connects,1);
+ assert.deepEqual(h.received.map(message=>message.type),['closed']);
+});
