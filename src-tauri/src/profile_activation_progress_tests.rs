@@ -23,6 +23,12 @@ fn native_progress_observation_follows_committed_attempt_changes() {
         }
     };
     assert_eq!(next()["phase"],"preparing");
+    {
+        let mut entries = tracker.entries.lock().unwrap();
+        entries.get_mut(OP).unwrap().message = "Committed while authority remains locked".into();
+        tracker.commit(&entries);
+        assert_eq!(next()["message"], "Committed while authority remains locked");
+    }
     tracker.note(7,"launching","Launching simulator");
     assert_eq!(next()["step"],"launching");
     tracker.cancel(OP,&manager.profile_admission_epoch).unwrap();

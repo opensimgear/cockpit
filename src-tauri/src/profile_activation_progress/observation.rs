@@ -42,15 +42,19 @@ impl Tracker {
             .spawn(move || {
                 let origin = Instant::now();
                 let mut published = Value::Null;
+                let mut snapshot = None;
                 loop {
                     let observed = worker_wake.observed();
                     let Some(tracker) = tracker.upgrade() else { break; };
                     if tracker.closed.load(Ordering::Acquire) { break; }
-                    let current = tracker.current_entry(Instant::now());
+                    if let Some(entry) = tracker.committed.pop() { snapshot = Some(entry); }
                     drop(tracker);
+                    let current = snapshot.as_ref().and_then(|entry| {
+                        visible(entry, Instant::now(), true).map(|deadline| (entry, deadline))
+                    });
                     let (value, deadline) = current.map_or((Value::Null, None), |(entry, deadline)| {
                         let epoch = admission.load(Ordering::Acquire);
-                        let (value, expiry) = project(&entry, &companion_host, epoch);
+                        let (value, expiry) = project(entry, &companion_host, epoch);
                         (value, deadline.into_iter().chain(expiry).min())
                     });
                     if worker_wake.observed() != observed {

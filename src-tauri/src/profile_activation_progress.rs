@@ -56,12 +56,19 @@ impl Activation {
     }
 }
 
-#[derive(Default)]
 pub(super) struct Tracker {
     entries: Mutex<BTreeMap<String, Activation>>,
+    committed: crossbeam_queue::ArrayQueue<Activation>,
     changes: Arc<osg_streams::NativeWake>,
     closed: AtomicBool,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self { entries: Default::default(), committed: crossbeam_queue::ArrayQueue::new(1),
+            changes: Default::default(), closed: Default::default(), worker: Default::default() }
+    }
 }
 
 impl Drop for Tracker {
@@ -69,6 +76,13 @@ impl Drop for Tracker {
 }
 impl Tracker {
     pub(super) fn admission_changed(&self) { self.changes.notify(); }
+
+    // Called under the authority lock so an older operation cannot replace a
+    // newer commit. The observer owns its snapshot after removing it from here.
+    fn commit(&self, entries: &BTreeMap<String, Activation>) {
+        if let Some(entry) = newest(entries) { self.committed.force_push(entry.clone()); }
+        self.changes.notify();
+    }
 
     fn begin(&self, id: &str, profile: &str, begin_epoch: impl FnOnce() -> u64) -> Result<u64,String> {
         self.begin_with(id,profile,begin_epoch,|_|{})
@@ -88,33 +102,26 @@ impl Tracker {
             message:"Checking devices and preparing the profile…".into(),error:None,outcome:None,previous_owner:None,companions:vec![],completed:None,
             started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),vehicle_name:None,steps:vec![],cancellable:true};
         configure(&mut activation);entries.insert(id.into(),activation);
-        self.changes.notify();
+        self.commit(&entries);
         Ok(epoch)
     }
     fn current(&self) -> Option<String> {
-        self.with_current(Instant::now(), false, |entry, _| entry.id.clone())
-    }
-
-    fn current_entry(&self, now: Instant) -> Option<(Activation, Option<Instant>)> {
-        self.with_current(now, true, |entry, deadline| (entry.clone(), deadline))
-    }
-
-    fn with_current<T>(&self, now: Instant, observing: bool, read: impl FnOnce(&Activation, Option<Instant>) -> T) -> Option<T> {
-        // Compare admission epochs before checking visibility so a completed
-        // newer operation cannot expose an older, superseded attempt again.
         let entries = self.entries.lock().unwrap_or_else(|p|p.into_inner());
-        let entry = entries.values().max_by_key(|entry|(entry.epoch,entry.started))?;
-        let retention = if entry.origin == "vehicle-switch" { Some(VEHICLE_SWITCH_CONFIRMATION) }
-            else { observing.then_some(OBSERVATION_CONFIRMATION) };
-        let deadline = entry.completed.zip(retention).and_then(|(at, retention)| at.checked_add(retention))
-            .filter(|at| now < *at);
-        (entry.pending() || deadline.is_some()).then(|| read(entry, deadline))
+        let entry = newest(&entries)?;
+        visible(entry, Instant::now(), false).map(|_| entry.id.clone())
+    }
+
+    #[cfg(test)]
+    fn current_entry(&self, now: Instant) -> Option<(Activation, Option<Instant>)> {
+        let entries = self.entries.lock().unwrap_or_else(|p|p.into_inner());
+        let entry = newest(&entries)?;
+        visible(entry, now, true).map(|deadline| (entry.clone(), deadline))
     }
     pub(super) fn activating(&self,id:&str) {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         if let Some(entry)=entries.get_mut(id).filter(|entry|entry.pending()&&!entry.cancel_requested) {
             entry.phase="activating";entry.message="Applying the profile and preparing companion screens…".into();
-            self.changes.notify();
+            self.commit(&entries);
         }
     }
     pub(super) fn note(&self, epoch:u64, step:&str, message:&str) {
@@ -130,14 +137,14 @@ impl Tracker {
                 if entry.steps.len()>=128 {entry.steps.remove(0);}
                 entry.steps.push(json!({"step":entry.step,"message":entry.message}));
             }
-            if changed { self.changes.notify(); }
+            if changed { self.commit(&entries); }
         }
     }
     pub(super) fn rebind(&self,id:&str,old:u64,new:u64)->Result<(),String> {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         let entry=entries.get_mut(id).filter(|entry|entry.pending()&&entry.epoch==old&&!entry.cancel_requested)
             .ok_or("The activation was cancelled before game launch admission.")?;
-        entry.epoch=new;self.changes.notify();Ok(())
+        entry.epoch=new;self.commit(&entries);Ok(())
     }
     fn cancel(&self,id:&str,epoch:&AtomicU64)->Result<(),String> {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
@@ -154,9 +161,21 @@ impl Tracker {
         }
         entry.cancel_requested=true;entry.phase="cancelling";
         entry.message="Cancelling activation and safely releasing any changes…".into();
-        self.changes.notify();
+        self.commit(&entries);
         Ok(())
     }
+}
+
+fn newest(entries: &BTreeMap<String, Activation>) -> Option<&Activation> {
+    entries.values().max_by_key(|entry| (entry.epoch, entry.started))
+}
+
+fn visible(entry: &Activation, now: Instant, observing: bool) -> Option<Option<Instant>> {
+    let retention = if entry.origin == "vehicle-switch" { Some(VEHICLE_SWITCH_CONFIRMATION) }
+        else { observing.then_some(OBSERVATION_CONFIRMATION) };
+    let deadline = entry.completed.zip(retention).and_then(|(at, retention)| at.checked_add(retention))
+        .filter(|at| now < *at);
+    (entry.pending() || deadline.is_some()).then_some(deadline)
 }
 
 impl GatewayManager {
@@ -174,16 +193,21 @@ impl GatewayManager {
         request["activationId"]=json!(id);Some(id)
     }
     pub(super) fn identify_profile_cleanup(&self,id:&str,profile:Option<&str>) {
-        if let Some(profile)=profile {if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(id)
-            .filter(|entry|entry.pending()&&!entry.cancellable){entry.profile=profile.into();self.profile_activations.changes.notify();}}
+        let Some(profile) = profile else { return; };
+        let mut entries = self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner());
+        if let Some(entry) = entries.get_mut(id).filter(|entry|entry.pending()&&!entry.cancellable) {
+            entry.profile = profile.into();
+            self.profile_activations.commit(&entries);
+        }
     }
     pub(super) fn start_native_profile_activation(&self,profile:&str,epoch:u64,origin:&str,_game_id:Option<&str>)->Result<String,String> {
         let id=uuid::Uuid::new_v4().to_string();
         self.profile_activations.begin_with(&id,profile,||epoch,|entry|entry.origin=origin.into())?;
         let name=self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(profile).map(|source|source.0.name).unwrap_or_else(|_|profile.into());
-        if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(&id) {
+        let mut entries = self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner());
+        if let Some(entry)=entries.get_mut(&id) {
             entry.profile_name=name;
-            self.profile_activations.changes.notify();
+            self.profile_activations.commit(&entries);
         }
         Ok(id)
     }
@@ -235,9 +259,10 @@ impl GatewayManager {
                 instance,publication:desired.publication_hash.clone(),
                 name:document.resources.iter().find(|r|r.id==desired.resource_id).map(|r|r.name.clone()).unwrap_or_else(||"Companion".into())})
         }).collect();
-        if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(id) {
+        let mut entries = self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner());
+        if let Some(entry)=entries.get_mut(id) {
             entry.previous_owner=previous_owner;entry.companions=companions;entry.profile_name=document.name.clone();
-            self.profile_activations.changes.notify();
+            self.profile_activations.commit(&entries);
         }
     }
     pub(super) fn finish_profile_activation(&self,id:&str,response:&Value) {
@@ -267,7 +292,7 @@ impl GatewayManager {
                 _=>"Activation cancelled. No profile is active.".into(),
             }} else {entry.error.clone().unwrap_or_else(||"Profile activation failed.".into())};
         entry.completed=Some(Instant::now());
-        self.profile_activations.changes.notify();
+        self.profile_activations.commit(&entries);
     }
     fn profile_activation_view(&self,id:&str)->Result<Value,String> {
         let activation=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get(id).cloned()
