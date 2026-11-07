@@ -82,9 +82,18 @@
       if (document.hidden) { stop(); return; }
       if (stops.length) return;
       const observations = companionObservations();
-      stops = ['companion.presence','companion.listener'].map(topic =>
+      const topics = ['companion.presence', 'companion.listener', 'companion.firmware', 'companion.firmware-releases'];
+      const ready = new Set<string>();
+      stops = topics.map(topic =>
         observations.subscribe(topic,state=>{
-          if(state.status==='ready')untrack(()=>void readCompanions());
+          if (state.status === 'ready') {
+            ready.add(topic);
+            if (ready.size === topics.length) untrack(() => { void readCompanions(); });
+          } else if (ready.delete(topic)) {
+            companionEpoch++;
+            companionQueued = false;
+            companions = null;
+          }
         }));
     };
     syncVisibility();

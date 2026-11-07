@@ -11,6 +11,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `can.inputs.<gateway>.<module>` | STM32 panel input capture through the exact gateway and module observation bridge | CAN panel input preview for supported streaming firmware. |
 | `system.inventory` | Supplemental system inventory invalidation through `system_inventory.rs` and gateway topology commits | Devices and Settings Devices read the affected inventory. The explicit inventory command also includes current driver metadata. |
 | `system.inventory.drivers` | The inventory worker watches the exact Windows vJoy and HidHide driver files and publishes changed installed status and file versions | Settings Devices renders the retained driver snapshot directly. Native, browser-dev and MCP receive the same metadata. Driver-only commits leave general inventory readers quiet. [Running verification](../verification/2026-11-07-optional-driver-observation.md) |
+| `system.inventory.vjoy` | Visible Devices demand wakes the approved shared Windows vJoy status reader; ownership changes publish through `system.inventory` | Devices and Settings Devices keep the demand reader only while they display vJoy status. |
 | `profiles.library`, `profiles.runtime` | Native profile read models publish saved document and applied owner changes separately | Profile list, editor, activation controls and shell. The clean editor follows MCP commits. A dirty editor keeps its draft and the revision guard rejects stale Save. |
 | `profiles.resources` | Resource observation owner publishes committed availability and route changes | Profile resource selection and live resource resolution. |
 | `profiles.activation`, `profiles.learning` | Activation progress and native input learning publish their own lifecycle revisions | Activation window and MCP passive input learning. The profile editor no longer mounts the learning panel after the controller settings simplification in `2013ce62`. |
@@ -22,8 +23,8 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `games.state`, `games.detail.<id>` | Game read-model worker captures prepared caches after source revisions | Game library and scoped game details. Immutable page reads follow the exact projected references. |
 | `games.discovery` | Game read-model worker publishes the prepared scan review independently | The Games view and MCP discovery readers resolve scan result pages. Catalogue subscribers do not load them. |
 | `games.jobs`, `games.telemetry` | Game read-model worker publishes job changes and telemetry invalidation | Discovery and artwork progress, and selected telemetry inspection. |
-| `companion.listener`, `companion.presence`, `companion.firmware` | Companion host publishes listener lifecycle, pairing and presence, and USB firmware progress separately | Companion connections, listener settings, designer and firmware workflows. |
-| `companion.firmware-releases` | The native release resolver publishes changed metadata after a catalog or installation result commits | Visible companion tiles and firmware details share a reader. Native, browser-dev and MCP readers receive the current release snapshot independently of USB flash progress. [Running verification](../verification/2026-11-07-companion-release-observation.md) |
+| `companion.listener`, `companion.presence`, `companion.firmware` | Companion host publishes listener lifecycle, pairing and presence, and USB firmware progress separately | Companion connections, listener settings, designer, firmware workflows and the expanded Debug companion details. |
+| `companion.firmware-releases` | The native release resolver publishes changed metadata after a catalog or installation result commits | Visible companion tiles, firmware details and expanded Debug companion details share a reader. Native, browser-dev and MCP readers receive the current release snapshot independently of USB flash progress. [Running verification](../verification/2026-11-07-companion-release-observation.md) |
 | `designer.workspace` | Native designer storage publishes the workspace and library revisions after a successful workspace or widget-source commit. | The native companion library and MCP readers receive the revision notice. Browser-dev designer storage has a separate IndexedDB commit signal. Open editors preserve their drafts. |
 | `activity.log` | Activity log revision published after log and source updates | Activity log reads and filters. |
 | `settings.activity` | Activity retention publisher serializes committed retention changes | General Settings follows the committed value on native and browser-dev while preserving a local draft. |
@@ -120,6 +121,12 @@ The companion listener fixture runs on both transports. It occupies a
 loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates
 the pairing form while the hidden listener settings make no reads.
+
+On November 7, the running Windows WebView and Edge browser-dev verified the
+expanded Debug companion details. The presence and listener readers stayed
+shared with the shell. The details opened firmware-progress and release readers
+only while visible. All four baselines led to one `companion_status` read per
+open. Hiding the document or closing the details retired their exact readers.
 
 Debug's Runtime & recovery tab reads status after its observation baseline.
 Hiding the document or switching tabs retires that reader. Reopening starts
@@ -295,4 +302,11 @@ the app mounted. The fixture now waits for the navigation control before
 clicking. Logs are `matrix-native.log` and `matrix-browser.log` under
 `.research/reactive/held-launch-schedule/`.
 
-The matrix still needs proof for other external device and filesystem changes, nested consumer teardown and browser parity on native-only settings surfaces. Windows process acquisition retains the documented access-denied fallback. The browser and native companion apps and firmware lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md) and [remaining acceptance](remaining-acceptance.md) track those boundaries.
+The R5 producer audit covered the fixed native/MCP catalogue, admitted dynamic
+topics, portal-only observation scopes, and direct native or gateway status
+reads. The live delivery gate still needs coverage of other external device
+and filesystem changes, nested consumer teardown, and browser parity for
+native-only settings. Windows process acquisition retains the documented
+access-denied fallback. The browser and native companion apps and firmware
+lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md)
+and [remaining acceptance](remaining-acceptance.md) track those boundaries.

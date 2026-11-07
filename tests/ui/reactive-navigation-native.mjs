@@ -175,6 +175,10 @@ test(`${transport} main view navigation retires observation readers without dupl
     const clickDebugTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Debug sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
     const debugTopics = ['profiles.desktop', 'profiles.retired-recovery'];
+    const firmwareTopics = ['companion.firmware', 'companion.firmware-releases'];
+    const detailsTopics = [...debugTopics, ...firmwareTopics];
+    const firmwareReaders = () => [...active.entries()]
+      .filter(([, reader]) => firmwareTopics.includes(reader.topic)).map(([id]) => id);
     // The Devices sidebar count retains the shared companion readers.
     // Opening Debug or the designer must not create a second pair.
     const companionDetails = () => page.evaluate(`[...document.querySelectorAll('.profile-debug details')]
@@ -189,25 +193,33 @@ test(`${transport} main view navigation retires observation readers without dupl
     for (let cycle = 0; cycle < 2; cycle++) {
       await clickDebugTab('Runtime & recovery');
       await settled(debugTopics, true);
+      const beforeOpen = companionReads;
       await companionsOpen(true);
       await until(companionDetails, value => !!value && value !== 'null');
-      await settled(debugTopics, true);
+      await settled(detailsTopics, true);
+      assert.equal(companionReads - beforeOpen, 1, 'The four companion baselines must share one status read');
       if (cycle === 0) {
         const visibility = hidden => page.evaluate(`(() => {
           if (${hidden}) Object.defineProperty(document, 'hidden', {configurable:true, value:true});
           else delete document.hidden;
           document.dispatchEvent(new Event('visibilitychange'));
         })()`);
+        const hiddenReaders = firmwareReaders();
         await visibility(true);
+        const beforeReopen = companionReads;
         try {
           await until(companionDetails, value => value === 'null');
+          await until(() => hiddenReaders.every(id => retired.has(id)));
         } finally {
           await visibility(false);
         }
         await until(companionDetails, value => !!value && value !== 'null');
-        await settled(debugTopics, true);
+        await settled(detailsTopics, true);
+        assert.equal(companionReads - beforeReopen, 1, 'Reopen must load a single current companion snapshot');
       }
+      const closingReaders = firmwareReaders();
       await companionsOpen(false);
+      await until(() => closingReaders.every(id => retired.has(id)));
       await settled(debugTopics, true);
       await clickDebugTab('Incoming telemetry');
       await settled(['games.telemetry'], true);
