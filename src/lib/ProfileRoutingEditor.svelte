@@ -348,7 +348,7 @@
           <ProfileDebugControllerEditor resource={node.resource} profileId={document.id} revision={document.revision} {active} disabled={readOnly} update={updateDebug}/>
         {:else}
         {#if node.resource}<ProfileResourceSettings {node} {document} {games} controller={physicalController} source={assignmentSource} resources={assignmentResources} page={assignmentPage} mappings={selectedMappings} options={mappingOptions} busy={assignmentBusy} error={assignmentError} hasPrevious={assignmentBrowser.hasPrevious} hasNext={assignmentBrowser.hasNext} policy={(key,value)=>resourcePolicy(node,key,value)} visibility={value=>apply(()=>graphSetVisibility(graph,node.id,value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')} publication={value=>publicationPolicy(node,value)} chooseSource={value=>{assignmentSource=value;if(value)void browseAssignment('open');}} {chooseMapping} browse={browseAssignment} assign={assignResource}/>{/if}
-        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly} change={updateVirtual}/>{/if}
+        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly} {active} change={updateVirtual}/>{/if}
         {#if node.desktop}<ProfileDesktopEditor output={node.desktop} change={updateDesktop}/>{/if}
         {/if}
       </fieldset>

@@ -111,6 +111,16 @@ fixture also opens the view on a free slot, verifies that a profile lease
 updates the visible row to busy, stops the profile while the view is closed,
 and verifies the free slot on reopen.
 
+The profile's virtual slot picker follows two separate committed sources.
+The exact profile's local version in `profiles.library` advances on a saved
+slot pin even when its portable document revision stays the same. The picker
+then reads that profile's current pin. `system.inventory` drives the choices
+and their availability. The previous desktop picker missed a visible pin
+commit. The fixed desktop and browser-dev runs each read the changed pin once
+with no inventory read, reflected a second profile taking and releasing its
+vJoy slot without re-reading the pin, and made zero pin reads while hidden.
+The picker reopened with one pin read and the current value.
+
 That fixture covers Cockpit-owned claims. A third-party feeder can acquire
 or release the same device without a topology notification. Those ownership
 changes remain a separate acquisition boundary. See the
