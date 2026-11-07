@@ -156,7 +156,7 @@ fn a_connected_hid_source_stays_known_after_its_last_report_ages() {
 }
 
 #[test]
-fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_after_overflow() {
+fn paced_hid_sources_route_together_with_a_stalled_preview_and_recover_after_loss() {
     use osg_mapping::{
         engine::ReportReason,
         profile::OutputControl,
@@ -167,17 +167,22 @@ fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_
     let (mut plan, capture, _, wake) = native();
     let contact = Control::new(9, 1, 0, 0, 0);
     let encoder = Control::new(9, 2, 0, 0, 1);
-    let id = {
-        let mut registry = capture.registry.lock().unwrap();
-        registry.connect(Definition {
+    let panel = |name: &str, controls| Definition {
             identity: Identity { backend: "test".into(), vendor_id: 1, product_id: 2, serial: None,
-                collection: "panel".into(), fingerprint: String::new(), path: "panel".into() },
-            name: "Panel".into(), controls: vec![contact.clone(), encoder.clone()], diagnostics: vec![],
-        }).unwrap()
+                collection: name.into(), fingerprint: String::new(), path: name.into() },
+            name: name.into(), controls, diagnostics: vec![],
+    };
+    let (id, peer) = {
+        let mut registry = capture.registry.lock().unwrap();
+        (registry.connect(panel("fast-panel", vec![contact.clone(), encoder.clone()])).unwrap(),
+            registry.connect(panel("slow-panel", vec![contact.clone()])).unwrap())
     };
     let report = |contact, encoder| capture.registry.lock().unwrap()
         .report(&id, 0, &BTreeMap::from([(0, contact), (1, encoder)])).unwrap();
+    let report_peer = |contact| capture.registry.lock().unwrap()
+        .report(&peer, 0, &BTreeMap::from([(0, contact)])).unwrap();
     report(0, 0);
+    report_peer(0);
     let broker = osg_streams::Broker::new("paced-hid-routing".into()).unwrap();
     let topic = format!("controllers.input.{id}");
     let observation = capture.registry.lock().unwrap().prepare_observation(&broker, &id).unwrap();
@@ -191,23 +196,32 @@ fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_
     first.route.as_mut().unwrap().id = route_id.clone();
     first.token.as_mut().unwrap().route_id = route_id;
     first.endpoint.port_id = "contact".into();
-    first.observed_port_id = Some(contact.id);
+    first.observed_port_id = Some(contact.id.clone());
     let mut second = first.clone();
     second.endpoint.port_id = "encoder".into();
-    second.observed_port_id = Some(encoder.id);
-    plan.sources.push(second);
+    second.observed_port_id = Some(encoder.id.clone());
+    let mut slow = first.clone();
+    slow.endpoint.node_id = "peer".into();
+    slow.inventory_resource_id = Some("peer-device".into());
+    slow.route.as_mut().unwrap().id = format!("hid:{peer}");
+    let token = slow.token.as_mut().unwrap();
+    token.route_id = format!("hid:{peer}");
+    token.resource_id = "peer-device".into();
+    plan.sources.extend([second, slow]);
 
     let contract = PortContract::State { schema: ScalarSchema::Boolean {}, freshness_ms: 1000, fallback: None };
-    let endpoints = ["contact", "encoder"].map(|port| Endpoint { node_id: "pedal".into(), port_id: port.into() });
+    let endpoints = [("pedal", "contact"), ("pedal", "encoder"), ("peer", "contact")]
+        .map(|(node, port)| Endpoint { node_id: node.into(), port_id: port.into() });
+    let buttons = ["contact", "encoder", "peer"].map(str::to_owned);
     let program = Program {
         sources: endpoints.iter().cloned().map(|endpoint| SourcePort { endpoint, contract: contract.clone() }).collect(),
         nodes: vec![],
         sinks: endpoints.into_iter().enumerate().map(|(index, from)| Sink {
-            id: from.port_id.clone(), endpoint: Endpoint { node_id: "target".into(), port_id: from.port_id.clone() },
+            id: buttons[index].clone(), endpoint: Endpoint { node_id: "target".into(), port_id: buttons[index].clone() },
             from, contract: contract.clone(), kind: SinkKind::Virtual { controller_id: "target".into(), control: OutputControl::Button { index: index as u16 } },
         }).collect(),
         controllers: vec![VirtualController { id: "target".into(), layout: ControllerLayout {
-            buttons: vec!["contact".into(), "encoder".into()], axes: vec![], hats: vec![],
+            buttons: buttons.to_vec(), axes: vec![], hats: vec![],
         } }],
     };
     let mut reducer = Phase::new(program, Counter(1), "94a5ece4-4e3a-4395-a69b-3aa79c1ecf12".into()).unwrap();
@@ -220,6 +234,8 @@ fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_
     reducer.drain_reports();
     let mut expected = Vec::new();
     let mut delivered = Vec::new();
+    let mut captures = BTreeMap::<String, Vec<u64>>::new();
+    let mut slow_level = false;
     let started = Instant::now();
     let edges = [(1, 0), (1, 1), (1, 0), (0, 0)];
     for tick in 1..=256 {
@@ -227,19 +243,28 @@ fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_
         std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
         let (contact, encoder) = edges[(tick as usize - 1) % edges.len()];
         report(contact, encoder);
-        expected.push(vec![contact != 0, encoder != 0]);
+        expected.push(vec![contact != 0, encoder != 0, slow_level]);
         if tick % 8 == 0 {
-            capture.registry.lock().unwrap()
-                .report(&capture.other, 0, &BTreeMap::from([(0, tick as u32)])).unwrap();
+            slow_level = !slow_level;
+            report_peer(u32::from(slow_level));
+            expected.push(vec![contact != 0, encoder != 0, slow_level]);
         }
         if tick % 16 == 0 {
             let (frames, errors) = reader.poll(&capture, |_| Ok(())).unwrap();
             assert!(errors.is_empty());
+            for frame in &frames { captures.entry(frame.source.clone()).or_default().push(frame.captured_us.0); }
             assert!(admit(&mut reducer, frames).is_empty());
             delivered.extend(reducer.drain_reports().into_iter().map(|report| report.state.buttons));
         }
     }
     assert_eq!(delivered, expected);
+    for (source, target, count) in [("pedal", 1000, 256), ("peer", 125, 32)] {
+        let stamps = &captures[source];
+        assert_eq!(stamps.len(), count);
+        let span = stamps.last().unwrap() - stamps[0];
+        assert!(span > 0);
+        eprintln!("{source}: {count} captures at {:.2} Hz (target {target} Hz)", (count - 1) as f64 * 1_000_000.0 / span as f64);
+    }
     let fresh = capture.registry.lock().unwrap().prepare_observation(&broker, &id).unwrap();
     let mut reopened = fresh.with_subscription(|| {
         broker.subscribe("reopened-preview", "ui", &topic).map_err(|error| error.to_string())
@@ -258,12 +283,32 @@ fn paced_hid_edges_reach_the_virtual_reducer_with_a_stalled_preview_and_recover_
     report(0, 0);
     let (frames, errors) = reader.poll(&capture, |_| Ok(())).unwrap();
     assert!(errors.is_empty());
-    assert_eq!(frames.iter().map(|frame| &frame.reason).collect::<Vec<_>>(), vec![&Reason::Gap, &Reason::Baseline]);
+    for source in ["pedal", "peer"] {
+        assert_eq!(frames.iter().filter(|frame| frame.source == source).map(|frame| &frame.reason).collect::<Vec<_>>(),
+            vec![&Reason::Gap, &Reason::Baseline]);
+    }
     assert!(!admit(&mut reducer, frames).is_empty());
     let reports = reducer.drain_reports();
     assert!(reports.iter().any(|report| report.reason == ReportReason::SourceLost));
-    assert!(reports.iter().all(|report| report.state.buttons == [false, false]));
+    assert!(reports.iter().all(|report| report.state.buttons == [false, false, false]));
     report(0, 1);
     admit(&mut reducer, reader.poll(&capture, |_| Ok(())).unwrap().0);
-    assert_eq!(reducer.drain_reports().last().unwrap().state.buttons, [false, true]);
+    assert_eq!(reducer.drain_reports().last().unwrap().state.buttons, [false, true, false]);
+
+    report_peer(1);
+    admit(&mut reducer, reader.poll(&capture, |_| Ok(())).unwrap().0);
+    assert_eq!(reducer.drain_reports().last().unwrap().state.buttons, [false, true, true]);
+    capture.registry.lock().unwrap().disconnect(&id);
+    let (frames, _) = reader.poll(&capture, |_| Ok(())).unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].reason, Reason::Disconnect);
+    assert_eq!(frames[0].source, "pedal");
+    admit(&mut reducer, frames);
+    assert_eq!(reducer.drain_reports().last().unwrap().state.buttons, [false, false, true]);
+    assert_eq!(capture.registry.lock().unwrap().connect(panel("fast-panel", vec![contact, encoder])).unwrap(), id);
+    report(0, 1);
+    let (frames, _) = reader.poll(&capture, |_| Ok(())).unwrap();
+    assert!(frames.iter().all(|frame| frame.reason != Reason::Baseline), "A replacement must not revive the old route token");
+    if !frames.is_empty() { admit(&mut reducer, frames); }
+    assert!(reducer.drain_reports().iter().all(|report| report.state.buttons == [false, false, true]));
 }

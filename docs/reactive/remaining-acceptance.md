@@ -130,6 +130,25 @@ and 997.28 reports/s. The faster run carried 37 reports from a concurrent
 diagnostic and the vJoy fixture cover different stages. The combined
 physical and software load gates remain open.
 
+The native dual-rate fixture now routes both sources to one virtual-controller
+reducer while a preview reader holds its first delivery. One run captured 256
+fast reports at 999.32 Hz and 32 peer reports at 125.14 Hz. The reducer
+produced all 288 expected button states in order. After a journal overflow it
+required fresh baselines. The fixture then disconnected the fast source,
+checked that its button released while the peer stayed held, and confirmed
+that the replacement generation could not reuse the retired route token.
+
+A separate run against the current dev Cockpit delivered 65 authored vJoy
+edges and the Stop release to Windows Raw Input while one preview and one MCP
+reader were stalled. The independent preview advanced and Devices Settings
+showed the slot free after Stop. Submission-to-receipt p50/p95/p99 were
+1.38/1.99/2.43 ms. The output fixture uses debug inputs and a separate pacing
+schedule. Physical unplug and end-to-end dual-rate output timing remain open.
+The full native suite passed 2,374 tests with 18 existing ignores. Input
+routing reached 87.78% line and 90.00% function coverage. The local vJoy
+trace is `vjoy-raw-burst-result.json` under
+`.research/reactive/held-launch-schedule/dual-rate-routing-1794022400331/`.
+
 The running-Cockpit Stop and recovery criterion in #193 is checked. The
 compiled browser companion fixture explicitly disconnects while its input
 and feedback are held. The affected samples withdraw under the same profile
