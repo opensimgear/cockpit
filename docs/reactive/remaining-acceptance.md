@@ -198,6 +198,23 @@ HID acquisition and display presentation are separate measurements. Raw
 samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`
 and `.research/reactive/vjoy-ready-timing/burst-{1,2,3}.json`.
 
+The November 7 comparison used the same dev executable for both 65-edge
+bursts (SHA-256 `EF370AE5C5FC7AF25BA877B822195DBBF0882DC1A9BFEF21C987202EFBED1623`).
+Both runs delivered every authored edge and the separate Stop release to
+Windows Raw Input slot 1.
+
+| Readers | Submission-to-receipt p50 / p95 / p99 |
+| --- | --- |
+| Regular | 1.27 / 1.59 / 8.34 ms |
+| One held preview receipt and an unread MCP reader | 1.21 / 1.84 / 8.73 ms |
+
+The independent preview advanced from report 42 to 59 with no errors during
+the hold. The MCP reader went unread for 1.81 s and its Stop request took
+63.7 ms. These two runs show continued delivery under the tested load.
+The fixture also passed directly after startup once it waited for the
+compatible free slot to appear. The local traces are under
+`.research/reactive/held-launch-schedule/controller-latency-{current,quiet,startup}/`.
+
 A follow-up enabled the stalled preview, unread MCP subscription and Devices
 Settings inventory checks in the same run. Windows Raw Input received all 65
 authored transitions and the Stop release. The independent preview advanced,

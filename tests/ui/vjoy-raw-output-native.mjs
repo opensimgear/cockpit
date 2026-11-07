@@ -73,8 +73,10 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
   try {
     if(faultApp)assert.notEqual(process.env.OSG_MCP_SLOW_VJOY,'1','Run feeder loss and MCP Stop as separate scenarios');
     assert.equal((await status()).owner,null);
-    const slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback&&device.buttons+device.axes.length+device.continuousHats<=128);
-    assert.ok(slot,'A compatible free vJoy slot is required');
+    const slot=await until(async ()=>(await inventory()).find(device=>
+      device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
+      &&device.buttons+device.axes.length+device.continuousHats<=128))
+      .catch(cause=>{throw new Error('A compatible free vJoy slot is required',{cause});});
     if(settingsInventory){
       await devicesSettings();
       await until(()=>visibleSlot(slot.name), value=>value==='free');
