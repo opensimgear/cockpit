@@ -12,6 +12,7 @@ import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
 import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
+import {openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
@@ -59,6 +60,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   if (seconds) assert.ok(observeMcp && !nativeRates, 'Soak requires combined desktop MCP with the debug and panel input profile');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
+  const biosTarget = resolve(userFolder, 'Scripts/DCS-BIOS');
   await mkdir(resolve(userFolder, 'Scripts'), {recursive: true});
   const browserGatewayClient = browserUrl ? browserGateway(new URL(browserUrl)) : null;
   const cdp = browserUrl ? await browserPage(browserUrl) : await nativePage(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9224');
@@ -154,9 +156,13 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     evidence.before = {setup: before, installation: installationBefore};
     if (['faulted', 'recovery-needed'].includes(initialProfiles.profileSession.state)) await request({command: 'profile_recover'});
     await request({command: 'profile_selection_mode', mode: 'manual'}); await request({command: 'profile_stop'});
-    const biosSource = resolve(before.connection.cataloguePath, '../..'), biosTarget = resolve(userFolder, 'Scripts/DCS-BIOS');
+    const biosSource = resolve(before.connection.cataloguePath, '../..');
     assert.ok(biosTarget.startsWith(directory + sep));
-    await cp(biosSource, biosTarget, {recursive: true, errorOnExist: true, force: false});
+    const documentationAssets = resolve(biosSource, 'doc/doc_assets');
+    await cp(biosSource, biosTarget, {
+      recursive: true, errorOnExist: true, force: false,
+      filter: source => source !== documentationAssets,
+    });
     await writeFile(resolve(userFolder, 'Scripts/Export.lua'), "-- private native physics acceptance\npackage.path = package.path .. ';' .. lfs.writedir() .. 'Scripts/?.lua'\ndofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n");
     const executable = await fixtureExecutable(directory);
     const registered = (await request({command: 'game_add', name: originalDcs.name, installPath: resolve(directory, 'installation'), executable})).games;
@@ -332,41 +338,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       await checkpoint('Combined desktop soak complete');
     }
     await combined?.openInspector();
-    await cdp.evaluate(`(async()=>{
-      const {SharedObservations}=await import('/src/lib/streams/shared.ts');
-      const cancel=new AbortController();
-      const originalFetch=window.fetch;
-      const trace=window.__dcsSlowReader={fast:0,slow:0,error:null,
-        close:()=>{cancel.abort();trace.fastReader.close();window.fetch=originalFetch;}};
-      const browser=${!!browserUrl};
-      let transport;
-      if(browser){
-        const {createBrowserObservationTransport}=await import('/src/lib/streams/browser.ts');
-        // The browser transport requires a synchronous acknowledgement call.
-        // Hold only this reader's HTTP receipt on the real shared connection.
-        window.fetch=(url,init)=>{
-          const receipt=typeof url==='string'&&url.endsWith('/api/observe/ack')&&JSON.parse(init.body);
-          if(receipt&&receipt.subscriptionId===trace.slowId&&receipt.delivery==='1'){
-            return new Promise((resolve,reject)=>{
-              trace.release=()=>originalFetch.call(window,url,init).then(resolve,reject);
-              init.signal?.addEventListener('abort',()=>reject(init.signal.reason),{once:true});
-            });
-          }
-          return originalFetch.call(window,url,init);
-        };
-        transport=createBrowserObservationTransport();
-      }else{
-        const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
-        transport=createNativeObservationTransport();
-      }
-      trace.fastReader=new SharedObservations(transport);
-      transport.open('games.telemetry',{
-        frame(envelope,ack){trace.slow++;trace.slowId=envelope.subscriptionId;
-          if(browser||trace.slow>1)void ack();else trace.release=ack;},
-        error(error){trace.error=error;}
-      },cancel.signal);
-      trace.fastReader.subscribe('games.telemetry',state=>{if(state.status==='ready')trace.fast++;});
-    })()`);
+    await openDcsTelemetryReaders(cdp, !!browserUrl);
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
@@ -383,20 +355,34 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       assert.ok(stalled.fast - before >= 16, 'The fast reader must continue during the withheld acknowledgement');
       evidence.phases.leaseOnly = await live();
       assert.deepEqual((await status()).profileSession.owner, owner);
+      const ownshipStamp = page => BigInt(page.ports.find(row => row.endpoint.nodeId === 'telemetry'
+        && row.endpoint.portId === 'flight.airspeed.true').observedUs);
       await passive(biosId, 1000);
+      biosMode = 'off';
+      const missing = await absent(biosId);
+      evidence.phases.biosStale = await until(async () => {
+        const page = await samples();
+        return output(page, biosId)?.status === 'stale'
+          && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
+      }, 'BIOS expiry must withdraw its derived output while fresh ownship processing remains live');
+      const ownship = await passive('flight.airspeed.true', 210.25);
+      assert.equal(ownship.context.aircraft, aircraft);
+      assert.equal(ownship.context.physicsStatus, 'live');
+      assert.ok(ownshipStamp(evidence.phases.biosStale) > ownshipStamp(evidence.phases.leaseOnly),
+        'The ownship capture must advance through BIOS expiry');
+      assert.deepEqual((await status()).profileSession.owner, owner);
+      const afterExpiry = await readers();
+      assert.equal(afterExpiry.slow, 1, 'BIOS expired while the slow receipt was still held');
+      assert.equal(afterExpiry.error, null);
+      assert.ok(afterExpiry.fast > stalled.fast, 'Fast notifications must continue through BIOS expiry');
+      evidence.phases.biosExpiryUnderBackpressure = {missing, ownship, fastNotifications: afterExpiry.fast - stalled.fast};
       await cdp.evaluate('window.__dcsSlowReader.release()');
       await until(async () => (await readers()).slow > 1, 'Slow reader did not resume after acknowledgement');
       evidence.phases.slowReader = {fastNotifications: stalled.fast - before, withheldDeliveries: stalled.slow, ownerPreserved: true};
     } finally {
       await cdp.evaluate('window.__dcsSlowReader.close(); delete window.__dcsSlowReader');
     }
-    await checkpoint('BIOS counter-only lease renewal and a stalled telemetry reader preserve retained values');
-    biosMode = 'off';
-    evidence.phases.biosStale = await until(async () => {
-      const page = await samples();
-      return page && output(page, biosId)?.status !== 'known'
-        && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
-    }, 'BIOS expiry must withdraw its derived output while fresh ownship processing remains live');
+    await checkpoint('BIOS counter-only renewal and expiry verified with one stalled telemetry reader');
     if (combined) {
       evidence.phases.closedPreviews = await combined.withPreviewsClosed(owner, setAirborne);
       assert.deepEqual((await status()).profileSession.owner, owner);
@@ -490,6 +476,10 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     if (initialProfiles?.session.selectedProfileId) await cleanup('Restore selected profile', () => request({command: 'profile_select', id: initialProfiles.session.selectedProfileId, selectionSource: 'manual'}));
     if (initialProfiles?.session.selectionMode) await cleanup('Restore selection mode', () => request({command: 'profile_selection_mode', mode: initialProfiles.session.selectionMode}));
     await cleanup('Leave profile stopped', () => request({command: 'profile_stop'}));
+    if (!cleanupErrors.length) await cleanup('Remove copied DCS-BIOS catalogue', () => {
+      assert.ok(biosTarget.startsWith(directory + sep));
+      return rm(biosTarget, {recursive: true, force: true});
+    });
     if (browserGatewayClient) await cleanup('Close direct browser gateway transport', () => browserGatewayClient.close());
     await cleanup('Close Cockpit page', () => cdp.close());
     evidence.finishedAt = new Date().toISOString();
