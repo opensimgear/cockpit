@@ -8,9 +8,9 @@ missing baseline, sequence gap or transport loss closes the connection and
 uses the existing automatic reconnect path without replaying a mutation.
 
 Explicit reads and command-scoped layout verification still request snapshots.
-The legacy protocol-1 Pico adapter retains its original cadence. Pico Debug
-requires the current firmware. Its stream conveys no CAN publication ownership,
-and native HID and ordered device input delivery retain their existing paths.
+Pico Debug requires the current protocol-3 firmware. Its stream conveys no
+CAN publication ownership, and native HID and ordered device input delivery
+retain their existing paths.
 
 - Gateway firmware `e761e4d685324f9d7b13a3c2c2527d750fbbd854` and protocol
   `d0d6a4ce14f4f58bb7d54523aae3499d412b3414` are on main.
@@ -33,3 +33,18 @@ and native HID and ordered device input delivery retain their existing paths.
 
 The Windows Cockpit and POSIX firmware fixture ran separately. Physical Pico
 USB behavior and input latency remain acceptance work in #199.
+
+## Protocol-1 retirement
+
+After the operator approved retirement, `42f733d2` removed the protocol-1
+worker and its two-second status query. A protocol-1 handshake now shows
+firmware upgrade instructions and parks automatic reconnection until an
+explicit reconnect or a topology change.
+
+The protocol-3 fixture exercised the production Pico selector and workspace
+cache. It observed two idle watchdog renewals, a sequenced inventory change
+and a clean disconnect. The Windows suite passed 2,361 tests with 18 opt-in
+tests skipped. The running Cockpit passed the workspace baseline and
+subscription lifecycle checks. See the [recorded decision and coverage results
+in #189](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6695159221).
+The physical protocol-3 board check is tracked in #199.
