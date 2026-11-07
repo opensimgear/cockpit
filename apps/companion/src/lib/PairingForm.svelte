@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { scanQrFrames } from './qr-frame-scan';
   let { disabled=false, onsubmitted }: { disabled?: boolean; onsubmitted: () => void } = $props();
   let name=$state('Companion'), code=$state(''), endpoint=$state(''), busy=$state(false), error=$state('');
   let hints=$state<{name:string;hostname:string;port:number;addresses:string[]}[]>([]);
   let video = $state<HTMLVideoElement>();
   let stream: MediaStream | undefined;
   let scanning=$state(false);
-  let scanTimer: ReturnType<typeof setTimeout>;
+  let stopFrameScan: (() => void) | undefined;
   let generation=0;
   const request=<T,>(value: unknown) => invoke<T>('companion_client_request',{request:value});
   async function discover() {
@@ -20,7 +21,7 @@
     const address=host.addresses.find(a=>!a.includes(':')) || host.hostname.replace(/\\.$/,'');
     return 'wss://'+address+':'+host.port+'/companion';
   }
-  function stopScan() { generation++; scanning=false; clearTimeout(scanTimer); stream?.getTracks().forEach(t=>t.stop()); stream=undefined; }
+  function stopScan() { generation++; scanning=false; stopFrameScan?.(); stopFrameScan=undefined; stream?.getTracks().forEach(t=>t.stop()); stream=undefined; }
   async function submit(payload?: string) {
     stopScan();
     busy=true; error='';
@@ -35,7 +36,10 @@
     const token=generation;
     try {
       const Detector=(window as unknown as {BarcodeDetector?:new(options:{formats:string[]})=>{detect(source:HTMLVideoElement):Promise<{rawValue:string}[]>}}).BarcodeDetector;
-      if (!Detector) throw new Error('QR scanning is unavailable on this device. Enter the pairing code instead.');
+      if (!Detector || typeof HTMLVideoElement.prototype.requestVideoFrameCallback !== 'function'
+        || typeof HTMLVideoElement.prototype.cancelVideoFrameCallback !== 'function') {
+        throw new Error('QR scanning is unavailable on this device. Enter the pairing code instead.');
+      }
       const acquired = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
       if (token !== generation) {
         acquired.getTracks().forEach(track => track.stop());
@@ -49,24 +53,12 @@
       if (!preview) throw new Error('Camera preview unavailable');
       preview.srcObject = acquired;
       await preview.play();
+      if (token !== generation) return;
       const detector = new Detector({formats:['qr_code']});
-      const read = async () => {
-        if (token !== generation) return;
-        try {
-          const results = await detector.detect(preview);
-          if (token !== generation) return;
-          if (results[0]) {
-            await submit(results[0].rawValue);
-            return;
-          }
-          scanTimer=setTimeout(read,200);
-        } catch (reason) {
-          if (token !== generation) return;
-          error = String(reason);
-          stopScan();
-        }
-      };
-      void read();
+      stopFrameScan = scanQrFrames(preview,
+        async () => (await detector.detect(preview))[0]?.rawValue,
+        value => { void submit(value); },
+        reason => { error = String(reason); stopScan(); });
     } catch (reason) {
       if (token !== generation) return;
       error = String(reason);
@@ -75,6 +67,7 @@
   }
   onDestroy(stopScan);
 </script>
+<svelte:document onvisibilitychange={() => { if (document.hidden) stopScan(); }}/>
 <div class="pairing-form">
   <p>In Cockpit, choose Companions → Pair. Scan its QR code or enter its eight-character pairing code.</p>
   <label>This device name<input bind:value={name} maxlength="80" /></label>

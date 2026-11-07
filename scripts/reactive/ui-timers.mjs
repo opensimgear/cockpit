@@ -23,8 +23,7 @@ const timeouts = new Map([
     "()=>{this.fail(new Error('Cockpit reply timed out'));this.socket?.close();},4000",
   ]],
   ['src/lib/gateway-workspace.ts', ['callback,milliseconds']],
-  // Local camera frames, authored actions, feedback expiry and compiler work.
-  ['apps/companion/src/lib/PairingForm.svelte', ['read,200']],
+  // Authored actions, feedback expiry and compiler work.
   ['packages/companion-ui/src/CompiledWidget.svelte', [
     '()=>{deadline=timeout=undefined;tickClock();},Math.max(0,Math.ceil(next-performance.now()))',
   ]],
