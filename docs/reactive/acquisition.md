@@ -226,6 +226,7 @@ worker and explicit launch and setup checks are separate.
 | --- | --- | --- |
 | Windows process observation | Native process notifications are preferred. Global game activation parks when the catalogue has no installed game with process monitoring support and wakes on a library commit. After a live catalogue watcher exits, the owner attempts one replacement per library revision. The 500 ms discovery fallback applies when a monitorable installation exists and event coverage is unavailable. Initial access denial does not restart the watcher. Scoped integration setup reports denied access and can request the explicit temporary monitoring helper. | The Windows regression checks the recovery limit and its reset on a library commit. Qualify consent and exact-process notification lifetime. Keep fallback evidence separate from native event coverage. |
 | File and provider watches | Unavailable watches and detached reads retain scoped maintenance. DCS and Assetto setup scopes can retain two-second checks. Other admitted vehicle readers can retain 100 ms process qualification. | Verify watch coverage and retire or explicitly disposition each remaining fallback. |
+| External vJoy slot ownership | Cockpit-owned claims wake `system.inventory`. Another process can claim or release a slot without changing device topology. The pinned vJoy SDK exposes a status query and a device removal callback. External ownership currently updates on explicit Refresh or on another inventory wake. | Decide how to acquire ownership changes outside Cockpit. No sampling exception has been recorded for this boundary. |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
 | ESP32 companion touch | Waveshare GT911 INT on GPIO4 wakes the touch task. One 20 ms follow-up covers an early interrupt. Held contact, faults and interrupt-registration failure retain the 20 ms cadence. A quiet 200 ms read renews the existing touch safety lease. Sunton checks PENIRQ every 20 ms. A released pen bypasses the display bus lock and uses no SPI transactions. | Qualify IRQ delivery, release and fault timing on Waveshare. Verify release during rendering on Sunton and explicitly disposition remaining touch sampling. |
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
@@ -428,3 +429,25 @@ was 95.28% for the games runtime, 91.55% for game context including validation,
 and 100% for the process cache. The rebuilt Cockpit separately passed the
 authored DCS fixture. The fixture does not qualify live WMI notification
 permissions, scan-cost savings on a physical rig, or simulator effects.
+
+### Current firmware service sites
+
+The committed scan at Cockpit `47c2a12a`, gateway `e761e4d6`, device template
+`c5457884` and firmware-common `64025cce` found 441 timing and readiness sites.
+The checker also matched the 247 pinned historical dispositions and passed
+the UI timer guard. The historical check covers its pinned inventory.
+
+| Site | Owner and behavior |
+| --- | --- |
+| `../device-gateway/firmware/src/main.c:191` | The STM32 gateway pumps the TinyUSB device stack. Completion callbacks advance USB I/O. |
+| `../device-template/firmware/src/main.c:153` | The STM32 module pumps the TinyUSB device stack in the board loop, alongside its separately owned runtime and CAN service. |
+| `../device-gateway/simulation/pico/firmware/src/main.c:124` | The Pico Debug board pumps TinyUSB before handling connection changes and the debug core's deadlines. This firmware ships a physical board target despite the repository path. |
+| `../device-gateway/simulation/pico/firmware/src/main.c:138` | The Pico Debug board services CDC and HID before calling the Pico SDK loop hook. The hook itself does not request or publish application state. |
+
+### External vJoy ownership
+
+The [vJoy 2.2.2.0 SDK header](https://github.com/BrunnerInnovation/vJoy/blob/bd268d1fa5934a900a79e76e519d4aa804e0ee3d/SDK/inc/vjoyinterface.h)
+exposes queries for slot status and owner. Its removal callback is driven by
+Windows device removal messages. The SDK does not expose a callback for
+another feeder acquiring or relinquishing a slot. See the
+[pinned SDK implementation](https://github.com/BrunnerInnovation/vJoy/blob/bd268d1fa5934a900a79e76e519d4aa804e0ee3d/apps/common/vJoyInterface/vJoyInterface.cpp#L189).

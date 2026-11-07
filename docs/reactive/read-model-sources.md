@@ -99,6 +99,11 @@ fixture also opens the view on a free slot, verifies that a profile lease
 updates the visible row to busy, stops the profile while the view is closed,
 and verifies the free slot on reopen.
 
+That fixture covers Cockpit-owned claims. A third-party feeder can acquire
+or release the same device without a topology notification. Those ownership
+changes remain a separate acquisition boundary. See the
+[vJoy SDK audit](acquisition.md#external-vjoy-ownership).
+
 On both transports, the navigation fixture commits desktop output enablement
 through the guarded settings command while Devices Settings is open. It checks
 the visible toggle and its observation acknowledgement, closes the tab, and
