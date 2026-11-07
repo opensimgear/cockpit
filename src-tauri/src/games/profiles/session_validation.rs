@@ -16,9 +16,15 @@ impl Default for Policy {
     fn default() -> Self { Self { fresh: FRESH, refresh: REFRESH } }
 }
 
+impl Policy {
+    fn refresh_deadline(self, verified: Option<Instant>, retry_at: Option<Instant>) -> Option<Instant> {
+        retry_at.or_else(|| verified.map(|began| began + self.refresh))
+    }
+}
+
 struct Worker {
     requests: mpsc::Sender<()>,
-    results: mpsc::Receiver<Result<Instant, String>>,
+    results: mpsc::Receiver<Result<Option<Instant>, String>>,
     cancelled: Arc<AtomicBool>,
     pending: bool,
     wake: Arc<Mutex<Option<Weak<NativeWake>>>>,
@@ -27,6 +33,7 @@ struct Worker {
 #[derive(Default)]
 pub(super) struct Validation {
     verified: Option<Instant>,
+    retry_at: Option<Instant>,
     worker: Option<Worker>,
     policy: Policy,
 }
@@ -39,14 +46,17 @@ impl Validation {
         validation
     }
 
-    pub(super) fn seed(&mut self, began: Instant) { self.verified = Some(began); }
+    pub(super) fn seed(&mut self, began: Instant) {
+        self.verified = Some(began);
+        self.retry_at = None;
+    }
 
     pub(super) fn started(&self) -> bool { self.worker.is_some() }
 
     pub(super) fn start(
         &mut self,
         wake: Option<Weak<NativeWake>>,
-        mut validate: impl FnMut() -> Result<Instant, String> + Send + 'static,
+        mut validate: impl FnMut() -> Result<Option<Instant>, String> + Send + 'static,
     ) {
         if self.started() { return; }
         let (requests, incoming) = mpsc::channel();
@@ -75,12 +85,14 @@ impl Validation {
         }
     }
 
-    /// Once a request is in flight, completion supplies the next wake. Keep
-    /// the previous proof's expiry until the consumer has processed it.
+    /// Keep the proof's expiry alongside a scheduled retry. Completion wakes
+    /// the consumer while a request is in flight.
     pub(super) fn next_deadline(&self) -> Option<Instant> {
         let worker = self.worker.as_ref()?;
-        let verified = self.verified?;
-        Some(verified + if worker.pending { self.policy.fresh } else { self.policy.refresh })
+        let expiry = self.verified.map(|began| began + self.policy.fresh);
+        if worker.pending { return expiry; }
+        let refresh = self.policy.refresh_deadline(self.verified, self.retry_at);
+        expiry.into_iter().chain(refresh).min()
     }
 
     #[cfg(test)]
@@ -104,22 +116,35 @@ impl Validation {
 
     fn poll_at(&mut self, now: Instant) -> Result<bool, String> {
         let Some(worker) = self.worker.as_mut() else { return Ok(false); };
+        let mut continuity_lost = false;
         match worker.results.try_recv() {
             Ok(result) => {
                 worker.pending = false;
-                self.verified = Some(result?);
+                if let Some(observed) = result? {
+                    // A delayed consumer can receive a new proof before it
+                    // processes the gap between two non-overlapping proofs.
+                    continuity_lost = self.retry_at.is_some() && self.verified
+                        .is_some_and(|began| observed > began + self.policy.fresh);
+                    self.verified = Some(observed);
+                    self.retry_at = None;
+                } else {
+                    // The lookup supplied no new process evidence. Limit
+                    // retries without extending any previous proof.
+                    self.retry_at = Some(now + self.policy.refresh);
+                }
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => return Err("The native game validation worker stopped.".into()),
         }
-        if !worker.pending && self.verified.is_none_or(|began| now.saturating_duration_since(began) >= self.policy.refresh) {
+        let refresh = self.policy.refresh_deadline(self.verified, self.retry_at);
+        if !worker.pending && refresh.is_none_or(|deadline| now >= deadline) {
             worker.requests.send(()).map_err(|_| "The native game validation worker stopped.".to_owned())?;
             worker.pending = true;
         }
         if self.verified.is_some_and(|began| now.saturating_duration_since(began) >= self.policy.fresh) {
             self.verified = None;
         }
-        Ok(self.verified.is_some())
+        Ok(!continuity_lost && self.verified.is_some())
     }
 
     pub(super) fn cancel(&mut self) {
@@ -127,6 +152,7 @@ impl Validation {
             worker.cancelled.store(true, Ordering::Release);
         }
         self.verified = None;
+        self.retry_at = None;
     }
 }
 

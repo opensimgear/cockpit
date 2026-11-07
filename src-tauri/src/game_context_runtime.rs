@@ -102,17 +102,20 @@ impl GamesRuntime {
         }))
     }
     pub(crate) fn validate_game_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
-        let result = validate_preparation_inner(&self.inner, proof);
-        if let Err(error) = &result {
-            self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner())
-                .invalidate_preparation(proof, error.clone());
+        match observe_preparation_inner(&self.inner, proof, |game, expected| self.inner.exact_process_current(game, expected)) {
+            Ok(ProcessEvidence::Verified(_)) => Ok(()),
+            Ok(ProcessEvidence::Unavailable(error)) => Err(error),
+            Err(error) => {
+                self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner())
+                    .invalidate_preparation(proof, error.clone());
+                Err(error)
+            }
         }
-        result
     }
     /// Capture identity for strict validation away from the live health path.
     pub(crate) fn profile_validation_task(
         &self, proof: GamePreparation, context: Option<ContextToken>,
-    ) -> impl FnMut() -> Result<Instant, String> + Send + 'static {
+    ) -> impl FnMut() -> Result<Option<Instant>, String> + Send + 'static {
         let inner = self.inner.clone();
         move || {
             let observed = observe_preparation_inner(&inner, &proof, |game, expected| {
@@ -124,7 +127,10 @@ impl GamesRuntime {
                 }
                 inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).validate(token)?;
             }
-            Ok(observed)
+            Ok(match observed {
+                ProcessEvidence::Verified(at) => Some(at),
+                ProcessEvidence::Unavailable(_) => None,
+            })
         }
     }
     pub(crate) fn admit_prepared_game_context(
@@ -304,21 +310,17 @@ impl GamesRuntime {
     }
     pub(crate) fn profile_game_context(&self, id: &str) -> Result<ContextToken, String> {
         self.inner.refresh_game_contexts(true);
-        self.inner
-            .contexts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .token(id)
+        let contexts = self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner());
+        contexts.ensure_observed_process(id)?;
+        contexts.token(id)
     }
     /// Source attachment, telemetry consumption and commands must use this native
     /// check rather than a browser's cached contextSession label.
     pub(crate) fn validate_profile_game_context(&self, token: &ContextToken) -> Result<(), String> {
         self.inner.refresh_game_contexts(true);
-        self.inner
-            .contexts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .validate(token)
+        let contexts = self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner());
+        contexts.ensure_observed_process(&token.game_id)?;
+        contexts.validate(token)
     }
 }
 impl Inner {
@@ -472,6 +474,7 @@ impl Inner {
         let mut processes = inventory(&selected).into_iter();
         for (game, (supported, eligible)) in games.iter().zip(admission) {
             use crate::game_discovery::ProcessLookupError;
+            let eligible_for_retention = matches!(eligible, Ok(true));
             let process = eligible.map_err(ProcessLookupError::Unavailable).and_then(|eligible| {
                 if !eligible { return Ok(None); }
                 let process = processes.next().ok_or_else(||
@@ -484,6 +487,7 @@ impl Inner {
             let Some(id) = game["id"].as_str() else { continue; };
             let Some(integration) = crate::game_discovery::integration_key(game) else { continue; };
             let revision = self.setup.provider_setup_revision(integration);
+            let lookup_unavailable = eligible_for_retention && matches!(process, Err(ProcessLookupError::Unavailable(_)));
             let error = process.as_ref().err().map(ToString::to_string);
             let connection = self
                 .setup
@@ -508,6 +512,7 @@ impl Inner {
             let setup_matches = game["integrationSetup"]["providerSetupRevision"].as_str()
                 == Some(revision.as_str());
             let observation = Observation {
+                installation: preparation_installation(game),
                 process: process.unwrap_or(None),
                 supported,
                 setup_ready: setup_matches
@@ -525,7 +530,7 @@ impl Inner {
                 .contexts
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .observe(id, epoch, observation);
+                .observe(id, epoch, observation, lookup_unavailable);
         }
     }
 }

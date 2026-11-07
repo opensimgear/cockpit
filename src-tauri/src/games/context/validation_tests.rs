@@ -9,7 +9,7 @@ fn process_evidence_is_timestamped_before_native_work() {
     *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || {
         entered.send(Instant::now()).unwrap();
     })));
-    let captured = runtime.profile_validation_task(prepared.proof, None)().unwrap();
+    let captured = runtime.profile_validation_task(prepared.proof, None)().unwrap().unwrap();
     assert!(captured <= observed.recv().unwrap());
     runtime.shutdown();
 }
@@ -99,6 +99,39 @@ fn library_presentation_updates_do_not_revoke_process_evidence() {
         game["defaultBackground"] = json!({"url":"https://example.test/default.png"});
         game["installations"] = json!([{"id":"unselected-installation","name":"New metadata"}]);
     })));
-    runtime.profile_validation_task(prepared.proof, Some(token))().unwrap();
+    assert!(runtime.profile_validation_task(prepared.proof, Some(token))().unwrap().is_some());
+    runtime.shutdown();
+}
+
+#[test]
+fn unavailable_lookup_withholds_proof_and_commands_then_recovers_the_same_context() {
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    let prepared = runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
+    runtime.set_profile_context_owner(Some(owner(Some("x-plane-12")))).unwrap();
+    let token = runtime.admit_prepared_game_context(&prepared.proof).unwrap();
+    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()));
+    assert!(validate().unwrap().is_some());
+
+    platform.failed.store(true, Ordering::Release);
+    assert!(runtime.validate_admitted_game_context(&token, &prepared.proof).is_err());
+    runtime.inner.refresh_game_contexts(false);
+    assert!(validate().unwrap().is_none());
+    {
+        let contexts = runtime.inner.contexts.lock().unwrap();
+        assert_eq!(contexts.token("x-plane-12").unwrap(), token);
+        assert_eq!(contexts.view("x-plane-12")["processVerified"], false);
+    }
+
+    platform.failed.store(false, Ordering::Release);
+    runtime.inner.refresh_game_contexts(false);
+    assert!(validate().unwrap().is_some());
+    assert_eq!(runtime.profile_game_context("x-plane-12").unwrap(), token);
+
+    runtime.inner.refresh_game_contexts_with_inventory(false, |games| {
+        games.iter().map(|_| Err(ProcessLookupError::Ambiguous("Competing processes".into()))).collect()
+    });
+    assert!(validate().is_err());
+    assert!(runtime.inner.contexts.lock().unwrap().token("x-plane-12").is_err());
     runtime.shutdown();
 }

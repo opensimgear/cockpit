@@ -26,7 +26,7 @@ fn assetto_service_needs_live_watch_and_validation_and_reverts_on_close() {
     let (watch, close) = crate::acr_windows::Watch::fixture(wake.clone());
     source.install_assetto_watch_fixture(watch);
     assert!(!source.watched_game_source(), "A producer watch cannot substitute for native proof");
-    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Some(Instant::now())));
     assert!(source.watched_game_source());
     assert!(source.assetto_capture_deadline().is_none(), "A waiting decoder has no capture to expire");
     close();
@@ -50,7 +50,7 @@ pub(crate) fn watched_assetto_scheduling_fixture(
     source.set_wake(Some(wake.clone()));
     let (watch, close) = crate::acr_windows::Watch::fixture(wake.clone());
     source.install_assetto_watch_fixture(watch);
-    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Some(Instant::now())));
     (source, prepared, close)
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn watched_xplane_scheduling_fixture(
     source.set_wake(Some(wake.clone()));
     source.refresh_source_wakes(games).unwrap();
     assert!(!source.watched_game_source(), "The watch alone cannot replace proof");
-    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Some(Instant::now())));
     (source, prepared, publish)
 }
 
@@ -87,9 +87,9 @@ pub(crate) fn watched_dcs_scheduling_fixture(
     *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
     source.set_wake(Some(wake.clone()));
     source.refresh_source_wakes(games).unwrap();
-    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    source.validation.start(Some(Arc::downgrade(&wake)), || Ok(Some(Instant::now())));
     assert!(!source.watched_game_source(), "DCS also requires a catalogue proof worker");
-    source.catalogue_validation.start(Some(Arc::downgrade(&wake)), || Ok(Instant::now()));
+    source.catalogue_validation.start(Some(Arc::downgrade(&wake)), || Ok(Some(Instant::now())));
     (source, fixture.game, fixture.folder)
 }
 

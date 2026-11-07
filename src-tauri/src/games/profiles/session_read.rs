@@ -178,7 +178,7 @@ impl GameSources {
             self.catalogue_validation.start(wake, move || {
                 let began = Instant::now();
                 guard.validate(true)?;
-                Ok(began)
+                Ok(Some(began))
             });
         }
     }

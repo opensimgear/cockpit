@@ -16,6 +16,7 @@ pub(crate) struct ProfileOwner {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Observation {
+    pub installation: Value,
     pub process: Option<ProcessIdentity>,
     pub supported: bool,
     pub setup_ready: bool,
@@ -60,6 +61,7 @@ struct Record {
     observation: Observation,
     token: Option<ContextToken>,
     preparation: Option<GamePreparation>,
+    lookup_unavailable: Option<String>,
 }
 #[derive(Default)]
 pub(crate) struct Broker {
@@ -105,6 +107,7 @@ impl Broker {
             record.observation.process = None;
             record.observation.catalogue_revision = None;
             record.observation.error = Some("Native game observation counter exhausted.".into());
+            record.lookup_unavailable = None;
         }
         self.changed();
         Err("Native game observation counter exhausted.".into())
@@ -126,7 +129,9 @@ impl Broker {
         if self.owner != owner {
             self.owner = owner;
             for (id, record) in &mut self.games {
-                record.token = Self::mint(self.owner.as_ref(), id, &record.observation);
+                record.token = if record.lookup_unavailable.is_none() {
+                    Self::mint(self.owner.as_ref(), id, &record.observation)
+                } else { None };
             }
             self.changed();
         }
@@ -137,6 +142,7 @@ impl Broker {
         id: &str,
         epoch: u64,
         observation: Observation,
+        lookup_unavailable: bool,
     ) -> Result<(), String> {
         if !crate::game_discovery::valid_id(id)
             || self.observations_exhausted
@@ -173,15 +179,34 @@ impl Broker {
                 record.observation.process = None;
                 record.observation.catalogue_revision = None;
                 record.observation.error=Some("Native game observation could not be validated. Reacquire verified identity and provider revisions.".into());
+                record.lookup_unavailable = None;
             }
             self.changed();return Err("Invalid verified game observation.".into());
         }
-        if self
-            .games
-            .get(id)
-            .is_some_and(|record| record.observation == observation)
-        {
-            return Ok(());
+        if let Some(record) = self.games.get_mut(id) {
+            if lookup_unavailable && record.preparation.is_some() {
+                // Keep the exact binding for recovery only if all independent
+                // installation, setup, catalogue and aircraft evidence agrees.
+                let mut retained = observation.clone();
+                retained.process.clone_from(&record.observation.process);
+                retained.error = None;
+                if retained == record.observation {
+                    if record.lookup_unavailable != observation.error {
+                        record.lookup_unavailable = observation.error;
+                        self.changed();
+                    }
+                    return Ok(());
+                }
+            }
+            if record.observation == observation {
+                if record.lookup_unavailable.take().is_some() {
+                    if record.token.is_none() {
+                        record.token = Self::mint(self.owner.as_ref(), id, &record.observation);
+                    }
+                    self.changed();
+                }
+                return Ok(());
+            }
         }
         let token = Self::mint(self.owner.as_ref(), id, &observation);
         let preparation =
@@ -207,6 +232,7 @@ impl Broker {
                 observation,
                 token,
                 preparation,
+                lookup_unavailable: None,
             },
         );
         self.changed();
@@ -240,12 +266,10 @@ impl Broker {
             .get(id)
             .and_then(|record| record.preparation.clone()))
     }
-    pub(crate) fn validate_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
-        if self.preparation(&proof.game_id)?.as_ref() == Some(proof) {
-            Ok(())
-        } else {
-            Err("The verified game preparation changed; acquire a fresh process/setup/catalogue proof.".into())
-        }
+    pub(crate) fn validate_preparation(&self, proof: &GamePreparation) -> Result<&Value, String> {
+        self.games.get(&proof.game_id).filter(|record| record.preparation.as_ref() == Some(proof))
+            .map(|record| &record.observation.installation)
+            .ok_or_else(|| "The verified game preparation changed; acquire a fresh process/setup/catalogue proof.".into())
     }
     pub(crate) fn invalidate(&mut self, id: &str, reason: String) {
         // Direct validation already proved this current capture invalid. Fence
@@ -263,6 +287,7 @@ impl Broker {
             record.preparation = None;
             record.observation.process = None;
             record.observation.error = Some(reason);
+            record.lookup_unavailable = None;
         }
         if changed {
             self.changed();
@@ -315,6 +340,9 @@ impl Broker {
             Err("The applied profile, game process, setup or catalogue context changed. Acquire a fresh native context before using this branch.".into())
         }
     }
+    pub(crate) fn ensure_observed_process(&self, id: &str) -> Result<(), String> {
+        self.games.get(id).and_then(|record| record.lookup_unavailable.clone()).map_or(Ok(()), Err)
+    }
     pub(crate) fn view(&self, id: &str) -> Value {
         let Some(record) = self.games.get(id) else {
             return json!({"status":"waiting-game","message":"Waiting for native game process inspection.","processVerified":false,"contextSession":null,"providerSetupRevision":null,"catalogueRevision":null});
@@ -325,8 +353,8 @@ impl Broker {
                 "unsupported-platform",
                 "Native process identity verification is unavailable on this platform.",
             )
-        } else if observation.error.is_some() {
-            ("error", observation.error.as_deref().unwrap())
+        } else if let Some(error) = record.lookup_unavailable.as_deref().or(observation.error.as_deref()) {
+            ("error", error)
         } else if !observation.setup_ready || observation.catalogue_revision.is_none() {
             ("setup-required","Complete this game's provider setup and catalogue selection before using its integration.")
         } else if self
@@ -343,7 +371,7 @@ impl Broker {
         } else {
             ("ready","The applied profile owns the matching verified game process and current provider revisions.")
         };
-        json!({"status":status,"message":message,"processVerified":observation.process.is_some(),"contextSession":record.token.as_ref().map(|token|&token.session),"providerSetupRevision":observation.provider_setup_revision,"catalogueRevision":observation.catalogue_revision})
+        json!({"status":status,"message":message,"processVerified":record.lookup_unavailable.is_none() && observation.process.is_some(),"contextSession":record.token.as_ref().map(|token|&token.session),"providerSetupRevision":observation.provider_setup_revision,"catalogueRevision":observation.catalogue_revision})
     }
     pub(crate) fn view_for(&self,game:&Value)->Value {
         let id=game["id"].as_str().unwrap_or("");let mut view=self.view(id);

@@ -17,7 +17,7 @@ criteria have delivered software and outstanding qualification.
 | Issue | Remaining boundary |
 | --- | --- |
 | #189 | Reconcile the complete acquisition/migration inventory and each disposition. The user approved one native shared-memory reader per active Assetto game; no general sampling exception follows. |
-| #192 | Committed game ownership survives failed lookups and busy registry reads. Unstable Assetto page copies skip acquisition and preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. Cross-adapter contention and quality qualification remain open. Windows denied the Assetto and X-Plane process notification prerequisite for the latest telemetry fixtures. |
+| #192 | Passive and active telemetry retain their exact readers during transient process inventory failures. Active proof expiry withdraws samples and requires a fresh baseline. Unstable Assetto page copies preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. Cross-adapter contention and quality qualification remain open. Windows denied the Assetto and X-Plane process notification prerequisite for the latest telemetry fixtures. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
@@ -90,6 +90,37 @@ build withdrew both ownship and BIOS values and resumed after the second
 process exited. No simulator or physical inputs were used. The native suite
 passed 2,379 tests with 18 default ignores. The changed production modules
 passed their line coverage gates.
+
+### Active process inventory contention
+
+An exact watched inventory row remains usable when an unrelated row cannot
+be inspected. An unavailable lookup on the selected row cannot renew its
+process proof. The original 100 ms proof expiry still withdraws telemetry.
+The retained reader resumes with a baseline after a successful lookup.
+Confirmed process exit or ambiguity still withdraws the context. The Games
+view reports uncertainty without issuing a new session. Strict command
+admission requires an independent successful lookup.
+
+The isolated Windows suite passed 2,387 tests with 18 default ignores. Both
+pinned DCS-BIOS archive checks passed separately. The repository's production
+line counter measured 99.32% for the context broker, 91.40% for the context
+runtime, 100% for the process cache, 95.71% for preparation validation,
+85.23% for session reads and 98.97% for session proof validation. LLVM's
+supplementary function count for the full context runtime was 66.28%.
+
+The first suite run caught a changed error message for confirmed process loss.
+The passing rerun preserves the existing message. The default dev build
+ran out of disk creating the static library. The running fixture used
+an uninstrumented dev executable linked from the same Rust sources with the
+isolated manifest set to build only the Rust library format needed by the
+dev executable. The fixture passed competing-process withdrawal, independent
+BIOS and ownship recovery, and process exit with no cleanup errors.
+Executable SHA-256 was
+`4AE8A5A13979A5265DBCCC82BC92EEB1C5CD3CE8760C276626F5B21C716D8FCA`.
+
+Transient lookup failure was injected in the native tests. The separate
+queued DCS command lane still cancels on a failed strict proof. Its interaction
+with active telemetry recovery and full cross-adapter qualification remain open.
 
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots

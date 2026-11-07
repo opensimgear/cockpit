@@ -11,6 +11,7 @@ fn owner(game: Option<&str>) -> ProfileOwner {
 }
 fn observed() -> Observation {
     Observation {
+        installation: json!({"executable":"/games/DCS.exe"}),
         process: Some(ProcessIdentity {
             pid: 42,
             path: "/games/DCS.exe".into(),
@@ -26,7 +27,40 @@ fn observed() -> Observation {
 }
 fn observe(broker: &mut Broker, id: &str, observation: Observation) -> Result<(), String> {
     let epoch = broker.begin_observation()?;
-    broker.observe(id, epoch, observation)
+    broker.observe(id, epoch, observation, false)
+}
+
+#[test]
+fn unavailable_inventory_retains_an_exact_binding_and_does_not_mint_a_new_owner() {
+    let mut broker = Broker::default();
+    let active = owner(Some("dcs"));
+    broker.set_owner(Some(active.clone())).unwrap();
+    observe(&mut broker, "dcs", observed()).unwrap();
+    let token = broker.token("dcs").unwrap();
+    let mut unavailable = observed();
+    unavailable.process = None;
+    unavailable.error = Some("Inventory busy".into());
+
+    let old = broker.begin_observation().unwrap();
+    let current = broker.begin_observation().unwrap();
+    broker.observe("dcs", current, unavailable.clone(), true).unwrap();
+    broker.observe("dcs", old, observed(), false).unwrap();
+    assert_eq!(broker.token("dcs").unwrap(), token);
+    assert_eq!(broker.view("dcs")["processVerified"], false);
+    assert!(broker.ensure_observed_process("dcs").is_err());
+
+    let mut replacement = active;
+    replacement.run_generation += 1;
+    broker.set_owner(Some(replacement.clone())).unwrap();
+    assert!(broker.token("dcs").is_err());
+    observe(&mut broker, "dcs", observed()).unwrap();
+    assert_eq!(broker.token("dcs").unwrap().owner, replacement);
+
+    unavailable.installation = json!({"executable":"/other/DCS.exe"});
+    let current = broker.begin_observation().unwrap();
+    broker.observe("dcs", current, unavailable, true).unwrap();
+    assert!(broker.token("dcs").is_err());
+    assert!(broker.preparation("dcs").unwrap().is_none());
 }
 #[test]
 fn older_observations_cannot_replace_a_new_preparation_or_applied_context() {
@@ -38,17 +72,17 @@ fn older_observations_cannot_replace_a_new_preparation_or_applied_context() {
     let prepared = broker.preparation("dcs").unwrap().unwrap();
     broker.set_owner(Some(owner(Some("dcs")))).unwrap();
     let token = broker.token("dcs").unwrap();
-    broker.observe("dcs", old, old_snapshot).unwrap();
+    broker.observe("dcs", old, old_snapshot, false).unwrap();
     assert_eq!(broker.preparation("dcs").unwrap(), Some(prepared.clone()));
     assert_eq!(broker.token("dcs").unwrap(), token);
     let mut malformed = observed();
     malformed.provider_setup_revision = "stale invalid data".into();
-    broker.observe("dcs", old, malformed).unwrap();
+    broker.observe("dcs", old, malformed, false).unwrap();
     assert!(broker.validate_preparation(&prepared).is_ok());
     assert!(broker.validate(&token).is_ok());
 
     // Ordering is per game: a slow capture of another game still commits.
-    broker.observe("x-plane-12", old, observed()).unwrap();
+    broker.observe("x-plane-12", old, observed(), false).unwrap();
     assert!(broker.preparation("x-plane-12").unwrap().is_some());
     assert!(broker.token("x-plane-12").is_err());
 }
@@ -61,7 +95,7 @@ fn explicit_current_invalidation_fences_inflight_results_but_allows_fresh_eviden
     let token = broker.token("dcs").unwrap();
     let inflight = broker.begin_observation().unwrap();
     assert!(broker.invalidate_preparation(&prepared, "Current process exited".into()));
-    broker.observe("dcs", inflight, observed()).unwrap();
+    broker.observe("dcs", inflight, observed(), false).unwrap();
     assert!(broker.preparation("dcs").unwrap().is_none());
     assert!(broker.validate(&token).is_err());
     observe(&mut broker, "dcs", observed()).unwrap();
@@ -121,8 +155,8 @@ fn invalidation_wakes_only_when_a_visible_game_record_changes() {
 #[test]
 fn invalid_or_exhausted_observation_tickets_cannot_grant_or_restore_authority() {
     let mut broker = Broker::default();
-    assert!(broker.observe("dcs", 0, observed()).is_err());
-    assert!(broker.observe("dcs", 1, observed()).is_err());
+    assert!(broker.observe("dcs", 0, observed(), false).is_err());
+    assert!(broker.observe("dcs", 1, observed(), false).is_err());
     observe(&mut broker, "dcs", observed()).unwrap();
     broker.set_owner(Some(owner(Some("dcs")))).unwrap();
     let token = broker.token("dcs").unwrap();
@@ -130,7 +164,7 @@ fn invalid_or_exhausted_observation_tickets_cannot_grant_or_restore_authority() 
     assert!(broker.begin_observation().is_err());
     assert!(broker.preparation("dcs").unwrap().is_none());
     assert!(broker.validate(&token).is_err());
-    assert!(broker.observe("dcs", u64::MAX, observed()).is_err());
+    assert!(broker.observe("dcs", u64::MAX, observed(), false).is_err());
     assert!(broker.begin_observation().is_err());
     assert_eq!(broker.view("dcs")["status"], "error");
 }
@@ -345,7 +379,7 @@ fn detached_binding_retires_proof_and_fences_in_flight_capture() {
     let old_epoch = broker.begin_observation().unwrap();
     broker.retain_bindings(&[]);
     broker
-        .observe("discovered-title", old_epoch, observed())
+        .observe("discovered-title", old_epoch, observed(), false)
         .unwrap();
     assert!(broker.validate(&token).is_err());
     assert!(broker.preparation("discovered-title").unwrap().is_none());

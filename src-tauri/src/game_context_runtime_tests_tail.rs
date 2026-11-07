@@ -94,6 +94,7 @@ fn inspection_failure_and_pause_revoke_authority_without_legacy_output_stop() {
     assert!(runtime.validate_profile_game_context(&token).is_err());
     platform.failed.store(false, Ordering::Release);
     let fresh = runtime.profile_game_context("x-plane-12").unwrap();
+    assert_eq!(fresh, token);
     runtime.set_profile_context_owner(None).unwrap();
     assert!(runtime.validate_profile_game_context(&fresh).is_err());
     assert!(calls.lock().unwrap().is_empty());
