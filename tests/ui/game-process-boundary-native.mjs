@@ -8,37 +8,38 @@ import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {promisify} from 'node:util';
 import test from 'node:test';
-import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
-const enabled = process.platform === 'win32' && process.env.OSG_GAME_PROCESS_BOUNDARY_NATIVE === '1';
+const browserUrl = process.env.OSG_GAME_PROCESS_BOUNDARY_BROWSER_URL;
+const transport = browserUrl ? 'browser-dev' : 'native';
+const gatewayPath = browserUrl ? '/api/gateway/' : '/gateway_request';
+const enabled = process.platform === 'win32' && (browserUrl || process.env.OSG_GAME_PROCESS_BOUNDARY_NATIVE === '1');
 const execute = promisify(execFile);
 const binding = '__osgProcessBoundaryReport';
 
-test('Windows game process boundaries reach the Active game header and the shared read model', {
+test(`${transport} Windows game process boundaries reach the Active game header and the shared read model`, {
   skip:!enabled, timeout:120000,
 }, async () => {
   const root = resolve('.research/reactive/process-boundary', String(Date.now()));
   const registered = resolve(root, 'registered'), decoy = resolve(root, 'different-path');
   const executable = resolve(registered, 'OsgProcessBoundaryFixture.exe');
   const wrongExecutable = resolve(decoy, 'OsgProcessBoundaryFixture.exe');
+  const replacement = resolve(registered, 'replacement', 'OsgProcessBoundaryFixture.exe');
   await mkdir(registered, {recursive:true});
   await mkdir(decoy, {recursive:true});
+  await mkdir(resolve(registered, 'replacement'), {recursive:true});
   await execute('powershell.exe', ['-NoProfile','-NonInteractive','-Command',
     "$ErrorActionPreference='Stop'; Add-Type -TypeDefinition 'public static class OsgProcessBoundaryFixture { public static void Main() { System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); } }' -OutputAssembly $env:OSG_PROCESS_BOUNDARY_FIXTURE -OutputType WindowsApplication"],
   {windowsHide:true,env:{...process.env,OSG_PROCESS_BOUNDARY_FIXTURE:executable}});
   await copyFile(executable, wrongExecutable);
+  await copyFile(executable, replacement);
 
-  const page = await nativePage();
+  const page = browserUrl ? await browserPage(browserUrl) : await nativePage();
   const name = 'OSG process boundary fixture';
   let child, gameId, tracking = false, dispose = () => {};
   const transitions = {stream:[],header:[]}, reads = [];
-  const request = async value => {
-    const response = await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{
-      request:${JSON.stringify({...value,clientId:'process-boundary-native'})}
-    })`);
-    assert.equal(response.ok, true, `${value.command}: ${response.error}`);
-    return response.state;
-  };
+  const request = value => page.evaluate(`import('/src/lib/gateway.ts')
+    .then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`);
   const start = async path => {
     child = spawn(path, {windowsHide:true,stdio:'ignore'});
     await once(child,'spawn');
@@ -53,6 +54,16 @@ test('Windows game process boundaries reach the Active game header and the share
     child = undefined;
   };
   const times = [];
+  const boundary = async (running, change) => {
+    const next = transitions.stream.length + 1, at = performance.now();
+    await change();
+    await until(() => transitions.stream.length >= next && transitions.header.length >= next,
+      Boolean, 5000);
+    const stream = transitions.stream[next-1], header = transitions.header[next-1];
+    assert.equal(stream.running,running);
+    assert.equal(header.running,running);
+    return {running,streamMs:stream.at-at,headerMs:header.at-at};
+  };
   try {
     await until(() => page.evaluate(`Boolean(document.querySelector('.header-statuses'))`));
     const {games} = await request({command:'game_add',name,installPath:registered,executable});
@@ -68,7 +79,7 @@ test('Windows game process boundaries reach the Active game header and the share
         transitions[surface].push({running,at:performance.now()});
       }
       if (tracking && method === 'Network.requestWillBeSent' && params.request.postData
-          && new URL(params.request.url).pathname === '/gateway_request') {
+          && new URL(params.request.url).pathname === gatewayPath) {
         const body = JSON.parse(params.request.postData);
         const command = (body.request ?? body).command;
         if (command === 'game_get_state' || command === 'game_read_model_page') reads.push(command);
@@ -114,21 +125,32 @@ test('Windows game process boundaries reach the Active game header and the share
 
     for (let round = 0; round < 8; round++) {
       for (const [running,change] of [[true,()=>start(executable)],[false,stop]]) {
-        const next = transitions.stream.length + 1, at = performance.now();
-        await change();
-        await until(() => transitions.stream.length >= next && transitions.header.length >= next,
-          Boolean, 5000);
-        const stream = transitions.stream[next-1], header = transitions.header[next-1];
-        assert.equal(stream.running,running);
-        assert.equal(header.running,running);
-        times.push({running,streamMs:stream.at-at,headerMs:header.at-at});
+        times.push(await boundary(running, change));
         await delay(130 + round * 13);
       }
     }
-    assert.deepEqual(transitions.stream.map(item=>item.running),transitions.header.map(item=>item.running));
     assert.equal(transitions.stream.length,17,'Expected one visible change per authored boundary');
+
+    await boundary(true, () => start(executable));
+    // A catalogue commit may legitimately load a changed immutable page.
+    // Keep the zero-query assertion scoped to process changes.
+    tracking = false;
+    const replacementBoundary = await boundary(false, () => request({command:'game_save',gameId,executable:replacement}));
+    await delay(1100);
+    assert.equal(child.exitCode, null, 'The previous executable must still be running when its identity is withdrawn');
+    assert.equal(child.signalCode, null);
+    assert.equal(transitions.stream.length,19);
+    tracking = true;
+    await stop();
+    await delay(650);
+    assert.equal(transitions.stream.length,19, 'The retired executable exit must leave the new registration quiet');
+    await boundary(true, () => start(replacement));
+    await boundary(false, stop);
+
+    assert.deepEqual(transitions.stream.map(item=>item.running),transitions.header.map(item=>item.running));
+    assert.equal(transitions.stream.length,21,'Expected only the authored process and catalogue boundaries');
     assert.deepEqual(reads,[],'Process transitions must arrive without repeated game state or page queries');
-    const evidence = {wrongPathIgnored:true,reads,times,headerTransitions:16,streamTransitions:16};
+    const evidence = {transport,wrongPathIgnored:true,reads,times,replacementBoundary,headerTransitions:20,streamTransitions:20};
     await writeFile(resolve(root,'evidence.json'), JSON.stringify(evidence,null,2) + '\n');
     console.log(JSON.stringify(evidence));
   } finally {

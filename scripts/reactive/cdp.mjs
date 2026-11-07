@@ -20,7 +20,7 @@ export async function browserPage(url) {
         return {evaluate: expression => peer.evaluate(expression)};
       },
       listen(listener) {
-        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Fetch.requestPaused'];
+        const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Fetch.requestPaused','Runtime.bindingCalled'];
         const handlers = methods.map(method => [method, params => listener({method,params})]);
         for (const [method, handler] of handlers) session.on(method, handler);
         return () => handlers.forEach(([method, handler]) => session.off(method, handler));

@@ -61,8 +61,40 @@ frontend game-launch tests. The changed native module reached 89.19%
 production line coverage. LLVM reported 89.66% function coverage for the
 module including tests. This toolchain run did not emit branch coverage.
 
+## Native and browser-dev delivery with executable replacement
+
+The running Windows WebView and Edge browser-dev each delivered 20 matching
+header and shared read-model transitions. Each ignored the same-name decoy,
+observed eight start/exit cycles, then withdrew the old identity after a
+`game_save` replaced the registered executable path while that old process
+was still running. Exiting the retired process left the new registration quiet.
+Starting and stopping the replacement produced one transition each. Each UI
+trace contained zero `game_get_state` or `game_read_model_page` requests during
+the process changes. The catalogue commit is a separate measurement because a
+committed catalogue change can require an immutable page load.
+
+| Transport | Start to header | Exit to header | Executable save to withdrawal |
+| --- | ---: | ---: | ---: |
+| Windows WebView | 560.22–856.63 ms | 233.43–372.65 ms | 28.35 ms |
+| Edge browser-dev | 777.97–1042.89 ms | 247.92–338.10 ms | 42.46 ms |
+
+The intervals include the authored process action or save request, detection,
+projection, and delivery. Windows process-event consent and the fallback
+disposition remain separate gates. The WebView executable SHA-256 was
+`743163e125ec49891929b946db7e4b216feebf6d94da3103caadc52919ff0ffb`.
+The browser-dev gateway SHA-256 was
+`f17639511e24d5d84f68d04abcff16766a6a77ce4e20d7f3fa6042c1bc4c0c98`.
+Cargo linked the new gateway under `target/debug/deps`. Access to the old
+top-level executable prevented Cargo from copying over it, so the fixture
+launched the newly linked executable directly.
+
+All 32 game read-model tests and 27 game launch tests passed. The game
+read-model coverage gate measured 94.87% lines, 88.08% branches, and 85.05%
+functions. Both transports also passed the full navigation and observation trace.
+
 To repeat on a disposable running Windows dev Cockpit, set
 `OSG_NATIVE_CDP_URL` to the main WebView's CDP endpoint and set
-`OSG_GAME_PROCESS_BOUNDARY_NATIVE=1`. Run
-`node --test tests/ui/game-process-boundary-native.mjs`. The fixture uses only
-its authored children and removes its registered game afterward.
+`OSG_GAME_PROCESS_BOUNDARY_NATIVE=1`. For browser-dev, set
+`OSG_GAME_PROCESS_BOUNDARY_BROWSER_URL` to the local frontend URL backed by the
+Windows gateway service. Run `node --test tests/ui/game-process-boundary-native.mjs`.
+The fixture uses its authored children and removes its registered game afterward.

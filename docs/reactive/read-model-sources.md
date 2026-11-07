@@ -263,6 +263,13 @@ The discovery fixture runs against native Cockpit with
 of a known title, a generic executable, same-volume relocation, and explicit
 removal. The browser fixture also covers the first-start results banner.
 
+Windows WebView and Edge browser-dev both delivered one header and shared
+read-model transition for each authored process boundary without repeat UI
+queries. A committed executable-path replacement withdrew the old identity
+while it was still running, and its later exit left the new identity quiet.
+The Windows native process acquisition fallback remains a separate boundary.
+[Running verification](../verification/2026-11-07-windows-process-boundary.md#native-and-browser-dev-delivery-with-executable-replacement)
+
 After the discovery stream split, the running Windows WebView and Edge
 browser-dev navigation fixture each opened one `games.discovery` reader and
 one `games.jobs` reader per Games visit. Both readers retired on leaving the
