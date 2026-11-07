@@ -20,11 +20,12 @@ impl DcsWatch {
     }
 
     pub(super) fn refresh(&mut self, inner: &Inner) {
+        let wake = &inner.changes.context_worker_wake;
         let catalogue = inner.setup.dcs_catalogue_watch_path();
         let children = catalogue.as_deref().map(|root| {
             (root, catalogue_file as prepared_sources::watch::ChildFilter)
         });
-        if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children) {
+        if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children, wake) {
             inner.setup.invalidate_dcs_catalogue();
             inner.changes.mark(crate::game_read_models::signals::Domain::Setup);
             inner.changes.mark_resources();
@@ -49,7 +50,7 @@ impl DcsWatch {
         let children = self.saved_games.as_deref().map(|root| {
             (root, dcs_profile_directory as prepared_sources::watch::ChildFilter)
         });
-        if self.source.refresh_with_children(self.paths.clone(), children) {
+        if self.source.refresh_with_children(self.paths.clone(), children, wake) {
             self.pending = self.source.active();
             inner.setup.set_setup_watch("dcs", self.pending && self.scope.is_some());
             inner.setup.set_dcs_discovery_watch(self.pending && children.is_some());
@@ -74,3 +75,7 @@ fn catalogue_file(_: EventKind, name: &std::ffi::OsStr) -> bool {
     Path::new(name).extension().and_then(std::ffi::OsStr::to_str)
         .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
 }
+
+#[cfg(test)]
+#[path = "context_dcs_watch_tests.rs"]
+mod tests;

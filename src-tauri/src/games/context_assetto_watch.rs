@@ -29,7 +29,7 @@ impl AssettoWatches {
             let paths = game.as_ref().and_then(|game| game["executable"].as_str())
                 .map(|executable| crate::acr_setup::executable_watch_paths(Path::new(executable), provider))
                 .unwrap_or_default();
-            if watch.source.refresh(paths) {
+            if watch.source.refresh(paths, &inner.changes.context_worker_wake) {
                 inner.setup.set_setup_watch(provider.id(), watch.source.active());
                 watch.pending = watch.source.active();
             }

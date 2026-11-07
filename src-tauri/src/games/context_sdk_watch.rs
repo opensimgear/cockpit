@@ -1,6 +1,7 @@
 //! Watch exact SDK catalogue paths on the native game context owner.
 use super::*;
 use crate::game_read_models::signals::Domain;
+use osg_streams::NativeWake;
 
 const XPLANE: [&str; 2] = ["x-plane-11", "x-plane-12"];
 const WATCH_RETRY: Duration = Duration::from_secs(2);
@@ -32,7 +33,7 @@ impl SdkWatches {
         };
         let mut changed = false;
         for ((watch, path), id) in self.0.iter_mut().zip(paths).zip(XPLANE) {
-            if watch.refresh(path.into_iter().collect()) {
+            if watch.refresh(path.into_iter().collect(), &inner.changes.context_worker_wake) {
                 inner.setup.set_setup_watch(id, watch.active());
                 inner.setup.invalidate_xplane_catalogue(id);
                 changed = true;
@@ -47,13 +48,14 @@ impl SourceWatch {
 
     pub(super) fn retry_at(&self) -> Option<Instant> { self.retry_at }
 
-    pub(super) fn refresh(&mut self, paths: Vec<PathBuf>) -> bool {
-        self.refresh_with_children(paths, None)
+    pub(super) fn refresh(&mut self, paths: Vec<PathBuf>, wake: &Arc<NativeWake>) -> bool {
+        self.refresh_with_children(paths, None, wake)
     }
 
     pub(super) fn refresh_with_children(
         &mut self, paths: Vec<PathBuf>,
         children: Option<(&Path, prepared_sources::watch::ChildFilter)>,
+        wake: &Arc<NativeWake>,
     ) -> bool {
         let child_root = children.map(|(root, _)| root.to_path_buf());
         let invalidated = self.dirty.swap(false, Ordering::AcqRel)
@@ -69,11 +71,11 @@ impl SourceWatch {
             return invalidated;
         }
         if self.watch.is_none() {
-            let worker = thread::current();
+            let wake = Arc::clone(wake);
             let dirty = self.dirty.clone();
             self.watch = prepared_sources::watch::Watch::new(Arc::new(move |_| {
                 dirty.store(true, Ordering::Release);
-                worker.unpark();
+                wake.notify();
             })).ok();
         }
         let registered = self.watch.as_mut().is_some_and(|watch|
@@ -127,10 +129,13 @@ mod tests {
         let selected = directory.path().join("DataRefs.txt");
         let sibling = directory.path().join("unrelated.txt");
         std::fs::write(&selected, "old catalogue").unwrap();
+        let changes = crate::game_read_models::signals::Signal::default();
+        let wake = &changes.context_worker_wake;
+        wake.bind_thread(thread::current()).unwrap();
         let mut watch = SourceWatch::default();
-        assert!(watch.refresh(vec![selected.clone()]));
+        assert!(watch.refresh(vec![selected.clone()], wake));
         assert!(watch.watch.is_some());
-        assert!(!watch.refresh(vec![selected.clone()]));
+        assert!(!watch.refresh(vec![selected.clone()], wake));
 
         std::fs::write(sibling, "unrelated").unwrap();
         let quiet_until = Instant::now() + Duration::from_millis(150);
@@ -139,15 +144,21 @@ mod tests {
             thread::park_timeout(remaining);
         }
 
+        let observed = wake.observed();
         std::fs::write(&selected, "new catalogue").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
-        while !watch.dirty.load(Ordering::Acquire) {
+        while wake.observed() == observed {
             let remaining = deadline.checked_duration_since(Instant::now())
                 .expect("SDK file write did not wake the native watcher");
             thread::park_timeout(remaining);
         }
-        assert!(watch.refresh(vec![selected]));
-        assert!(watch.refresh(Vec::new()));
+        // Even if an unrelated wait consumes the token, the worker must drain again.
+        thread::park_timeout(Duration::ZERO);
+        assert!(!wake.wait_scheduled(observed, Some(Duration::ZERO)));
+        assert_eq!(changes.context_wake.observed(), 0, "A file write does not replace the process scope");
+        assert_eq!(changes.context_process_wake.observed(), 0);
+        assert!(watch.refresh(vec![selected], wake));
+        assert!(watch.refresh(Vec::new(), wake));
         assert!(watch.watch.is_none());
     }
 
@@ -157,33 +168,35 @@ mod tests {
         let parent = directory.path().join("sdk");
         let selected = parent.join("DataRefs.txt");
         std::fs::write(&parent, "blocked directory").unwrap();
+        let wake = Arc::default();
         let mut watch = SourceWatch::default();
-        assert!(watch.refresh(vec![selected.clone()]));
+        assert!(watch.refresh(vec![selected.clone()], &wake));
         assert!(!watch.active());
         assert!(watch.retry_at().is_some());
-        assert!(!watch.refresh(vec![selected.clone()]), "An early wake does not retry");
+        assert!(!watch.refresh(vec![selected.clone()], &wake), "An early wake does not retry");
 
         let expired = Instant::now();
         watch.retry_at = Some(expired);
-        assert!(!watch.refresh(vec![selected.clone()]), "A failed retry keeps the same baseline");
+        assert!(!watch.refresh(vec![selected.clone()], &wake), "A failed retry keeps the same baseline");
         assert!(watch.retry_at().unwrap() > expired);
 
         std::fs::remove_file(&parent).unwrap();
         std::fs::create_dir(&parent).unwrap();
         std::fs::write(&selected, "first catalogue").unwrap();
         watch.retry_at = Some(Instant::now());
-        assert!(watch.refresh(vec![selected.clone()]));
+        assert!(watch.refresh(vec![selected.clone()], &wake));
         assert!(watch.active());
         assert!(watch.retry_at().is_none());
-        assert!(!watch.refresh(vec![selected]));
+        assert!(!watch.refresh(vec![selected], &wake));
     }
 
     #[test]
     fn removing_the_scope_cancels_watch_retry() {
+        let wake = Arc::default();
         let mut watch = SourceWatch::default();
-        assert!(watch.refresh(vec![PathBuf::from("relative")]));
+        assert!(watch.refresh(vec![PathBuf::from("relative")], &wake));
         assert!(watch.retry_at().is_some());
-        assert!(watch.refresh(Vec::new()));
+        assert!(watch.refresh(Vec::new(), &wake));
         assert!(!watch.active());
         assert!(watch.retry_at().is_none());
     }

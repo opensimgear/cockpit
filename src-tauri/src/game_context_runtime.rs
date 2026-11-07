@@ -180,7 +180,7 @@ impl GamesRuntime {
             return;
         }
         let inner = self.inner.clone();
-        *self.observer.lock().unwrap_or_else(|p| p.into_inner()) = Some(thread::spawn(move || {
+        *self.observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thread::spawn(move || {
             let polling_closed = Arc::new(AtomicBool::new(false));
             let polling_inner = inner.clone();
             let polling_stop = polling_closed.clone();
@@ -200,36 +200,34 @@ impl GamesRuntime {
                     let observed = worker_wake.observed();
                     let now = Instant::now();
                     let maintenance_due = now >= next_maintenance
-                        && polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).needs_process_maintenance();
+                        && polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner).needs_process_maintenance();
                     if maintenance_due {
                         polling_inner.poll_vehicle_telemetry(false);
                         next_maintenance = Instant::now() + Duration::from_millis(100);
-                    } else if observed != drained || polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner())
-                        .capture_deadline().is_some_and(|deadline| Instant::now() >= deadline)
+                    } else if observed != drained || matches!(polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .capture_deadline(), Some(deadline) if Instant::now() >= deadline)
                     {
                         polling_inner.poll_vehicle_telemetry(true);
                     }
                     drained = observed;
-                    let delay = polling_inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).maintenance_delay(next_maintenance);
+                    let delay = polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner).maintenance_delay(next_maintenance);
                     worker_wake.wait_scheduled(observed, delay);
                 }
             });
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
-            let update_wake = &inner.changes.context_update_wake;
-            let _ = context_wake.bind_thread(thread::current());
-            let _ = process_wake.bind_thread(thread::current());
-            let _ = update_wake.bind_thread(thread::current());
+            let worker_wake = &inner.changes.context_worker_wake;
+            let _ = worker_wake.bind_thread(thread::current());
             let mut process_cache = process_cache::Cache::default();
             let mut last_library = context_wake.observed();
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             let mut dcs_watch = context_dcs_watch::DcsWatch::default();
             while !inner.closed.load(Ordering::Acquire) {
+                let observed = worker_wake.observed();
                 let started = Instant::now();
                 let library = context_wake.observed();
                 let processes = process_wake.observed();
-                let updated = update_wake.observed();
                 let epoch = (library, processes);
                 let sdk_changed = sdk_watches.refresh(&inner);
                 assetto_watches.refresh(&inner);
@@ -239,18 +237,18 @@ impl GamesRuntime {
                     let rows = process_cache.read(inner.platform.as_ref(), games,
                         scope.filter(|_| inner.current_process_epoch() == Some(epoch)));
                     let snapshot = if inner.current_process_epoch() == Some(epoch) { process_cache.snapshot() } else { None };
-                    *inner.context_process_inventory.lock().unwrap_or_else(|p| p.into_inner()) = snapshot;
+                    *inner.context_process_inventory.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot;
                     rows
                 });
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;
                 if inner.closed.load(Ordering::Acquire) { break; }
-                if processes == process_wake.observed() && updated == update_wake.observed() {
+                if observed == worker_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
                     let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at()]
                         .into_iter().flatten().min().map(|at| at.saturating_duration_since(Instant::now()));
                     let maintenance = context_sdk_watch::maintenance_delay(&inner, live, started);
-                    context_wake.wait_scheduled(library, maintenance.into_iter().chain(watch_retry).min());
+                    worker_wake.wait_scheduled(observed, maintenance.into_iter().chain(watch_retry).min());
                 }
             }
             polling_closed.store(true, Ordering::Release);
@@ -336,7 +334,7 @@ impl Inner {
     // Reader destruction may unsubscribe in bounded batches and sleep. Retire
     // under the mutex, then drop its owned batch only after releasing the guard.
     fn update_vehicles<R>(&self, update: impl FnOnce(&mut crate::game_vehicles::Tracker) -> R) -> R {
-        let (value, retired) = { let mut vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
+        let (value, retired) = { let mut vehicles = self.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let value = update(&mut vehicles); (value, vehicles.take_retired()) };
         drop(retired);
         value

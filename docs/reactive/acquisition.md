@@ -247,6 +247,13 @@ worker and explicit launch and setup checks are separate.
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
 | ESP32 USB console | On the supported UART console boards, the driver event queue wakes provisioning and retains one unread notification. Direct requests wait for UART readiness with their original deadline. The network task owns both reads and shares one bounded decoder. A status watch publishes the first and changed projections from that same task, including during direct requests. | Qualify command cancellation, reconnect and physical USB on both boards. The status watch uses the existing network task wake and maintenance deadlines. Non-UART console builds still use the maintenance wake and have no board qualification. |
 
+The game context worker uses one retained notification counter for library,
+process, filesystem and setup wakes. Library and process counters still
+identify inventory generations. File notifications leave those generations
+intact and force another pass if they arrive during inspection. Failed watch
+registration and missing process-event coverage still use their scoped
+deadlines above.
+
 The pinned ESP-IDF console forwards readiness registration to its primary
 device. The UART driver signals receive readiness on interrupt and checks
 already buffered bytes during registration. [Console VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_vfs_console/vfs_console.c) · [UART VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_uart/src/uart_vfs.c)

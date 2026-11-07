@@ -1,6 +1,7 @@
 //! Cheap typed source invalidations and ordered job transitions. No callbacks,
 //! snapshot construction, serialization, filesystem or transport runs here.
 use serde::Serialize;
+use osg_streams::NativeWake;
 use std::{collections::{BTreeMap,VecDeque},sync::{atomic::{AtomicBool, Ordering},Arc,Mutex,Weak}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -32,20 +33,55 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake, pub(crate) context_process_wake:Arc<osg_streams::NativeWake>, pub(crate) context_update_wake:osg_streams::NativeWake, context_process_scope:Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>, pub(crate) activation_wake:Arc<osg_streams::NativeWake>, resource_wake:Mutex<Weak<osg_streams::NativeWake>>, automatic_wake:Mutex<Weak<osg_streams::NativeWake>>, routing_wake:Mutex<Weak<osg_streams::NativeWake>>, activity_wake:Mutex<Weak<osg_streams::NativeWake>>, launch_wake:Mutex<Weak<osg_streams::NativeWake>>, profile_admission_wake:Mutex<Weak<osg_streams::NativeWake>> }
+pub(crate) struct Signal {
+    state: Mutex<State>,
+    telemetry: AtomicBool,
+    pub(crate) wake: Arc<NativeWake>,
+    pub(crate) context_worker_wake: Arc<NativeWake>,
+    pub(crate) context_wake: NativeWake,
+    pub(crate) context_process_wake: Arc<NativeWake>,
+    pub(crate) context_update_wake: NativeWake,
+    context_process_scope: Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>,
+    pub(crate) activation_wake: Arc<NativeWake>,
+    resource_wake: Mutex<Weak<NativeWake>>,
+    automatic_wake: Mutex<Weak<NativeWake>>,
+    routing_wake: Mutex<Weak<NativeWake>>,
+    activity_wake: Mutex<Weak<NativeWake>>,
+    launch_wake: Mutex<Weak<NativeWake>>,
+    profile_admission_wake: Mutex<Weak<NativeWake>>,
+}
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
-    fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default(),context_process_wake:Default::default(),context_update_wake:Default::default(),context_process_scope:Mutex::default(),activation_wake:Default::default(),resource_wake:Mutex::default(),automatic_wake:Mutex::default(),routing_wake:Mutex::default(),activity_wake:Mutex::default(),launch_wake:Mutex::default(),profile_admission_wake:Mutex::default()}}
+    fn default() -> Self {
+        let context_worker_wake = Arc::new(NativeWake::default());
+        Self {
+            state: Mutex::new(State { revision: 0, dirty: ALL, jobs: BTreeMap::new(), events: VecDeque::new(),
+                bytes: 0, overflow: false, closed: false, error: None }),
+            telemetry: AtomicBool::new(false),
+            wake: Arc::default(),
+            context_wake: NativeWake::child(context_worker_wake.clone()),
+            context_process_wake: Arc::new(NativeWake::child(context_worker_wake.clone())),
+            context_update_wake: NativeWake::child(context_worker_wake.clone()),
+            context_worker_wake,
+            context_process_scope: Mutex::default(),
+            activation_wake: Arc::default(),
+            resource_wake: Mutex::default(),
+            automatic_wake: Mutex::default(),
+            routing_wake: Mutex::default(),
+            activity_wake: Mutex::default(),
+            launch_wake: Mutex::default(),
+            profile_admission_wake: Mutex::default(),
+        }
+    }
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
 }
 impl Signal {
     pub(crate) fn set_context_process_scope(&self, library: u64, continuity: Option<Arc<crate::game_activation::ProcessContinuity>>) {
-        let mut scope = self.context_process_scope.lock().unwrap_or_else(|p| p.into_inner());
+        let mut scope = self.context_process_scope.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if match (&*scope, &continuity) {
             (Some((epoch, old)), Some(next)) => *epoch == library && Arc::ptr_eq(old, next),
             (None, None) => true,
@@ -57,7 +93,7 @@ impl Signal {
     }
 
     pub(crate) fn context_process_live(&self, library: u64) -> bool {
-        self.context_process_scope.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+        self.context_process_scope.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()
             .is_some_and(|(epoch, continuity)| *epoch == library && continuity.is_live())
     }
     fn tick(state:&mut State,domain:Domain) {
