@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 36 checked and 19
-open. The open criteria include six software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 37 checked and 18
+open. The open criteria include five software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -503,6 +503,13 @@ axis timing during a deliberate sweep, physical display latency and physical
 input-to-virtual receipt remain in #199.
 
 ## User-operated qualification stays in #199
+
+The [shared controller capture check](../verification/2026-11-07-shared-controller-routing.md)
+is accepted in #191. The running Cockpit verified controller preview and
+applied routing, and the authored native USB fixture verified exact capture
+sharing and delivery after the preview closed. The running app had no USB
+module endpoint. The real board, controller sweep, unplug and latency
+checks remain operator acceptance in #199.
 
 The 13 original criteria requiring physical devices, actual simulators, rig
 baseline/budgets or the combined 30-minute soak remain externally unqualified.
