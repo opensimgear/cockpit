@@ -13,13 +13,15 @@ import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst} from './dcs-native-rate-burst.mjs';
+import {runDcsSoak} from './dcs-feature-soak.mjs';
+import {installSoakPanel} from './dcs-soak-panel.mjs';
 import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 
-export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false}={}) {
+export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false, seconds=0}={}) {
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
@@ -72,6 +74,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     }
     const panel=await browser.newPage();
     await tracePanelCanvas(panel);
+    if(seconds)await installSoakPanel(panel);
     await panel.addInitScript(()=>{
       window.__combinedLamp=[];
       const Worker=window.SharedWorker;
@@ -190,6 +193,16 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       nodeId:debugNode,streamId,sequence:sent,changes:[{portId:'button-1',value}]});
     assert.equal(debugController.sequence,sent);
     return debugController.pendingFrames;
+  }
+
+  async function soak(options) {
+    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,nodeId:outputNode,...options});
+    await Promise.all(panels.map(({page})=>page.evaluate(()=>{
+      const baseline=window.__combinedLamp.findLast(sample=>sample.status==='fresh'&&sample.value===false);
+      window.__combinedLamp.splice(0,window.__combinedLamp.length,...(baseline?[baseline]:[]));
+      window.__panelPaints.length=0;
+    })));
+    return evidence;
   }
 
   async function openInspector() {
@@ -450,7 +463,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     observation=undefined;
     return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:true}};
   }
-  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,close};
+  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close};
 }
 
 export function combinedTimingMisses(timing, load) {

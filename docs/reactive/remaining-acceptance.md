@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 33 checked and 22
-open. The open criteria include nine software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 34 checked and 21
+open. The open criteria include eight software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -22,7 +22,7 @@ criteria have delivered software and outstanding qualification.
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Companion library reopen passed on native and across separate browser-dev tabs. The other nested lifetimes and background/reopen checks remain open. |
-| #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
+| #198 | The [30-minute authored Windows soak](../verification/2026-11-07-dcs-panel-vjoy.md#30-minute-desktop-soak) passed. The remaining integrated fault/load matrix, applicable local suites and CI, final acquisition inventory and acceptance accounting are open. |
 
 ## R7 UI consistency
 

@@ -387,3 +387,41 @@ Repository production line coverage was 82.14% for the qualification
 module and 97.37% for the shared gateway module. LLVM module function
 coverage was 75.00% and 87.50% respectively. This build did not instrument
 branches. The stream and browser feedback coverage checks also passed.
+
+## 30-minute desktop soak
+
+The disposable Windows Cockpit at `926cec91` passed **1,800.007 seconds** of
+combined load with authored DCS ownship and BIOS, an applied profile, two
+separately paired loopback browser panels, and a real Windows vJoy slot.
+Before measurement, the fixture exercised deliberate DCS withdrawal and rearm,
+warmed both panel renderers and let automatic startup discovery finish.
+
+- The same profile owner and both armed panel sessions and bindings survived
+  **919 health checks**, **60 inventory refreshes**, **60 completed discovery
+  scans**, and repeated navigation through Devices, Games, Debug and Overview.
+  Both panels painted each authored lamp change. The panel observer recorded no
+  new non-fresh lamp values, feedback closures or binding changes during the soak.
+- One native observer held its first vJoy node sample acknowledgement for the
+  measured interval. The independent fast observer received **919** known
+  samples during that hold. Releasing the acknowledgement delivered the next
+  sample to the stalled observer.
+- Across 60 memory samples, Cockpit private bytes ranged from **73.14 to
+  89.43 MiB**. The five-minute peak increased from **81.38 to 88.67 MiB**
+  between the early window after warmup and the final window. Browser panel
+  JS heap peaks fell from **14.99 to 8.45 MiB** and **15.86 to 8.76 MiB**.
+  The fixture allows up to 64 MiB of peak growth between those windows to
+  accommodate cache warming and garbage collection.
+- The post-soak fixture captured 65 authored debug transitions at **124.08 Hz**
+  and two additional transitions after preview teardown. Both MCP readers
+  retired on Stop, Windows reported the slot free, and cleanup reported no
+  errors. Transport stream coverage was **98.28% lines / 93.06% branches /
+  92.86% functions**. Browser feedback reached **100%** on all three metrics.
+
+To repeat, use a disposable running Windows Cockpit with the same authored DCS
+seed and Raw Input probe described above. Set `OSG_DCS_COMBINED_SOAK_SECONDS=1800`
+and `OSG_DCS_SOAK_COCKPIT_PID` to that Cockpit process ID. Enable the native
+DCS and combined MCP modes with `OSG_DCS_PHYSICS_NATIVE=1` and
+`OSG_DCS_COMBINED_MCP=1`. Shorter runs exercise the fixture without satisfying
+the duration gate. This fixture exercises real Windows output and browser
+rendering with authored inputs. Physical-controller latency and live simulator
+effects are tracked in [#199](https://github.com/opensimgear/cockpit/issues/199).

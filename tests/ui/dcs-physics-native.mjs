@@ -13,11 +13,13 @@ import {createSocket} from 'node:dgram';
 import {createHash, randomUUID} from 'node:crypto';
 import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
+import {soakSeconds} from './dcs-feature-soak.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
+const seconds = soakSeconds(process.env.OSG_DCS_COMBINED_SOAK_SECONDS);
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -52,12 +54,13 @@ async function fixtureExecutable(directory) {
 }
 
 test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and BIOS remain independent through withdrawal and rearm`, {
-  skip: !browserUrl && process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000,
+  skip: !browserUrl && process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000 + seconds * 1000,
 }, async () => {
   assert.equal(process.platform, 'win32');
   const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
   if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
+  if (seconds) assert.ok(observeMcp && !nativeRates, 'Soak requires combined desktop MCP with the debug and panel input profile');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
   await mkdir(resolve(userFolder, 'Scripts'), {recursive: true});
@@ -74,7 +77,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       : await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
-  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates}) : null;
+  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates, seconds}) : null;
   if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
@@ -326,6 +329,11 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
         resolve(submission);
       };
     });
+    if (seconds) {
+      await checkpoint('Starting the combined desktop soak');
+      evidence.phases.soak = await combined.soak({owner,directory,status,live,setAirborne});
+      await checkpoint('Combined desktop soak complete');
+    }
     await combined?.openInspector();
     await cdp.evaluate(`(async()=>{
       const {SharedObservations}=await import('/src/lib/streams/shared.ts');
