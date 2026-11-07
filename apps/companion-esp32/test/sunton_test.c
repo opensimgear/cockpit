@@ -1,15 +1,15 @@
 #include "../boards/sunton-3248s035r/board.c"
 #include <assert.h>
 #include <stdio.h>
-static bool fail_spi,fail_lock;
+static bool fail_spi,fail_lock,release_on_lock;
 static int irq=1,dc=1,z1=1000,z2=2000,raw_x=2050,raw_y=2050;
-static unsigned transmits,pixel_bytes,devices;
+static unsigned transmits,pixel_bytes,devices,lock_attempts;
 static uint8_t last[1024],cmd;
 int gpio_config(const gpio_config_t *c){assert(c->pin_bit_mask);return ESP_OK;}
 int gpio_set_level(int pin,int value){if(pin==2)dc=value;return ESP_OK;}
 int gpio_get_level(int pin){assert(pin==36);return irq;}
 SemaphoreHandle_t xSemaphoreCreateMutex(void){return (void *)1;}
-int xSemaphoreTake(SemaphoreHandle_t h,unsigned ms){assert(h&&ms==100);return !fail_lock;}
+int xSemaphoreTake(SemaphoreHandle_t h,unsigned ms){assert(h&&ms==100);lock_attempts++;if(release_on_lock)irq=1;return !fail_lock;}
 int xSemaphoreGive(SemaphoreHandle_t h){assert(h);return 1;}
 void vTaskDelay(unsigned ms){assert(ms==150||ms==120);}
 int spi_bus_initialize(int host,const spi_bus_config_t *c,int dma){
@@ -45,7 +45,14 @@ int main(void){
  unsigned start=transmits;assert(board.write(board.context,0,0,480,4,strip));assert(transmits-start==9&&pixel_bytes==768);
  unsigned before=transmits;assert(!board.write(board.context,479,319,2,1,rgb));assert(transmits==before);
  bool down=true;int x=-1,y=-1;
+ unsigned before_touch=lock_attempts;
+ fail_lock=true;
  assert(board.touch(board.context,&down,&x,&y)&&!down);
+ assert(lock_attempts==before_touch&&transmits==before);
+ fail_lock=false;release_on_lock=true;irq=0;
+ assert(board.touch(board.context,&down,&x,&y)&&!down);
+ assert(lock_attempts==before_touch+1&&transmits==before);
+ release_on_lock=false;
  irq=0;assert(board.touch(board.context,&down,&x,&y)&&down&&x==239&&y==159);
  raw_x=200;raw_y=200;assert(board.touch(board.context,&down,&x,&y)&&down&&x==479&&y==0);
  raw_x=3900;raw_y=3900;assert(board.touch(board.context,&down,&x,&y)&&down&&x==0&&y==319);
@@ -54,6 +61,7 @@ int main(void){
  z1=1000;z2=2000;fail_spi=true;assert(!board.touch(board.context,&down,&x,&y)&&!down);
  fail_spi=false;fail_lock=true;assert(!board.touch(board.context,&down,&x,&y));assert(!board.write(board.context,0,0,1,1,rgb));
  fail_lock=false;fail_spi=true;assert(!board.write(board.context,0,0,1,1,rgb));fail_spi=false;assert(!board.write(board.context,0,0,1,1,rgb));
+ irq=1;assert(!board.touch(board.context,&down,&x,&y)&&!down);
  assert(osg_sunton_point(200,3900,200,3900,200,3900,&x,&y)&&x==0&&y==0);
  assert(osg_sunton_point(3900,200,200,3900,200,3900,&x,&y)&&x==479&&y==319);
  assert(!osg_sunton_point(2050,2050,200,200,200,3900,&x,&y));

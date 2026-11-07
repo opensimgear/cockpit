@@ -9,13 +9,14 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
+#include <stdatomic.h>
 #include <string.h>
 #if !CONFIG_IDF_TARGET_ESP32
 #error "Sunton 3248S035R requires IDF_TARGET=esp32"
 #endif
 #define WIDTH 480
 #define HEIGHT 320
-typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[1024];bool failed;} sunton;
+typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[1024];atomic_bool failed;} sunton;
 static sunton hardware;
 static bool transfer(spi_device_handle_t device,const void *tx,void *rx,size_t bytes){
     spi_transaction_t t={.length=bytes*8,.tx_buffer=tx,.rx_buffer=rx};
@@ -52,9 +53,12 @@ static int median(int v[5]){
 }
 static bool touch(void *context,bool *down,int *x,int *y){
     sunton *b=context;*down=false;
-    if(b->failed||xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))!=pdTRUE)return false;
-    bool ok=true;
-    if(gpio_get_level(36)==0){
+    if(b->failed)return false;
+    // A released pen needs no SPI transaction or wait behind a display write.
+    if(gpio_get_level(36)!=0)return true;
+    if(xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))!=pdTRUE)return false;
+    bool ok=!b->failed;
+    if(ok&&gpio_get_level(36)==0){
         int xs[5],ys[5],z1=0,z2=0,unused=0;
         ok=adc(b,0xb0,&z1)&&adc(b,0xc0,&z2);
         for(int i=0;ok&&i<5;i++)ok=adc(b,0xd0,&xs[i])&&adc(b,0x90,&ys[i]);
@@ -82,6 +86,7 @@ static bool init_lcd(sunton *b){
 }
 bool osg_board_init(osg_board *out){
     sunton *b=&hardware;memset(b,0,sizeof(*b));
+    atomic_init(&b->failed,false);
     gpio_config_t outputs={.pin_bit_mask=(1ULL<<27)|(1ULL<<2)|(1ULL<<15)|(1ULL<<33)|(1ULL<<5),.mode=GPIO_MODE_OUTPUT};
     if(gpio_config(&outputs)!=ESP_OK)return false;
     gpio_set_level(27,0);gpio_set_level(15,1);gpio_set_level(33,1);gpio_set_level(5,1);

@@ -20,7 +20,7 @@ USB bridge identity cannot uniquely identify the screen model. Select this profi
 | XPT2046 chip select / PENIRQ | 33 / 36 |
 | SD chip select, held inactive | 5 |
 
-Display clock 24 MHz; touch clock 2 MHz. Both devices share SPI2, serialized by a bounded mutex. Pixel writes synchronously consume CPU-order RGB565, swap to wire byte order, validate bounds and latch SPI write failures. Touch returns false on SPI failure, lock timeout or invalid ADC coordinates so the existing input monitor stops the session. Median-of-five samples and a pressure threshold reduce resistive noise. PENIRQ high reports release. Resistive panels do not provide reliable multi-finger identification.
+Display clock is 24 MHz and touch clock is 2 MHz. Both devices share SPI2, serialized by a bounded mutex. Pixel writes synchronously consume CPU-order RGB565, swap to wire byte order, validate bounds and latch SPI write failures. PENIRQ high reports release without waiting for the display bus. PENIRQ low requires the bus to sample coordinates. Touch returns false on a latched display failure, touch SPI failure, lock timeout or invalid ADC coordinates so the existing input monitor stops the session. Median-of-five samples and a pressure threshold reduce resistive noise. Resistive panels do not provide reliable multi-finger identification.
 
 The ST7796 uses software reset, RGB565, BGR color order and landscape MADCTL 0x28. Hardware reset is tied to the board enable/reset line. SD, speaker, RGB LED and light sensor are not initialized.
 
