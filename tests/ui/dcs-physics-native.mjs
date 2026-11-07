@@ -1,5 +1,6 @@
 // IPC-only acceptance against the running native Cockpit. The simulator process,
 // BIOS frames and ownship envelopes are authored fixtures; no hardware outputs.
+// OSG_DCS_COMBINED_VJOY_PROBE adds a browser panel and a temporary vJoy slot.
 // Setup and Repair write only to the private user folder.
 // The opt-in discovery test briefly adds an empty, uniquely named profile directory.
 import test from 'node:test';
@@ -10,6 +11,7 @@ import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createSocket} from 'node:dgram';
 import {createHash, randomUUID} from 'node:crypto';
+import {combinedDcsFixture} from './dcs-companion-vjoy-fixture.mjs';
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -92,6 +94,9 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     const reply = await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
+  const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
+  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe) : null;
+  if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
   const status = async () => (await request({command: 'profile_status'})).profiles;
@@ -307,7 +312,9 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     document.resources.push({id: 'telemetry', name: 'Private DCS telemetry', kind: 'game', required: true, ports: chosen.map(row => ({...row.descriptor, id: row.descriptor.id.slice(8)}))});
     for (const row of chosen) { const id = row.descriptor.id.slice(8), node = nodeId(id); document.processingNodes.push(identity(node, row.descriptor.contract)); document.bindings.push({id: `route-${node}`, from: {nodeId: 'telemetry', portId: id}, to: {nodeId: node, portId: 'in'}}); }
     const assignments = [{resourceId: 'telemetry', sourceId: resource.id, ports: chosen.map(row => ({profilePortId: row.descriptor.id.slice(8), observedPortId: row.descriptor.id, expectedContractHash: row.contractHash}))}];
+    await combined?.prepare(document, assignments);
     const saved = (await request({command: 'profile_editor_save', document, assignments, expectedRevision: document.revision})).profiles.document; profile.revision = saved.revision;
+    await combined?.bind(profile);
     evidence.captured = {resource, ports: chosen, profile};
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     evidence.phases.live = await live(); await checkpoint('selected physics and BIOS reach identity processing');
@@ -334,7 +341,14 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
       const before = (await readers()).fast;
-      await sleep(1250);
+      const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
+        setAirborne(airborne) {
+          nativeValues['flight.ownship.inAir'] = airborne;
+          selected['flight.ownship.inAir'] = airborne;
+        },
+        setPaused(paused) { mode = paused ? 'paused' : 'live'; },
+      })]);
+      if (burst) evidence.phases.combined = burst;
       const stalled = await readers();
       assert.equal(stalled.error, null);
       assert.equal(stalled.slow, 1, 'Only one native delivery may be in flight');
@@ -355,7 +369,9 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       return page && output(page, biosId)?.status !== 'known'
         && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
     }, 'BIOS expiry must withdraw its derived output while fresh ownship processing remains live');
+    const stopNs = process.hrtime.bigint();
     await request({command: 'profile_stop'});
+    if (combined) Object.assign(evidence.phases.combined, await combined.stopped(stopNs));
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     evidence.phases.ownshipOnlyStart = await until(async () => {
       const page = await samples();
@@ -382,6 +398,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
   } finally {
     clearInterval(timer); if (producer) producer.close();
     await cleanup('Stop profile', () => request({command: 'profile_stop'}));
+    if (combined) await cleanup('Close combined panel and probe', () => combined.close());
     if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await sleep(200); }
     if (profile) await cleanup('Delete temporary profile', () => request({command: 'profile_delete', id: profile.id, expectedRevision: profile.revision}));
     if (fixtureSetup) await cleanup('Remove private managed setup', async () => {

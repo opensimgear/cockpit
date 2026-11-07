@@ -362,8 +362,9 @@ fixture awaits acknowledgement on each source independently. The native
 journal and reducer regression separately passed at 1,001.17 Hz and
 125.12 Hz. It preserved all 288 expected reports before overflow, then
 verified fresh baselines and fenced the replaced source.
-Stable desktop WebView 1 kHz delivery and the combined simulator/panel load
-remain open.
+Stable desktop WebView 1 kHz and the 30-minute rig soak remain open.
+The [combined desktop fault run](../verification/2026-11-07-dcs-panel-vjoy.md)
+passed with authored DCS telemetry, a compiled browser panel and real vJoy.
 
 ### Ordered 125 Hz and 1 kHz on browser-dev
 
