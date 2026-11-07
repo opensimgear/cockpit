@@ -81,10 +81,15 @@ test('A real companion encoder burst and native debug sources preserve exact Win
     await fromPeer('ready');
 
     const resource=await until(async()=>(await request({command:'profile_resources_list',limit:128})).profileResources.resources
-      .find(item=>item.attributes?.companionId===instance&&item.attributes?.componentKind!=='paired-companion'));
-    const {ports}=(await request({command:'profile_resources_inspect',resourceId:resource.id,limit:64})).profileResources;
-    const observed=ports.find(port=>port.current&&port.descriptor.id===control);
-    assert.ok(observed,JSON.stringify(ports));
+      .find(item=>item.attributes?.companionId===instance&&item.attributes?.componentKind==='paired-companion'));
+    const {ports}=(await request({command:'profile_companion_inspect',resourceId:resource.id,
+      publicationHash,offset:0,limit:64})).profileCompanionAuthoring;
+    const observed=ports.find(port=>port.descriptor.id===control);
+    assert.ok(observed,`Missing encoder port ${control} in the selected publication`);
+    await until(async()=>{
+      const current=(await request({command:'profile_resources_inspect',resourceId:resource.id,limit:64})).profileResources.ports;
+      return current.some(port=>port.current&&port.descriptor.id===control&&port.contractHash===observed.contractHash);
+    });
     slot=await until(async()=>(await inventory()).find(device=>device.status==='free'&&device.buttons>=2
       &&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
       &&device.buttons+device.axes.length+device.continuousHats<=128));
