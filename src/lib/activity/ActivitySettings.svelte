@@ -2,19 +2,20 @@
   import Icon from '../Icon.svelte';
   import { gatewayRequest } from '../gateway';
   import { SharedObservations } from '../streams/shared';
+  import { visibleObservation } from '../visible-observation';
   import { ActivityClient, type ActivitySettings } from './model';
   const client = new ActivityClient(gatewayRequest);
   let { active }: { active: boolean } = $props();
-  let observations: SharedObservations | undefined;
+  let stopObservation: (() => void) | undefined;
   let committed = $state.raw<ActivitySettings>();
   let draft = $state<number | undefined>();
   let busy = $state(false), streamError = $state(''), error = $state(''), message = $state('');
   const retentionDays = $derived(draft ?? committed?.retentionDays);
   function observe() {
-    observations?.close();
+    stopObservation?.();
     streamError = '';
-    observations = new SharedObservations();
-    observations.subscribe('settings.activity', state => {
+    const observations = new SharedObservations();
+    const reader = visibleObservation(observations, 'settings.activity', state => {
       if (state.status === 'ready') {
         committed = state.frame?.payload as ActivitySettings;
         streamError = '';
@@ -22,7 +23,12 @@
         committed = undefined;
         streamError = state.error ?? 'Activity retention settings are unavailable.';
       }
-    });
+    }, () => { committed = undefined; });
+    stopObservation = () => {
+      reader.close();
+      observations.close();
+    };
+    reader.setVisible(true);
   }
   async function save() {
     if (retentionDays === undefined || !committed || busy) return;
@@ -45,8 +51,8 @@
     if (!active) return;
     observe();
     return () => {
-      observations?.close();
-      committed = undefined;
+      stopObservation?.();
+      stopObservation = undefined;
     };
   });
 </script>

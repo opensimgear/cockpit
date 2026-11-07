@@ -25,6 +25,34 @@ test('committed settings invalidations survive a pending read and coalesce', asy
   settings.dispose();
 });
 
+test('retiring the settings observation fences a pending read until the reopened baseline', async () => {
+  const stale = deferred(), current = deferred();
+  let reads = 0;
+  const settings = createMcpSettings(() => ++reads === 1 ? stale.promise : current.promise, true);
+  settings.setObservationReady(false);
+  await settings.load();
+  assert.equal(reads, 0);
+
+  settings.setObservationReady(true);
+  const opening = settings.load();
+  assert.equal(reads, 1);
+  settings.setObservationReady(false);
+  await settings.load();
+  assert.equal(reads, 1);
+  settings.setObservationReady(true);
+  settings.invalidate();
+  stale.resolve(status({ settingsRevision: 1 }));
+  await opening;
+  assert.equal(reads, 2);
+  assert.equal(settings.state.status, null);
+  assert.equal(settings.state.statusCurrent, false);
+  current.resolve(status({ settingsRevision: 2 }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settings.state.status.settingsRevision, 2);
+  assert.equal(settings.state.statusCurrent, true);
+  settings.dispose();
+});
+
 function host(initial = status()) {
   let current=plain(initial),sequence=0;const calls=[];
   const send=async(command,args)=>{

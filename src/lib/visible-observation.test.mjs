@@ -13,7 +13,7 @@ test('visible demand starts once and retires on hide or close', () => {
     events.push('open');
     return () => events.push('close');
   }};
-  const demand = visibleObservation(observations, topic, () => {});
+  const demand = visibleObservation(observations, topic, () => {}, () => events.push('retire'));
   const hide = hidden => {
     document.hidden = hidden;
     document.dispatchEvent(new Event('visibilitychange'));
@@ -26,10 +26,10 @@ test('visible demand starts once and retires on hide or close', () => {
     demand.setVisible(true);
     assert.deepEqual(events, ['open']);
     hide(true);
-    assert.deepEqual(events, ['open', 'close']);
+    assert.deepEqual(events, ['open', 'close', 'retire']);
     demand.setVisible(false);
     hide(false);
-    assert.deepEqual(events, ['open', 'close']);
+    assert.deepEqual(events, ['open', 'close', 'retire']);
     demand.setVisible(true);
     demand.setVisible(false);
     demand.setVisible(true);
@@ -37,7 +37,7 @@ test('visible demand starts once and retires on hide or close', () => {
     demand.close();
     demand.setVisible(true);
     hide(false);
-    assert.deepEqual(events, ['open', 'close', 'open', 'close', 'open', 'close']);
+    assert.deepEqual(events, ['open', 'close', 'retire', 'open', 'close', 'retire', 'open', 'close', 'retire']);
   } finally {
     demand.close();
     delete globalThis.document;

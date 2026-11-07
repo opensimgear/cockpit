@@ -50,6 +50,30 @@ credential list. The navigation fixture also verifies that Activity retention
 follows external commits, preserves a local draft and opens a fresh snapshot
 after General was hidden.
 
+On November 7 the running native AI settings fixture reproduced an eager
+status request before subscription, followed by a second request at the
+opening baseline. The corrected pane reads once after the baseline, retires
+its reader when the document hides, and fences any status reply from that
+retired observation. An external credential revocation while hidden
+triggered zero reads. Reopening obtained one current status and leaving the
+tab retired the reopened reader. Edge browser-dev rendered the desktop-only
+notice with a disabled switch and sent zero AI settings requests.
+
+The navigation fixture also reproduced an editable Activity retention value
+while the document was hidden. In native Cockpit and Edge browser-dev the
+fixed pane withdrew the editable snapshot, retained its local draft, retired
+its exact reader, and reopened on the retention saved while hidden. The same
+navigation trace verifies the current Devices, driver metadata, firmware
+release and Designer subscriptions. Raw logs are under
+`.research/reactive/mcp-settings-lifetime/`.
+
+The isolated frontend passed 1,700 tests, the Svelte check and the production
+build. The MCP settings controller reached 97.61% line, 93.47% branch and
+94.44% function coverage. The visibility helper reached 100% on all three
+measures. The desktop and browser-dev executables used SHA-256
+`8bc0f11da8f59b0648759cba6337dbdd7396f71113889ac60b036cf941c7978e`
+and `0dfc6a0bd97fa9a9a994c5ab2d5b6b72bd13cd90585b0f12d3e7887791d1c4b4`.
+
 The profile fixture uses two independent library readers and the runtime
 reader on both transports. An external rename triggers one pinned document
 read for a clean editor. A second rename updates both libraries while the

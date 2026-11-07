@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {dirname, resolve, toNamespacedPath} from 'node:path';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {checkActivitySettings} from './reactive-navigation/activity-settings.mjs';
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
 const browserOpenId = ({ connectionId, requestId }) => JSON.stringify([connectionId, requestId]);
@@ -122,9 +123,11 @@ test(`${transport} main view navigation retires observation readers without dupl
   };
   try {
     await navigate('Overview');
-    const companionLibraryTopics = browserUrl ? [] : ['designer.workspace'];
+    const companionLibraryTopics = browserUrl
+      ? ['companion.firmware-releases']
+      : ['companion.firmware-releases', 'designer.workspace'];
     const views = [
-      ['Devices', []],
+      ['Devices', ['system.inventory.vjoy']],
       ['Profiles', []],
       ['Games', ['games.discovery', 'games.jobs']],
       ['Companions', companionLibraryTopics],
@@ -226,7 +229,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         return true;
       })()`));
       await until(() => page.evaluate(`!!document.querySelector('[aria-label="Panel name"]')`));
-      await settled([], true);
+      await settled(browserUrl ? [] : ['designer.workspace'], true);
       await page.evaluate(`(() => {
         const confirm = window.confirm;
         try {
@@ -244,54 +247,18 @@ test(`${transport} main view navigation retires observation readers without dupl
     await navigate('Settings');
     const clickTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
-    const deviceTopics = ['settings.desktop', 'system.inventory'];
+    const deviceTopics = ['settings.desktop', 'system.inventory', 'system.inventory.drivers', 'system.inventory.vjoy'];
     const settingsTopics = () => [...active.values()].map(reader => reader.topic)
       .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener' || topic === 'settings.mcp').sort();
     await new Promise(resolve => setTimeout(resolve, 200));
     await settled(browserUrl ? ['settings.activity'] : ['settings.activity', 'storage.backups']);
     assert.deepEqual(settingsTopics(), [], 'Hidden settings tabs must not open readers');
     const activityReader = () => [...active.values()].find(reader => reader.topic === 'settings.activity')?.token;
-    const retentionInput = () => page.evaluate(`document.querySelector('[aria-label="Activity retention days"]:not(:disabled)')?.valueAsNumber`);
-    const {activitySettings: retention} = await request({command:'activity_settings_get'});
-    await until(retentionInput, days => days === retention.retentionDays);
-    const firstActivityReader = activityReader();
-    assert.ok(retention.retentionDays < 3649, 'The dev Cockpit needs two higher retention values for this fixture');
-    const changedDays = retention.retentionDays + 1;
-    try {
-      await request({command:'activity_settings_save', retentionDays:changedDays});
-      await until(retentionInput, days => days === changedDays);
-      const draftDays = changedDays + 1;
-      await page.evaluate(`(() => {
-        const input = document.querySelector('[aria-label="Activity retention days"]');
-        input.valueAsNumber = ${draftDays};
-        input.dispatchEvent(new Event('input', {bubbles:true}));
-      })()`);
-      const beforeDraftCommit = deliveries.get(firstActivityReader);
-      await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
-      await until(() => deliveries.get(firstActivityReader) !== beforeDraftCommit);
-      assert.equal(await retentionInput(), draftDays, 'An external commit must not overwrite the draft');
-      const beforeSave = deliveries.get(firstActivityReader);
-      await page.evaluate(`document.querySelector('[aria-label="Activity retention"] button').click()`);
-      await until(() => page.evaluate(`document.querySelector('[aria-label="Activity retention"] [role="status"]')
-        ?.textContent.includes('Retention saved')`));
-      await until(() => deliveries.get(firstActivityReader) !== beforeSave);
-      await clickTab('Devices');
-      await until(() => pending.size === 0 && !activityReader());
-      await request({command:'activity_settings_save', retentionDays:changedDays});
-      assert.equal(activityReader(), undefined);
-      await clickTab('General');
-      await settled(['settings.activity']);
-      assert.notEqual(activityReader(), firstActivityReader);
-      await until(retentionInput, days => days === changedDays);
-    } finally {
-      const {activitySettings: current} = await request({command:'activity_settings_get'});
-      if (current.retentionDays === changedDays || current.retentionDays === changedDays + 1) {
-        const reader = activityReader();
-        const beforeRestore = deliveries.get(reader);
-        await request({command:'activity_settings_save', retentionDays:retention.retentionDays});
-        if (reader) await until(() => deliveries.get(reader) !== beforeRestore);
-      }
-    }
+    await checkActivitySettings({
+      page, request, clickTab, activityReader, deliveries,
+      waitForReader: () => settled(['settings.activity']),
+      waitForRetirement: () => until(() => pending.size === 0 && !activityReader()),
+    });
     const backupReader = () => [...active.values()].find(reader => reader.topic === 'storage.backups')?.token;
     const backupRow = id => page.evaluate(`Array.from(document.querySelectorAll('[data-backup-id]'))
       .some(row => row.dataset.backupId === ${JSON.stringify(id)})`);

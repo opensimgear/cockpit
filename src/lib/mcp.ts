@@ -62,19 +62,21 @@ export function mcpStatusLabel(state: McpSettingsState): string {
 export function createMcpSettings(send: McpInvoke, native: boolean, changed: (state: McpSettingsState) => void = () => {}) {
   let state: McpSettingsState = { native, loaded: false, status: null, busy: '', error: '', message: '', secret: null, statusCurrent: false };
   let disposed = false, polling = false, pendingRefresh = false, epoch = 0, readError = '';
+  let observationReady = true;
   const publish = (patch: Partial<McpSettingsState>) => {
     if (disposed) return;
     state = { ...state, ...patch };
+    if (!observationReady) state.statusCurrent = false;
     changed(state);
     if (pendingRefresh && !state.busy) void Promise.resolve().then(refreshPending);
   };
-  const ready = () => !disposed && native && state.loaded && !!state.status && !state.busy;
+  const ready = () => !disposed && native && state.statusCurrent && state.loaded && !!state.status && !state.busy;
   const writable = () => ready() && !state.status?.readOnly;
   const failed = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 2048);
   const readStatus = (value: unknown) => parseMcpStatus(value);
 
   function refreshPending() {
-    if (disposed || !native || polling || state.busy || !pendingRefresh) return;
+    if (disposed || !native || !observationReady || polling || state.busy || !pendingRefresh) return;
     pendingRefresh = false;
     void load(true);
   }
@@ -84,8 +86,18 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
     refreshPending();
   }
 
+  function setObservationReady(ready: boolean) {
+    if (observationReady === ready) return;
+    observationReady = ready;
+    if (!ready) {
+      epoch++;
+      pendingRefresh = false;
+      publish({ statusCurrent: false });
+    }
+  }
+
   async function load(silent = false) {
-    if (disposed || !native || state.busy || polling) return;
+    if (disposed || !native || !observationReady || state.busy || polling) return;
     polling = true;
     const version = epoch;
     if (!silent) publish({ busy: 'load', error: '', message: '' });
@@ -103,7 +115,7 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
       }
     } finally {
       polling = false;
-      if (epoch === version && state.busy === 'load') publish({ busy: '' });
+      if (state.busy === 'load') publish({ busy: '' });
       refreshPending();
     }
   }
@@ -191,7 +203,7 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
     finally { publish({ busy: '' }); }
   }
 
-  return { get state() { return state; }, load, invalidate, update, create, revoke, rotate, hideSecret, copy,
+  return { get state() { return state; }, load, invalidate, setObservationReady, update, create, revoke, rotate, hideSecret, copy,
     dispose() { disposed = true; epoch++; state = { ...state, secret: null }; },
   };
 }

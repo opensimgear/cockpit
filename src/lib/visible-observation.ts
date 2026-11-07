@@ -1,14 +1,23 @@
 import type { SharedObservations, ObservationListener } from './streams/shared';
 
 /** Retain one shared topic subscription only while its owning view and document are visible. */
-export function visibleObservation(observations: Pick<SharedObservations, 'subscribe'>, topic: string, listener: ObservationListener) {
+export function visibleObservation(
+  observations: Pick<SharedObservations, 'subscribe'>,
+  topic: string,
+  listener: ObservationListener,
+  retired?: () => void,
+) {
   let requested = false;
   let closed = false;
   let stop: (() => void) | undefined;
   const sync = () => {
     const shouldSubscribe = requested && !closed && !document.hidden;
     if (shouldSubscribe && !stop) stop = observations.subscribe(topic, listener);
-    else if (!shouldSubscribe && stop) { stop(); stop = undefined; }
+    else if (!shouldSubscribe && stop) {
+      stop();
+      stop = undefined;
+      retired?.();
+    }
   };
   document.addEventListener('visibilitychange', sync);
   return {

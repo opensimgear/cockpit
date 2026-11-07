@@ -5,6 +5,7 @@
   import Notification from './Notification.svelte';
   import { notify } from './notifications';
   import { SharedObservations } from './streams/shared';
+  import { visibleObservation } from './visible-observation';
   import { createMcpSettings, mcpClientConfig, mcpPortError, mcpStatusLabel, type McpScope, type McpSettingsState } from './mcp';
 
   let preferences = $state.raw<McpSettingsState>({ native: false, loaded: false, status: null, busy: '', error: '', message: '', secret: null });
@@ -12,6 +13,7 @@
   let name = $state('');
   let scope = $state<McpScope>('read');
   let observationError = $state('');
+  let reader: ReturnType<typeof visibleObservation> | undefined;
   let initialized = false;
   let observedPort = 54438;
   const settings = createMcpSettings(invoke, isTauri(), next => {
@@ -23,7 +25,7 @@
       observedPort = next.status.port;
     }
   });
-  const unavailable = $derived(!preferences.native || !preferences.loaded || !!preferences.busy || !!preferences.status?.readOnly);
+  const unavailable = $derived(!preferences.native || !preferences.statusCurrent || !!preferences.busy || !!preferences.status?.readOnly);
   const portError = $derived(mcpPortError(port));
   const config = $derived(preferences.status ? mcpClientConfig(preferences.status.endpoint) : '');
   const error = $derived(preferences.error || preferences.status?.error || observationError);
@@ -32,14 +34,28 @@
 
   onMount(() => {
     preferences = settings.state;
-    void settings.load();
     const observations = new SharedObservations();
-    if (preferences.native) observations.subscribe('settings.mcp', state => {
-      observationError = state.error ?? '';
-      if (state.status === 'ready') settings.invalidate();
-    });
-    return () => { observations.close(); settings.dispose(); };
+    if (preferences.native) {
+      settings.setObservationReady(false);
+      reader = visibleObservation(observations, 'settings.mcp', state => {
+        observationError = state.error ?? '';
+        const ready = state.status === 'ready';
+        settings.setObservationReady(ready);
+        if (ready) settings.invalidate();
+      }, () => settings.setObservationReady(false));
+      reader.setVisible(true);
+    }
+    return () => { settings.dispose(); reader?.close(); observations.close(); };
   });
+
+  function refreshStatus() {
+    if (observationError && reader) {
+      reader.setVisible(false);
+      reader.setVisible(true);
+    } else {
+      void settings.load();
+    }
+  }
 
   async function toggle() {
     if (!preferences.status) return;
@@ -86,7 +102,7 @@
     {#if preferences.status}
       <div class="preference-row client-config-row"><div class="client-config"><strong>Client configuration</strong><p id="mcp-config-help">Use these HTTP connection settings in a compatible MCP client. Replace YOUR_COCKPIT_TOKEN with your saved token. Replacing a token immediately revokes the original when successful.</p><textarea class="text-input config-value" aria-label="MCP client configuration" aria-describedby="mcp-config-help" readonly spellcheck="false" value={config}></textarea>{#if preferences.status.protocolVersions.length}<p class="protocols">Protocol versions: {preferences.status.protocolVersions.join(', ')}</p>{/if}</div><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('config'); }}><Icon name="copy" size={14} />Copy configuration</button></div>
     {/if}
-    {#if error}<div class="settings-result"><Notification message={error} kind="error" /><button class="secondary-button" disabled={!!preferences.busy} onclick={() => { void settings.load(); }}><Icon name="refresh" size={14} />Refresh status</button></div>
+    {#if error}<div class="settings-result"><Notification message={error} kind="error" /><button class="secondary-button" disabled={!!preferences.busy} onclick={refreshStatus}><Icon name="refresh" size={14} />Refresh status</button></div>
     {/if}
   {/if}
 </section>
