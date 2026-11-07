@@ -114,6 +114,24 @@ each result when the library reopens. The writer is a separate page and
 uses the production designer store. The Windows WebView fixture separately
 passed the same visible and hidden mutations via native SQLite.
 
+The open panel and widget editors now follow the same committed workspace.
+An external source addition updates the panel palette. A change to the exact
+saved panel or widget leaves the local draft in place and blocks Save until
+the editor reopens. A change to a placed source invalidates the existing
+compilation. The fixture reproduced the missing panel change on the previous
+desktop build. The fixed Windows WebView and Edge browser-dev both preserved
+locally edited titles, surfaced each conflict and showed the saved title on
+reopen. The browser writer ran in a separate tab.
+
+Both transports rejected a stale writer after a second store committed.
+Browser-dev checks and advances the IndexedDB revision in the same transaction
+as the workspace write. A rejected write emits no commit notification. The
+store also fences a write prepared from an older snapshot if a queued load
+already superseded it. Twelve targeted tests passed with 96.97% lines,
+93.51% branches and 94.12% functions for the library module.
+The isolated frontend passed 1,699 tests with four workers. Svelte checks
+and the production frontend build passed.
+
 The navigation fixture verifies that native Settings releases its Backups
 subscription when General is hidden. An external create commits while no
 Backups reader is open. Returning to General opens a fresh baseline and

@@ -162,18 +162,23 @@ async function validateWorkspace(input: unknown): Promise<CompiledWorkspace> {
 export class CompiledWorkspaceStore {
   private pending: Promise<unknown> = Promise.resolve();
   private storage: CompiledWorkspaceStorage;
+  private latest?: CompiledWorkspace;
   constructor(storage: CompiledWorkspaceStorage = desktopDesignerStorage<CompiledWorkspace>() ?? compiledIndexedDbStorage()) { this.storage = storage; }
   private ordered<T>(work: () => Promise<T>): Promise<T> { const result = this.pending.then(work); this.pending = result.catch(() => undefined); return result; }
   load(): Promise<CompiledWorkspace> { return this.ordered(async () => {
     const input = await this.storage.read();
-    if (input === undefined) { const empty = emptyCompiledWorkspace(); const saved = await this.storage.write(empty); return saved ? validateWorkspace(saved) : empty; }
-
-    return validateWorkspace(input);
+    if (input === undefined) { const empty = emptyCompiledWorkspace(); const saved = await this.storage.write(empty); const loaded = saved ? await validateWorkspace(saved) : empty; this.latest = loaded; return loaded; }
+    const loaded = await validateWorkspace(input); this.latest = loaded; return loaded;
   }); }
-  save(input: CompiledWorkspace): Promise<CompiledWorkspace> { const capture = structuredClone(input); return this.ordered(async () => { const checked = await validateWorkspace(capture); const saved = await this.storage.write(checked); return saved ? validateWorkspace(saved) : structuredClone(checked); }); }
+  save(input: CompiledWorkspace, base?: CompiledWorkspace): Promise<CompiledWorkspace> { const capture = structuredClone(input); return this.ordered(async () => {
+    if (base !== undefined && base !== this.latest) throw new Error('This workspace changed while it was open. Reload it before saving.');
+    const checked = await validateWorkspace(capture), saved = await this.storage.write(checked), committed = saved ? await validateWorkspace(saved) : structuredClone(checked);
+    this.latest = committed; return committed;
+  }); }
 }
 export function compiledIndexedDbStorage(factory = globalThis.indexedDB): CompiledWorkspaceStorage {
   let opening: Promise<IDBDatabase> | undefined;
+  let expectedRevision = 0;
   async function open(): Promise<IDBDatabase> {
     ensure(factory, 'IndexedDB is unavailable; changes have not been saved.');
     return opening ??= new Promise((resolve, reject) => {
@@ -185,12 +190,41 @@ export function compiledIndexedDbStorage(factory = globalThis.indexedDB): Compil
     });
   }
   async function transact(value?: CompiledWorkspace): Promise<unknown> {
+    const expected = expectedRevision;
     const db = await open();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('workspace', value ? 'readwrite' : 'readonly'), store = tx.objectStore('workspace');
-      const request = value ? store.put(value, 'snapshot') : store.get('snapshot');
-      tx.oncomplete = () => resolve(value ? undefined : request.result);
-      tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error ?? new Error('Designer save cancelled.'));
+      let snapshot: unknown, revision = expected, abortError: Error | undefined;
+      const readRevision = store.get('revision');
+      readRevision.onsuccess = () => {
+        revision = readRevision.result ?? 0;
+        if (!Number.isSafeInteger(revision) || revision < 0 || (value && revision === Number.MAX_SAFE_INTEGER)) {
+          abortError = new Error('The designer workspace revision is invalid. Changes have not been saved.');
+          tx.abort();
+          return;
+        }
+        if (value) {
+          if (revision !== expected) {
+            abortError = new Error('This workspace changed in another window. Reopen or reload it before saving.');
+            tx.abort();
+            return;
+          }
+          store.put(value, 'snapshot');
+          store.put(revision + 1, 'revision');
+        } else {
+          const readSnapshot = store.get('snapshot');
+          readSnapshot.onsuccess = () => { snapshot = readSnapshot.result; };
+        }
+      };
+      // The transaction completion event is the only point at which the adapter
+      // may advance its local revision or expose a successful write.
+      tx.oncomplete = () => {
+        if (value) expectedRevision = revision + 1;
+        else expectedRevision = revision;
+        resolve(value ? undefined : snapshot);
+      };
+      tx.onerror = () => reject(abortError ?? tx.error ?? new Error('Designer save failed.'));
+      tx.onabort = () => reject(abortError ?? tx.error ?? new Error('Designer save cancelled.'));
     });
   }
   return { read: () => transact(), write: async value => { await transact(value); publishBrowserDesignerCommit(); } };

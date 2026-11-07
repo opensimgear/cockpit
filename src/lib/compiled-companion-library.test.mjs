@@ -5,7 +5,7 @@ import { createToggleSource } from '../../packages/widget-compiler/src/seeds.ts'
 
 function memory(initial) { let value = initial, fail = false; return { read: async () => structuredClone(value), write: async next => { if (fail) throw new Error('Disk full'); value = structuredClone(next); }, get value() { return value; }, set fail(v) { fail = v; } }; }
 function indexedDbFixture() {
-  let value, fail = false;
+  let value, revision, fail = false;
   return {
     factory: { open() {
       const request = {};
@@ -13,22 +13,13 @@ function indexedDbFixture() {
         request.result = {
           createObjectStore() {}, close() {},
           transaction() {
-            const transaction = {};
+            const transaction = { jobs: [], done: false, abort() { this.done = true; queueMicrotask(() => this.onabort?.()); } };
             transaction.objectStore = () => ({
-              get() {
-                const result = {};
-                queueMicrotask(() => { result.result = structuredClone(value); result.onsuccess?.(); transaction.oncomplete?.(); });
-                return result;
-              },
-              put(next) {
-                const result = {};
-                queueMicrotask(() => {
-                  if (fail) { transaction.error = new Error('Disk full'); transaction.onerror?.(); return; }
-                  value = structuredClone(next); result.onsuccess?.(); transaction.oncomplete?.();
-                });
-                return result;
-              },
+              get(key) { const result = {}; transaction.jobs.push(() => { result.result = key === 'revision' ? revision : value; result.onsuccess?.(); }); schedule(); return result; },
+              put(next, key) { const result = {}; transaction.jobs.push(() => { if (fail) { transaction.error = new Error('Disk full'); transaction.done = true; transaction.onerror?.(); return; } if (key === 'revision') revision = next; else value = structuredClone(next); result.onsuccess?.(); }); schedule(); return result; },
             });
+            let scheduled = false;
+            function schedule() { if (scheduled) return; scheduled = true; queueMicrotask(() => { scheduled = false; while (!transaction.done && transaction.jobs.length) transaction.jobs.shift()(); if (!transaction.done) { transaction.done = true; transaction.oncomplete?.(); } }); }
             return transaction;
           },
         };
@@ -138,17 +129,20 @@ test('browser designer notifications follow successful IndexedDB commits across 
     const workspace = await firstStore.load();
     assert.equal(first.length, 1, 'Seeding is a committed IndexedDB write');
     assert.equal(second.length, 1, 'Other local storage instances receive the same commit');
-    await secondStore.save({ ...workspace, drafts: [newCompiledDraft('Saved in another store')] });
+    const secondWorkspace = await secondStore.load();
+    await secondStore.save({ ...secondWorkspace, drafts: [newCompiledDraft('Saved in another store')] });
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(first.length, 2);
     assert.equal(second.length, 2);
     const externalMessages = [];
     external.onmessage = event => externalMessages.push(event.data);
+    await firstStore.load();
     await firstStore.save(await secondStore.load());
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(externalMessages.length, 1, 'Other tabs receive a message after the IndexedDB transaction commits');
     idb.fail = true;
-    await assert.rejects(firstStore.save(await firstStore.load()), /Disk full/);
+    const latest = await firstStore.load();
+    await assert.rejects(firstStore.save(latest), /Disk full/);
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(first.length, 3);
     assert.equal(second.length, 3);
@@ -173,6 +167,31 @@ test('browser designer notifications still work when BroadcastChannel is unavail
     stop();
     if (previousChannel) globalThis.BroadcastChannel = previousChannel;
   }
+});
+
+test('browser IndexedDB rejects a stale adapter write and does not publish a failed commit', async () => {
+  const idb = indexedDbFixture();
+  const firstStorage = compiledIndexedDbStorage(idb.factory), staleStorage = compiledIndexedDbStorage(idb.factory);
+  const first = new CompiledWorkspaceStore(firstStorage), stale = new CompiledWorkspaceStore(staleStorage);
+  await first.load();
+  const staleSnapshot = await stale.load();
+  const current = await first.load();
+  const notifications = [];
+  const stop = observeBrowserDesignerCommits(() => notifications.push('commit'));
+  try {
+    await first.save({ ...current, drafts: [newCompiledDraft('Newer')] });
+    const committedCount = notifications.length;
+    await assert.rejects(stale.save({ ...staleSnapshot, drafts: [newCompiledDraft('Stale')] }), /reopen or reload/i);
+    assert.equal(notifications.length, committedCount, 'A stale write does not publish a commit signal');
+    assert.equal((await first.load()).drafts[0].title, 'Newer');
+  } finally { stop(); }
+});
+
+test('store guarded saves reject when another load on the same store has replaced the base snapshot', async () => {
+  const storage = memory(), store = new CompiledWorkspaceStore(storage), base = await store.load();
+  await store.load();
+  await assert.rejects(store.save({ ...base, drafts: [newCompiledDraft('Stale editor')] }, base), /Reload it before saving/);
+  assert.deepEqual(storage.value.drafts, []);
 });
 
 test('desktop defaults use native SQLite exclusively and return merged native sources',async()=>{

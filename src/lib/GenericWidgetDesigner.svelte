@@ -13,7 +13,7 @@
   import { BROWSER_WIDGET_CAPABILITIES, type CompiledWidgetBundle } from '../../packages/widget-runtime/src/artifact.ts';
   import { createBehaviorState, evaluateExpression, type Expression, type Scalar, type BehaviorSignal, type BehaviorState, type BehaviorFeedback } from '../../packages/widget-runtime/src/behavior.ts';
   import { createSourceHistory, editSource, undoSource, redoSource, sourceIdentity, CompilationFence, moveLayer, resizeSelection, type ResizeHandle, type SelectionBounds, type LayerPlacement, type SourceHistory } from './generic-widget-editor.ts';
-  let { source, onsave, oncancel, active=true }: { active?:boolean; source: WidgetSource; onsave: (source: WidgetSource, bundle: CompiledWidgetBundle) => Promise<void>; oncancel: () => void } = $props();
+  let { source, onsave, oncancel, active=true, saveConflict='' }: { active?:boolean; source: WidgetSource; onsave: (source: WidgetSource, bundle: CompiledWidgetBundle) => Promise<void>; oncancel: () => void; saveConflict?:string } = $props();
   let history = $state.raw(untrack(() => createSourceHistory(source)));
   const draft = $derived(history.present);
   const tabs = ['Design','States','Signals','Motion','Sound','Preview'] as const;
@@ -31,7 +31,7 @@
   let error = $state(''), busy = $state(false), saving = $state(false), progress = $state('');
   let compilationProgress = $state<number | undefined>();
   let compiled = $state.raw<CompiledWidgetBundle>();
-  const saveDisabledReason=$derived(saving?'The widget is being saved. Please wait.':busy?'Wait for compilation to finish before saving.':!compiled?(error?'Fix the error and compile the widget before saving.':'Compile the widget before saving. Design or target changes require a new compilation.'):'');
+  const saveDisabledReason=$derived(saveConflict||(saving?'The widget is being saved. Please wait.':busy?'Wait for compilation to finish before saving.':!compiled?(error?'Fix the error and compile the widget before saving.':'Compile the widget before saving. Design or target changes require a new compilation.'):''));
   let motion = $state(true), audioEnabled = $state(true), muted = $state(false);
   let targetWidth = $state(untrack(()=>source.size.width)), targetHeight = $state(untrack(()=>source.size.height));
   let stage = $state<SVGSVGElement>();
