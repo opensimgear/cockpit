@@ -40,19 +40,21 @@
   let baseline = new Set<string>();
   let reading = false, refreshQueued = false;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
+  let finishingFlash=$state(false);
   let flashStatus = $state.raw<CompanionHostState['usb']>();
   const firmwareInfo=(client:Record<string,unknown>)=>hostState.firmware?.[text(client,'companionId')];
   const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,companionFirmwareVersion(hostState,text(client,'companionId')));
   async function prepareUpdate(){
-    await send('companion_usb_ports',{companionId:selectedId});
-    updateProfile=firmwareInfo(selected!)?.profile ?? '';
-    const result=await send('companion_usb_update_prepare',{companionId:selectedId});
-    updatePort=result.usbPorts?.length===1?result.usbPorts[0].port:'';
+    const companionId=selectedId;
+    if (!selected || !companionId) return;
+    const profile=firmwareInfo(selected)?.profile ?? '';
+    const prepared=await send('companion_usb_update_prepare',{companionId});
+    const port=prepared.usbPorts?.length===1 ? prepared.usbPorts[0].port : '';
+    if (!port) throw new Error('Connect only this paired companion by USB, then try again.');
+    updateProfile=profile;
+    updatePort=port;
     updateOpen=true;
-    await installUpdate();
-  }
-  async function installUpdate(){
-    const result = await send('companion_usb_flash',{companionId:selectedId,port:updatePort,profile:updateProfile});
+    const result = await send('companion_usb_flash',{companionId,port,profile});
     flashStatus = result.usb;
     updating=true;
   }
@@ -209,14 +211,20 @@
       notify(status.flashWarning ?? status.flashError, status.flashWarning ? 'warning' : 'error');
     }
     if (status.flashCancelled || status.flashFinished) {
+      const port=updatePort;
       updating = false;
+      finishingFlash = true;
       try {
         if (status.flashFinished) await new Promise(resolve => setTimeout(resolve, 1500));
-        await send('companion_usb_connect', {port:updatePort});
+        if (disposed) return;
+        await send('companion_usb_connect', {port});
+        if (disposed) return;
         updateOpen = false;
         if (status.flashFinished) notify('Firmware updated. Saved pairing and connection settings preserved.');
       } catch (error) {
         if (!disposed) notify(String(error), 'error');
+      } finally {
+        finishingFlash = false;
       }
     }
   }
@@ -230,7 +238,7 @@
   });
   onMount(() => {
     mounted=true;
-    return () => {void settingsAutosave.flush();disposed=true;if(updateOpen && !updating && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
+    return () => {void settingsAutosave.flush();disposed=true;if(updateOpen && !updating && !finishingFlash && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
   });
 </script>
 
@@ -336,7 +344,7 @@
                   <div class="firmware-progress-fill" style:width={(flashStatus?.waitingForBoot?0:firmwareProgress)+'%'}></div>
                   <span>{flashStatus?.stage || 'Preparing firmware update...'}{flashStatus?.waitingForBoot ? '' : ` · ${firmwareProgress}%`}</span>
                 </div>
-                <button class="secondary-button danger" disabled={busy || (updating && (!flashStatus?.waitingForBoot || flashStatus?.cancelRequested))} onclick={()=>action(async()=>{
+                <button class="secondary-button danger" disabled={busy || finishingFlash || (updating && (!flashStatus?.waitingForBoot || flashStatus?.cancelRequested))} onclick={()=>action(async()=>{
                   if(updating) await send('companion_usb_flash_cancel');
                   else {if(updatePort)await send('companion_usb_connect',{port:updatePort});updateOpen=false;}
                 })}><Icon name="close" size={14} />Cancel</button>
