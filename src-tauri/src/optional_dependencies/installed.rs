@@ -111,6 +111,18 @@ fn inspect_driver(
             cache.remove(path);
             match version(path) {
                 Ok(version) if !version.trim().is_empty() => {
+                    let same_file = std::fs::metadata(path).is_ok_and(|current| {
+                        current.is_file() && current.len() == metadata.len()
+                            && current.modified().ok() == Some(modified)
+                            && current.created().ok() == metadata.created().ok()
+                    });
+                    if !same_file {
+                        return DriverMetadata {
+                            installed: None,
+                            version: None,
+                            error: Some("Driver file changed during version inspection.".into()),
+                        };
+                    }
                     let version: String = version.trim().chars().take(128).collect();
                     cache.insert(path, metadata.len(), modified, version.clone());
                     DriverMetadata {
@@ -201,10 +213,25 @@ fn file_version(_path: &Path) -> Result<String, String> {
     Err("Driver version inspection is only available on Windows.".into())
 }
 
-fn driver_at(root: &Path, filename: &str) -> Value {
+pub(super) const VJOY_FILE: &str = "vjoy.sys";
+pub(super) const HIDHIDE_FILE: &str = "HidHide.sys";
+
+pub(super) fn directory() -> Option<PathBuf> {
+    if !cfg!(all(target_os = "windows", target_arch = "x86_64")) { return None; }
+    std::env::var_os("SystemRoot").map(|root| PathBuf::from(root).join("System32/drivers"))
+}
+
+pub(super) fn invalidate_versions(directory: &Path) {
+    if let Some(cache) = VERSION_CACHE.get() {
+        cache.remove(&directory.join(VJOY_FILE));
+        cache.remove(&directory.join(HIDHIDE_FILE));
+    }
+}
+
+fn driver_at(directory: &Path, filename: &str) -> Value {
     let cache = VERSION_CACHE.get_or_init(VersionCache::default);
     inspect_driver(
-        &root.join("System32/drivers").join(filename),
+        &directory.join(filename),
         cache,
         file_version,
     )
@@ -221,10 +248,9 @@ pub(crate) fn inspect() -> Value {
     }
     #[cfg(windows)]
     {
-        match std::env::var_os("SystemRoot") {
-            Some(root) => {
-                let root = PathBuf::from(root);
-                json!({"supported":true,"vjoy":driver_at(&root,"vjoy.sys"),"hidhide":driver_at(&root,"HidHide.sys")})
+        match directory() {
+            Some(directory) => {
+                json!({"supported":true,"vjoy":driver_at(&directory,VJOY_FILE),"hidhide":driver_at(&directory,HIDHIDE_FILE)})
             }
             None => {
                 let error = "Windows system directory is unavailable.";
@@ -296,6 +322,22 @@ mod tests {
                 error: Some("version resource could not be read".into())
             }
         );
+    }
+
+    #[test]
+    fn replacement_during_version_inspection_is_never_cached() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(VJOY_FILE);
+        fs::write(&path, b"first").unwrap();
+        let cache = VersionCache::default();
+        let changed = inspect_driver(&path, &cache, |file| {
+            fs::write(file, b"new driver bytes").unwrap();
+            Ok("1.0.0".into())
+        });
+        assert_eq!(changed.installed, None);
+        assert_eq!(changed.version, None);
+        let current = inspect_driver(&path, &cache, |_| Ok("2.0.0".into()));
+        assert_eq!(current.version.as_deref(), Some("2.0.0"));
     }
 
     #[test]

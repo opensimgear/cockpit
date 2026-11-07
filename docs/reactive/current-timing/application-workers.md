@@ -54,8 +54,9 @@
 | `src-tauri/src/profile_session/companion_feedback.rs:126` | Contention retry | The independent presentation worker gives one still-current panel update a single retry after a 2 ms Hub-lock backoff. Mapping and safety maintenance continue separately. |
 | `src-tauri/src/profile_session/game_publication.rs:149` | Operation deadline | Wait for a returning reader's exact baseline or its deadline; the reader selects a bounded fallback if it cannot notify. |
 | `src-tauri/src/profile_system_notification.rs:326` | Operation recovery | Recheck a missing Windows toast update for at most 50 ms on its worker so an in-flight dismissal can arrive. |
-| `src-tauri/src/system_inventory.rs:55` | Source wake | Wait for committed topology, output or other inventory invalidation. |
-| `src-tauri/src/system_inventory.rs:285,291,316,324` | Fixture | Bound inventory commit and slow-provider isolation checks. |
+| `src-tauri/src/system_inventory.rs:66` | Source wake | Wait for committed topology, output or exact optional driver file invalidation. |
+| `src-tauri/src/system_inventory.rs:323,329,354,362` | Fixture | Bound inventory commit and slow-provider isolation checks. |
+| `src-tauri/src/system_inventory/driver_watch.rs:153` | Fixture | Bound the wait for real Windows notification on a private fixture file. |
 | `src-tauri/src/system_inventory/vjoy_status.rs:141` | Approved acquisition | One Windows owner queries status and owner PID every 500 ms while visible Devices readers exist. Reader lifecycle and cache changes wake the owner. A helper failure uses a three-second retry. With zero readers the owner parks without a timer. |
 | `src-tauri/src/window_persistence.rs:12` | User debounce | Coalesce window moves and resizes before saving the latest geometry. |
 | `src-tauri/src/window_persistence.rs:50,54,57,65` | Fixture | Bound window geometry coalescing and shutdown assertions. |

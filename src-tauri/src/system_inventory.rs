@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::{sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::{SystemTime, UNIX_EPOCH}};
 
 const TOPIC: &str = "system.inventory";
+const DRIVERS_TOPIC: &str = "system.inventory.drivers";
 pub(crate) const VJOY_DEMAND: &str = "system.inventory.vjoy";
 const VISIBILITY_TOPIC: &str = "controllers.visibility";
 #[path = "system_inventory_associations.rs"]
@@ -12,6 +13,7 @@ mod associations;
 mod installed;
 #[path = "system_inventory/vjoy_status.rs"]
 mod vjoy_status;
+mod driver_watch;
 pub(crate) use associations::collect as controller_associations;
 
 pub(crate) struct Runtime {
@@ -22,12 +24,14 @@ pub(crate) struct Runtime {
     wake: Arc<osg_streams::NativeWake>,
     activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    driver_changes: Arc<driver_watch::Changes>,
     vjoy_status: vjoy_status::Owner,
     publishers: Mutex<Option<Publishers>>,
 }
 struct Publishers {
     observations: crate::observations::Runtime,
     inventory: osg_streams::Publisher,
+    drivers: osg_streams::Publisher,
     vjoy_demand: osg_streams::Publisher,
     visibility: osg_streams::Publisher,
 }
@@ -38,7 +42,8 @@ impl Runtime {
     pub(crate) fn new(native: bool) -> Self {
         Self { native, snapshot: Mutex::new(None), capture_gate: Mutex::new(()),
             stopped: Arc::default(), wake: Arc::default(), activity_wake: Mutex::default(),
-            worker: Mutex::new(None), vjoy_status: vjoy_status::Owner::default(), publishers: Mutex::new(None) }
+            worker: Mutex::new(None), driver_changes: Arc::default(),
+            vjoy_status: vjoy_status::Owner::default(), publishers: Mutex::new(None) }
     }
     pub(crate) fn start(&self, capture: impl Fn() -> bool + Send + 'static) -> Result<(), String> {
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -47,13 +52,20 @@ impl Runtime {
         }
         let wake = self.wake.clone();
         let stopped = self.stopped.clone();
+        let changes = self.driver_changes.clone();
+        let directory = self.native.then(installed::directory).flatten();
         let handle = thread::Builder::new().name("system-inventory".into()).spawn(move || {
             wake.bind_thread(thread::current()).expect("system inventory wake has one worker");
+            let mut driver_watch = directory.as_deref().and_then(|directory| changes.arm(directory, &wake));
             while !stopped.load(Ordering::Acquire) {
                 let observed = wake.observed();
+                if changes.needs_repair() {
+                    driver_watch = directory.as_deref().and_then(|directory| changes.arm(directory, &wake));
+                }
                 if !capture() { break; }
                 while !stopped.load(Ordering::Acquire) && wake.wait_scheduled(observed, None) {}
             }
+            drop(driver_watch);
         }).map_err(|error| error.to_string())?;
         *worker = Some(handle);
         Ok(())
@@ -76,6 +88,7 @@ impl Runtime {
         *slot = Some(Publishers {
             observations: observations.clone(),
             inventory: register(TOPIC, "system-inventory", vec!["ui", "browser", "mcp"])?,
+            drivers: register(DRIVERS_TOPIC, "system-inventory", vec!["ui", "browser", "mcp"])?,
             vjoy_demand: register(VJOY_DEMAND, "system-inventory", vec!["ui", "browser"])?,
             visibility: register(VISIBILITY_TOPIC, "controller-visibility", vec!["ui", "browser", "mcp"])?,
         });
@@ -154,29 +167,54 @@ impl Runtime {
             compose(Default::default(), Ok(vec![]), Ok((vec![],vec![])))
         };
         value["drivers"] = if self.native {
+            if let Some(directory) = installed::directory() {
+                self.driver_changes.invalidate_versions(&directory);
+            }
             installed::inspect()
         } else {
             installed::unsupported()
         };
+        if let Some(issue) = self.driver_changes.issue() { value["drivers"]["observationError"] = json!(issue); }
         if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
         self.commit(value);
         self.vjoy_status.wake.notify();
     }
     fn commit(&self, mut value: Value) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
+        let mut inventory_changed = true;
+        let drivers_changed = snapshot.as_ref().is_none_or(|prior| prior.value["drivers"] != value["drivers"]);
         if let Some(previous) = snapshot.as_ref() {
             let captured_at = value["observedAt"].as_u64().unwrap_or(0);
             let previous_at = previous.value["observedAt"].as_u64().unwrap_or(0);
             value["observedAt"] = json!(previous_at);
             if value == previous.value { return; }
+            if drivers_changed {
+                inventory_changed = inventory_fields_changed(&previous.value, &value);
+            }
             // Two source revisions can arrive within the same millisecond.
             let token = captured_at.max(previous_at.saturating_add(1));
             value["observedAt"] = json!(token);
         }
+        let drivers = drivers_changed.then(|| value["drivers"].clone());
         *snapshot = Some(Snapshot { value });
         drop(snapshot);
-        self.publish(TOPIC, |publishers| &publishers.inventory);
+        if inventory_changed { self.publish(TOPIC, |publishers| &publishers.inventory); }
+        if let Some(drivers) = drivers {
+            let slot = self.publishers.lock().unwrap_or_else(|p|p.into_inner());
+            if let Some(publishers) = slot.as_ref() {
+                let _ = publishers.drivers.publish_latest_state(publishers.drivers.generation(), drivers,
+                    publishers.observations.captured_us(), DRIVERS_TOPIC);
+            }
+        }
     }
+}
+
+fn inventory_fields_changed(previous: &Value, next: &Value) -> bool {
+    let previous = previous.as_object().expect("system inventory is an object");
+    let next = next.as_object().expect("system inventory is an object");
+    previous.len() != next.len() || next.iter().any(|(key, value)| {
+        key != "drivers" && previous.get(key) != Some(value)
+    })
 }
 impl Drop for Runtime {
     fn drop(&mut self) { self.shutdown(); }
