@@ -7,7 +7,7 @@ use osg_streams::{
 use std::net::SocketAddr;
 use std::{
     net::{Ipv4Addr, UdpSocket},
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{Arc, Condvar, Mutex, MutexGuard, Weak},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -26,6 +26,8 @@ struct State {
     session: Session,
     snapshot: Snapshot,
     journal: Journal,
+    vehicle_wake: Weak<NativeWake>,
+    closed: bool,
 }
 struct Shared {
     state: Mutex<State>,
@@ -79,12 +81,14 @@ impl Shared {
                 .session
                 .invalidate("DCS ownship observation publication failed.");
             state.snapshot = state.session.snapshot(self.now_ms());
+            state.closed = true;
             state.journal.close();
-            self.committed.notify_all();
-            return Err(());
         }
         self.committed.notify_all();
-        Ok(())
+        if let Some(wake) = state.vehicle_wake.upgrade() {
+            wake.notify();
+        }
+        result.map_err(|_| ())
     }
 }
 
@@ -187,6 +191,8 @@ impl Source {
                 session,
                 snapshot,
                 journal,
+                vehicle_wake: Weak::new(),
+                closed: false,
             }),
             committed: Condvar::new(),
             clock: Instant::now(),
@@ -215,6 +221,15 @@ impl Source {
     }
     pub(crate) fn subscribe(&self) -> Result<Reader, StreamError> {
         self.view.subscribe()
+    }
+    /// One internal vehicle owner shares the capture without a journal lease.
+    pub(crate) fn watch_vehicle_commits(&self, wake: &Arc<NativeWake>) {
+        let mut state = self.view.shared.lock();
+        state.vehicle_wake = Arc::downgrade(wake);
+        wake.notify();
+    }
+    pub(crate) fn is_closed(&self) -> bool {
+        self.is_finished() || self.view.shared.lock().closed
     }
     pub(crate) fn is_finished(&self) -> bool {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
@@ -302,6 +317,7 @@ async fn receive(socket: tokio::net::UdpSocket, shared: Arc<Shared>, stop: Cance
         }
     };
     let mut state = shared.lock();
+    state.closed = true;
     state
         .session
         .invalidate(failure.as_deref().unwrap_or("DCS ownship source closed."));

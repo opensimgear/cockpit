@@ -19,6 +19,8 @@ fn expired_view() -> SourceView {
                 session,
                 snapshot,
                 journal,
+                vehicle_wake: Weak::new(),
+                closed: false,
             }),
             committed: Condvar::new(),
             clock,
@@ -82,6 +84,8 @@ fn mutex_contention_does_not_move_the_packet_capture_instant_or_make_it_fresh() 
             session,
             snapshot,
             journal,
+            vehicle_wake: Weak::new(),
+            closed: false,
         }),
         committed: Condvar::new(),
         clock,
@@ -157,6 +161,9 @@ fn failed_report_publication_releases_socket_without_dropping_source() {
             .recv_timeout(Duration::from_secs(3))
             .unwrap()
             .unwrap();
+        let vehicle = Arc::new(NativeWake::default());
+        source.watch_vehicle_commits(&vehicle);
+        let observed = vehicle.observed();
         source.view.shared.lock().journal.close();
         sender
             .send_to(
@@ -165,7 +172,24 @@ fn failed_report_publication_releases_socket_without_dropping_source() {
             )
             .unwrap();
         wait_for_exit(&source);
+        assert!(source.is_closed());
+        assert_ne!(vehicle.observed(), observed, "Publication failure wakes the vehicle owner");
     }
+}
+
+#[test]
+fn vehicle_wake_signals_terminal_commit_without_retaining_its_owner() {
+    let source = Source::bind_loopback_ephemeral().unwrap();
+    let retired = Arc::new(NativeWake::default());
+    source.watch_vehicle_commits(&retired);
+    assert_eq!(retired.observed(), 1);
+    let vehicle = Arc::new(NativeWake::default());
+    source.watch_vehicle_commits(&vehicle);
+    assert_eq!(Arc::strong_count(&vehicle), 1);
+    let observed = vehicle.observed();
+    drop(source);
+    assert_ne!(vehicle.observed(), observed);
+    assert_eq!(retired.observed(), 1);
 }
 
 #[test]

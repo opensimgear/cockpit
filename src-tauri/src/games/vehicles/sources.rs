@@ -104,7 +104,6 @@ pub(super) enum CaptureWatch {
     },
     Dcs {
         _bios: osg_streams::NativeWatch<dcs_bios::decoded::Snapshot, dcs_bios::decoded::Snapshot>,
-        _ownship: Option<osg_streams::NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
         process_exit: Option<crate::xplane::process_events::ExitEvidence>,
     },
 }
@@ -204,13 +203,10 @@ impl Reader {
             Self::Dcs { source, physics, process_exit, .. } => {
                 let bios = source.watch(wake.clone())?;
                 if let Some(process_exit) = process_exit { process_exit.watch(&wake); }
-                let ownship = physics.as_ref().and_then(|physics| physics.view().watch(wake).ok());
-                // Preserve maintenance if an active ownship owner could not register a wake.
-                let process_exit = process_exit.as_ref().filter(|_| physics.is_none() || ownship.is_some());
+                if let Some(physics) = physics { physics.watch_vehicle_commits(&wake); }
                 Ok(Some(CaptureWatch::Dcs {
                     _bios: bios,
-                    _ownship: ownship,
-                    process_exit: process_exit.map(crate::xplane::process_events::ExitWatch::evidence),
+                    process_exit: process_exit.as_ref().map(crate::xplane::process_events::ExitWatch::evidence),
                 }))
             }
         }
@@ -291,10 +287,9 @@ impl Reader {
                         return Ok((None, capture));
                     }
                 }
-                if physics.as_ref().is_some_and(crate::dcs_physics::Source::is_finished) {
+                if physics.as_ref().is_some_and(crate::dcs_physics::Source::is_closed) {
                     *physics_error = physics.as_ref().and_then(|source| source.snapshot().error);
-                    // The completed worker has already released its socket.
-                    // Preserve BIOS while retrying this independent failed owner.
+                    // Dropping the closed owner joins its receiver before a retry.
                     *physics = None;
                     *capture_dirty = true;
                     *physics_retry = Instant::now() + Duration::from_secs(2);

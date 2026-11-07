@@ -149,7 +149,11 @@ monitor already owned by the capture source. Process loss withdraws the cached
 view even during a detached read. Assetto readers drain on capture notifications.
 Their first native page timestamp determines the exact local freshness deadline, which
 expires the decoder without another read from the source. Other admitted
-readers still use the separate 100 ms process qualification pass. The pass
+readers with unavailable process evidence still use the separate 100 ms
+qualification pass. A DCS reader with an exact Windows exit watch retains
+that evidence even when its ownship journal reaches the reader limit. The
+ownship source signals the vehicle owner directly on capture, expiry and
+closure. The qualification pass
 leaves unopened readers and open retries with the context owner. A wake with
 no candidates skips installation validation and catalogue reads. Before and
 after detached capture work, qualification checks the installation fields

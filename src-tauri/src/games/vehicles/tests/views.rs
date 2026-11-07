@@ -106,6 +106,9 @@ fn physics_view_requires_a_fresh_matching_dcs_reader() {
 fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_its_socket() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
+    #[cfg(windows)]
+    let process = crate::xplane::process_events::ExitWatch::current_process_fixture();
+    #[cfg(not(windows))]
     let process = process();
     let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
     tracker.observe(&game, &connection(5010), Some(process.clone()), "setup", true, 1);
@@ -117,14 +120,22 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     let (decoder, guard, catalogue) = dcs_profile::passive_telemetry_sources(&fixtures(), "A-10C", 1500).unwrap();
     let bios = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
     tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
-        process_exit: None,
+        process_exit: crate::xplane::process_events::ExitWatch::open(&process).ok(),
         source: bios, decoder, guard, connection: connection(5010), module: "A-10C".into(),
         catalogue, physics: Some(physics), physics_error: None, physics_retry: Instant::now(),
         resolved_aircraft: None, capture_dirty: false,
     });
+    let peer = Arc::new(osg_streams::NativeWake::default());
+    let mut saturated = Vec::new();
+    for _ in 0..64 {
+        saturated.push(physics_view.watch(peer.clone()).unwrap());
+    }
+    assert!(matches!(physics_view.watch(peer), Err(osg_streams::StreamError::SubscriberLimit)));
     let capture_wake = Arc::new(osg_streams::NativeWake::default());
     capture_wake.bind_thread(std::thread::current()).unwrap();
     tracker.watch_captures(capture_wake.clone());
+    #[cfg(windows)]
+    assert!(!tracker.needs_process_maintenance(), "The exact exit watch stays authoritative");
     let before = capture_wake.observed();
     let packet = json!({"schemaVersion":1,"source":"osg-dcs-ownship","session":"tracker-fixture",
         "sequence":1,"modelTime":1.0,"planeId":5,"aircraft":"A-10C","allowed":true,
@@ -136,8 +147,9 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
         capture_wake.wait(before, deadline.saturating_duration_since(Instant::now()));
     }
     assert_eq!(tracker.dcs_physics(&process).unwrap().sequence, Some(1));
+    drop(saturated);
     let wake = std::sync::Arc::new(osg_streams::NativeWake::default());
-    assert!(tracker.dcs_physics_watch(&ProcessIdentity { epoch: 11, ..process.clone() }, wake.clone()).unwrap().is_none());
+    assert!(tracker.dcs_physics_watch(&ProcessIdentity { epoch: process.epoch ^ 1, ..process.clone() }, wake.clone()).unwrap().is_none());
     assert_eq!(wake.observed(), 0);
     let attached = tracker.dcs_physics_watch(&process, wake.clone()).unwrap().unwrap();
     assert_eq!(wake.observed(), 1);
@@ -152,6 +164,7 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     assert!(tracker.dcs_physics_watch(&process, wake.clone()).unwrap().is_none());
     let entry = tracker.entries.get_mut("dcs").unwrap();
     entry.enabled = true;
+    entry.capture_watch = None;
     entry.observed -= Duration::from_secs(3);
     assert!(tracker.dcs_physics_watch(&process, wake).unwrap().is_none());
     drop(owner);
