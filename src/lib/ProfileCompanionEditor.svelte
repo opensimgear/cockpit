@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onDestroy,untrack} from 'svelte';
   import Icon from './Icon.svelte';
+  import ProfilePortTile from './profile-inspector/ProfilePortTile.svelte';
   import {gatewayRequest} from './gateway';
   import {integrationPortTypeLabel,portContractLabel} from './profile-canvas';
   import {ProfileCompanionAuthoringClient,ProfileCompanionPortBrowser,graphCaptureCompanionPanel,graphReconcileCompanionPanel,graphReleaseCompanionPanel,graphSelectCompanionPort,latestCompanionPanels,selectedCompanionPanel,type ProfileCompanionCatalogue,type ProfileCompanionPage,type ProfileCompanionPanel} from './profile-companion-authoring';
@@ -126,18 +127,15 @@
         <div class="port-list" aria-label={direction==='input'?'Feedback inputs':'Control outputs'}>
           {#each ports as port (port.descriptor.id)}
             {@const selectedPin=pin(port)}
-            <div class="port-tile" title={`${port.descriptor.name} · ${port.descriptor.id} · ${portContractLabel(port.descriptor.contract)}`}>
-              <div class="port-row">
-                <strong>{port.descriptor.name}</strong>
-                <span class="port-type">{integrationPortTypeLabel(port.descriptor.contract)}</span>
+            <ProfilePortTile name={port.descriptor.name} type={integrationPortTypeLabel(port.descriptor.contract)}
+              id={port.descriptor.id} title={`${port.descriptor.name} · ${port.descriptor.id} · ${portContractLabel(port.descriptor.contract)}`}>
                 {#if selectedPin}
                   <span class="port-state" title={selectedPin.expectedContractHash===port.contractHash?'Selected exact port':'Contract changed; reconcile this port'}><Icon name={selectedPin.expectedContractHash===port.contractHash?'check':'info'} size={13}/>{selectedPin.expectedContractHash===port.contractHash?'Selected':'Changed'}</span>
                 {:else}
                   <button type="button" class="text-button" aria-label={`Add ${port.descriptor.name}`} disabled={readOnly||!active||assignment?.sourceId!==page.resourceId||captured?.publicationHash!==page.publicationHash||(resource?.ports.length??0)>=128} onclick={()=>addPort(port)}><Icon name="plus" size={13}/>Add</button>
                 {/if}
-              </div>
-              <details class="port-details"><summary>Port details</summary><code>{port.descriptor.id}</code><span>{portContractLabel(port.descriptor.contract)}</span></details>
-            </div>
+              {#snippet details()}<details class="port-details"><summary>Port details</summary><code>{port.descriptor.id}</code><span>{portContractLabel(port.descriptor.contract)}</span></details>{/snippet}
+            </ProfilePortTile>
           {:else}<p class="empty-ports">No {label.toLowerCase()} on this page.</p>{/each}
         </div>
       </section>
@@ -171,13 +169,9 @@
   .port-section-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:var(--ui-text-size)}
   h4{margin:0;color:var(--soft);font-size:var(--ui-heading-size);font-weight:570}
   .port-list{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--ui-input-cell-gap);min-width:0}
-  .port-tile{box-sizing:border-box;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:var(--input-bg);color:var(--soft);font-size:var(--ui-text-size)}
-  .port-row{display:flex;align-items:center;gap:7px;min-width:0;min-height:var(--ui-input-cell-height)}
-  .port-row strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:570}
-  .port-type{max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:var(--ui-action-size)}
-  .port-row button,.port-state{display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
+  .port-state{display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
   .port-state{color:var(--muted)}
-  .port-details{margin-top:5px;color:var(--muted)}
+  .port-details{color:var(--muted)}
   .port-details summary{font-size:calc(var(--ui-text-size) - 1px)}
   code{display:block;overflow-wrap:anywhere;margin-top:5px;font-size:var(--ui-text-size)}
   .port-details span{display:block;margin-top:4px;line-height:var(--ui-line-height)}
