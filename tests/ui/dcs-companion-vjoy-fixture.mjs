@@ -11,18 +11,21 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
-import {dualRateLanes,dualRateResults,submitBrowserRate} from './vjoy-rate-transport.mjs';
+import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
+import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 
-export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={}) {
+export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false}={}) {
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
   const inventory = async () => (await request({command:'system_inventory'})).systemInventory.virtualDevices;
   let browser, page, slot, probe, report, probeStart, probeReady, listenerEnabled=false, dualSubmissions, presentation;
+  let observation, nativeSubmissions;
+  const paired=Boolean(browserUrl || observeMcp);
   const panels=[];
   const samples=(target=page)=>target.evaluate(()=>window.__combinedLamp);
   const waitLamp=(offset,predicate,target=page)=>until(async()=>(await samples(target)).slice(offset).find(predicate))
@@ -64,7 +67,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
       browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,
         args:['--ignore-certificate-errors-spki-list='+pin,
           // The test's two headless contexts represent separately visible panels.
-          ...(browserUrl?['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']:[])]});
+          ...(paired?['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']:[])]});
     }
     const panel=await browser.newPage();
     await tracePanelCanvas(panel);
@@ -142,7 +145,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     page=first.page;
     const publicationHash=await publishPanel();
     await assignPanel(document,assignments,publicationHash,first,panelNode);
-    if(browserUrl)await assignPanel(document,assignments,publicationHash,await connectPanel(),panelNode+'-peer');
+    if(paired)await assignPanel(document,assignments,publicationHash,await connectPanel(),panelNode+'-peer');
     slot=await until(async()=>(await inventory()).find(device=>device.status==='free'&&device.buttons>=2
       &&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
       &&device.buttons+device.axes.length+device.continuousHats<=128));
@@ -169,9 +172,10 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
       nodeId:outputNode,slot:slot.slot});
   }
 
-  async function measurePresentation(submitOwnship) {
+  async function measurePresentation(owner,submitOwnship) {
     await Promise.all(panels.map(panel=>waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false,panel.page)));
-    presentation=await measurePanelPresentation(browserUrl?panels.map(panel=>panel.page):page,submitOwnship);
+    if(observeMcp)observation=await mcpVjoyObservation(cdp,owner,{nodeId:outputNode,capturePhysical:false});
+    presentation=await measurePanelPresentation(paired?panels.map(panel=>panel.page):page,submitOwnship);
     return presentation;
   }
 
@@ -184,6 +188,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     const {debugController}=await request({command:'profile_debug_controller_input',owner,
       nodeId:debugNode,streamId,sequence:sent,changes:[{portId:'button-1',value}]});
     assert.equal(debugController.sequence,sent);
+    return debugController.pendingFrames;
   }
 
   async function openInspector() {
@@ -273,22 +278,80 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     probeReady=process.hrtime.bigint();
   }
 
-  async function browserBurst(owner,setAirborne) {
-    const offsets=await Promise.all(panels.map(({page})=>page.evaluate(()=>window.__panelPaints.length)));
-    dualSubmissions=await submitBrowserRate(request,owner,probeStart,()=>setAirborne(true));
-    const overlapStart=Math.max(...dualSubmissions.map(rows=>rows[0].at));
-    const overlapEnd=Math.min(...dualSubmissions.map(rows=>rows.at(-1).at));
-    const canvases=await Promise.all(panels.map(async({page},index)=>{
+  const paintOffsets=()=>Promise.all(panels.map(({page})=>page.evaluate(()=>window.__panelPaints.length)));
+
+  function litCanvases(offsets) {
+    return Promise.all(panels.map(async({page},index)=>{
       const paint=await until(()=>page.evaluate(`window.__panelPaints.slice(${offsets[index]}).find(row=>row.lit)`));
       const {initial,final}=presentation[index];
       const low=Math.max(initial.low,final.low), high=Math.min(initial.high,final.high);
       const reference=Number(probeStart)/1e6;
       return {panel:index+1,earliestMs:paint.at-high-reference,latestMs:paint.at-low-reference};
     }));
+  }
+
+  async function browserBurst(owner,setAirborne) {
+    const offsets=await paintOffsets();
+    dualSubmissions=await submitBrowserRate(request,owner,probeStart,()=>setAirborne(true));
+    const overlapStart=Math.max(...dualSubmissions.map(rows=>rows[0].at));
+    const overlapEnd=Math.min(...dualSubmissions.map(rows=>rows.at(-1).at));
+    const canvases=await litCanvases(offsets);
     const after=await Promise.all(panels.map(({page})=>samples(page).then(rows=>rows.length)));
     setAirborne(false);
     await Promise.all(panels.map(({page},index)=>waitLamp(after[index],sample=>sample.status==='fresh'&&sample.value===false,page)));
     return {overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases};
+  }
+
+  async function sendNativeBurst(owner) {
+    const submissions=[];
+    const started=performance.now();
+    for(const [index,value] of expected.entries()){
+      const remaining=started+index*8-performance.now();
+      if(remaining>0)await delay(remaining);
+      const at=Number(process.hrtime.bigint()-probeStart)/1e6;
+      submissions.push({at,pendingFrames:await sendDebug(owner,value)});
+    }
+    return submissions;
+  }
+
+  async function nativeMcpBurst(owner,{setAirborne,setPaused}) {
+    const offsets=await paintOffsets();
+    setAirborne(true);
+    const [debug, observed]=await Promise.allSettled([
+      sendNativeBurst(owner),
+      (async()=>{
+        const debugSample=await observation.sample(true,'button-1');
+        const canvases=await litCanvases(offsets);
+        await page.getByRole('button',{name:'probe: press',exact:true}).click();
+        const panelSample=await observation.sample(true,'button-2');
+        assert.equal(panelSample.generation,debugSample.generation);
+        assert.ok(BigInt(panelSample.revision)>BigInt(debugSample.revision));
+        return {debugSample,panelSample,canvases,panelSampleAtMs:Number(process.hrtime.bigint()-probeStart)/1e6};
+      })(),
+    ]);
+    if(debug.status==='rejected')throw debug.reason;
+    if(observed.status==='rejected')throw observed.reason;
+    nativeSubmissions=debug.value;
+    const overlapStart=nativeSubmissions[0].at, overlapEnd=nativeSubmissions.at(-1).at;
+    const actualHz=(nativeSubmissions.length-1)*1000/(overlapEnd-overlapStart);
+    assert.ok(Math.abs(actualHz/125-1)<=.05,`Native debug sustained ${actualHz.toFixed(2)} Hz against 125 Hz`);
+    assert.ok(observed.value.panelSampleAtMs>=overlapStart&&observed.value.panelSampleAtMs<=overlapEnd,
+      'MCP must see the panel press during the native debug burst');
+    for(const panel of observed.value.canvases){
+      assert.ok(panel.earliestMs>=overlapStart&&panel.latestMs<=overlapEnd,
+        `Panel ${panel.panel} must update during the native debug burst`);
+    }
+    const mark=(await samples()).length;
+    setPaused(true);
+    const paused=await waitLamp(mark,sample=>sample.status!=='fresh');
+    const afterPause=(await samples()).length;
+    setPaused(false);
+    const resumed=await waitLamp(afterPause,sample=>sample.status==='fresh'&&sample.value===true);
+    const after=(await samples()).length;
+    setAirborne(false);
+    const inactive=await waitLamp(after,sample=>sample.status==='fresh'&&sample.value===false);
+    return {...observed.value,paused,resumed,inactive,overlapStart,overlapEnd,
+      authoredTransitions:nativeSubmissions.length,actualHz};
   }
 
   async function burst(owner, {setAirborne,setPaused}) {
@@ -296,6 +359,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
     await startProbe();
     if(browserUrl)return browserBurst(owner,setAirborne);
+    if(observation)return nativeMcpBurst(owner,{setAirborne,setPaused});
     const mark=(await samples()).length;
     setAirborne(true);
     const active=await waitLamp(mark,sample=>sample.status==='fresh'&&sample.value===true);
@@ -303,11 +367,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     const beforePause=(await samples()).length;
     setPaused(true);
     const start=performance.now();
-    for(const [index,value] of expected.entries()){
-      const remaining=start+index*8-performance.now();
-      if(remaining>0)await delay(remaining);
-      await sendDebug(owner,value);
-    }
+    await sendNativeBurst(owner);
     const paused=await waitLamp(beforePause,sample=>sample.status!=='fresh');
     const beforeResume=(await samples()).length;
     setPaused(false);
@@ -346,20 +406,44 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={
     const stopReleaseMs=[debug.at(-1),panel.at(-1)].map(event=>Number(
       qpcNs(start+BigInt(event.receivedTicks))-stopNs)/1e6);
     assert.ok(stopReleaseMs.every(ms=>ms>=0),'Both buttons must stay held until Stop');
+    let timing;
+    if(nativeSubmissions){
+      const submissionToRawInputMs=summarizeMilliseconds(nativeSubmissions.map(({at},index)=>
+        Number(qpcNs(start+BigInt(debug[index].receivedTicks))-probeStart)/1e6-at));
+      const pendingFramesPeak=Math.max(...nativeSubmissions.map(sample=>sample.pendingFrames));
+      assert.ok(pendingFramesPeak>0&&pendingFramesPeak<=256);
+      assert.ok(submissionToRawInputMs.p95<=20&&submissionToRawInputMs.p99<=50,
+        'Native debug must meet the submission-to-Raw-Input budget');
+      timing={submissionToRawInputMs,pendingFramesPeak};
+    }
     return {slot:slot.slot,debugTransitions:expected.length,closedPreviewTransitions:closedPreviewEdges.length,
-      panelTransitions:1,stopReleaseMs,slotFree:true};
+      panelTransitions:1,stopReleaseMs,slotFree:true,...timing};
   }
 
   async function close() {
     probe?.kill();
     stopTrace?.();
+    try {await observation?.close();} finally {await closePanels();}
+  }
+  async function closePanels() {
     try {await browser?.close();} finally {
       try {for(const {peer} of panels)await companion('companion_revoke',{companionId:peer.companionId});} finally {
         if(listenerEnabled)await companion('companion_disable',{expectedSettingsRevision:(await listener()).settingsRevision});
       }
     }
   }
-  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stopped,close};
+  async function stop(stopNs) {
+    if(!observation){
+      await request({command:'profile_stop'});
+      return stopped(stopNs);
+    }
+    const stopReplyMs=await observation.stop();
+    const {unreadMs}=await observation.resumeSlow();
+    await observation.close();
+    observation=undefined;
+    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:true}};
+  }
+  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,close};
 }
 
 export function combinedTimingMisses(timing, load) {

@@ -221,3 +221,50 @@ directory. Windows refused to replace a separate stale top-level alias, so
 the test launcher selected the linked artifact by hash.
 Raw evidence is in `.research/dcs-physics-native/1794046215504/evidence.json`
 and `.research/dcs-physics-native/1794046263204/evidence.json`.
+
+## Desktop MCP during DCS, paired panels and vJoy
+
+The desktop variant pairs two browser panels and opens two authenticated MCP
+subscriptions to the active profile's vJoy samples. One MCP client leaves its
+response unread after the baseline. The other receives an authored debug
+button press and a real panel press on separate vJoy ports, with advancing
+revisions in the same observation generation. Both canvases paint the DCS
+change and MCP sees the panel press inside the 125 Hz debug burst. The
+native Debug inspector is open, and a separate native telemetry reader
+withholds its acknowledgement while another continues to receive updates.
+
+Windows Raw Input checks all 65 authored debug edges, the panel edge and two
+additional debug edges after the UI previews close. Both held buttons stay
+held until MCP Stop. The fast MCP client receives the retirement event, and
+the unread client receives it when reading resumes. Stop releases the vJoy
+slot. The temporary credential is revoked and listener settings are restored.
+The unread application stream and the withheld native acknowledgement are
+separate stressors.
+
+| Run | Debug rate | Panel 1 p95 | Panel 2 p95 | MCP unread | Raw Input Stop release | MCP Stop reply |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `1794047182905` | 122.87 Hz | 18.56 ms | 21.08 ms | 3.45 s | 42.17 ms | 96.32 ms |
+| `1794047289747` | 121.97 Hz | 7.14 ms | 46.20 ms | 3.76 s | 43.93 ms | 156.69 ms |
+| `1794047419528` | 125.25 Hz | 18.00 ms | 20.31 ms | 3.46 s | 37.59 ms | 117.17 ms |
+
+The panel distributions use 24 changes with both MCP readers open. The
+short routing burst has a separately correlated canvas update per panel.
+In the final run the two paints and MCP's panel-press sample landed within
+the same 510.99 ms debug burst. The 65 matched Windows performance-counter
+timestamps gave 2.80 ms p50, 9.24 ms p95 and 10.26 ms p99 from debug
+submission to Raw Input. The input queue peaked at one frame.
+Each run uses authored simulator packets and loopback panel traffic. The
+additional 1 kHz source under this workload, a sustained soak, LAN and
+physical/simulator acceptance remain open.
+
+For a repeat, set `OSG_DCS_PHYSICS_NATIVE=1`, `OSG_DCS_COMBINED_MCP=1` and
+`OSG_DCS_COMBINED_VJOY_PROBE` and run `node --test tests/ui/dcs-physics-native.mjs`
+against a disposable running desktop Cockpit with managed DCS fixture
+configuration. The product revision was `67756783`, with desktop SHA-256
+`40f67438269b28d3f4f51f94adead43a85b367d924efe60b6ed95af778e480c8`.
+Raw evidence is in the corresponding `.research/dcs-physics-native/<run>/evidence.json`.
+The existing single-panel desktop DCS case and standalone MCP/vJoy case
+also passed. The stream and browser-feedback unit coverage gates passed.
+The browser-dev regression completed cleanup and missed only its existing
+1,000 Hz synthetic source gate at 446.28 Hz. Its evidence is in
+`.research/dcs-physics-native/1794047498183/evidence.json`.

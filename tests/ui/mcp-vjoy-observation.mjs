@@ -28,7 +28,7 @@ function frames(response) {
   };
 }
 
-export async function mcpVjoyObservation(page, owner) {
+export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', capturePhysical = true} = {}) {
   const invoke = (command, args = {}) => page.evaluate(
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
   );
@@ -81,7 +81,7 @@ export async function mcpVjoyObservation(page, owner) {
       }}}),
     });
     const topic = await page.evaluate(`import('/src/lib/profile-samples/models.ts').then(
-      ({profileNodeSamplesTopic}) => profileNodeSamplesTopic(${JSON.stringify(owner)},'fixture-vjoy'))`);
+      ({profileNodeSamplesTopic}) => profileNodeSamplesTopic(${JSON.stringify(owner)},${JSON.stringify(nodeId)}))`);
     const uri = 'cockpit://observations/' + topic;
     const sampleFrame = event => event.params?._meta?.['opensimgear.com/observation'];
     const subscribe = async () => {
@@ -96,14 +96,26 @@ export async function mcpVjoyObservation(page, owner) {
     };
     const slow = await subscribe(); // Keep the first response open with no further reads until Stop.
     const slowPausedAt = performance.now();
-    const captureBefore = (await physicalSources()).sort((a,b) => b.controlCount-a.controlCount)[0];
+    const captureBefore = capturePhysical
+      ? (await physicalSources()).sort((a,b) => b.controlCount-a.controlCount)[0]
+      : undefined;
     const fast = await subscribe();
     const retired = event => event.params?.uri === uri && sampleFrame(event)?.kind === 'loss';
     return {
-      async sample(value) {
-        await fast.next(event => event.params?.uri === uri && sampleFrame(event)?.payload?.ports?.some(
-          port => port.endpoint.portId === 'button-1' && port.sample.value?.value === value,
+      async sample(value, portId = 'button-1') {
+        const event = await fast.next(event => event.params?.uri === uri && sampleFrame(event)?.payload?.ports?.some(
+          port => port.endpoint.portId === portId && port.sample.value?.value === value,
         ));
+        const frame = sampleFrame(event);
+        const port = frame.payload.ports.find(port => port.endpoint.portId === portId);
+        return {
+          value: port.sample.value.value,
+          kind: frame.kind,
+          topic: frame.topic,
+          portId,
+          ...(frame.generation !== undefined ? {generation: frame.generation} : {}),
+          ...(frame.revision !== undefined ? {revision: frame.revision} : {}),
+        };
       },
       async stop() {
         const startedAt = performance.now();

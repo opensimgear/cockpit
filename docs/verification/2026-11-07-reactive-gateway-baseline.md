@@ -72,3 +72,10 @@ source sustained 442.04 Hz, and the second panel exceeded the 150 ms p95
 budget in the 24-change panel measurement. The combined budget stays open,
 including same-service MCP and sustained load.
 [Combined browser-dev trace](2026-11-07-dcs-panel-vjoy.md#two-browser-panels-and-dual-rate-vjoy-in-one-service)
+
+The desktop trace adds two MCP readers to the same owner as DCS, both
+panels, the Debug inspector and vJoy. It verifies live output changes and
+retirement after MCP Stop while one MCP response is unread. This run uses
+the 125 Hz authored lane and a real panel press. The full 125 Hz and 1 kHz
+workload with MCP and the sustained load gate remain open.
+[Desktop MCP trace](2026-11-07-dcs-panel-vjoy.md#desktop-mcp-during-dcs-paired-panels-and-vjoy)
