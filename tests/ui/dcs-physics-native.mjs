@@ -1,7 +1,5 @@
-// Acceptance against desktop Cockpit or its browser-dev gateway. The simulator
-// process, BIOS frames and ownship envelopes are authored fixtures.
+// Desktop and browser-dev acceptance with authored simulator process and telemetry.
 // OSG_DCS_COMBINED_VJOY_PROBE adds a browser panel and a temporary vJoy slot.
-// The opt-in discovery test briefly adds an empty, uniquely named profile directory.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {access, cp, mkdir, readFile, rm, rmdir, unlink, writeFile} from 'node:fs/promises';
@@ -13,6 +11,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
+import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
@@ -235,6 +234,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     assert.ok(!(await inspect('engine.rpm')).channels.some(row => row.id === 'engine.rpm'), 'Native engine percentage must not claim absolute RPM.');
     evidence.magnitude = await passive('vehicle.g_force.magnitude', 5);
     await passive('AAP_CDUPWR:0', 1); await checkpoint('independent native, canonical and unbound BIOS inspection live');
+    evidence.phases.telemetryReopen = await qualifyDcsTelemetryReopen(cdp, browserUrl, nativeValues, passive);
     await passive(biosId, 1000);
     const competitor = spawn(executable, [], {cwd: dirname(executable), windowsHide: true, stdio: 'ignore'});
     try {
