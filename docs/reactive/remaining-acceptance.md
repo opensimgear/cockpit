@@ -44,6 +44,19 @@ publishers. Real simulator behavior remains open in #199 for each simulator.
 Later X-Plane and Assetto telemetry runs stopped at Windows process-notification
 access denial. The earlier runs establish adapter evidence for the tested builds.
 The process-monitor consent and lifetime qualification remain in #199.
+
+The passive vehicle reader retains its current process generation when a
+successful projection misses the two-second cache deadline. It discards the
+late projection and keeps the previous capture's original timestamp. The
+X-Plane fixture confirms that the next capture advances on the same reader.
+Process expiry, confirmed replacement and reader failure still withdraw
+their affected reader. The rebuilt Cockpit's authored DCS fixture also kept
+the profile owner while an independent reader received 32 notifications
+during one withheld delivery. These checks cover separate reader boundaries.
+The full native suite passed 2,375 tests with 18 existing ignores. The
+vehicle polling module reached 95.73% line and 100% function coverage.
+Process inventory contention and real simulator qualification remain open.
+
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots
 every 34 ms. One latest pending projection and exact acknowledgements bound

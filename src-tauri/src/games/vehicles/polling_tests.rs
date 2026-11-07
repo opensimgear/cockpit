@@ -142,6 +142,7 @@ fn late_poll_cannot_restore_replaced_or_withdrawn_process_reader() {
             tracker.begin_observation(&game, &crate::xplane::defaults(12), None, "setup", true, 2);
         } else if changed == "expiry" {
             poll.at -= Duration::from_secs(3);
+            tracker.entries.get_mut("x-plane-12").unwrap().observed -= Duration::from_secs(3);
         } else {
             let mut current_game = game;
             if changed == "installation" {
@@ -157,6 +158,43 @@ fn late_poll_cannot_restore_replaced_or_withdrawn_process_reader() {
         assert!(tracker.entries["x-plane-12"].reader.is_none(), "{changed}");
         assert_eq!(tracker.current("x-plane-12"), None);
     }
+}
+
+#[test]
+fn late_projection_preserves_the_current_reader_without_refreshing_telemetry() {
+    let (_directory, mut tracker, game) = fixture();
+    let id = "x-plane-12";
+    let (source, publish) = crate::xplane::Source::inspector_fixture();
+    tracker.entries.get_mut(id).unwrap().reader = Some(Reader::Xplane(source));
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    tracker.watch_captures(wake);
+    let drain = |tracker: &mut Tracker| {
+        let candidates = tracker.capture_candidates().into_iter().map(|candidate|
+            candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal()
+        ).collect();
+        tracker.begin_polls(candidates).pop().unwrap().read()
+    };
+    publish(41);
+    let initial = drain(&mut tracker);
+    tracker.apply_poll(initial);
+    let original = tracker.telemetry(&game).unwrap();
+    let generation = tracker.entries[id].generation;
+    let observed = tracker.entries[id].observed;
+
+    publish(42);
+    let mut late = drain(&mut tracker);
+    late.at -= Duration::from_secs(3);
+    tracker.apply_poll(late);
+    assert_eq!(tracker.entries[id].generation, generation);
+    assert_eq!(tracker.entries[id].observed, observed);
+    assert!(Arc::ptr_eq(&tracker.telemetry(&game).unwrap(), &original));
+    assert_eq!(original.packet, json!(41));
+
+    publish(43);
+    let current = drain(&mut tracker);
+    tracker.apply_poll(current);
+    assert_eq!(tracker.telemetry(&game).unwrap().packet, json!(43));
+    assert_eq!(tracker.entries[id].generation, generation);
 }
 #[test]
 fn detached_poll_keeps_conservative_capture_time_and_handles_failure() {

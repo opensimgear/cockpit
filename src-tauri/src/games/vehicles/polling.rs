@@ -232,9 +232,7 @@ impl Tracker {
         }
         entry.polling = false;
         entry.detached_physics = None;
-        // A slow read does not make old telemetry fresh on completion.
         if poll.qualification.qualified == Some(false)
-            || poll.at.elapsed() > Duration::from_secs(2)
             || (!entry.process_current() && (entry.retained_process_current().is_none() || !matches!(poll.result, Some(Err(_)))))
         {
             entry.generation = entry.generation.wrapping_add(1);
@@ -245,6 +243,7 @@ impl Tracker {
             self.publish_visible(&poll.id);
             return;
         }
+        let late = poll.at.elapsed() > Duration::from_secs(2);
         let id = poll.id.clone();
         let mut retain = false;
         match poll
@@ -257,6 +256,12 @@ impl Tracker {
                         .and_then(|wake| CaptureBinding::open(&poll.reader, wake));
                 }
                 self.retired.extend(entry.reader.replace(poll.reader));
+                if late {
+                    // The projection missed its deadline. A still-current
+                    // process keeps its reader and its original capture age.
+                    self.publish_visible(&id);
+                    return;
+                }
                 let capture = Arc::new(capture);
                 if !poll.capture_changed {
                     entry.published_capture = Some(Arc::downgrade(&capture));
