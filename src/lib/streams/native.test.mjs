@@ -34,6 +34,17 @@ test('compact native controller snapshots restore exact values and require a fre
   assert.throws(() => expand(compact), /Invalid compact controller snapshot/);
 });
 
+test('compact snapshot expansion isolates nested descriptor fields', () => {
+  const expand = controllerChannelDecoder();
+  const topic = 'controllers.input.source';
+  expand(delivery({topic, source:'controller-input', kind:'snapshot',
+    payload:{controls:[{capability:{id:'axis', extension:{value:'original'}}, value:null}]}}));
+  const compact = delivery({topic, source:'controller-input', kind:'snapshot', revision:'2',
+    payload:{source:{sequence:'2'}, cursor:'2', capturedUs:'20', controllerSamples:[[1,1]]}}, '2');
+  expand(compact).frame.payload.controls[0].capability.extension.value = 'changed';
+  assert.equal(expand(compact).frame.payload.controls[0].capability.extension.value, 'original');
+});
+
 test('native early channel delivery waits for token and ACK follows delivery', async () => {
   const opening = deferred();
   const calls = [];

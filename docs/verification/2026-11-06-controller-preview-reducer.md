@@ -92,3 +92,21 @@ and output-free routing. All 28 frontend stream tests and 17 controller
 observer tests passed their coverage gates. Svelte checking reported zero
 diagnostics. The native suite passed 2,358 tests with 18 existing ignores.
 The encoder reached 44 of 50 production lines (88%).
+
+## Compact snapshot expansion cost
+
+The WebView decoder now copies scalar descriptor records directly. It keeps
+deep copies for nested values and delivers independent records to consumers.
+In alternating Node runs with a 137-control fixture and 4,000 timed reports
+per run, median expansion dropped from 125.2–126.7 µs to 6.8–6.9 µs.
+The p95 dropped from 131.9–146.4 µs to 7.7–7.8 µs. This measurement covers
+the decoder alone. Runs including the observer's copy had variable tails.
+
+The visible dev Cockpit matched all 125 reports from a stationary VKB
+Gladiator in ten seconds. Journal-to-DOM p50/p95/p99 were 9.70/14.63/16.18 ms
+with 2.40 ms clock alignment uncertainty. This run confirms delivery and
+does not establish a measurable end-to-end latency reduction. The delayed
+receipt fixture recovered to the current snapshot. All 29 stream and 17
+controller observer tests passed coverage, and Svelte reported zero
+diagnostics. Raw timing is under
+`.research/reactive/held-launch-schedule/controller-copy-1794025246914/`.
