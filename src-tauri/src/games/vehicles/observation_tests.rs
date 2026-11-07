@@ -189,6 +189,72 @@ fn failed_post_read_requalification_or_expiry_cannot_publish_a_reader() {
         assert_eq!(tracker.current("x-plane-12"), None);
     }
 }
+
+#[test]
+fn slow_catalogue_keeps_admitted_reader_until_confirmed_process_loss() {
+    use std::sync::atomic::AtomicBool;
+
+    for detached in [false, true] {
+        let (_directory, mut tracker) = tracker();
+        let initial = read(work(&mut tracker, 1));
+        tracker.apply_observation(initial);
+        let id = "x-plane-12";
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        let entry = tracker.entries.get_mut(id).unwrap();
+        entry.capture_watch = Some(CaptureBinding {
+            _watch: sources::CaptureWatch::Fixture(Arc::new(AtomicBool::new(true))),
+            wake: wake.clone(),
+            drained: 0,
+        });
+        entry.current = vehicle(id, "Aircraft/Test/Test.acf");
+        let capture = Arc::new(Capture {
+            status: "live".into(),
+            source: "fixture".into(),
+            context: json!({"aircraft":"Aircraft/Test/Test.acf"}),
+            packet: json!(7),
+            age_ms: Some(0),
+            values: BTreeMap::new(),
+            ages: BTreeMap::new(),
+            stale_ids: Default::default(),
+            message: None,
+            at: Instant::now(),
+        });
+        entry.telemetry = Some(capture.clone());
+        let current = tracker.current(id).unwrap();
+        let generation = tracker.entries[id].generation;
+        let poll = detached.then(|| {
+            wake.notify();
+            let candidates = tracker.capture_candidates();
+            tracker.begin_polls(candidates).pop().unwrap()
+        });
+        let mut slow = work(&mut tracker, 2).verify(&[game()], "setup", |_| Ok(true));
+        slow.catalogue = Some(vec![json!({"id":"late-aircraft"})]);
+        tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
+        let observed = tracker.entries[id].observed;
+        tracker.apply_observation(slow);
+
+        let entry = &tracker.entries[id];
+        assert_eq!(entry.generation, generation);
+        assert_eq!(entry.observed, observed);
+        assert!(entry.capture_watch.is_some());
+        assert_eq!(entry.polling, detached);
+        assert_eq!(entry.reader.is_none(), detached);
+        assert!(entry.vehicles.is_empty());
+        assert_eq!(tracker.current(id), Some(current));
+        assert!(Arc::ptr_eq(&capture, &tracker.telemetry(&game()).unwrap()));
+
+        let lost = work(&mut tracker, 3).verify(&[game()], "setup", |_| Ok(false));
+        tracker.apply_observation(lost);
+        if let Some(poll) = poll {
+            tracker.apply_poll(poll.read());
+        }
+        assert_ne!(tracker.entries[id].generation, generation);
+        assert!(tracker.entries[id].reader.is_none());
+        assert!(tracker.current(id).is_none());
+        assert!(tracker.telemetry(&game()).is_none());
+    }
+}
+
 #[test]
 fn failed_reader_open_is_retained_as_retryable_diagnostic_without_current_vehicle() {
     let (_directory, mut tracker) = tracker();

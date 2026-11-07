@@ -231,13 +231,7 @@ impl Tracker {
             self.publish_visible(&observation.id);
             return;
         }
-        if observation.verified.is_none() {
-            if owns_opening { entry.retry = Instant::now() + Duration::from_secs(2); }
-            self.retired.extend(observation.reader.and_then(Result::ok));
-            self.publish_visible(&observation.id);
-            return;
-        }
-        if observation.verified == Some(false) || entry.observed.elapsed() > Duration::from_secs(2) {
+        if observation.verified == Some(false) {
             entry.generation = entry.generation.wrapping_add(1);
             entry.polling = false;
             entry.opening = None;
@@ -247,6 +241,14 @@ impl Tracker {
             entry.current = None;
             entry.telemetry = None;
             entry.retry = Instant::now() + Duration::from_secs(2);
+            self.retired.extend(observation.reader.and_then(Result::ok));
+            self.publish_visible(&observation.id);
+            return;
+        }
+        if observation.verified.is_none() || entry.observed.elapsed() > Duration::from_secs(2) {
+            // Slow catalogue work cannot revoke an admitted reader or make
+            // its process proof current. Only an unadmitted opener must retry.
+            if owns_opening { entry.retry = Instant::now() + Duration::from_secs(2); }
             self.retired.extend(observation.reader.and_then(Result::ok));
             self.publish_visible(&observation.id);
             return;
