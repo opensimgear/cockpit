@@ -5,6 +5,28 @@ machine-readable list of timer sites produced by the audit script; it is an
 inventory, not an allowlist or proof that every timer is an acquisition loop.
 See [native timing dispositions](native-timing-dispositions.md) for the classified native sites.
 
+## Rust wait call audit
+
+The November 7 scan includes Rust method calls to `wait`, `wait_while` and
+`wait_timeout_while`. At Cockpit `c4d0751b`, gateway `e761e4d6`, device template
+`c5457884` and firmware common `64025cce`, this adds 95 matches to the existing
+scan. The 437 matches include inline fixtures and nonblocking deadline
+calculations. The historical 247-site disposition ledger remains pinned.
+
+| Owner | Disposition |
+| --- | --- |
+| `companion-serial` port owner | USB discovery sends status probes every 500 ms before identification. After discovery it sends a correlated status request every second. This drives liveness, provisioning state and panel recovery. Port byte readiness, pairing and panel feedback already have independent wakes. The status acquisition cadence is open in #189/#195. |
+| `module_usb` configuration reconciliation | A command settles, then waits 50 ms between exact-port reconnection attempts until its existing deadline. Route and boot checks fence readback. It does not repeat the configuration write. Scope is command recovery. |
+| Companion network and serial I/O | Socket/serial read and write waits select native readiness, cancellation or operation deadlines. The feedback reader's 250 ms delay applies after transport failure. The listener schedules actual Hub deadlines. |
+| Controller registry, streams, persistence and cached read models | Condition-variable waits park for queue/registry commits, startup completion or shutdown. The controller visibility worker waits for exact job completion. Profile visibility activation also wakes on admission cancellation. |
+| Profile activation and cleanup | Action, publication, panel, companion and game waiters select producer commits, cancellation or owned deadlines. Game acquisition retains bounded service when a producer watch is missing. Publication restoration uses status completion and its cleanup budget. |
+| Game launch and permission | Process confirmation waits for native events or expiry. The startup path still checks at up to 100 ms intervals without a live process watcher. The post-launch provider baseline waits for native input or its provider deadline. X-Plane permission waits for acquisition completion, cancellation or expiry. Child process waits select exact process exit. |
+| Desktop output and script worker lifecycle | Waits select worker state, ownership, operation deadlines or process exit. The desktop guard `wait(now)` computes the next deadline without blocking. |
+| Inline fixture and probe code | Test-only barriers, bounded fake actor waits and diagnostic child joins account for matches in gateway, controller inventory, module USB, profile panel and X-Plane test code and the desktop worker probe. |
+
+These matches extend the source review. They still require reconciliation with
+the provider and firmware inventory before closing the migration gate.
+
 Direct USB update, 2026-11-04: input acquisition and committed configuration
 metadata now use native CDC streams. The historical `module_usb.rs` two-second
 `recv_timeout` entry is retired; source metadata wakes the parked worker. The

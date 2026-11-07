@@ -86,7 +86,7 @@ const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|r
 // the call sites as well as the lower-level wait that implements them.
 const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject(?:Ex)?|(?:Msg)?WaitForMultipleObjects(?:Ex)?|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
 const nativeReadiness = {
-  rust: /\b(poll\.poll)\s*\(/g,
+  rust: /(?:\.(wait(?:_timeout_while|_while)?)|\b(poll\.poll))\s*\(/g,
   c: /\b(select|poll|ppoll|epoll_wait|kevent)\s*\(/g,
 };
 const sites = [];
@@ -115,7 +115,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
       const kinds = [...new Set([
         ...(line.match(timing) ?? []),
         ...Array.from(line.matchAll(eventWait), match => match[1]),
-        ...(readiness ? Array.from(line.matchAll(readiness), match => match[1]) : []),
+        ...(readiness ? Array.from(line.matchAll(readiness), match => match.slice(1).find(Boolean)) : []),
       ])];
       if (!kinds.length) continue;
       sites.push({file:relative(root, path).replaceAll('\\','/'), line:index + 1, kinds});
