@@ -3,15 +3,18 @@ import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {execFile, spawn} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {Agent,request as httpRequest} from 'node:http';
 import {resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 import {promisify} from 'node:util';
-import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {setImmediate as nextTurn} from 'node:timers/promises';
+import {browserPage,nativePage,until} from '../../scripts/reactive/cdp.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 const probeExecutable=process.env.OSG_VJOY_RAW_PROBE;
 const slowPreview=process.env.OSG_VJOY_SLOW_PREVIEW==='1';
 const settingsInventory=process.env.OSG_VJOY_SETTINGS_INVENTORY==='1';
-const dualRate=process.env.OSG_VJOY_DUAL_RATE==='1';
+const browserUrl=process.env.OSG_VJOY_BROWSER_URL;
+const dualRate=!!browserUrl||process.env.OSG_VJOY_DUAL_RATE==='1';
 // Opt in with the full executable path of the dedicated dev Cockpit at the CDP URL.
 const faultApp=process.env.OSG_VJOY_FAULT_APP;
 
@@ -89,6 +92,59 @@ async function submitDualRate(page, owner) {
   })()`);
 }
 
+async function submitBrowserRate(request, owner, reference) {
+  const start = process.hrtime.bigint() + 15_000_000n;
+  const results = await Promise.allSettled(dualRateLanes.map(async lane => {
+    const streamId = randomUUID(), samples = [];
+    for (let index = 0; index < lane.count; index++) {
+      const deadline = start + BigInt(index * lane.intervalMs) * 1_000_000n;
+      // Yield for I/O without rounding the short software schedule to a timer tick.
+      while (process.hrtime.bigint() < deadline) await nextTurn();
+      const value = index % 2 === 0, sequence = String(index + 1);
+      const at = process.hrtime.bigint();
+      const {debugController:state} = await request({command:'profile_debug_controller_input',
+        owner,nodeId:lane.nodeId,streamId,sequence,changes:[{portId:'button-1',value}]});
+      assert.equal(state.sequence,sequence);
+      assert.equal(state.replayed,false);
+      assert.ok(Number.isInteger(state.pendingFrames) && state.pendingFrames > 0 && state.pendingFrames <= 256);
+      samples.push({at:Number(at-reference)/1e6,roundTripMs:Number(process.hrtime.bigint()-at)/1e6,
+        pendingFrames:state.pendingFrames,value});
+    }
+    return samples;
+  }));
+  return results.map(result => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+}
+
+function browserGateway(origin) {
+  const agent=new Agent({keepAlive:true,maxSockets:2});
+  const endpoint=new URL('/api/gateway/',origin);
+  return {
+    request(payload) {
+      const body=Buffer.from(JSON.stringify(payload));
+      return new Promise((resolve,reject)=>{
+        const request=httpRequest(endpoint,{method:'POST',agent,signal:AbortSignal.timeout(5000),
+          headers:{origin:origin.origin,'x-osg-client':'1','content-type':'application/json','content-length':body.length}},
+        response=>{
+          const chunks=[];
+          response.on('data',chunk=>chunks.push(chunk));
+          response.once('error',reject);
+          response.once('end',()=>{
+            try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));}
+            catch(error){reject(error);}
+          });
+        });
+        request.once('error',reject);
+        request.setNoDelay(true);
+        request.end(body);
+      });
+    },
+    close(){agent.destroy();},
+  };
+}
+
 async function bracketWebViewClock(page, reference) {
   const samples = [];
   for (let index = 0; index < 8; index++) {
@@ -135,15 +191,25 @@ function dualRateResults(submissions, events, receiverTickHz, receiptMs, clock, 
   });
 }
 
-test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact Windows Raw Input slot':
+test(browserUrl?'two paced browser-dev sources deliver ordered transitions to Windows vJoy':
+  faultApp?'owned vJoy feeder loss faults the profile and releases the exact Windows Raw Input slot':
   dualRate?'two paced authored sources deliver ordered vJoy transitions during the same live run':
   'authored vJoy button transitions reach the exact Windows Raw Input slot',{
   skip:process.platform!=='win32'||!probeExecutable,timeout:60000,
-},async()=>{
-  const page=await nativePage();
+},async context=>{
+  const origin=browserUrl?new URL(browserUrl):null;
+  if(origin){
+    assert.ok(origin.protocol==='http:'&&['127.0.0.1','localhost'].includes(origin.hostname)
+      && !origin.username&&!origin.password,'Use an isolated loopback browser-dev Cockpit');
+    assert.ok(!faultApp&&process.env.OSG_MCP_SLOW_VJOY!=='1','Desktop feeder and MCP scenarios use the native app');
+  }
+  const page=origin?await browserPage(origin.href):await nativePage();
+  const browser=origin?browserGateway(origin):null;
   let saved, probe, observation;
   const request=async value=>{
-    const reply=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'vjoy-raw-output-native'})}})`);
+    const payload={...value,clientId:'vjoy-raw-output-native'};
+    const reply=browser?await browser.request(payload):
+      await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify(payload)}})`);
     assert.equal(reply.ok,true,`${value.command}: ${reply.error}`);
     return reply.state;
   };
@@ -198,12 +264,13 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     if(settingsInventory)await until(()=>visibleSlot(slot.name), value=>value?.startsWith('busy'));
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy');
     await new Promise(resolve=>setTimeout(resolve,600));
-    if(dualRate||process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
+    if(!origin&&(dualRate||process.env.OSG_MCP_SLOW_VJOY==='1'))observation=await mcpVjoyObservation(page,started.owner);
     let previewBefore;
     if(slowPreview){
       await page.evaluate(`(async()=>{
         const {gatewayRequest}=await import('/src/lib/gateway.ts');
         const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
+        const {createBrowserObservationTransport}=await import('/src/lib/streams/browser.ts');
         const {observeControllerInputs}=await import('/src/lib/controller-observations.ts');
         const {controllers}=await gatewayRequest({command:'controller_list',offset:0});
         const source=controllers.sources.filter(source=>source.online&&source.baselineReady&&source.vendorId!==0x1234)
@@ -211,8 +278,18 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
         if(!source)throw Error('An attached reporting physical controller is required.');
         const state={abort:new AbortController(),held:0,errors:[]};
         window.__vjoySlowPreview=state;
-        createNativeObservationTransport().open('controllers.input.'+source.id,{
-          frame(){state.held++;},error(message){state.errors.push(message);}
+        const browser=${!!origin};
+        // Browser callbacks must start the acknowledgement synchronously.
+        // Keep that request pending on its own connection until cleanup.
+        const transport=browser?createBrowserObservationTransport({
+          fetch(path,init){
+            if(!path.endsWith('/ack'))return fetch(path,init);
+            return new Promise((_,reject)=>init.signal.addEventListener('abort',
+              ()=>reject(init.signal.reason),{once:true}));
+          },
+        }):createNativeObservationTransport();
+        transport.open('controllers.input.'+source.id,{
+          frame(_delivery,ack){state.held++;if(browser)ack();},error(message){state.errors.push(message);}
         },state.abort.signal);
         state.stop=observeControllerInputs(source.id,value=>{
           if(value.status==='ready')state.fast=value.detail.source.sequence;
@@ -237,10 +314,15 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const levels=Array.from({length:burst?65:3},(_,index)=>index%2===0);
     const intervalMs=burst?8:250;
     const startedAt=performance.now(), submissions=[], submittedNs=[], gatewayRoundTrips=[];
-    const clockBefore=dualRate?await bracketWebViewClock(page,beforeProbe):null;
-    const dualSubmissions=dualRate?await submitDualRate(page,started.owner):null;
-    const clockAfter=dualRate?await bracketWebViewClock(page,beforeProbe):null;
-    if(dualRate)await observation.sample(true);
+    const clockBefore=dualRate&&!origin?await bracketWebViewClock(page,beforeProbe):null;
+    const dualSubmissions=origin?await submitBrowserRate(request,started.owner,beforeProbe):
+      dualRate?await submitDualRate(page,started.owner):null;
+    if(dualSubmissions)dualSubmissions.forEach((samples,index)=>{
+      const rate=(samples.length-1)*1000/(samples.at(-1).at-samples[0].at);
+      context.diagnostic(`${dualRateLanes[index].nodeId}: ${rate.toFixed(2)} submissions/s`);
+    });
+    const clockAfter=dualRate&&!origin?await bracketWebViewClock(page,beforeProbe):null;
+    if(dualRate)await observation?.sample(true);
     if(!dualRate)for(const [index,value] of levels.entries()){
       const remaining=startedAt+index*intervalMs-performance.now();
       if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
@@ -302,20 +384,30 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     assert.ok(qpcNs(startTicks)>=beforeProbe&&qpcNs(startTicks)<=afterReady,
       'Raw Input and Node must share the Windows performance counter');
     if(dualSubmissions){
-      assert.ok(clockBefore.low<=clockAfter.high && clockAfter.low<=clockBefore.high,
-        'WebView clock brackets must agree before and after the burst');
-      const clock={low:Math.min(clockBefore.low,clockAfter.low),high:Math.max(clockBefore.high,clockAfter.high)};
+      const clock={low:0,high:0};
+      if(!origin){
+        assert.ok(clockBefore.low<=clockAfter.high && clockAfter.low<=clockBefore.high,
+          'WebView clock brackets must agree before and after the burst');
+        clock.low=Math.min(clockBefore.low,clockAfter.low);
+        clock.high=Math.max(clockBefore.high,clockAfter.high);
+      }
       const receiptMs=event=>Number(qpcNs(startTicks+BigInt(event.receivedTicks))-beforeProbe)/1e6;
       const lanes=dualRateResults(dualSubmissions,events,report.receiverTickHz,receiptMs,clock,Number(stopNs-beforeProbe)/1e6);
+      const overlapMs=Math.min(...dualSubmissions.map(samples=>samples.at(-1).at))
+        - Math.max(...dualSubmissions.map(samples=>samples[0].at));
       await mkdir('.research/reactive',{recursive:true});
-      await writeFile('.research/reactive/vjoy-dual-rate-result.json',JSON.stringify({
-        slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,lanes,submissions:dualSubmissions,
-        webViewClock:{before:clockBefore,after:clockAfter,offset:clock},...report,
+      const output=origin?'vjoy-browser-dual-rate-result.json':'vjoy-dual-rate-result.json';
+      await writeFile('.research/reactive/'+output,JSON.stringify({
+        slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,overlapMs,lanes,submissions:dualSubmissions,
+        ...(origin?{clock:'Windows QPC'}:{webViewClock:{before:clockBefore,after:clockAfter,offset:clock}}),...report,
       },null,2));
       for(const lane of lanes){
         assert.deepEqual(lane.received,lane.expected,`${lane.nodeId} ordered delivery and Stop release`);
         assert.ok(lane.stopReleaseMs>=0,`${lane.nodeId} released before Stop`);
+        if(origin)assert.ok(Math.abs(lane.actualHz/lane.targetHz-1)<=0.05,
+          `${lane.nodeId} sustained ${lane.actualHz.toFixed(2)} Hz against a ${lane.targetHz} Hz target`);
       }
+      if(origin)assert.ok(overlapMs>=180,`Only ${overlapMs.toFixed(2)} ms of simultaneous load`);
       return;
     }
     assert.deepEqual(events.map(event=>event.pressed),[...levels,false]);
@@ -350,7 +442,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
           if(slowPreview)await page.evaluate(`(()=>{const s=window.__vjoySlowPreview;
             s?.abort.abort();s?.stop?.();delete window.__vjoySlowPreview;})()`);
           if(settingsInventory)await overview().catch(()=>{});
-        } finally {probe?.kill();page.close();}
+        } finally {probe?.kill();browser?.close();await page.close();}
       }
     }
   }

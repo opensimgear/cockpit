@@ -362,7 +362,37 @@ fixture awaits acknowledgement on each source independently. The native
 journal and reducer regression separately passed at 1,001.17 Hz and
 125.12 Hz. It preserved all 288 expected reports before overflow, then
 verified fresh baselines and fenced the replaced source.
-Stable live 1 kHz delivery and the combined simulator/panel load remain open.
+Stable desktop WebView 1 kHz delivery and the combined simulator/panel load
+remain open.
+
+### Ordered 125 Hz and 1 kHz on browser-dev
+
+Three browser-dev runs sent two independent ordered debug sources through
+the production loopback gateway and the native service into one Windows
+vJoy slot. The fast source sustained 992.24–1,000.97 Hz and the peer
+125.01–125.24 Hz. They overlapped for at least 191.63 ms. Windows Raw Input
+received all 654 authored transitions and six Stop releases. One browser
+preview acknowledgement stayed pending while the independent preview advanced
+by 12–13 reports. Settings showed the slot busy, then free on reopen.
+
+The largest per-run p50/p95/p99 for loopback HTTP submission to Windows Raw
+Input were 0.93/1.19/2.02 ms for the fast source and 1.08/1.30/4.03 ms for
+the peer. Both clocks use the Windows performance counter and the fixture
+checks the receiver launch bracket. The largest reported debug input queue
+depth was one frame. Both Stop releases arrived within 1.29 ms of command
+submission. The desktop parity run also passed at 697.93 Hz and 124.80 Hz
+with the held MCP reader.
+
+Use `OSG_VJOY_BROWSER_URL` with the loopback dev URL and the same Raw Input
+probe. The browser test requires each measured rate within 5% of target and
+at least 180 ms of overlap. The fixture used a dedicated HTTP keep-alive
+agent. Earlier fetch-based attempts retained every edge at lower rates.
+The native gateway executable from `3592e502` has SHA-256
+`33256e5ce2f3fefaf3b7997dca9bddf22d25ed9bc029a6c1b5230c1168a41d47`.
+The raw records are `browser-final-{1,2,3}.json` in
+`.research/reactive/dual-rate-live/`. This run covers authored browser-dev
+input and an independent stalled browser observer. Physical acquisition,
+simulator confirmation and combined load remain separate gates.
 
 ### November 7 single-source comparisons
 
