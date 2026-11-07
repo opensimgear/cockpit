@@ -432,6 +432,10 @@ permissions, scan-cost savings on a physical rig, or simulator effects.
 
 ### Current firmware service sites
 
+The [current timing migration matrix](current-timing/README.md) maps the
+committed scan site by site and records source cadences outside named timer
+calls. The historical inventory continues to track retired refresh sites.
+
 The committed scan at Cockpit `47c2a12a`, gateway `e761e4d6`, device template
 `c5457884` and firmware-common `64025cce` found 441 timing and readiness sites.
 The checker also matched the 247 pinned historical dispositions and passed

@@ -123,6 +123,28 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
   }
 }
 sites.sort((a,b) => a.file.localeCompare(b.file, 'en') || a.line - b.line);
+if (process.argv.includes('--check-current-dispositions')) {
+  const expected = new Set(sites.map(site => `${site.file}:${site.line}`));
+  const classified = new Set();
+  for (const name of ['application-workers', 'crates-and-firmware', 'games', 'native-services', 'portal-and-companions']) {
+    const path = resolve(root, 'docs/reactive/current-timing', name + '.md');
+    for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+      if (!line.startsWith('| `')) continue;
+      const row = /^\| `([^:`]+):([\d,]+)` \| [^|]+ \| .+ \|$/.exec(line);
+      if (!row) throw new Error(`Invalid current timing row in ${name}: ${line}`);
+      for (const number of row[2].split(',')) {
+        const site = `${row[1]}:${number}`;
+        if (classified.has(site)) throw new Error(`Duplicate current timing disposition: ${site}`);
+        if (!expected.delete(site)) throw new Error(`Current timing disposition has no matching site: ${site}`);
+        classified.add(site);
+      }
+    }
+  }
+  if (expected.size) throw new Error(`Missing current timing dispositions:\n${[...expected].join('\n')}`);
+  console.log(`All ${classified.size} current timing sites have exactly one disposition.`);
+  for (const revision of revisions) console.log(revision);
+  process.exit(0);
+}
 const text = '[\n' + sites.map(site => '  ' + JSON.stringify(site)).join(',\n') + '\n]\n';
 if (check) {
   if (readFileSync(output, 'utf8').replaceAll('\r\n','\n') !== text) {
