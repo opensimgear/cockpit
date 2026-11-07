@@ -173,3 +173,51 @@ The product revision was `027ee955`. Evidence is in
 `.research/dcs-physics-native/1794044739216/evidence.json` and
 `.research/dcs-physics-native/1794044555463/evidence.json`. The native
 regression evidence is in `.research/dcs-physics-native/1794044792093/evidence.json`.
+
+## Retry a contended panel feedback commit
+
+The slow panel advanced fewer host feedback sequences than its peer over the
+same authored DCS changes. A successful panel commit wakes its socket reader,
+which can briefly hold the shared Hub mutex when the next panel tries to
+publish. Previously, a busy commit went through the full 34 ms publication
+cooldown. The background feedback worker now gives a still-current projection
+one retry after a 2 ms contention backoff. Both attempts check the same
+assignment, session, binding generation, cancellation and age fences. A
+second miss returns to the existing cooldown and latest projection.
+
+An experimental batch commit put both panels under the timing budget, but
+required a ready panel to wait for every later panel's validation. The final
+change keeps the original per-panel commit order. Ready publications continue
+to commit before the worker starts validating a later panel.
+
+| Run | Panel 1 p95 | Panel 2 p95 | Panel 2 p99 | Fast synthetic source |
+| --- | ---: | ---: | ---: | ---: |
+| Before, `1794045080235` | 49.23 ms | 269.16 ms | 311.93 ms | 442.04 Hz |
+| Retry, `1794046215504` | 49.35 ms | 49.35 ms | 64.28 ms | 412.62 Hz |
+| Retry, `1794046263204` | 20.68 ms | 20.76 ms | 27.25 ms | 428.48 Hz |
+
+Both retry runs met the 150 ms panel budget over 24 changes per panel.
+Page receipt to canvas stayed at or below 0.50 ms p95. Both panels also
+painted during the separate short dual-source burst. Each run delivered all
+218 ordered vJoy transitions, released both held buttons within 1.03 ms
+of Stop, retired all three telemetry readers, and completed cleanup.
+Submission to Windows Raw Input remained below 6 ms p95 on both lanes.
+The combined test failed only its 1,000 Hz synthetic HTTP source assertion
+in both runs. Same-service MCP, sustained load and physical qualification
+remain open.
+
+The Windows native suite passed 2,398 tests with 18 default ignores. The
+two pinned DCS archive tests passed separately. The changed production
+module reached 98.05% line coverage by the repository counter and 97.06%
+function coverage by LLVM. The build did not instrument branches. New
+regressions cover immediate success, a single retry, repeated contention,
+and cancellation before retry.
+
+The retry runs used Windows browser-dev gateway SHA-256
+`1f8f19e397d91e7ea2a8878860c5beb18401d8350671d971bea8bc55986bf1bb`.
+The local build selected only the Rust library needed for the gateway
+binary to fit on disk. The runnable artifact linked in Cargo's dependency
+directory. Windows refused to replace a separate stale top-level alias, so
+the test launcher selected the linked artifact by hash.
+Raw evidence is in `.research/dcs-physics-native/1794046215504/evidence.json`
+and `.research/dcs-physics-native/1794046263204/evidence.json`.

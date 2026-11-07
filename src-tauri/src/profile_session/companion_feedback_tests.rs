@@ -1,5 +1,38 @@
 use super::*;
 
+#[test]
+fn feedback_retries_one_busy_commit_and_never_retries_success() {
+    for first in [Some(1), None] {
+        let mut attempts = 0;
+        assert!(publish_with_contention_retry(|| true, || {
+            attempts += 1;
+            Ok(if attempts == 1 { first } else { Some(2) })
+        }).unwrap());
+        assert_eq!(attempts, if first.is_some() { 1 } else { 2 });
+    }
+
+    let mut attempts = 0;
+    assert!(!publish_with_contention_retry(|| true, || {
+        attempts += 1;
+        Ok(None)
+    }).unwrap());
+    assert_eq!(attempts, 2);
+}
+
+#[test]
+fn feedback_abandons_retry_if_the_projection_is_revoked_during_backoff() {
+    let checks = std::cell::Cell::new(0);
+    let mut attempts = 0;
+    assert!(!publish_with_contention_retry(|| {
+        checks.set(checks.get() + 1);
+        checks.get() == 1
+    }, || {
+        attempts += 1;
+        Ok(None)
+    }).unwrap());
+    assert_eq!(attempts, 1);
+}
+
 fn finished<T: Send + 'static>(worker: &mut Worker<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {

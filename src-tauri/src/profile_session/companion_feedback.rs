@@ -10,6 +10,7 @@ mod delivery;
 pub(super) use delivery::Delivery;
 
 const MAX_AGE: Duration = Duration::from_millis(250);
+const CONTENTION_BACKOFF: Duration = Duration::from_millis(2);
 pub(super) const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(34);
 pub(super) fn revocation() -> Arc<AtomicBool> { Arc::new(AtomicBool::new(false)) }
 
@@ -106,12 +107,25 @@ impl Job {
                 if !current() { return Ok(false); }
             }
             published_at = Instant::now();
-            Ok(hub.try_publish_profile_feedback(&self.receipt, &token, &self.publication.samples,
-                self.publication.mode, self.publication.captured, MAX_AGE, current)?.is_some())
+            publish_with_contention_retry(current, || {
+                hub.try_publish_profile_feedback(&self.receipt, &token, &self.publication.samples,
+                    self.publication.mode, self.publication.captured, MAX_AGE, current)
+            })
         })();
         Completion { logical: self.logical, generation: self.generation, run: self.run,
             cancelled: self.cancelled, result, receipt: self.publication.receipt, published_at }
     }
+}
+
+fn publish_with_contention_retry(current: impl Fn() -> bool,
+    mut try_publish: impl FnMut() -> Result<Option<u64>, String>) -> Result<bool, String> {
+    if try_publish()?.is_some() { return Ok(true); }
+    if !current() { return Ok(false); }
+    // A panel reader woken by the previous job can briefly own the Hub lock.
+    // Retry once on this worker before the normal publication cooldown.
+    std::thread::sleep(CONTENTION_BACKOFF);
+    if !current() { return Ok(false); }
+    Ok(try_publish()?.is_some())
 }
 
 impl Instance {
