@@ -5,13 +5,20 @@ export async function browserPage(url) {
   const {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
   const browser = await chromium.launch({headless:true, channel:process.env.OSG_BROWSER_CHANNEL});
   try {
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     await page.goto(url);
     await page.getByRole('navigation', {name:'Main navigation'}).waitFor();
-    const session = await page.context().newCDPSession(page);
+    const session = await context.newCDPSession(page);
     return {
       call: (method, args) => session.send(method, args),
       evaluate: expression => page.evaluate(expression),
+      async openPeer() {
+        const peer = await context.newPage();
+        await peer.goto(url);
+        await page.bringToFront();
+        return {evaluate: expression => peer.evaluate(expression)};
+      },
       listen(listener) {
         const methods = ['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Fetch.requestPaused'];
         const handlers = methods.map(method => [method, params => listener({method,params})]);

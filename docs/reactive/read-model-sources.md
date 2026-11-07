@@ -69,6 +69,14 @@ loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates
 the pairing form while the hidden listener settings make no reads.
 
+The Companion library fixture opens a second Edge tab in the same browser
+context. The second tab commits a draft to IndexedDB while the first tab
+shows the library. The first tab receives both addition and removal. The
+fixture repeats the two commits with the reader on Overview and verifies
+each result when the library reopens. The writer is a separate page and
+uses the production designer store. The Windows WebView fixture separately
+passed the same visible and hidden mutations via native SQLite.
+
 The navigation fixture verifies that native Settings releases its Backups
 subscription when General is hidden. An external create commits while no
 Backups reader is open. Returning to General opens a fresh baseline and

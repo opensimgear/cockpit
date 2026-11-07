@@ -14,7 +14,8 @@ test('Companion library follows visible and hidden draft commits', {
   const card = name => page.evaluate(`[...${panels}?.querySelectorAll('button') ?? []]
     .some(button => button.getAttribute('aria-label') === ${JSON.stringify('Edit ' + name)} && button.checkVisibility())`);
   const name = `Reopened panel ${randomUUID()}`;
-  const writeDraft = operation => page.evaluate(`import('/src/lib/compiled-companion-library.ts').then(async library => {
+  let writer = page;
+  const writeDraft = operation => writer.evaluate(`import('/src/lib/compiled-companion-library.ts').then(async library => {
     const store = new library.CompiledWorkspaceStore();
     const workspace = await store.load();
     const name = ${JSON.stringify(name)};
@@ -23,6 +24,7 @@ test('Companion library follows visible and hidden draft commits', {
     await store.save({...workspace, drafts});
   })`);
   try {
+    if (browserUrl) writer = await page.openPeer();
     await until(() => page.evaluate('!!document.querySelector(\'nav[aria-label="Main navigation"]\')'));
     await navigate('Companions');
     await until(() => page.evaluate(`[...${panels}?.querySelectorAll('button') ?? []]

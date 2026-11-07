@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 30 checked and 25
-open. The open criteria include 12 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 31 checked and 24
+open. The open criteria include 11 software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -21,8 +21,19 @@ criteria have delivered software and outstanding qualification.
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #194 | The [read-model source matrix](read-model-sources.md) maps the native observation catalogue to committed producers and portal consumers. Complete per-provider background, cancellation and lock qualification. Activity's aggregate 750 ms metadata acquisition is replaced by four committed-source wake groups with passive caches. The denied-process-event fallback remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
-| #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Complete the other nested lifetimes, background/reopen matrix and consistent component review. |
+| #196 | Main navigation, two Settings tabs, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. Native dirty editor, controller metadata and companion listener checks passed. Companion library reopen passed on native and across separate browser-dev tabs. The other nested lifetimes and background/reopen checks remain open. |
 | #198 | Integrated software fault/load matrix, final applicable local suites and CI, final acquisition inventory and complete acceptance accounting. |
+
+## R7 UI consistency
+
+The companion and integration port sections share the same tile, filter and
+pager. The tile owns spacing, typography and status styles. Companion authoring
+controls retain concise labels, icons and accessible remove actions. The
+running Windows Cockpit passed the companion input/output tile and paging
+fixture on November 7. Ten focused port UI tests and the full companion
+coverage command also passed. The WebView loaded the development frontend,
+which contained unrelated local profile edits. The component review used
+committed main. The physical VKB and broader background/reopen gates remain open.
 
 ## R3 adapter evidence
 
