@@ -9,7 +9,7 @@ const NAMES_PER_QUERY: usize = 16;
 pub(crate) struct InventoryEvents {
     stop: Arc<Handle>,
     cancelled: Arc<AtomicBool>,
-    worker: std::thread::JoinHandle<()>,
+    finished: Arc<AtomicBool>,
     ready: Arc<ProcessContinuity>,
 }
 
@@ -21,21 +21,28 @@ impl InventoryEvents {
         }
         let stop = Arc::new(Handle::event()?);
         let cancelled = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
         let ready = Arc::new(ProcessContinuity::default());
         let worker_ready = ready.clone();
         let worker_stop = stop.clone();
         let worker_cancelled = cancelled.clone();
-        let worker = std::thread::Builder::new()
+        let worker_finished = finished.clone();
+        std::thread::Builder::new()
             .name("game-process-inventory-events".into())
             .spawn(move || {
+                let _complete = Complete {
+                    ready: &worker_ready,
+                    finished: &worker_finished,
+                    wakes: &wakes,
+                };
                 let _ = run(&queries, &worker_stop, &worker_cancelled, &worker_ready, &wakes);
             })
             .map_err(|error| format!("Cannot start game process notifications: {error}"))?;
-        Ok(Some(Self { stop, cancelled, worker, ready }))
+        Ok(Some(Self { stop, cancelled, finished, ready }))
     }
 
     pub(crate) fn is_finished(&self) -> bool {
-        self.worker.is_finished()
+        self.finished.load(Ordering::Acquire)
     }
 
     pub(crate) fn failed_after_live(&self) -> bool {
@@ -50,7 +57,7 @@ impl InventoryEvents {
         Self {
             stop: Arc::new(Handle::event().unwrap()),
             cancelled: Arc::new(AtomicBool::new(false)),
-            worker: std::thread::spawn(|| {}),
+            finished: Arc::new(AtomicBool::new(true)),
             ready,
         }
     }
@@ -103,6 +110,24 @@ impl Drop for Withdraw<'_> {
     fn drop(&mut self) {
         self.0.retire();
         for wake in self.1 { wake.notify(); }
+    }
+}
+
+struct Complete<'a> {
+    ready: &'a ProcessContinuity,
+    finished: &'a AtomicBool,
+    wakes: &'a [Arc<NativeWake>; 2],
+}
+impl Drop for Complete<'_> {
+    fn drop(&mut self) {
+        // The COM subscription and apartment are already released. Notify
+        // after publishing completion so the next owner can start immediately.
+        self.ready.retire();
+        self.finished.store(true, Ordering::Release);
+        self.wakes[0].notify();
+        if !self.ready.retired_after_live() {
+            self.wakes[1].notify();
+        }
     }
 }
 
@@ -162,6 +187,35 @@ mod tests {
         assert!(!live.is_live());
         assert!(live.retired_after_live());
         assert!(wakes.iter().zip(before).all(|(wake, old)| wake.observed() != old));
+    }
+
+    #[test]
+    fn completing_live_teardown_wakes_replacement_after_the_early_loss() {
+        let live = ProcessContinuity::default();
+        assert!(live.begin());
+        let finished = AtomicBool::new(false);
+        let wakes = [Arc::new(NativeWake::default()), Arc::new(NativeWake::default())];
+        let complete = Complete { ready: &live, finished: &finished, wakes: &wakes };
+        drop(Withdraw(&live, &wakes));
+        assert!(!live.is_live());
+        assert!(!finished.load(Ordering::Acquire));
+        let before = wakes.each_ref().map(|wake| wake.observed());
+        drop(complete);
+        assert!(finished.load(Ordering::Acquire));
+        assert_ne!(wakes[0].observed(), before[0]);
+        assert_eq!(wakes[1].observed(), before[1]);
+    }
+
+    #[test]
+    fn bootstrap_failure_signals_terminal_state_without_live_continuity() {
+        let ready = ProcessContinuity::default();
+        let finished = AtomicBool::new(false);
+        let wakes = [Arc::new(NativeWake::default()), Arc::new(NativeWake::default())];
+        drop(Complete { ready: &ready, finished: &finished, wakes: &wakes });
+        assert!(finished.load(Ordering::Acquire));
+        assert!(!ready.retired_after_live());
+        assert!(!ready.begin());
+        assert!(wakes.iter().all(|wake| wake.observed() == 1));
     }
 
     #[test]
