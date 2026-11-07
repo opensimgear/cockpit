@@ -60,6 +60,7 @@ The [read-model source matrix](reactive/read-model-sources.md) identifies the pr
 | Follow retained Activity | Observe `activity.log` and call `activity_list` with `committedOnly: true` after the revision advances. Keep `throughId` for stable paging. |
 | Follow Activity retention | Observe `settings.activity` for the committed `retentionDays` value. Change it with `activity_settings_save`. |
 | Follow desktop readiness, UI preferences and backup operations | Observe `profiles.desktop`, `settings.desktop`, `preferences.<key>` and `storage.backups`. The portal's `settings.mcp` invalidation is local-only. MCP settings and credential tools use their own revision guard. |
+| Follow Windows auto-start registration | Observe `settings.autostart`. The native desktop publishes the current registration and Task Manager approval state. |
 
 The `2025-11-25` handshake offers bounded reads. With `2026-07-28`, discover fixed topics through `resources/list` and use `resources/templates/list` for the exact topic URI template. `subscriptions/listen` accepts up to eight requested resource URIs. Its acknowledgement precedes resource updates and does not establish that a producer has delivered a baseline. Wait for the exact topic's snapshot and handle unavailable topics and reader limits. Closing the HTTP stream or revoking its credential releases the readers. Reconnecting or receiving a loss requires a current baseline. A cursor on `resources/read` reports continuity against the current snapshot.
 

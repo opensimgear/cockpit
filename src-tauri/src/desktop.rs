@@ -11,6 +11,11 @@ use tauri::{
     Manager,
 };
 
+#[cfg(windows)]
+mod autostart_observation;
+#[cfg(windows)]
+mod autostart_registry;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase",deny_unknown_fields)]
 pub struct TrayPreferences {
@@ -26,6 +31,8 @@ pub struct DesktopState {
     window_save: crate::window_persistence::SaveWorker,
     geometry: crate::persistence::ui::window_writer::WindowWriter,
     window_error: Mutex<Option<String>>,
+    #[cfg(windows)]
+    autostart: Option<autostart_observation::Observer>,
 }
 
 pub fn show_main(app: &tauri::AppHandle) {
@@ -80,10 +87,29 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    app.handle().plugin(tauri_plugin_autostart::init(
-        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-        None,
-    ))?;
+    {
+        let builder = tauri_plugin_autostart::Builder::new();
+        #[cfg(target_os = "macos")]
+        let builder = builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+        #[cfg(all(windows, feature = "reactive-qualification"))]
+        let builder = match std::env::var("OSG_AUTOSTART_QUALIFICATION_ID").ok().and_then(|id| uuid::Uuid::parse_str(&id).ok()) {
+            Some(id) => builder.app_name(format!("OpenSimGear-Autostart-Test-{id}")),
+            None => builder,
+        };
+        app.handle().plugin(builder.build())?;
+    }
+    #[cfg(windows)]
+    let autostart = {
+        let app_handle = app.handle().clone();
+        let observations = app.state::<crate::NativeGateway>().0.observation_runtime();
+        match autostart_observation::Observer::register(observations) {
+            Ok(observer) => {
+                observer.ensure(move || read_autostart(&app_handle));
+                Some(observer)
+            }
+            Err(error) => { eprintln!("Cannot start auto-start observation: {error}"); None }
+        }
+    };
     let preferences=app.state::<crate::NativeGateway>().0.ui_preferences.clone();
     let _=preferences.read("tray");let _=preferences.read("progress");
     let tray_error = create_tray(app).err().map(|e|e.to_string());
@@ -103,6 +129,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray_error,
         minimized_handled: AtomicBool::new(false),
         window_save, geometry, window_error:Mutex::new(window_error),
+        #[cfg(windows)]
+        autostart,
     });
     Ok(())
 }
@@ -117,13 +145,16 @@ pub async fn desktop_preferences(
     let settings_error=loaded.as_ref().err().cloned();
     let settings_revision=loaded.as_ref().map(|row|row.revision).unwrap_or(0);
     let preferences:TrayPreferences=loaded.ok().and_then(|row|serde_json::from_value(row.value).ok()).unwrap_or_default();
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    let autostart = {
-        use tauri_plugin_autostart::ManagerExt;
-        app.autolaunch().is_enabled().map_err(|e| e.to_string())
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let autostart: Result<bool, String> = Ok(false);
+    let autostart = read_autostart(&app);
+    #[cfg(windows)]
+    if let Some(observer) = &state.autostart {
+        let app_handle = app.clone();
+        observer.ensure(move || read_autostart(&app_handle));
+    }
+    #[cfg(windows)]
+    let autostart_observed = state.autostart.is_some();
+    #[cfg(not(windows))]
+    let autostart_observed = false;
     Ok(json!({
         "closeToTray": preferences.close_to_tray,
         "minimizeToTray": preferences.minimize_to_tray,
@@ -133,9 +164,20 @@ pub async fn desktop_preferences(
         "settingsRevision":settings_revision,
         "windowStateError":state.geometry.error().or_else(||state.window_error.lock().unwrap_or_else(|p|p.into_inner()).clone()),
         "autostartSupported": cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux")),
+        "autostartObserved": autostart_observed,
         "autostartEnabled": autostart.as_ref().copied().unwrap_or(false),
         "autostartError": autostart.err(),
     }))
+}
+
+fn read_autostart(_app: &tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        _app.autolaunch().is_enabled().map_err(|error| error.to_string())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    Ok(false)
 }
 
 #[tauri::command]
@@ -230,6 +272,8 @@ fn save_window_state(app:&tauri::AppHandle){
 }
 pub(crate) fn shutdown(app:&tauri::AppHandle){
     if let Some(state)=app.try_state::<DesktopState>(){
+        #[cfg(windows)]
+        if let Some(autostart) = &state.autostart { autostart.stop(); }
         state.window_save.stop();save_window_state(app);
         if let Err(error)=state.geometry.flush(){eprintln!("Could not flush window geometry: {error}");}
         state.geometry.stop();

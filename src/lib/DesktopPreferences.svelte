@@ -5,6 +5,7 @@
   import Notification from './Notification.svelte';
   import { onMount, untrack } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
+  import { SharedObservations } from './streams/shared';
 
   type Preferences = {
     closeToTray: boolean;
@@ -14,6 +15,7 @@
     settingsError: string | null;
     windowStateError?: string | null;
     autostartSupported: boolean;
+    autostartObserved: boolean;
     autostartEnabled: boolean;
     autostartError: string | null;
   };
@@ -26,6 +28,9 @@
   let error = $state('');
   let message = $state('');
   const visible = $derived(desktop && active && documentVisible);
+  let observedAutostart = $state<{ enabled: boolean | null; error: string | null }>();
+  const autostartEnabled = $derived(preferences?.autostartObserved ? observedAutostart?.enabled : preferences?.autostartEnabled);
+  const autostartError = $derived(preferences?.autostartObserved ? observedAutostart?.error : preferences?.autostartError);
   let readEpoch = 0;
 
   async function load() {
@@ -68,6 +73,23 @@
     }
   });
 
+  $effect(() => {
+    if (!visible || !preferences?.autostartObserved) return;
+    const observations = new SharedObservations();
+    observations.subscribe('settings.autostart', state => {
+      if (state.status === 'connecting') return;
+      const payload = state.frame?.payload as Partial<{ enabled: boolean | null; error: string | null }> | undefined;
+      if (state.status === 'ready' && state.frame?.source === 'desktop-autostart' && payload
+          && (typeof payload.enabled === 'boolean' || payload.enabled === null)
+          && (typeof payload.error === 'string' || payload.error === null)) {
+        observedAutostart = { enabled: payload.enabled, error: payload.error };
+      } else {
+        observedAutostart = { enabled: null, error: state.error ?? 'The auto-start observation is unavailable.' };
+      }
+    });
+    return () => { observations.close(); observedAutostart = undefined; };
+  });
+
   async function toggle(key: 'closeToTray' | 'minimizeToTray' | 'autostartEnabled') {
     const current = preferences;
     if (!visible || !current || busy) return;
@@ -75,14 +97,15 @@
     error = ''; message = '';
     try {
       if (key === 'autostartEnabled') {
-        const enabled = !current.autostartEnabled;
+        if (autostartEnabled == null) return;
+        const enabled = !autostartEnabled;
         const applied = await invoke<boolean>('set_autostart', { enabled });
-        if (preferences === current) preferences = { ...current, autostartEnabled: applied, autostartError: null };
+        if (!current.autostartObserved && preferences === current) preferences = { ...current, autostartEnabled: applied, autostartError: null };
         if (applied !== enabled) throw new Error('The operating system did not apply the auto-start change.');
       } else {
         const next = { ...$tray.value, [key]: !$tray.value[key] };
         await tray.save(next);
-        if (preferences === current) preferences = { ...current, ...next, settingsError: null };
+        if (preferences === current) current.settingsError = null;
       }
       message = 'Preference saved.';
     } catch (e) { error = String(e); }
@@ -110,12 +133,12 @@
     </div>
     <div class="preference-row">
       <div><strong>Start Cockpit when I sign in</strong><p>{preferences.autostartSupported ? 'Automatically launch Cockpit when you sign in to this computer.' : 'Auto-start is not supported on this platform.'}</p></div>
-      <button class="toggle" class:on={preferences.autostartEnabled} role="switch" aria-label="Start Cockpit when I sign in" aria-checked={preferences.autostartEnabled} disabled={busy || !preferences.autostartSupported} onclick={() => toggle('autostartEnabled')}><span></span></button>
+      <button class="toggle" class:on={autostartEnabled === true} role="switch" aria-label="Start Cockpit when I sign in" aria-checked={autostartEnabled ?? false} disabled={busy || !preferences.autostartSupported || autostartEnabled == null} onclick={() => toggle('autostartEnabled')}><span></span></button>
     </div>
     {#if preferences.windowStateError}<Notification message={'Window geometry could not be saved or restored: ' + preferences.windowStateError} kind="error" />{/if}
     {#if preferences.trayError}<Notification message={'The system tray is unavailable: ' + String(preferences.trayError)} kind="error" />{/if}
     {#if preferences.settingsError}<Notification message={'Saved desktop preferences could not be read: ' + String(preferences.settingsError) + '. Normal window behavior is active.'} kind="error" />{/if}
-    {#if preferences.autostartError}<div class="preference-row"><Notification message={'Auto-start status could not be read: ' + String(preferences.autostartError)} kind="error" /><button class="secondary-button" disabled={busy} onclick={load}><Icon name="refresh" size={14} />Retry</button></div>{/if}
+    {#if autostartError}<div class="preference-row"><Notification message={'Auto-start status could not be read: ' + autostartError} kind="error" /><button class="secondary-button" disabled={busy} onclick={load}><Icon name="refresh" size={14} />Retry</button></div>{/if}
   {/if}
   {#if $tray.error}<div class="preference-row"><Notification message={$tray.error} kind="error" /><button class="secondary-button" onclick={() => { void uiPreferences.hydrate(); }}><Icon name="refresh" size={14} />Retry</button></div>{/if}
   {#if error}<div class="preference-row"><Notification message={String(error)} kind="error" />{#if !preferences}<button class="secondary-button" onclick={load}><Icon name="refresh" size={14} />Retry</button>{/if}</div>{/if}
