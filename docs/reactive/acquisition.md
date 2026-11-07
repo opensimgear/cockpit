@@ -392,3 +392,19 @@ neutral vJoy feeder renewal, or the exact launch expiry. The source scan still
 finds the fallback primitive because holds with other adapters retain the 5 ms
 service bound. This is an acquisition boundary to resolve or disposition under
 #189. The 247 historical timing entries still have exactly one disposition each.
+
+### Windows focus and DCS receive waits
+
+At Cockpit `776bdec3`, gateway `e761e4d6`, device template `c5457884`
+and firmware-common `64025cce`, the expanded scan finds 438 sites. The
+previous scanner found 435 at the same revisions. The three added sites
+are existing readiness waits.
+
+| Site | Owner and wake |
+| --- | --- |
+| `crates/desktop-output/src/windows/focus/native.rs:452` | The focus owner blocks on Windows messages. Posted work and shutdown wake the message pump. |
+| `src-tauri/src/dcs_bios/transport.rs:251` | The DCS-BIOS receiver waits for UDP readiness or cancellation and timestamps arrival before decoding or committing. |
+| `src-tauri/src/dcs_physics/source.rs:264` | The managed ownship receiver waits for UDP readiness, cancellation, or its exact capture-expiry deadline. |
+
+The frontend timer guard and all 247 historical dispositions pass. The
+remaining acquisition gates in the table above are still open.

@@ -84,9 +84,9 @@ const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simu
 const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
 // Event waits can carry a periodic fallback or an exact deadline. Inventory
 // the call sites as well as the lower-level wait that implements them.
-const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject(?:Ex)?|(?:Msg)?WaitForMultipleObjects(?:Ex)?|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
+const eventWait = /\b(wait_scheduled|wait_deadline|wait_until|WaitForSingleObject(?:Ex)?|(?:Msg)?WaitForMultipleObjects(?:Ex)?|GetMessage[AW]|GetQueuedCompletionStatus(?:Ex)?|WaitCommEvent|set_read_timeout|set_write_timeout|xQueueReceive|ulTaskNotifyTake|xTaskNotifyWait|tud_task|tight_loop_contents)\s*\(/g;
 const nativeReadiness = {
-  rust: /(?:\.(wait(?:_timeout_while|_while)?)|\b(poll\.poll))\s*\(/g,
+  rust: /(?:\.(wait(?:_timeout_while|_while)?|blocking_recv|recv_from)|\b(poll\.poll|(?:tokio::)?time::interval(?:_at)?))\s*\(/g,
   c: /\b(select|poll|ppoll|epoll_wait|kevent)\s*\(/g,
 };
 const sites = [];
