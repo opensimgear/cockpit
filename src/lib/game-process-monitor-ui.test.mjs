@@ -27,9 +27,17 @@ test('starting and checking show Cancel; ready shows Stop',async()=>{
 });
 
 test('unsupported games are hidden and unsupported or uninstalled X-Plane cannot be allowed',async()=>{
-  const other=await setup({...xplane(),id:'assetto-corsa',provider:'assetto-corsa'});assert.doesNotMatch(other.html,/Process monitoring/);
+  const other=await setup(xplane(undefined,{id:'fixture-game',provider:undefined,processMonitor:undefined,processMonitoringSupported:false}));
+  assert.doesNotMatch(other.html,/Process monitoring/);
   const unsupported=await setup(xplane({state:'disabled',message:'Unsupported.'},{processMonitoringSupported:false}));assert.match(unsupported.html,/disabled/);
   const uninstalled=await setup(xplane({state:'waiting',message:'Not installed.'},{installed:false}));assert.match(uninstalled.html,/disabled/);
+});
+
+test('Assetto shows the explicitly supplied native monitoring state',async()=>{
+  const {html}=await setup(xplane({state:'needs-permission',message:'Assetto process permission is required.'},
+    {id:'assetto-corsa',name:'Assetto Corsa',provider:'assetto-corsa'}));
+  assert.match(html,/Assetto process permission is required\./);
+  assert.match(html,/>Allow<\/button>/);
 });
 
 test('explicit Allow sends only command and gameId and tracks the pending request',async()=>{

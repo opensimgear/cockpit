@@ -5,6 +5,7 @@ import { loadModules } from '../test-module-loader.mjs';
 const modules=await loadModules(['./system-inventory-providers'],new Map([
   ['./game-read-models/shared',{observeGamesState(){return ()=>{};}}],
   ['./controller-read-models/shared',{observeControllerInventory(){return ()=>{};}}],
+  ['./profile-read-models/shared',{observeProfileRuntime(){return ()=>{};}}],
 ]));
 const {gatewayObservations}=modules.get('./system-inventory-providers');
 const entry=()=>({id:'gateway',port:{backend:'stm32',path:'COM1'},present:true,busy:false,error:'',stale:false,

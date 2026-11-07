@@ -61,40 +61,135 @@ test('device manual actions use the real native ownership block, with no retired
  const html=render(Manual,{props:{state,module,busy:false,request:noRequest,profileBlockedReason:'Exact native profile ownership must be released.'}}).body;assert.ok(html.includes('Exact native profile ownership must be released.'));assert.ok(!html.includes('Stop DCS-BIOS'));assert.ok(!html.includes('temporary override'));assert.match(html,/<fieldset[^>]*disabled[^>]*>[^]*?Apply[^]*?<\/fieldset>/);assert.ok(html.includes('Applied state is unknown.'));
 });
 
-async function mountedApp(send){
- const models=readModelFixture();models.emit('library',{status:'connecting'});models.emit('runtime',{status:'connecting'});let oldRuntime,oldLibrary;
- const observations={...models,observeProfileRuntime(listener){oldRuntime=listener;return models.observeProfileRuntime(listener);},observeProfileLibrary(listener){oldLibrary=listener;return models.observeProfileLibrary(listener);}};
- const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,get runtime(){return profileRuntime;},get state(){return{profileState,profileSummaries,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
- const document={hidden:false},location=new URL('http://localhost/'),window={location,addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},history={state:null,replaceState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},pushState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},go(){},back(){},forward(){}};window.history=history;
- const App=evaluate(js.code,filename.pathname,name=>{
-  if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount(fn){mounts.push(fn);}};if(name.endsWith('.svelte'))return{default:()=>{}};
-  const key=name.replace('./lib/','./');if(key==='./profile-read-models/shared')return observations;if(key==='./cockpit-history'){const actual=modules.get(key);return{...actual,createCockpitHistory:(initial,options)=>actual.createCockpitHistory(initial,{...options,host:window})};}if(modules.has(key))return modules.get(key);
-  if(name.endsWith('/gateway'))return{gatewayRequest:send,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{refresh(){}dispose(){}}};if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:async()=>{}};if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error('Unexpected App dependency '+name);
- },{document,window,history,setInterval(fn){timers.set(++nextTimer,fn);return nextTimer;},clearInterval(id){timers.delete(id);},captureApp(value){handlers=value;}});
- render(App).body;return{handlers,document,timers,models,mount(){return mounts.map(fn=>fn());},lateRuntime(state){oldRuntime?.(state);},lateLibrary(state){oldLibrary?.(state);}};
+async function mountedApp(send) {
+  const models = readModelFixture();
+  models.emit('library', {status:'connecting'});
+  models.emit('runtime', {status:'connecting'});
+  let oldRuntime, oldLibrary, oldGames, gameReader;
+  const observations = {
+    observeProfileRuntime(listener) {
+      oldRuntime = listener;
+      return models.observeProfileRuntime(listener);
+    },
+    observeProfileLibrary(listener) {
+      oldLibrary = listener;
+      return models.observeProfileLibrary(listener);
+    },
+  };
+  const filename = new URL('../App.svelte', import.meta.url);
+  const source = (await readFile(filename, 'utf8')).replace('</script>',
+    'captureApp({navigate,get runtime(){return profileRuntime;},get state(){return{profileState,profileSummaries,view,games,gamesStale};}});</script>');
+  const {js} = compile(source, {filename:filename.pathname, generate:'server'});
+  const mounts = [], listeners = new Map();
+  let handlers;
+  const document = {hidden:false};
+  const location = new URL('http://localhost/');
+  const window = {
+    location,
+    addEventListener(name, fn) { listeners.set(name, fn); },
+    removeEventListener(name) { listeners.delete(name); },
+  };
+  const history = {
+    state:null,
+    replaceState(state, _unused, url) { this.state=state; if (url) location.href=new URL(url, location).href; },
+    pushState(state, unused, url) { this.replaceState(state, unused, url); },
+    go(){}, back(){}, forward(){},
+  };
+  window.history = history;
+  const App = evaluate(js.code, filename.pathname, name => {
+    if (name === 'svelte/internal/server') return server;
+    if (name === 'svelte') return {...svelte, onMount(fn){mounts.push(fn);}};
+    if (name.endsWith('.svelte')) return {default:()=>{}};
+    const key = name.replace('./lib/', './');
+    if (key === './profile-read-models/shared') return observations;
+    if (key === './game-read-models/shared') return {
+      observeGamesState(listener) {
+        gameReader = oldGames = listener;
+        listener({status:'connecting'});
+        return () => { gameReader = undefined; };
+      },
+    };
+    if (key === './can-input-observations') return {canInputTopic:()=>null, observeCanPanel:noRequest};
+    if (key === './cockpit-history') {
+      const actual = modules.get(key);
+      return {...actual, createCockpitHistory:(initial, options) => actual.createCockpitHistory(initial, {...options, host:window})};
+    }
+    if (modules.has(key)) return modules.get(key);
+    if (key === './gateway') return {gatewayRequest:send, GatewayError:Error, releaseOnExit:noRequest, openCockpitLink:noRequest};
+    if (key === './gateway-workspace') return {GatewayWorkspace:class {start(){} dispose(){}}};
+    if (key === './notifications') return {notify:noRequest};
+    throw new Error('Unexpected App dependency '+name);
+  }, {document, window, history, captureApp(value){handlers=value;}});
+  render(App).body;
+  return {
+    handlers, document, models,
+    mount:()=>mounts.map(fn=>fn()),
+    emitGames:state=>gameReader?.(state),
+    hasGameReader:()=>!!gameReader,
+    lateRuntime:state=>oldRuntime?.(state),
+    lateLibrary:state=>oldLibrary?.(state),
+    lateGames:state=>oldGames?.(state),
+  };
 }
 const savedRows=()=>[{id:modules.get('./profiles').DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:hash},...profiles];
-test('actual mounted App keeps passive profile streams fresh across views while hidden game polling remains suspended',async()=>{
- const calls=[],app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='game_get_state')return{games:games()};throw new Error('Unexpected App request '+request.command);});
- assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state']);assert.equal(app.handlers.state.profileState.stale,true);assert.equal(app.models.count('runtime'),1);assert.equal(app.models.count('library'),1);
- app.models.emit('runtime',{status:'ready',generation:'1',revision:'1',value:{profileSession:running(),automatic:automatic(),readOnly:false}});app.models.emit('library',{status:'ready',value:{profiles:savedRows()}});
- assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
- calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state']);
- calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);
- app.models.emit('runtime',{status:'lost',error:'Native source continuity lost.'});assert.equal(app.handlers.state.profileState.stale,true);app.models.emit('runtime',{status:'ready',generation:'2',revision:'1',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});assert.equal(app.handlers.state.profileState.status.owner,null);assert.equal(app.handlers.state.profileState.stale,false);
- app.document.hidden=false;for(const page of ['profiles','devices','topology','preferences']){app.handlers.navigate(page);await settle();calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state'],page);assert.equal(app.models.count('runtime'),1);assert.equal(app.models.count('library'),1);}
- app.handlers.navigate('overview');const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());app.lateRuntime({status:'ready',generation:'1',revision:'999',value:{profileSession:running(),automatic:automatic(),readOnly:false}});app.lateLibrary({status:'ready',value:{profiles:[]}});assert.deepEqual(plain(app.handlers.state),before);assert.equal(app.timers.size,0);assert.equal(app.models.count('runtime'),0);assert.equal(app.models.count('library'),0);assert.ok(calls.every(c=>c.command==='game_get_state'));
+
+test('mounted App follows committed profile and game streams across views without status queries', async () => {
+  const calls = [];
+  const app = await mountedApp(async request => { calls.push(request.command); throw Error('Unexpected App request'); });
+  const cleanup = app.mount();
+  await settle();
+  assert.equal(app.handlers.state.profileState.stale, true);
+  assert.equal(app.handlers.state.gamesStale, true);
+  assert.equal(app.hasGameReader(), true);
+
+  app.models.emit('runtime', {status:'ready',generation:'1',revision:'1',value:{profileSession:running(),automatic:automatic(),readOnly:false}});
+  app.models.emit('library', {status:'ready',value:{profiles:savedRows()}});
+  app.emitGames({status:'ready',value:games()});
+  assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId, id);
+  assert.equal(app.handlers.state.profileSummaries.length, 3);
+  assert.equal(app.handlers.state.gamesStale, false);
+
+  app.document.hidden = true;
+  app.emitGames({status:'lost',error:'Game catalogue continuity lost.'});
+  app.models.emit('runtime', {status:'lost',error:'Native source continuity lost.'});
+  assert.equal(app.handlers.state.profileState.stale, true);
+  assert.equal(app.handlers.state.gamesStale, true);
+  const updatedGames = {...games(), detectedGames:[]};
+  app.emitGames({status:'ready',value:updatedGames});
+  app.models.emit('runtime', {status:'ready',generation:'2',revision:'1',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});
+  assert.equal(app.handlers.state.profileState.status.owner, null);
+  assert.equal(app.handlers.state.profileState.stale, false);
+  assert.deepEqual(plain(app.handlers.state.games), updatedGames);
+
+  app.document.hidden = false;
+  for (const view of ['profiles','devices','topology','preferences','overview']) {
+    app.handlers.navigate(view);
+    await settle();
+    assert.equal(app.models.count('runtime'), 1);
+    assert.equal(app.models.count('library'), 1);
+    assert.equal(app.hasGameReader(), true);
+  }
+  const before = plain(app.handlers.state);
+  cleanup.forEach(fn=>fn?.());
+  app.lateRuntime({status:'ready',value:{profileSession:running(),automatic:automatic(),readOnly:false}});
+  app.lateLibrary({status:'ready',value:{profiles:[]}});
+  app.lateGames({status:'ready',value:games()});
+  assert.deepEqual(plain(app.handlers.state), before);
+  assert.equal(app.models.count('runtime'), 0);
+  assert.equal(app.models.count('library'), 0);
+  assert.equal(app.hasGameReader(), false);
+  assert.deepEqual(calls, []);
 });
 
 test('mounted App runtime observations keep policy and library selection separate from native ownership and fence disposed callbacks',async()=>{
- const calls=[],app=await mountedApp(async request=>{calls.push(request.command);if(request.command==='game_get_state')return{games:games()};throw new Error('Unexpected App request '+request.command);});const cleanup=app.mount();await settle();
+ const calls=[],app=await mountedApp(async request=>{calls.push(request.command);throw new Error('Unexpected App request '+request.command);});const cleanup=app.mount();await settle();
  app.models.emit('runtime',{status:'ready',value:{profileSession:stopped(),automatic:automatic('automatic'),readOnly:false}});assert.equal(app.handlers.state.profileState.stale,false);assert.equal(app.handlers.state.profileState.status.owner,null);assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
  app.models.emit('library',{status:'ready',value:{profiles:savedRows(),session:{selectedProfileId:other,state:'running',selectionMode:'automatic'}}});assert.equal(app.handlers.state.profileState.status.owner,null,'Library selection and automatic policy cannot invent native ownership.');
  app.models.emit('runtime',{status:'error',error:'Native runtime status unavailable.'});assert.equal(app.handlers.state.profileState.stale,true);assert.match(app.handlers.state.profileState.statusError,/unavailable/);
  app.models.emit('runtime',{status:'ready',value:{profileSession:running(),automatic:automatic(),readOnly:true}});assert.equal(app.handlers.state.profileState.stale,false);assert.equal(app.handlers.state.profileState.readOnly,true);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);
- assert.equal(await app.handlers.runtime.apply({id:other,revision:7,baseRevision:7,dirty:false,readOnly:false}),false);assert.ok(calls.every(command=>command==='game_get_state'),'Read-only observations cannot authorize Apply or any output request.');
+ assert.equal(await app.handlers.runtime.apply({id:other,revision:7,baseRevision:7,dirty:false,readOnly:false}),false);assert.deepEqual(calls,[],'Read-only observations cannot authorize Apply or any output request.');
  app.models.emit('runtime',{status:'ready',value:{profileSession:running(),automatic:automatic(),readOnly:false}});assert.equal(app.handlers.state.profileState.readOnly,false);
- const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());app.lateRuntime({status:'ready',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});app.lateRuntime({status:'error',error:'Retired source failed.'});assert.deepEqual(plain(app.handlers.state),before,'Disposed callbacks cannot update runtime status.');assert.ok(calls.every(command=>command==='game_get_state'));
+ const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());app.lateRuntime({status:'ready',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});app.lateRuntime({status:'error',error:'Retired source failed.'});assert.deepEqual(plain(app.handlers.state),before,'Disposed callbacks cannot update runtime status.');assert.deepEqual(calls,[]);
 });
 
 test('header badges show authoritative selection mode and applied ownership without a stopped label or stale inference',async()=>{
