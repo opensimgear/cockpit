@@ -8,7 +8,7 @@
 // node --test tests/ui/dcs-catalogue-background-native.mjs
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from 'node:fs/promises';
+import {copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, unlink, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
@@ -145,6 +145,8 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
     const gameRoot = join(scratch, 'DCS');
     const executable = join(gameRoot, 'bin', 'DCS.exe');
     const first = join(scratch, 'first'), second = join(scratch, 'second');
+    const blockedParent = join(scratch, 'blocked'), recovering = join(blockedParent, 'catalogue');
+    const parked = join(scratch, 'parked');
     const module = JSON.parse(await readFile(join(fixtures, `${originalModule}.json`), 'utf8'));
     const aliases = JSON.parse(await readFile(join(fixtures, 'AircraftAliases.json'), 'utf8'));
     await mkdir(userFolder);
@@ -157,7 +159,14 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
 
     await savePath(userFolder, first, (await setup()).providerSetupRevision);
     const firstSetup = await setup();
-    const {profileResources: {resource}} = await request({command: 'profile_dcs_vehicle_resource', vehicleId: aircraft});
+    const resource = await until(async () => {
+      try {
+        return (await request({command: 'profile_dcs_vehicle_resource', vehicleId: aircraft})).profileResources.resource;
+      } catch (error) {
+        if (!String(error).includes('The provider catalogue changed during capture')) throw error;
+        return null;
+      }
+    });
     assert.equal(resource.attributes.aircraftModule, originalModule);
     const profileName = `DCS background ${randomUUID()}`;
     const profile = await seedProfile(request, profileName, resource.id);
@@ -206,14 +215,35 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
       assert.equal(current.name, original.name);
       assert.deepEqual(current.position, original.position);
     }
+
+    // Select a path with a temporary non-directory ancestor. Restore it
+    // without a second settings commit or a manual catalogue refresh.
+    await prepareCatalogue(parked, module);
+    await writeJson(parked, 'AircraftAliases', {...aliases, [aircraft]: [aliasModule]});
+    await writeJson(parked, aliasModule,
+      moduleWithControls(module, 'ALIAS_ONE', 'ALIAS_TWO', 'ALIAS_THREE', 'RECOVERED_CONTROL'));
+    await writeFile(blockedParent, 'A temporary file prevents directory registration.');
+    await savePath(userFolder, recovering, secondSetup.providerSetupRevision);
+    const blockedSetup = await until(setup, value =>
+      value.catalogueGeneration !== remappedSetup.catalogueGeneration);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await unlink(blockedParent);
+    await mkdir(blockedParent);
+    await rename(parked, recovering);
+    const recovered = await waitForInputs(5, 'Catalogue watch rearmed after its parent recovered');
+    assert.equal(recovered.profileName, draftName);
+    assert.deepEqual(recovered.position, original.position);
+    const recoveredSetup = await setup();
+    assert.equal(recoveredSetup.providerSetupRevision, blockedSetup.providerSetupRevision);
     await click('.profiles-workspace button.header-back');
     await click('dialog[open][aria-labelledby="leave-profile-title"] button:nth-of-type(2)');
     const editButton = `.profiles-workspace button[aria-label="Edit ${profileName}"]`;
     await until(() => page.evaluate(`!!document.querySelector(${JSON.stringify(editButton)})`));
-    await writeJson(second, aliasModule, moduleWithControls(module, 'ALIAS_ONE', 'ALIAS_TWO', 'ALIAS_THREE', 'REOPEN_CONTROL'));
-    await until(setup, value => value.catalogueGeneration !== remappedSetup.catalogueGeneration);
+    await writeJson(recovering, aliasModule, moduleWithControls(module, 'ALIAS_ONE', 'ALIAS_TWO', 'ALIAS_THREE',
+      'RECOVERED_CONTROL', 'REOPEN_CONTROL'));
+    await until(setup, value => value.catalogueGeneration !== recoveredSetup.catalogueGeneration);
     await click(editButton);
-    const reopened = await waitForInputs(5, 'Reopened aircraft editor');
+    const reopened = await waitForInputs(6, 'Reopened aircraft editor');
     assert.equal(reopened.profileName, profileName);
     assert.equal(reopened.origin, original.origin);
     assert.deepEqual(reopened.position, original.position);

@@ -14,6 +14,10 @@ struct ProviderWatch {
 }
 
 impl AssettoWatches {
+    pub(super) fn retry_at(&self) -> Option<Instant> {
+        self.0.iter().filter_map(|watch| watch.source.retry_at()).min()
+    }
+
     pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
         let games = {
             let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());

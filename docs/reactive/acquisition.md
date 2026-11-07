@@ -168,6 +168,12 @@ wakes the context owner to replace watches when the selected folder changes.
 With both watches and live process notifications, the context owner parks
 between events and pending retries. Safety-sensitive commands still read
 durable evidence.
+The SDK, Assetto and DCS file watchers schedule a two-second re-registration
+deadline after a failed native registration. The context owner selects the
+earliest due watch alongside its existing deadlines. A successful retry
+clears its deadline and publishes a fresh source baseline. An unchanged
+failed registration preserves the current read-model generation, and a
+removed scope clears the deadline.
 X-Plane passive inspection schedules explicit demand at its lease deadline.
 Closing an observation wakes the vehicle worker to release its channels even
 when the native capture has no updates.

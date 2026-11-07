@@ -15,6 +15,10 @@ pub(super) struct DcsWatch {
 }
 
 impl DcsWatch {
+    pub(super) fn retry_at(&self) -> Option<Instant> {
+        self.source.retry_at().into_iter().chain(self.catalogue.retry_at()).min()
+    }
+
     pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
         let catalogue = inner.setup.dcs_catalogue_watch_path();
         let children = catalogue.as_deref().map(|root| {

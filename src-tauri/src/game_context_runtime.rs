@@ -247,7 +247,12 @@ impl GamesRuntime {
                 if inner.closed.load(Ordering::Acquire) { break; }
                 if processes == process_wake.observed() && updated == update_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
-                    context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner, live, started, assetto_setup_pending || dcs_setup_pending));
+                    let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at()]
+                        .into_iter().flatten().min().map(|at| at.saturating_duration_since(Instant::now()));
+                    let maintenance = context_sdk_watch::maintenance_delay(
+                        &inner, live, started, assetto_setup_pending || dcs_setup_pending,
+                    );
+                    context_wake.wait_scheduled(library, maintenance.into_iter().chain(watch_retry).min());
                 }
             }
             polling_closed.store(true, Ordering::Release);
