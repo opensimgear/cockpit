@@ -362,9 +362,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     if(browserUrl)return browserBurst(owner,setAirborne);
     if(nativeRates){
       const result=await createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart})(owner,setAirborne);
-      dualSubmissions=result.submissions;
-      const {submissions,...load}=result;
-      return load;
+      const {submissions,evidence:nativeRateEvidence,...load}=result;
+      dualSubmissions=submissions;
+      return {...load,nativeRateEvidence,submissionTimestamp:'source offer'};
     }
     if(observation)return nativeMcpBurst(owner,{setAirborne,setPaused});
     const mark=(await samples()).length;

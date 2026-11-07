@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 mod process_monitor;
 #[path = "gateways/profile_samples.rs"]
 mod sample_observations;
+#[path = "gateways/debug_input.rs"]
+mod debug_input;
 
 /// A metadata write may carry one already-bounded discovery artwork preview
 /// (128 KiB JPEG plus its base64 and JSON envelope).
@@ -184,6 +186,9 @@ fn empty_state() -> Value {
     json!({"connected":false,"running":false,"needsReconnect":false,"reconnecting":false,"modules":[],"port":null,"ports":[]})
 }
 fn profile_guard_operation(command: &str) -> Option<&str> {
+    if matches!(command, "profile_debug_controller_status" | "profile_debug_controller_input") {
+        return None;
+    }
     if command=="profile_companion_references" { return None; }
     if command=="profile_retired_recovery_status" { return None; }
     if command.starts_with("profile_retired_recovery_") { return Some("claim"); }
@@ -1422,17 +1427,8 @@ impl GatewayManager {
         }
         if matches!(command.as_str(),"profile_debug_controller_status"|"profile_debug_controller_input") {
             request.as_object_mut().unwrap().remove("clientId");
-            let mut result=crate::profile_debug_controller::Request::parse(&request).and_then(|request|self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).debug_controller(&request));
-            if let Ok(Value::Object(state)) = &mut result {
-                if state.remove("queued").is_some_and(|queued| queued == true) {
-                    self.profile_wake.notify();
-                }
-                if state.remove("changed").is_some_and(|changed| changed == true) {
-                    if let Some(publisher) = &self.debug_inputs_observation {
-                        let _ = publisher.publish_latest_state(publisher.generation(), json!({}), self.observations.captured_us(), "profile-debug-inputs");
-                    }
-                }
-            }
+            let result=crate::profile_debug_controller::Request::parse(&request)
+                .and_then(|request|self.dispatch_debug_controller(&request));
             return match result {Ok(state)=>json!({"ok":true,"state":{"debugController":state}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
         }
         if command == "profile_runtime_inspect" {

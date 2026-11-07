@@ -328,3 +328,62 @@ corrected runs are `.research/dcs-physics-native/1794048557207/evidence.json`
 and `.research/dcs-physics-native/1794048975685/evidence.json`,
 using desktop SHA-256
 `d517018db2e4becaf6fa2cff8fc3582a68bb356456c3f4fcdf20ec87b39f0ceb`.
+
+## Independent 1 kHz and 125 Hz offers with bounded native admission
+
+The follow-up timestamps each offered edge before handing it to a bounded
+lane queue. The scheduler never waits for gateway completion. Each lane
+keeps its stream ID and order, and enters the normal coordinator and
+debug frame queue under the usual owner checks. The portal and MCP debug
+requests also skip the redundant profile guard lock. The exact owner check
+still runs under the coordinator lock.
+
+With one coordinator acquisition per edge, run `1794049524376` offered
+1,000.00 and 125.01 Hz. The fast lane completed at 493.44 Hz, with
+1.61 ms median coordinator wait and 0.031 ms median coordinator work.
+It reached Windows Raw Input at 194.98 ms p95 from offer. The
+source-to-dispatch queue alone was 190.68 ms p95. All 218 edges arrived
+in order, and the 125 Hz lane met its latency budget.
+
+The final qualification worker drains up to eight already available
+edges in one acquisition. It never waits for more edges to fill a batch.
+It validates each exact owner and ordered frame, then wakes the profile
+worker and publishes the debug state change after unlocking. The wake
+is shared by the batch. Each edge still goes through the real reducer
+and vJoy path.
+
+| Run | Offered rates | Offer to Windows Raw Input p50 | p95 | p99 |
+| --- | --- | --- | --- | --- |
+| `1794049824258` | 999.81 / 124.99 Hz | 3.94 / 4.19 ms | 8.46 / 10.06 ms | 9.77 / 10.45 ms |
+| `1794049920834` | 999.64 / 124.96 Hz | 3.63 / 3.66 ms | 5.77 / 5.33 ms | 6.51 / 5.43 ms |
+| `1794049969060` | 1,001.22 / 125.16 Hz | 3.81 / 3.85 ms | 9.41 / 9.03 ms | 13.37 / 12.72 ms |
+
+The fast lane used 54–64 acquisitions for 193 edges, with a peak batch
+of eight and a peak of ten pending native frames. Its first-run median
+acquisition wait was 2.19 ms. Wait is measured once per batch. Each edge
+has a separate offer, dispatch, admission and Raw Input timestamp. The
+acquisition wait excludes the outer profile and game admission reads.
+
+All three fresh-owner runs delivered all 218 ordered edges. Both panels
+painted during the 191.75–192.05 ms overlap. Their separate 24-change
+presentation p95 stayed below 10 ms. The fast MCP reader observed both
+held values and both readers retired after Stop. Windows received both
+releases 38.58–44.00 ms after MCP Stop submission, and cleanup completed.
+The ordinary single-source MCP/vJoy regression passed with qualification
+disabled. Sustained load, actual simulator, LAN and physical-device
+qualification remain open.
+
+The batch build used desktop SHA-256
+`9b69eea9eb3edeaa2b4356ef5d29a01e335993f986737e45d52580096ffd8881`.
+Raw evidence is in the corresponding `.research/dcs-physics-native/<run>/evidence.json`.
+
+The final Windows suite passed 2,400 tests with 18 default ignores. The
+explicitly enabled qualification test and both pinned DCS archive tests
+passed separately. An earlier high-parallelism run exhausted disk space
+while three X-Plane tests copied their fixture executable. The same
+instrumented binary passed at four test threads.
+
+Repository production line coverage was 82.14% for the qualification
+module and 97.37% for the shared gateway module. LLVM module function
+coverage was 75.00% and 87.50% respectively. This build did not instrument
+branches. The stream and browser feedback coverage checks also passed.

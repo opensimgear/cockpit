@@ -86,3 +86,11 @@ order and the panels and MCP delivered updates. The 1.69 ms median
 native gateway call narrows the remaining rate investigation to the
 in-process path. The single-worker schedule also delayed the peer lane.
 [In-process dual-rate trace](2026-11-07-dcs-panel-vjoy.md#in-process-desktop-dual-rate-source)
+
+Separating the source clocks from admission established the offered rates
+and exposed a fast-lane coordinator backlog. A bounded drain of already
+available frames brought offer-to-Raw-Input latency under the software
+budget with both rates, the two panels, Debug and MCP in one desktop
+service. The short software burst is qualified. Sustained load and
+physical and simulator confirmation remain open.
+[Independent source and admission trace](2026-11-07-dcs-panel-vjoy.md#independent-1-khz-and-125-hz-offers-with-bounded-native-admission)
