@@ -19,6 +19,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `games.state`, `games.detail.<id>` | Game read-model worker captures prepared caches after source revisions | Game library and scoped game details. Immutable page reads follow the exact projected references. |
 | `games.jobs`, `games.telemetry` | Game read-model worker publishes job changes and telemetry invalidation | Discovery and artwork progress, and selected telemetry inspection. |
 | `companion.listener`, `companion.presence`, `companion.firmware` | Companion host publishes listener lifecycle, pairing and presence, and USB firmware progress separately | Companion connections, listener settings, designer and firmware workflows. |
+| `designer.workspace` | Native designer storage publishes the workspace and library revisions after a successful workspace or widget-source commit. | The native companion library and MCP readers receive the revision notice. Browser-dev designer storage has a separate IndexedDB commit signal. Open editors preserve their drafts. |
 | `activity.log` | Activity log revision published after log and source updates | Activity log reads and filters. |
 | `settings.activity` | Activity retention publisher serializes committed retention changes | General Settings follows the committed value on native and browser-dev while preserving a local draft. |
 | `storage.backups` | Persistence backup owner publishes operation and inventory state | Native Settings backup controls. |

@@ -15,6 +15,7 @@ import { uiPreferenceScenarios } from './mcp-ui-preference-scenarios.mjs';
 import { integrationObservation } from './mcp-integration-observation.mjs';
 import { controlParity } from './mcp-control-parity.mjs';
 import { profileEditorObservation } from './mcp-profile-editor-observation.mjs';
+import { designerObservation, designerUri } from './mcp-designer-observation.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(operation, description, timeout = 20000) {
@@ -147,7 +148,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const observeJobs = process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1';
     const activityUri = 'cockpit://observations/activity.log';
     const observeActivity = process.env.OSG_MCP_ACTIVITY_OBSERVATION === '1';
-    const uris = [observationUri, ...(observeController ? [controllerUri] : []), ...(observeJobs ? [jobsUri] : []), ...(observeActivity ? [activityUri] : [])];
+    const uris = [observationUri, designerUri, ...(observeController ? [controllerUri] : []), ...(observeJobs ? [jobsUri] : []), ...(observeActivity ? [activityUri] : [])];
     assert.ok(uris.every(uri => fixedResources.some(resource => resource.uri === uri)));
     const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: uris } });
     assert.equal(observation.status, 200);
@@ -182,6 +183,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
         }
       }
       assert.ok(uris.every(uri => baselines.has(uri)));
+      await designerObservation({page,reader,nextObservation,evidence});
       const committedActivity = async (update, document) => {
         if (update.params.uri !== activityUri) return false;
         assert.notEqual(update.params._meta['opensimgear.com/observation'].kind, 'loss');
