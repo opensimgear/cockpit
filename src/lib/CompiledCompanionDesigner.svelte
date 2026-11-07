@@ -59,14 +59,13 @@
   export function showMain(): boolean { if (!leave() || connections && !connections.showMain(false)) return false; widgetEditor=undefined;editingInstance='';draft = undefined; dirty = false; details = false; invalidate(); onNavigate?.({ kind: 'main' }); return true; }
   export function requestNavigation(proceed: () => void, cancel?: () => void) { if (!leave()) { cancel?.(); return; } const done = () => { trying = false; player?.reset(); proceed(); }; connections ? connections.requestNavigation(done, cancel) : done(); }
   export async function restoreNavigation(target: CompanionNavigation): Promise<void> {
-    await loaded; await tick(); if (disposed) return;
+    await tick(); await libraryLoad; if (disposed || !active) return;
     if(target.kind==='widget'){if(widgetEditor?.id!==target.id){const source=workspace.sources.find(s=>s.id===target.id);if(source)editWidget(source,'',false);}return;}
     widgetEditor=undefined;editingInstance='';
     if (target.kind === 'panel') { if (draft?.id !== target.id) openPanel(target.id, false); }
     else { draft = undefined; dirty = false; invalidate(); if (target.kind === 'companion') { details = true; connections?.showCompanion(target.id); } else { details = false; connections?.showMain(false); } }
   }
-  let resolveLoaded: () => void = () => {};
-  const loaded = new Promise<void>(resolve => { resolveLoaded = resolve; });
+  let libraryLoad = Promise.resolve();
   async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) { const result = (await gatewayRequest({ command, companion })).companions; if (!result) throw new Error('This operation requires the native Cockpit.'); host = { ...host, ...result }; return result; }
   async function refresh() {
     if (disposed || !active || !panelVisible) return;
@@ -88,17 +87,29 @@
       }));
     return () => stops.forEach(stop => stop());
   });
-  onMount(() => {
-    void (async () => { try {
-      workspace = await store.load();
-
-      ready = true;
-    } catch (e) { error = `Cannot load designer: ${String(e)}`; } finally { resolveLoaded(); } })();
-    return () => { disposed = true; invalidate(); resolveLoaded(); };
+  onMount(() => () => { disposed = true; invalidate(); });
+  $effect(() => {
+    if (!active || draft || widgetEditor) return;
+    // The app keeps this designer mounted across navigation. Reopen the
+    // library from storage without replacing a retained editor's inputs.
+    untrack(() => {
+      ready = false;
+      libraryLoad = (async () => {
+        try {
+          const current = await store.load();
+          if (!disposed && !draft && !widgetEditor) {
+            workspace = current;
+            ready = true;
+          }
+        } catch (e) {
+          if (!disposed) error = `Cannot load designer: ${String(e)}`;
+        }
+      })();
+    });
   });
   $effect(() => { if (!active) untrack(() => { trying = false; player?.reset(); }); });
   function openPanel(id: string, record = true) {
-    if (!leave()) return;
+    if (!ready || !leave()) return;
     const saved = workspace.drafts.find(draft => draft.id === id); if (!saved) { error = 'This panel is no longer available.'; return; }
     const visibleState = !draft ? connections?.getHostState() : undefined;
     invalidate(); draft = structuredClone(saved); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = false;
@@ -141,7 +152,7 @@
   }
   function removeSelected() { change(next => { next.widgets = next.widgets.filter(w => w.id !== selected); }); selected = ''; }
   function parameter(id: string, value: Scalar) { change(next => { next.widgets.find(w => w.id === selected)!.parameters[id] = value; }); }
-  function editWidget(item?: WidgetSource, instance = '', record=true) { editingInstance = instance; trying=false;player?.reset();widgetEditor = item ? structuredClone(item) : blankWidgetSource();if(record)onNavigate?.({kind:'widget',id:widgetEditor.id}); }
+  function editWidget(item?: WidgetSource, instance = '', record=true) { if(!ready)return;editingInstance = instance; trying=false;player?.reset();widgetEditor = item ? structuredClone(item) : blankWidgetSource();if(record)onNavigate?.({kind:'widget',id:widgetEditor.id}); }
   function closeWidget(){widgetEditor=undefined;editingInstance='';onNavigate?.(getNavigation());}
   async function saveWidget(next: WidgetSource, _bundle: CompiledWidgetBundle) {
     const updated = replaceWorkspaceSources(workspace, [next]);
@@ -168,6 +179,7 @@
     } catch (e) { error = String(e); } finally { busy = saving = false; }
   }
   async function removePanel(id: string) {
+    if (!ready) return;
     if (!window.confirm('Delete this panel and its assignments?')) return;
     busy = true; try { await restoreCompanionPanels(); await removePanelAssignments((workspace.publications[id] ?? []).map(p => p.publicationHash), send); const publications = { ...workspace.publications }; delete publications[id]; workspace = await store.save({ ...workspace, drafts: workspace.drafts.filter(d => d.id !== id), publications }); if (draft?.id === id) { dirty = false; busy = false; showMain(); } } catch (e) { error = String(e); } finally { busy = false; }
   }
