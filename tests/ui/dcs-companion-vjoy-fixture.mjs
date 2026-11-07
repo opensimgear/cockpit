@@ -143,6 +143,78 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
   }
 
   const expected=Array.from({length:65},(_,index)=>index%2===0);
+  const streamId=randomUUID();
+  let sequence=0, closedPreviewAt, stopTrace, previewReads=0, previewOpens=0, previewError;
+  const previewPending=new Map(), previewActive=new Map(), previewRetired=new Set();
+  async function sendDebug(owner,value) {
+    const sent=String(++sequence);
+    const {debugController}=await request({command:'profile_debug_controller_input',owner,
+      nodeId:debugNode,streamId,sequence:sent,changes:[{portId:'button-1',value}]});
+    assert.equal(debugController.sequence,sent);
+  }
+
+  async function openInspector() {
+    await cdp.call('Network.enable',{maxPostDataSize:65536});
+    stopTrace=cdp.listen(({method,params})=>{
+      const id=params?.requestId;
+      if(method==='Network.requestWillBeSent'&&params.request.postData){
+        const path=new URL(params.request.url).pathname;
+        if(!['/gateway_request','/observation_subscribe','/observation_unsubscribe'].includes(path))return;
+        const body=JSON.parse(params.request.postData);
+        if(path==='/gateway_request'&&['game_telemetry_inspect','profile_runtime_inspect'].includes(body.request?.command))previewReads++;
+        if(path==='/observation_subscribe'&&/^(games\.telemetry$|profiles\.samples\.|controllers\.input\.)/.test(body.topic)){
+          previewOpens++;
+          previewPending.set(id,{topic:body.topic});
+        }else if(path==='/observation_unsubscribe')previewPending.set(id,{token:body.subscriptionId});
+      }
+      const pending=previewPending.get(id);
+      if(!pending)return;
+      if(method==='Network.responseReceived')pending.status=params.response.status;
+      if(method!=='Network.loadingFinished'&&method!=='Network.loadingFailed')return;
+      if(pending.topic){
+        void cdp.call('Network.getResponseBody',{requestId:id}).then(({body})=>{
+          assert.equal(pending.status,200);
+          const token=JSON.parse(body);
+          assert.equal(typeof token,'string');
+          if(!previewRetired.has(token))previewActive.set(token,pending.topic);
+        }).catch(error=>previewError=error).finally(()=>previewPending.delete(id));
+      }else{
+        if(pending.status===200){previewRetired.add(pending.token);previewActive.delete(pending.token);}
+        previewPending.delete(id);
+      }
+    });
+    await cdp.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Debug"]').click()`);
+    await until(async()=>{
+      if(previewError)throw previewError;
+      return [...previewActive.values()].includes('games.telemetry') && await cdp.evaluate(`(()=>{
+        const table=document.querySelector('[aria-label="Incoming telemetry channel values"]');
+        return !!table && !table.closest('[hidden]');
+      })()`);
+    }).catch(async error=>{
+      const inspector=await cdp.evaluate(`document.querySelector('.game-telemetry')?.innerText.slice(0,500)`);
+      throw new Error(`Inspector did not open. Topics: ${[...previewActive.values()]}. View: ${inspector}`,{cause:error});
+    });
+  }
+
+  async function withPreviewsClosed(owner,setAirborne) {
+    await cdp.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Overview"]').click()`);
+    await until(async()=>{
+      if(previewError)throw previewError;
+      return previewPending.size===0 && previewActive.size===0 && await cdp.evaluate(`(()=>{
+        const inspector=document.querySelector('[aria-label="Incoming game telemetry"]');
+        return !inspector || !!inspector.closest('[hidden]');
+      })()`);
+    });
+    const before=[previewOpens,previewReads], offset=(await samples()).length;
+    closedPreviewAt=process.hrtime.bigint();
+    setAirborne(true);
+    await sendDebug(owner,false);
+    const lamp=await waitLamp(offset,sample=>sample.status==='fresh'&&sample.value===true);
+    await sendDebug(owner,true);
+    assert.deepEqual([previewOpens,previewReads],before,'Closed previews must not subscribe or read while native routes run');
+    return {lamp,retiredReaders:before[0],previewOpens:0,previewReads:0};
+  }
+
   async function burst(owner, {setAirborne,setPaused}) {
     await page.getByText('Connected · panel active',{exact:true}).waitFor();
     await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
@@ -150,9 +222,11 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     probe=spawn(probeExecutable,['--vjoy-buttons'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const started=once(lines,'line'), trace=[];
+    let probeError='';
+    probe.stderr.setEncoding('utf8').on('data',chunk=>{probeError=(probeError+chunk).slice(-4096);});
     report=(async()=>{
       const [code]=await once(probe,'close');
-      assert.equal(code,0);
+      assert.equal(code,0,probeError);
       return JSON.parse(trace.at(-1));
     })();
     // Keep the child result owned even if an earlier assertion aborts the test.
@@ -166,14 +240,11 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     await page.getByRole('button',{name:'probe: press',exact:true}).click();
     const beforePause=(await samples()).length;
     setPaused(true);
-    const streamId=randomUUID(), start=performance.now();
+    const start=performance.now();
     for(const [index,value] of expected.entries()){
       const remaining=start+index*8-performance.now();
       if(remaining>0)await delay(remaining);
-      const sequence=String(index+1);
-      const {debugController}=await request({command:'profile_debug_controller_input',owner,
-        nodeId:debugNode,streamId,sequence,changes:[{portId:'button-1',value}]});
-      assert.equal(debugController.sequence,sequence);
+      await sendDebug(owner,value);
     }
     const paused=await waitLamp(beforePause,sample=>sample.status!=='fresh');
     const beforeResume=(await samples()).length;
@@ -193,24 +264,29 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     assert.ok(events.every(event=>event.status===0x00110000));
     const edges=field=>events.filter((event,index)=>event[field]!==(events[index-1]?.[field]??false));
     const debug=edges('pressed'), panel=edges('peerPressed');
-    assert.deepEqual(debug.map(event=>event.pressed),[...expected,false]);
+    assert.deepEqual(debug.map(event=>event.pressed),[...expected,false,true,false]);
     assert.deepEqual(panel.map(event=>event.peerPressed),[true,false]);
     const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
+    const closedPreviewEdges=debug.slice(expected.length,-1);
+    assert.equal(closedPreviewEdges.length,2);
+    assert.ok(closedPreviewEdges.every(event=>qpcNs(start+BigInt(event.receivedTicks))>=closedPreviewAt));
     const stopReleaseMs=[debug.at(-1),panel.at(-1)].map(event=>Number(
       qpcNs(start+BigInt(event.receivedTicks))-stopNs)/1e6);
     assert.ok(stopReleaseMs.every(ms=>ms>=0),'Both buttons must stay held until Stop');
-    return {slot:slot.slot,debugTransitions:expected.length,panelTransitions:1,stopReleaseMs,slotFree:true};
+    return {slot:slot.slot,debugTransitions:expected.length,closedPreviewTransitions:closedPreviewEdges.length,
+      panelTransitions:1,stopReleaseMs,slotFree:true};
   }
 
   async function close() {
     probe?.kill();
+    stopTrace?.();
     try {await browser?.close();} finally {
       try {if(peer)await companion('companion_revoke',{companionId:peer.companionId});} finally {
         if(listenerEnabled)await companion('companion_disable',{expectedSettingsRevision:(await listener()).settingsRevision});
       }
     }
   }
-  return {prepare,bind,burst,stopped,close};
+  return {prepare,bind,openInspector,burst,withPreviewsClosed,stopped,close};
 }

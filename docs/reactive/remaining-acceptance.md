@@ -5,8 +5,8 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 32 checked and 23
-open. The open criteria include 10 software, qualification or governance
+The original #189–198 acceptance list has 55 criteria, with 33 checked and 22
+open. The open criteria include nine software, qualification or governance
 criteria and 13 requiring user-operated rig or simulator acceptance. Some open
 criteria have delivered software and outstanding qualification.
 
@@ -365,6 +365,10 @@ verified fresh baselines and fenced the replaced source.
 Stable desktop WebView 1 kHz and the 30-minute rig soak remain open.
 The [combined desktop fault run](../verification/2026-11-07-dcs-panel-vjoy.md)
 passed with authored DCS telemetry, a compiled browser panel and real vJoy.
+The follow-up retired the actual Cockpit telemetry inspector and both test
+readers. The same profile then sent fresh panel feedback while Windows
+received both vJoy transitions. This satisfies the closed-preview criterion
+in #193. Actual simulator effects remain in #199.
 
 ### Ordered 125 Hz and 1 kHz on browser-dev
 

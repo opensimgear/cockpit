@@ -46,8 +46,7 @@ export function nativeMainTarget(pages) {
 }
 
 // Test-only connection to the actual running native WebView, with bounded calls.
-export async function nativePage() {
-  const endpoint=process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222';
+export async function nativePage(endpoint=process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222') {
   const pages=await(await fetch(`${endpoint}/json`)).json();
   const page=nativeMainTarget(pages);
   if(!page)throw new Error('Start the native dev Cockpit before running acceptance.');

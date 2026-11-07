@@ -11,6 +11,7 @@ import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createSocket} from 'node:dgram';
 import {createHash, randomUUID} from 'node:crypto';
+import {nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture} from './dcs-companion-vjoy-fixture.mjs';
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
@@ -20,40 +21,6 @@ const nodeId = id => `value-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 const near = (actual, expected) => typeof expected === 'number'
   ? typeof actual === 'number' && Math.abs(actual - expected) < 1e-7
   : actual === expected;
-
-async function connect() {
-  const targets = await (await fetch(`${process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9224'}/json/list`)).json();
-  const target = targets.find(t => t.type === 'page' && /127\.0\.0\.1:1420|tauri\.localhost/.test(t.url) && !/activation/i.test(t.url));
-  assert.ok(target, 'Start the rebuilt native dev Cockpit.');
-  const socket = new WebSocket(target.webSocketDebuggerUrl), pending = new Map();
-  let serial = 0;
-  await new Promise((done, reject) => {
-    socket.addEventListener('open', done, {once: true});
-    socket.addEventListener('error', reject, {once: true});
-  });
-  socket.addEventListener('message', event => {
-    const value = JSON.parse(event.data), waiter = pending.get(value.id);
-    if (!waiter) return;
-    clearTimeout(waiter.timer); pending.delete(value.id);
-    value.error ? waiter.reject(Error(value.error.message)) : waiter.done(value.result);
-  });
-  return {
-    async evaluate(expression) {
-      const reply = await new Promise((done, reject) => {
-        const id = ++serial;
-        const timer = setTimeout(() => { pending.delete(id); reject(Error('Native IPC timed out.')); }, 15000);
-        pending.set(id, {done, reject, timer});
-        socket.send(JSON.stringify({id, method: 'Runtime.evaluate', params: {expression, awaitPromise: true, returnByValue: true}}));
-      });
-      if (reply.exceptionDetails) throw Error(reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text);
-      return reply.result.value;
-    },
-    close() {
-      for (const item of pending.values()) { clearTimeout(item.timer); item.reject(Error('CDP connection closed.')); }
-      pending.clear(); socket.close();
-    },
-  };
-}
 
 function block(address, bytes) {
   const header = Buffer.alloc(4); header.writeUInt16LE(address); header.writeUInt16LE(bytes.length, 2);
@@ -86,7 +53,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
   await mkdir(resolve(userFolder, 'Scripts'), {recursive: true});
-  const cdp = await connect(), checks = [], cleanupErrors = [];
+  const cdp = await nativePage(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9224'), checks = [], cleanupErrors = [];
   const evidence = {actualNativeCockpit: true, ipcOnly: true, noPhysicalOutputs: true,
     authoredTelemetry: true, fixtureProcess: true, actualSimulatorQualified: false,
     directory, userFolder, startedAt: new Date().toISOString(), checks, cleanupErrors, phases: {}};
@@ -326,6 +293,11 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     emitPhysics = true; await live(); await checkpoint('stale ownship withdraws physics while BIOS gauges remain live');
     biosMode = 'counter-only';
     const owner = (await status()).profileSession.owner;
+    const setAirborne = airborne => {
+      nativeValues['flight.ownship.inAir'] = airborne;
+      selected['flight.ownship.inAir'] = airborne;
+    };
+    await combined?.openInspector();
     await cdp.evaluate(`(async()=>{
       const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
       const {SharedObservations}=await import('/src/lib/streams/shared.ts');
@@ -342,10 +314,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
       const before = (await readers()).fast;
       const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
-        setAirborne(airborne) {
-          nativeValues['flight.ownship.inAir'] = airborne;
-          selected['flight.ownship.inAir'] = airborne;
-        },
+        setAirborne,
         setPaused(paused) { mode = paused ? 'paused' : 'live'; },
       })]);
       if (burst) evidence.phases.combined = burst;
@@ -369,6 +338,11 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       return page && output(page, biosId)?.status !== 'known'
         && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
     }, 'BIOS expiry must withdraw its derived output while fresh ownship processing remains live');
+    if (combined) {
+      evidence.phases.closedPreviews = await combined.withPreviewsClosed(owner, setAirborne);
+      assert.deepEqual((await status()).profileSession.owner, owner);
+      setAirborne(false);
+    }
     const stopNs = process.hrtime.bigint();
     await request({command: 'profile_stop'});
     if (combined) Object.assign(evidence.phases.combined, await combined.stopped(stopNs));

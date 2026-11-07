@@ -27,3 +27,29 @@ The separate older DCS-BIOS browser protocol fixture failed the current
 compiled-panel asset negotiation. The combined run uses the compiled
 publication and authored UDP. The 30-minute rig soak and real simulator
 effects remain in #199.
+
+## Routing with previews closed
+
+The follow-up opened the Cockpit Debug telemetry inspector and observed its
+native `games.telemetry` subscription and visible channel table. After the
+stalled-reader phase it closed the two test readers and navigated from Debug
+to Overview. The DevTools trace confirmed successful unsubscribe responses
+for all three tokens. It recorded zero new preview subscriptions and zero
+inspection reads during the closed phase.
+
+The same applied owner sent a fresh host lamp update to the browser panel.
+Windows Raw Input recorded both additional vJoy transitions after the readers
+retired. The original 65 debug transitions and the panel press arrived in
+order. During the withheld acknowledgement the independent reader received 31
+notifications. Stop released both held buttons in 3.11 ms and the slot became
+free. The fixture passed in 40.08 seconds with no cleanup errors.
+
+The follow-up used the same native executable and compiled publication as
+above, and the committed `3893eb7b` frontend in the native WebView. The
+Raw Input probe SHA-256 was
+`5ed395550241f052ac39fff604c347e5d0fe90efd97e8ba2df9b4f47b5d86947`.
+Evidence is in `.research/dcs-physics-native/1794039524953/evidence.json`.
+An earlier attempt timed out while detecting the inspector. The first
+DevTools run reached the vJoy phase but used an older Raw Input probe that
+exited before reporting readiness. The recorded pass uses the current
+dual-button probe.
