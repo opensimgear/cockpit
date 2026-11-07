@@ -198,7 +198,7 @@ mod native {
     }
     pub(super) fn find(paths: &[String]) -> Result<Option<ProcessIdentity>, String> {
         let exclusive = paths == ["X-Plane.exe"];
-        inventory(paths)?.inspect(paths, exclusive)
+        inventory(paths)?.inspect(paths, exclusive).map_err(|error| error.to_string())
     }
     pub(super) fn inventory(paths: &[String]) -> Result<ProcessInventory, String> {
         if paths.is_empty() {

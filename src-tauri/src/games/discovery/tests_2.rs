@@ -38,9 +38,9 @@
             vec![root.clone(), foreign],
             vec![runtime_root, runtime_child],
         ] {
-            assert!(selected_process(&candidates, false).is_err());
+            assert!(matches!(selected_process(&candidates, false), Err(ProcessLookupError::Ambiguous(_))));
         }
-        assert!(selected_process(&[root, child], true).is_err());
+        assert!(matches!(selected_process(&[root, child], true), Err(ProcessLookupError::Ambiguous(_))));
     }
 
 #[test]

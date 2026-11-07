@@ -247,6 +247,27 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     assert.ok(!(await inspect('engine.rpm')).channels.some(row => row.id === 'engine.rpm'), 'Native engine percentage must not claim absolute RPM.');
     evidence.magnitude = await passive('vehicle.g_force.magnitude', 5);
     await passive('AAP_CDUPWR:0', 1); await checkpoint('independent native, canonical and unbound BIOS inspection live');
+    await passive(biosId, 1000);
+    const competitor = spawn(executable, [], {cwd: dirname(executable), windowsHide: true, stdio: 'ignore'});
+    try {
+      await new Promise((done, reject) => { competitor.once('spawn', done); competitor.once('error', reject); });
+      await until(async () => /Multiple game processes/.test((await game()).integrationContext?.message ?? ''),
+        'A competing fixture process did not make the context ambiguous');
+      await absent('flight.airspeed.true');
+      await absent(biosId);
+      assert.equal(child.exitCode, null);
+    } finally {
+      if (competitor.exitCode === null && competitor.signalCode === null) {
+        competitor.kill();
+        await until(() => competitor.exitCode !== null || competitor.signalCode !== null, 'Competing fixture process did not exit');
+      }
+    }
+    evidence.phases.competingProcess = {
+      withdrawal: true,
+      resumed: await passive('flight.airspeed.true', 210.25),
+    };
+    await passive('AAP_CDUPWR:0', 1);
+    await checkpoint('competing process withdraws passive telemetry and sole process recovers');
     await cdp.evaluate(`import('/src/lib/streams/shared.ts').then(({SharedObservations})=>{
       const observations=new SharedObservations(), activity={frames:0,close:()=>observations.close()};
       window.__dcsTelemetryWake=activity;

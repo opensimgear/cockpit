@@ -41,10 +41,26 @@ pub(crate) trait Platform: Send + Sync {
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         self.find(game)
     }
-    fn integration_processes(&self, games: &[&Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
-        games.iter().map(|game| self.integration_process(game)).collect()
+    fn integration_processes(&self, games: &[&Value]) -> Vec<ProcessLookup> {
+        games.iter().map(|game| self.integration_process(game).map_err(ProcessLookupError::Unavailable)).collect()
     }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String>;
+}
+
+pub(crate) type ProcessLookup = Result<Option<ProcessIdentity>, ProcessLookupError>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ProcessLookupError {
+    Unavailable(String),
+    Ambiguous(String),
+}
+
+impl std::fmt::Display for ProcessLookupError {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(message) | Self::Ambiguous(message) => output.write_str(message),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,22 +108,18 @@ impl ProcessInventory {
         &self,
         paths: &[String],
         exclusive: bool,
-    ) -> Result<Option<ProcessIdentity>, String> {
+    ) -> ProcessLookup {
+        let candidates = self.processes.iter()
+            .filter(|(process, _)| exclusive || paths.iter().any(|path| paths_match(path, &process.path)))
+            .cloned().collect::<Vec<_>>();
+        let selected = selected_process(&candidates, exclusive)?;
         for path in paths {
             let basename = path.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase();
             if let Some(error) = self.errors.get(&basename) {
-                return Err(error.clone());
+                return Err(ProcessLookupError::Unavailable(error.clone()));
             }
         }
-        let candidates = self
-            .processes
-            .iter()
-            .filter(|(process, _)| {
-                exclusive || paths.iter().any(|path| paths_match(path, &process.path))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        selected_process(&candidates, exclusive)
+        Ok(selected)
     }
 }
 #[derive(Default)]

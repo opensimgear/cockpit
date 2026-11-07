@@ -39,6 +39,7 @@ fn read(work: VehicleObservation) -> VehicleObservation {
 
 #[test]
 fn inventory_errors_preserve_only_the_existing_configuration_and_lease() {
+    use crate::game_discovery::ProcessLookupError;
     let (_directory, mut tracker) = tracker();
     let game = game();
     let id = "x-plane-12";
@@ -48,7 +49,7 @@ fn inventory_errors_preserve_only_the_existing_configuration_and_lease() {
     let generation = tracker.entries[id].generation;
     let observed = tracker.entries[id].observed;
 
-    assert!(tracker.begin_inventory_observation(&game, &connection, Err("inventory busy".into()),
+    assert!(tracker.begin_inventory_observation(&game, &connection, Err(ProcessLookupError::Unavailable("inventory busy".into())),
         "setup", true, 2).is_none());
     assert_eq!(tracker.entries[id].generation, generation);
     assert_eq!(tracker.entries[id].observed, observed);
@@ -59,7 +60,22 @@ fn inventory_errors_preserve_only_the_existing_configuration_and_lease() {
     assert_eq!(tracker.entries[id].generation, generation);
     assert!(tracker.entries[id].reader.is_some());
 
-    tracker.begin_inventory_observation(&game, &connection, Err("inventory busy".into()), "replacement", true, 4);
+    tracker.begin_inventory_observation(&game, &connection, Err(ProcessLookupError::Unavailable("inventory busy".into())), "replacement", true, 4);
+    assert_ne!(tracker.entries[id].generation, generation);
+    assert!(tracker.entries[id].reader.is_none());
+    assert!(tracker.entries[id].process.is_none());
+}
+
+#[test]
+fn ambiguous_inventory_retires_the_previously_current_reader() {
+    use crate::game_discovery::ProcessLookupError;
+    let (_directory, mut tracker) = tracker();
+    let initial = read(work(&mut tracker, 1));
+    tracker.apply_observation(initial);
+    let id = "x-plane-12";
+    let generation = tracker.entries[id].generation;
+    tracker.begin_inventory_observation(&game(), &crate::xplane::defaults(12),
+        Err(ProcessLookupError::Ambiguous("competing processes".into())), "setup", true, 2);
     assert_ne!(tracker.entries[id].generation, generation);
     assert!(tracker.entries[id].reader.is_none());
     assert!(tracker.entries[id].process.is_none());

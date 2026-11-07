@@ -1,18 +1,16 @@
 //! A process inventory is reusable only inside the exact live event scope.
-use crate::game_discovery::{Platform, ProcessIdentity};
+use crate::game_discovery::{Platform, ProcessLookup};
 use serde_json::Value;
-
-type ResultRow = Result<Option<ProcessIdentity>, String>;
 
 #[derive(Default)]
 pub(super) struct Cache {
     epoch: Option<(u64, u64)>,
     selection: Vec<[Value; 6]>,
-    rows: Vec<ResultRow>,
+    rows: Vec<ProcessLookup>,
 }
 
 impl Cache {
-    pub(super) fn read(&mut self, platform: &dyn Platform, games: &[&Value], epoch: Option<(u64, u64)>) -> Vec<ResultRow> {
+    pub(super) fn read(&mut self, platform: &dyn Platform, games: &[&Value], epoch: Option<(u64, u64)>) -> Vec<ProcessLookup> {
         let epoch = epoch.filter(|_| games.iter().all(|game| game["processMonitoringSupported"] == true));
         let selection: Vec<_> = games.iter().map(|game| {
             ["id", "provider", "integrationKey", "integrationCompatible", "executable", "processExecutables"]

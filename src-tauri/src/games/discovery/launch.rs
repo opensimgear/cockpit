@@ -143,7 +143,7 @@ pub(crate) fn activation_process_paths(games: &[Value]) -> Vec<String> {
 fn selected_process(
     candidates: &[(ProcessIdentity, u32)],
     exclusive_xplane: bool,
-) -> Result<Option<ProcessIdentity>, String> {
+) -> ProcessLookup {
     if candidates.len() <= 1 {
         return Ok(candidates.first().map(|(identity, _)| identity.clone()));
     }
@@ -184,11 +184,11 @@ fn selected_process(
             }
         }
     }
-    Err(if exclusive_xplane {
+    Err(ProcessLookupError::Ambiguous(if exclusive_xplane {
         "Multiple X-Plane processes are running. Close the other installations before using telemetry."
     } else {
         "Multiple game processes match the selected installation. Close the other instances before activating its profile."
-    }.into())
+    }.into()))
 }
 fn wait_for_process(
     timeout: Duration,
@@ -271,7 +271,7 @@ impl Platform for NativePlatform {
             .map(|game| match &inventory {
                 Err(error) => Err(error.clone()),
                 Ok(inventory) => {
-                    find_game_process(game, false, |wanted| inventory.inspect(wanted, false))
+                    find_game_process(game, false, |wanted| inventory.inspect(wanted, false).map_err(|error| error.to_string()))
                 }
             })
             .collect()
@@ -279,15 +279,15 @@ impl Platform for NativePlatform {
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         find_game_process(game, true, native::find)
     }
-    fn integration_processes(&self, games: &[&Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+    fn integration_processes(&self, games: &[&Value]) -> Vec<ProcessLookup> {
         let paths: Vec<_> = games.iter().map(|game| process_paths(game)).collect();
         let mut seen = BTreeSet::new();
         let wanted = paths.iter().filter_map(|paths| paths.as_ref().ok()).flatten()
             .filter(|path| seen.insert(normalized_path(path))).cloned().collect::<Vec<_>>();
         let inventory = native::inventory(&wanted);
         paths.into_iter().map(|paths| {
-            let paths = paths?;
-            inventory.as_ref().map_err(Clone::clone)?.inspect(&paths, false)
+            let paths = paths.map_err(ProcessLookupError::Unavailable)?;
+            inventory.as_ref().map_err(|error| ProcessLookupError::Unavailable(error.clone()))?.inspect(&paths, false)
         }).collect()
     }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {

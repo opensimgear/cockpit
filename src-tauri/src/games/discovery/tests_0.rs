@@ -61,6 +61,7 @@
         assert!(inventory
             .inspect(&["C:\\Games\\Protected.exe".into()], false)
             .unwrap_err()
+            .to_string()
             .contains("Access denied"));
         assert_eq!(
             inventory

@@ -70,6 +70,16 @@ for vehicle polling using the setup coverage gate's counting rules. The
 supplementary LLVM report measured 65.85% functions for the context runtime.
 The rebuilt Cockpit passed the authored DCS fixture, including process exit.
 
+The Windows process inventory now reports a competing process separately from
+an unavailable lookup. The passive reader withdraws when Windows confirms
+ambiguity, even if the previously selected process is still alive. The
+preceding dev build reproduced the regression with two authored DCS processes
+and kept known airspeed while the context reported ambiguity. The corrected
+build withdrew both ownship and BIOS values and resumed after the second
+process exited. No simulator or physical inputs were used. The native suite
+passed 2,379 tests with 18 default ignores. The changed production modules
+passed their line coverage gates.
+
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots
 every 34 ms. One latest pending projection and exact acknowledgements bound

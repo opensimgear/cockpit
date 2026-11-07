@@ -399,7 +399,7 @@ impl Inner {
     fn refresh_game_contexts_with_inventory(
         &self,
         force_setup: bool,
-        inventory: impl FnOnce(&[&Value]) -> Vec<Result<Option<crate::game_discovery::ProcessIdentity>, String>>,
+        inventory: impl FnOnce(&[&Value]) -> Vec<crate::game_discovery::ProcessLookup>,
     ) {
         let epoch = match self
             .contexts
@@ -465,18 +465,20 @@ impl Inner {
             .filter_map(|(game, (_, eligible))| matches!(eligible, Ok(true)).then_some(game)).collect();
         let mut processes = inventory(&selected).into_iter();
         for (game, (supported, eligible)) in games.iter().zip(admission) {
-            let process = eligible.and_then(|eligible| {
+            use crate::game_discovery::ProcessLookupError;
+            let process = eligible.map_err(ProcessLookupError::Unavailable).and_then(|eligible| {
                 if !eligible { return Ok(None); }
-                let process = processes.next().ok_or("Game process inventory was incomplete.")??;
+                let process = processes.next().ok_or_else(||
+                    ProcessLookupError::Unavailable("Game process inventory was incomplete.".into()))??;
                 match process {
-                    Some(process) if self.platform.alive(&process)? => Ok(Some(process)),
+                    Some(process) if self.platform.alive(&process).map_err(ProcessLookupError::Unavailable)? => Ok(Some(process)),
                     _ => Ok(None),
                 }
             });
             let Some(id) = game["id"].as_str() else { continue; };
             let Some(integration) = crate::game_discovery::integration_key(game) else { continue; };
             let revision = self.setup.provider_setup_revision(integration);
-            let error = process.as_ref().err().cloned();
+            let error = process.as_ref().err().map(ToString::to_string);
             let connection = self
                 .setup
                 .provider_connection_snapshot(integration)
