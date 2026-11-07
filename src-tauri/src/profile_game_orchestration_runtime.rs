@@ -33,7 +33,7 @@ impl GatewayManager {
         let (document, assignments, read_only, virtual_slots) = self
             .profiles
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .compile_virtual_source(&original.document.id)?;
         let saved = Candidate { virtual_slots, launch_preparation: original.launch_preparation,
             document,
@@ -104,14 +104,14 @@ impl GatewayManager {
         let _admission = self
             .profile_admission
             .read()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.launch_current(capture, epoch)?;
         if self.profile_automatic.emergency.load(Ordering::Acquire) {
             return Err("Deactivation cancelled this pending game launch.".into());
         }
         self.profile_session
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .check_launch_hold(owner, epoch)
     }
     fn launch_decision(
@@ -164,11 +164,11 @@ impl GatewayManager {
         let _admission = self
             .profile_admission
             .write()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut coordinator = self
             .profile_session
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let owns = owner.is_some_and(|owner| coordinator.status().owner.as_ref() == Some(owner));
         // A late error must not inhibit an explicitly admitted newer selection.
         if owns || self.profile_admission_epoch.load(Ordering::Acquire) == epoch {
@@ -197,7 +197,7 @@ impl GatewayManager {
             return Err("The launch request was cancelled before native preparation.".into());
         }
         {
-            let coordinator = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+            let coordinator = self.profile_session.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
             coordinator.check_apply()?;
         }
@@ -217,7 +217,7 @@ impl GatewayManager {
         let (document, assignments, read_only, virtual_slots) = self
             .profiles
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .compile_virtual_source(&intent.profile_id)?;
         if read_only {
             return Err("Repair profile storage before launching a game.".into());
@@ -264,20 +264,20 @@ impl GatewayManager {
                     let _admission = self
                         .profile_admission
                         .write()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let _game = self
                         .game_admission
                         .read()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     self.launch_current(&capture, admission_epoch)?;
                     let mut coordinator = self
                         .profile_session
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
                     coordinator.check_apply()?;
                     let previous_stop = self.profile_automatic.emergency.load(Ordering::Acquire);
-                    self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&json!({"command":"profile_select","id":capture.intent.profile_id,"selectionSource":if capture.settings.mode==SelectionMode::Manual{"manual"}else{"automatic"}}))?;
+                    self.profiles.lock().unwrap_or_else(std::sync::PoisonError::into_inner).request(&json!({"command":"profile_select","id":capture.intent.profile_id,"selectionSource":if capture.settings.mode==SelectionMode::Manual{"manual"}else{"automatic"}}))?;
                     attempted = true;
                     if previous_stop {
                         self.profile_automatic
@@ -334,17 +334,17 @@ impl GatewayManager {
                         let _admission = self
                             .profile_admission
                             .write()
-                            .unwrap_or_else(|p| p.into_inner());
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let _game = self
                             .game_admission
                             .read()
-                            .unwrap_or_else(|p| p.into_inner());
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         self.launch_current(&capture, held_epoch)?;
                         let owner = held_owner.as_ref().unwrap();
                         let status = self
                             .profile_session
                             .lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .check_launch_hold(owner, held_epoch)?;
                         spawn(crate::games::launch::LaunchAdmission {
                             candidate: capture.candidate.clone(),
@@ -384,7 +384,7 @@ impl GatewayManager {
                 let mut candidate = self
                     .profile_session
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .launch_candidate(
                         &started.owner,
                         capture.intent.game_id.as_deref(),
@@ -399,17 +399,26 @@ impl GatewayManager {
                         self.profile_native,
                         &candidate,
                         started,
+                        &launch_wake,
+                        &|| {
+                            if self.closed.load(Ordering::Acquire)
+                                || self.profile_admission_epoch.load(Ordering::Acquire) != held_epoch
+                            {
+                                return Err("The game launch was cancelled by a newer native control.".into());
+                            }
+                            Ok(())
+                        },
                     )?,
                 );
                 {
                     let _admission = self
                         .profile_admission
                         .write()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let _game = self
                         .game_admission
                         .read()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     self.launch_current(&capture, held_epoch)?;
                     if self.launch_decision(&capture, &confirmed)? != decision {
                         return Err(
@@ -420,7 +429,7 @@ impl GatewayManager {
                     let (document, assignments, read_only, virtual_slots) = self
                         .profiles
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .compile_virtual_source(&capture.intent.profile_id)?;
                     candidate.stage.as_ref().unwrap().validate(&Candidate { virtual_slots, launch_preparation: candidate.launch_preparation,
                         document,
@@ -436,7 +445,7 @@ impl GatewayManager {
                     let mut coordinator = self
                         .profile_session
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     coordinator.check_launch_hold(held_owner.as_ref().unwrap(), held_epoch)?;
                     let finished = coordinator.finish_launch(held_owner.as_ref().unwrap(), candidate);
                     self.profile_wake.notify();

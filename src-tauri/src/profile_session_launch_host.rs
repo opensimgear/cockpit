@@ -161,6 +161,40 @@ fn unchanged_hardware(
     }
     Ok(())
 }
+fn wait_launch_baseline(
+    game: &mut crate::profile_session_games::GameSources,
+    games: &crate::games::GamesRuntime,
+    controllers: &osg_controller_input::ControllerService,
+    wake: &Arc<osg_streams::NativeWake>,
+    deadline: Instant,
+    guard: &dyn Fn() -> Result<(), String>,
+) -> Result<(), String> {
+    let previous_wake = game.notification_wake();
+    game.set_wake(Some(wake.clone()));
+    let result = (|| {
+        while game.requires_baseline() {
+            let observed = wake.observed();
+            guard()?;
+            let sample = game.poll(games, || controllers.monotonic_us());
+            if sample.context_lost {
+                return Err(sample.diagnostics.join("; "));
+            }
+            if sample.fresh {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("The launched provider has not produced an advancing fresh native baseline.".into());
+            }
+            let deadline = game.validation_deadline().unwrap_or(deadline).min(deadline);
+            let wait = game.baseline_wait_until(deadline).saturating_duration_since(Instant::now());
+            wake.wait(observed, wait);
+        }
+        guard()
+    })();
+    game.set_wake(previous_wake);
+    result
+}
+
 impl NativeProfileHost {
     pub(super) fn effective_context_owner(
         &self,
@@ -206,7 +240,10 @@ impl NativeProfileHost {
         native: bool,
         candidate: &Candidate,
         started: crate::games::launch::StartedGame,
+        wake: &Arc<osg_streams::NativeWake>,
+        guard: &dyn Fn() -> Result<(), String>,
     ) -> Result<Arc<crate::profile_session::Stage>, String> {
+        guard()?;
         if candidate.launch_preparation || candidate.read_only || candidate.stage.is_some() || candidate.admission_epoch.is_none() {
             return Err("A launch context requires a fresh writable native candidate.".into());
         }
@@ -283,36 +320,16 @@ impl NativeProfileHost {
             proof.clone(),
             controllers.capture_clock(),
         )?;
+        guard()?;
         game.acquire(games)?;
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let wake = Arc::new(osg_streams::NativeWake::default());
-        wake.bind_thread(std::thread::current())
-            .map_err(|_| "Cannot bind the launched game baseline waiter.")?;
-        game.set_wake(Some(wake.clone()));
-        while game.requires_baseline() {
-            let observed = wake.observed();
-            let sample = game.poll(games, || controllers.stream_page("", 0).captured_us);
-            if sample.context_lost {
-                return Err(sample.diagnostics.join("; "));
-            }
-            if sample.fresh {
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err(
-                    "The launched provider has not produced an advancing fresh native baseline."
-                        .into(),
-                );
-            }
-            let deadline = game.validation_deadline().map_or(deadline, |proof| proof.min(deadline));
-            let wait = game.baseline_wait_until(deadline).saturating_duration_since(Instant::now());
-            wake.wait(observed, wait);
-        }
-        game.set_wake(None);
+        wait_launch_baseline(
+            &mut game, games, controllers, wake, Instant::now() + Duration::from_secs(3), guard,
+        )?;
         if let Some(proof) = &proof {
             games.validate_game_preparation(&proof.proof)?;
         }
         games.validate_started_profile_game(&started)?;
+        guard()?;
         crate::profile_session::Stage::new(
             candidate,
             NativeLaunchContext {

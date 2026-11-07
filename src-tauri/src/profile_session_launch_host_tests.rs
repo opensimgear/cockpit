@@ -200,6 +200,8 @@ impl Fixture {
                 false,
                 &c,
                 self.started(),
+                &Arc::new(osg_streams::NativeWake::default()),
+                &|| Ok(()),
             )
             .unwrap(),
         );
@@ -412,6 +414,84 @@ fn newly_opened_game_reader_can_wait_for_a_baseline_before_inventory_publication
     assert!(!state.game.has_delivery_publication());
 }
 #[test]
+fn stop_wakes_the_launched_telemetry_baseline_without_a_provider_packet() {
+    let fixture = Fixture::new();
+    let (mut reader, _address, _catalogue) = crate::profile_session_games::test_baseline_reader();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let signal = fixture.host.games.read_model_signal();
+    signal.watch_launch(&wake);
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (ready, waiting) = std::sync::mpsc::channel();
+    let stop = {
+        let cancelled = cancelled.clone();
+        std::thread::spawn(move || {
+            waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+            cancelled.store(true, Ordering::Release);
+            signal.wake_profile_admission();
+        })
+    };
+    let started = Instant::now();
+    let result = wait_launch_baseline(
+        &mut reader, &fixture.host.games, &fixture.host.controllers, &wake,
+        Instant::now() + Duration::from_secs(3),
+        &|| {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("Launch cancelled".into());
+            }
+            let _ = ready.send(());
+            Ok(())
+        },
+    );
+    stop.join().unwrap();
+    assert_eq!(result.unwrap_err(), "Launch cancelled");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(reader.notification_wake().is_none());
+    assert!(!reader.can_command());
+}
+
+#[test]
+fn launched_telemetry_times_out_without_leaving_a_watch_or_command_authority() {
+    let fixture = Fixture::new();
+    let (mut reader, _address, _catalogue) = crate::profile_session_games::test_baseline_reader();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let previous = Arc::new(osg_streams::NativeWake::default());
+    reader.set_wake(Some(previous.clone()));
+
+    let error = wait_launch_baseline(
+        &mut reader, &fixture.host.games, &fixture.host.controllers, &wake,
+        Instant::now() + Duration::from_millis(30), &|| Ok(()),
+    ).unwrap_err();
+    assert!(error.contains("advancing fresh native baseline"), "{error}");
+    assert!(Arc::ptr_eq(&reader.notification_wake().unwrap(), &previous));
+    assert!(!reader.can_command());
+}
+
+#[test]
+fn launched_context_reports_missing_required_hidden_controller_before_any_mutation() {
+    let fixture = Fixture::new();
+    let mut candidate = fixture.game_candidate();
+    candidate.document.resources.push(osg_profiles::Resource {
+        id: "missing-controller".into(), name: "Missing controller".into(),
+        kind: ResourceKind::Device, required: true, ports: vec![],
+    });
+    candidate.document.visibility.push(osg_profiles::VisibilityIntent {
+        resource_id: "missing-controller".into(),
+        mode: osg_profiles::VisibilityMode::HiddenWhileActive,
+    });
+    let result = NativeProfileHost::stage_launch_context(
+        &fixture.host.resources, &fixture.host.games, &fixture.host.companions,
+        &fixture.host.controllers, cfg!(windows), &candidate, fixture.started(),
+        &Arc::new(osg_streams::NativeWake::default()), &|| Ok(()),
+    );
+    let error = result.err().expect("An unavailable required controller must block launch");
+    assert!(!error.is_empty());
+    assert!(fixture.host.authority.is_none());
+    assert!(!fixture.host.controllers.visibility_active());
+}
+
+#[test]
 fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_run() {
     let mut f=Fixture::new();f.bind();
     let candidate=f.stage();
@@ -493,7 +573,9 @@ fn launch_capture_rejects_missing_native_game_readonly_reused_or_uncancelled_can
             &f.host.controllers,
             false,
             &c,
-            f.started()
+            f.started(),
+            &Arc::new(osg_streams::NativeWake::default()),
+            &|| Ok(()),
         )
         .is_err());
     }
@@ -506,7 +588,9 @@ fn launch_capture_rejects_missing_native_game_readonly_reused_or_uncancelled_can
         &f.host.controllers,
         false,
         &base,
-        started
+        started,
+        &Arc::new(osg_streams::NativeWake::default()),
+        &|| Ok(()),
     )
     .is_err());
 }
@@ -532,6 +616,8 @@ fn hardware_launch_completes_with_no_selected_context_or_no_optional_provider() 
                 false,
                 &candidate,
                 f.started(),
+                &Arc::new(osg_streams::NativeWake::default()),
+                &|| Ok(()),
             )
             .unwrap(),
         );
@@ -593,6 +679,8 @@ fn verified_policy_context_may_be_another_running_game_without_authorizing_the_r
             false,
             &candidate,
             started,
+            &Arc::new(osg_streams::NativeWake::default()),
+            &|| Ok(()),
         )
         .unwrap(),
     );
@@ -879,6 +967,14 @@ fn actual_companion_hold_compares_current_acquired_publication_not_its_old_prosp
         game_id: None,
     };
     let prepared = host.prepare(&candidate, &owner).unwrap();
+    let report = &host.prepared[&key(&owner)].report;
+    let readiness = prepared_report(report, &candidate.document).unwrap().admission;
+    let waiting = prepared.plan.sources.iter().filter(|source|
+        source.preparation.as_ref().is_some_and(PortPreparation::requires_baseline)
+    ).map(|source| format!("{}:{}", source.endpoint.node_id, source.endpoint.port_id))
+        .collect::<Vec<_>>();
+    assert!(!waiting.is_empty(), "The replacement companion must supply a fresh baseline");
+    assert_eq!(readiness.waiting_baselines, waiting);
     let receipts = host.capture(&prepared, &owner, None).unwrap();
     let mut run = OwnedRun {
         owner,
