@@ -1,5 +1,6 @@
 // Running Cockpit lifetime check. Observe native IPC without replacing it.
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {dirname, resolve, toNamespacedPath} from 'node:path';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
@@ -391,6 +392,35 @@ test(`${transport} main view navigation retires observation readers without dupl
     }
     await navigate('Overview');
     await until(async () => pending.size === 0 && active.size === 0);
+    // Reopening Profiles must reuse the shell's committed library projection.
+    const name = `Profile navigation ${randomUUID()}`;
+    const hasProfile = label => page.evaluate(`[...document.querySelectorAll('[aria-label="Saved profiles"] .profile-row')]
+      .some(row => row.title === ${JSON.stringify(label)})`);
+    let profile;
+    try {
+      ({profiles:{document:profile}} = await request({command:'profile_create', name}));
+      await navigate('Profiles');
+      await until(() => hasProfile(name));
+      await settled([], true);
+      const visibleName = `${name} visible`;
+      ({profiles:{document:profile}} = await request({
+        command:'profile_rename', id:profile.id, expectedRevision:profile.revision, name:visibleName,
+      }));
+      await until(() => hasProfile(visibleName));
+      assert.equal(await hasProfile(name), false);
+      await navigate('Overview');
+      const hiddenName = `${name} hidden`;
+      ({profiles:{document:profile}} = await request({
+        command:'profile_rename', id:profile.id, expectedRevision:profile.revision, name:hiddenName,
+      }));
+      await navigate('Profiles');
+      await until(() => hasProfile(hiddenName));
+      assert.equal(await hasProfile(visibleName), false);
+      await settled([], true);
+    } finally {
+      if (profile) await request({command:'profile_delete', id:profile.id, expectedRevision:profile.revision});
+      await navigate('Overview');
+    }
     const fixtures = [
       ['x-plane-11', 'X-Plane 11', process.env.OSG_NAVIGATION_XPLANE11_EXE],
       ['x-plane-12', 'X-Plane 12', process.env.OSG_NAVIGATION_XPLANE12_EXE],
