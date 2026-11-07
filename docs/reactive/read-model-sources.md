@@ -89,6 +89,23 @@ verified no status read before release, one after each of three opens,
 and the exact unsubscribe on each close. Before the change both transports
 made an early read. The fixture issues no recovery commands.
 
+The profile editor's Debug controller inspector retires its input reader
+when the Cockpit document becomes hidden. Its held buttons follow the existing
+ordered release path. The controls stay disabled until the reopened reader
+has a fresh baseline and the exact applied owner's status has been read.
+`tests/ui/profile-debug-input-lifetime.mjs` reproduced a retained reader on the
+previous native build. The fixed Windows WebView and Edge browser-dev both
+retired two exact subscriptions, made zero status reads while hidden and made
+one read on each baseline. The test held the second subscription request and
+verified that the controls stayed disabled. A hat change submitted while
+hidden appeared after reopen. The native trace sent one button release, and
+the browser trace also sent the existing final neutral when the first release
+was still in flight. The fixture used only authored input on a private profile.
+The isolated frontend passed 1,697 tests with four workers. The default
+parallel run hit one graph timing assertion that passed both in isolation
+and in the four-worker run. Both debug controller coverage gates, Svelte
+checks and the production frontend build passed.
+
 The Companion library fixture opens a second Edge tab in the same browser
 context. The second tab commits a draft to IndexedDB while the first tab
 shows the library. The first tab receives both addition and removal. The

@@ -11,11 +11,12 @@
   let {resource,profileId,revision,active,disabled=false,update}:{resource:DeepReadonly<ProfileResource>;profileId:string;revision:number;active:boolean;disabled?:boolean;update:(resource:ProfileResource)=>void}=$props();
   const applyHint='Apply this profile to use these controls.';
   let layoutError=$state(''),values=$state<Record<string,boolean|number>>({}),interacting=$state(false),liveError=$state(''),ready=$state(false),mounted=$state(false);
+  let shown=$state(false);
   let interactionReleased:(()=>void)|undefined;
   function setInteracting(value:boolean){interacting=value;if(!value)interactionReleased?.();}
   let client=$state.raw<DebugControllerClient|null>(null);
   const layout=$derived(debugControllerLayout(resource));
-  const controlsActive=$derived(active&&!disabled&&ready&&!liveError);
+  const controlsActive=$derived(active&&shown&&!disabled&&ready&&!liveError);
   const limits={buttons:128,axes:16,hats:4} as const;
   function copyLayout():DebugControllerLayout{return JSON.parse(JSON.stringify(layout));}
   function emit(next:DebugControllerLayout){try{const ports=debugControllerPorts(next);update({...resource,ports});layoutError='';}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
@@ -31,11 +32,20 @@
   function editAxis(index:number,input:HTMLSelectElement){const next=copyLayout(),axis=next.axes[index];if(!axis)return;axis.range=input.value==='unipolar'?'unipolar':'bipolar';axis.fallback=0;emit(next);}
   function label(value:string){update({...JSON.parse(JSON.stringify(resource)) as ProfileResource,name:value});}
   function send(changes:DebugControllerChange[]){const owner=client?.currentOwner;if(!controlsActive||!client||!owner)return;client.push(owner,changes);for(const change of changes)values[change.portId]=change.value;values={...values};}
-  onMount(()=>{mounted=true;});
+  onMount(()=>{
+    const visibility=()=>{
+      shown=!document.hidden;
+      if(!shown){client?.clearOwner();ready=false;}
+    };
+    visibility();
+    mounted=true;
+    document.addEventListener('visibilitychange',visibility);
+    return()=>document.removeEventListener('visibilitychange',visibility);
+  });
   $effect(()=>{
     // Read every identity field so changing the inspected resource fences the old stream.
     const id=resource.id,currentProfile=profileId,currentRevision=revision,visible=active,readOnly=disabled;
-    if(!mounted||!visible||readOnly){untrack(()=>client)?.close();client=null;values={};ready=false;interacting=false;return;}
+    if(!mounted||!shown||!visible||readOnly){untrack(()=>client)?.close();client=null;values={};ready=false;interacting=false;return;}
     const sendRequest=(request:DebugControllerRequest)=>gatewayRequest(request as never);
     const next=createDebugControllerClient(sendRequest,id,error=>{if(untrack(()=>client===next)){ready=false;liveError=error instanceof Error?error.message:'Debug input update failed.';}});
     untrack(()=>client)?.close();client=next;values={};ready=false;liveError=applyHint;
@@ -83,11 +93,9 @@
         liveError=state.error??'Debug controller observation is unavailable.';
       }
     });
-    const visibility=()=>{if(document.hidden){next.clearOwner();ready=false;}else void refresh();};
     const interactionEnd=()=>{if(pending)void refresh();};
     interactionReleased=interactionEnd;
-    document.addEventListener('visibilitychange',visibility);
-    return()=>{disposed=true;interactionReleased=undefined;stopRuntime();observations.close();document.removeEventListener('visibilitychange',visibility);next.close();if(untrack(()=>client===next))client=null;};
+    return()=>{disposed=true;interactionReleased=undefined;stopRuntime();observations.close();next.close();if(untrack(()=>client===next))client=null;};
   });
   onDestroy(()=>{client?.close();});
 </script>
