@@ -14,6 +14,7 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/companion_firmware.rs"));
+mod observation;
 
 const API: &str = "https://api.github.com/repos/opensimgear/cockpit/releases";
 const RELEASE_PREFIX: &str = "esp32-companion-v";
@@ -30,9 +31,28 @@ struct Asset { name: String, url: String, size: usize }
 #[derive(Clone)]
 struct Release { version: String, assets: BTreeMap<String, Asset> }
 #[derive(Default)]
-struct State { checked: bool, release: Option<Release>, error: Option<String>, observed: BTreeMap<String, (Value, String, String)> }
-#[derive(Default)]
-pub(crate) struct Resolver { state: Mutex<State>, operation: Mutex<()> }
+struct State {
+    checked: bool,
+    release: Option<Release>,
+    error: Option<String>,
+    observed: BTreeMap<String, (Value, String, String)>,
+    observation: Option<observation::ReleaseObservation>,
+}
+pub(crate) struct Resolver {
+    state: Mutex<State>,
+    operation: Mutex<()>,
+    development: bool,
+}
+
+impl Default for Resolver {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            operation: Mutex::default(),
+            development: cfg!(debug_assertions),
+        }
+    }
+}
 
 fn source(development: bool) -> &'static str {
     if development { "development" } else { "github-release" }
@@ -195,7 +215,10 @@ impl Resolver {
     }
     pub(crate) fn metadata(&self) -> Value {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let development = cfg!(debug_assertions);
+        self.project(&state)
+    }
+    fn project(&self, state: &State) -> Value {
+        let development = self.development;
         let version = if development { LOCAL_FIRMWARE_VERSION } else { state.release.as_ref().map(|release| release.version.as_str()) };
         let profiles: Vec<_> = BOARDS.iter().map(|(id, name)| {
             let profile_version=if development {local_version(id)}else{version};
@@ -208,24 +231,27 @@ impl Resolver {
         json!({"firmwareSource":source(development),"firmwareChecked":development || state.checked,"firmwareVersion":version,"firmwareError":state.error,"firmwareProfiles":profiles})
     }
     pub(crate) fn check(&self) {
-        if cfg!(debug_assertions) { return; }
+        if self.development { return; }
         // Another explicit request is already checking or installing; ordinary
         // metadata will observe its result without queuing another long request.
         let Ok(_operation) = self.operation.try_lock() else { return; };
         let _ = self.refresh_catalog(Instant::now() + REQUEST_BUDGET);
     }
     fn refresh_catalog(&self, deadline: Instant) -> Result<(), String> {
-        let result = release_catalog(deadline);
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.checked = true;
-        match result {
-            Ok(release) => { state.release = Some(release); state.error = None; Ok(()) },
-            Err(error) => { state.release = None; state.error = Some(error.clone()); Err(error) }
-        }
+        self.commit_catalog(release_catalog(deadline))
+    }
+    fn commit_catalog(&self, result: Result<Release, String>) -> Result<(), String> {
+        self.update_metadata(|state| {
+            state.checked = true;
+            match result {
+                Ok(release) => { state.release = Some(release); state.error = None; Ok(()) },
+                Err(error) => { state.release = None; state.error = Some(error.clone()); Err(error) }
+            }
+        })
     }
     pub(crate) fn load(&self, directory: &Path, board: &str, installed: &[String]) -> Result<Vec<OwnedFirmwareSegment>, String> {
         target(board)?;
-        if cfg!(debug_assertions) {
+        if self.development {
             let local = embedded(board);
             if local.is_empty() { return Err("Build and stage local development firmware for this board first.".into()); }
             if let Some(version) = local_version(board) { reject_downgrade(installed, version)?; }
@@ -237,7 +263,7 @@ impl Resolver {
         // An explicit install always rechecks published state, with one total
         // network deadline for the catalog and selected firmware asset together.
         let result = self.refresh_catalog(deadline).and_then(|()|self.load_published(directory, board, installed, deadline));
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).error = result.as_ref().err().cloned();
+        self.update_metadata(|state| state.error = result.as_ref().err().cloned());
         result
     }
     fn load_published(&self, directory: &Path, board: &str, installed: &[String], deadline: Instant) -> Result<Vec<OwnedFirmwareSegment>, String> {

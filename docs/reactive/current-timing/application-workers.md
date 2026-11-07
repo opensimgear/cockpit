@@ -6,11 +6,11 @@
 | `src-tauri/src/activity/writer.rs:87` | Source wake and deadlines | Committed producer groups wake Activity. Hourly pruning and an outstanding persistence retry supply its timed wakes. |
 | `src-tauri/src/companion/host/detection.rs:77` | Source wake and retry | Native port or hub-record changes wake listener and USB detection. An outstanding listener bind or exact USB reconnect can request a retry. |
 | `src-tauri/src/companion/host/detection.rs:109` | Fixture | Wait for an occupied port to become available in the listener recovery test. |
-| `src-tauri/src/companion/host/firmware_observation.rs:61` | Fixture | Bound a wait for the terminal firmware status. |
+| `src-tauri/src/companion/host/firmware_observation.rs:62` | Fixture | Bound a wait for the terminal firmware status. |
 | `src-tauri/src/companion/host/presence_observation.rs:46` | Source wake | Wait for committed companion presence or shutdown. |
 | `src-tauri/src/desktop/progress/geometry.rs:101` | Operation deadline | Wait up to two seconds for native popup geometry work on the window thread. |
 | `src-tauri/src/desktop/progress/mod.rs:245` | Operation deadline | Wait up to two seconds for the current popup operation on the window thread. |
-| `src-tauri/src/firmware_releases.rs:414,417` | Fixture | Bound start and status barriers while testing firmware release work. |
+| `src-tauri/src/firmware_releases.rs:440,443` | Fixture | Bound start and status barriers while testing firmware release work. |
 | `src-tauri/src/hid_names.rs:116` | Command retry | After CDC re-enumeration, the exact HID naming request retries every 100 ms for up to two seconds and honors cancellation. Device arrival wake replacement remains open. |
 | `src-tauri/src/persistence/backup/startup.rs:96` | Operation deadline | Give an explicit restore-restart acknowledgement 500 ms before calling the native restart callback. |
 | `src-tauri/src/persistence/backup/startup.rs:143` | Fixture | Bound the isolated restart callback test's wait for completion. |

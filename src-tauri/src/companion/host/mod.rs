@@ -41,7 +41,6 @@ struct Services {
     server: ServerRuntime,
     usb: osg_companion_serial::Manager,
     usb_setup: Mutex<()>,
-    firmware_releases: crate::firmware_releases::Resolver,
     directory: PathBuf,
     saved_listener: crate::companion_settings::Listener,
     panel_cache: Mutex<()>,
@@ -62,6 +61,7 @@ pub struct Runtime {
     listener_observation: Mutex<Option<listener_observation::Observation>>,
     presence_observation: Mutex<Option<presence_observation::Observation>>,
     firmware_observation: Arc<OnceLock<osg_companion_serial::FlashObserver>>,
+    firmware_releases: crate::firmware_releases::Resolver,
     detection: detection::Detection,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     resource_inventory_wake: Mutex<Weak<osg_streams::NativeWake>>,
@@ -99,6 +99,7 @@ impl Runtime {
             listener_observation: Mutex::new(None),
             presence_observation: Mutex::new(None),
             firmware_observation: Arc::new(OnceLock::new()),
+            firmware_releases: crate::firmware_releases::Resolver::default(),
             detection: detection::Detection::default(),
             panel_operation_wakes: Mutex::new(Vec::new()),
             resource_inventory_wake: Mutex::default(),
@@ -224,7 +225,6 @@ impl Runtime {
                         if let Some(observe) = firmware_observation.get() { observe(state); }
                     }), move || usb_hub.notify_presence(), move || discovery.notify()),
                     usb_setup: Mutex::new(()),
-                    firmware_releases: crate::firmware_releases::Resolver::default(),
                 };
                 self.start_saved_listener(&services);
                 Ok(services)
@@ -304,7 +304,7 @@ impl Runtime {
             else if let Some(id)=client["companionId"].as_str(){if let Some(size)=screen_dimensions(firmware[id]["profile"].as_str().unwrap_or("")){client["screen"]=json!({"width":size.0,"height":size.1});}}
         }}}
         let mut status=json!({"firmware":firmware,"host":host, "listener":Self::listener_state(services)?,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()});
-        status.as_object_mut().unwrap().extend(services.firmware_releases.metadata().as_object().unwrap().clone());
+        status.as_object_mut().unwrap().extend(self.firmware_releases.metadata().as_object().unwrap().clone());
         Ok(status)
     }
     fn listener_state(services: &Services) -> Result<Value, String> {

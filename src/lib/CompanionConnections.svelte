@@ -9,13 +9,17 @@
   import { invoke } from '@tauri-apps/api/core';
   import { gatewayRequest } from './gateway';
   import { companionObservations } from './companion-observations';
+  import { visibleObservation } from './visible-observation';
   import { notify } from './notifications';
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
   import type { CompanionPublication } from './companions';
   import { companionScreenSize, companionPanelReason, companionRenderTarget } from './companion-screen';
   let { publications = [], openSettings, initialCompanionId = '', onViewChange, onNavigate, active = true }: { publications?: CompanionPublication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void; onNavigate?: (companionId: string | null) => void; active?: boolean } = $props();
-  let hostState = $state.raw<CompanionHostState>({});
+  type Releases = Pick<CompanionHostState, 'firmwareSource' | 'firmwareChecked' | 'firmwareVersion' | 'firmwareError' | 'firmwareProfiles'>;
+  let hostStatus = $state.raw<CompanionHostState>({});
+  let releases = $state.raw<Releases>();
+  const hostState = $derived({ ...hostStatus, ...releases });
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
   let disposed = false;
   let mounted = $state(false);
@@ -82,7 +86,7 @@
     const version = ++requestVersion;
     const result = (await gatewayRequest({ command, companion })).companions;
     if (!result) throw new Error('Companion pairing requires the native Cockpit app.');
-    if (!disposed && version >= appliedVersion) { appliedVersion=version; hostState = { ...hostState, ...result }; }
+    if (!disposed && version >= appliedVersion) { appliedVersion=version; hostStatus = { ...hostStatus, ...result }; }
     return result;
   }
   const settingsAutosave = createCompanionSettingsAutosave(send, state => {
@@ -132,6 +136,15 @@
       if (state.status === 'error' && state.error) notify(state.error, 'error');
     }));
     return () => stops.forEach(stop => stop());
+  });
+  $effect(() => {
+    if (!active || !mounted) return;
+    const reader = visibleObservation(companionObservations(), 'companion.firmware-releases', state => {
+      if (state.status === 'ready') releases = state.frame?.payload as Releases;
+      if (state.status === 'error' && state.error) notify(state.error, 'error');
+    });
+    reader.setVisible(true);
+    return () => reader.close();
   });
   $effect(() => {
     if (active && mounted && !settingsSaving) untrack(() => { if (refreshQueued) void refresh(); });

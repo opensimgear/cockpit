@@ -8,6 +8,7 @@ const TOPIC: &str = "companion.firmware";
 
 impl Runtime {
     pub(crate) fn observe_firmware(&self, runtime: &observations::Runtime) -> Result<(), String> {
+        self.firmware_releases.observe_releases(runtime)?;
         let publisher = runtime.broker().register(
             TopicSpec {
                 topic: TOPIC.into(),

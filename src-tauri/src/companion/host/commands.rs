@@ -133,13 +133,13 @@ impl Runtime {
         let services = self.services()?;
         match command {
             "companion_firmware_check" => {
-                services.firmware_releases.check();
+                self.firmware_releases.check();
                 self.status(services)
             }
             "companion_usb_ports" => {
-                let mut status=services.firmware_releases.metadata();
+                let mut status=self.firmware_releases.metadata();
                 status["usbPorts"]=services.usb.pairing_ports(&services.hub,payload["companionId"].as_str())?;
-                services.firmware_releases.observe_ports(&status["usbPorts"],&services.usb.statuses());
+                self.firmware_releases.observe_ports(&status["usbPorts"],&services.usb.statuses());
                 status["usb"]=services.usb.status();
                 Ok(status)
             }
@@ -149,7 +149,7 @@ impl Runtime {
                 let clients=services.hub.command(&json!({"command":"companion_status"}))?;
                 if !clients["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==id && c["kind"]=="esp32")){return Err("Choose a paired ESP32 companion.".into());}
                 let ports=services.usb.pairing_ports(&services.hub,Some(id))?;
-                services.firmware_releases.observe_ports(&ports,&services.usb.statuses());
+                self.firmware_releases.observe_ports(&ports,&services.usb.statuses());
                 if ports.as_array().is_none_or(|rows|rows.len()!=1){return Err("Connect only this paired companion by USB, then try again.".into());}
                 let metadata=crate::companion_settings::firmware(&services.directory)?.1;
                 if !matches!(metadata[id]["profile"].as_str(),Some("sunton-3248s035r"|"waveshare-lcd7-s3")){return Err("This legacy companion has no saved board profile. Identify its board before updating firmware.".into());}
@@ -178,12 +178,12 @@ impl Runtime {
                     return Err("The USB selection changed or firmware detection is still in progress. Refresh devices and select this USB port again.".into());
                 }
                 let mut installed=Vec::new();
-                if let Some(version)=services.firmware_releases.observed_version(port,profile){installed.push(version);}
+                if let Some(version)=self.firmware_releases.observed_version(port,profile){installed.push(version);}
                 if let Some(id)=update {
                     let metadata=crate::companion_settings::firmware(&services.directory)?.1;
                     if let Some(version)=metadata[id]["version"].as_str(){installed.push(version.to_owned());}
                 }
-                let firmware=services.firmware_releases.load(&services.directory,profile,&installed)?;
+                let firmware=self.firmware_releases.load(&services.directory,profile,&installed)?;
                 // Downloading must not bypass the serial manager's fresh device identity check.
                 if !match update {Some(id)=>services.usb.update_candidate_available(port,id)?,None=>services.usb.flash_candidate_available(port)?} {
                     return Err("The USB selection changed while downloading firmware. Refresh devices and select this USB port again.".into());
