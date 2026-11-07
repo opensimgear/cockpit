@@ -13,10 +13,14 @@ struct State {
     id: String,
     phase: String,
     reason: String,
+    activation: std::sync::Weak<osg_streams::NativeWake>,
 }
 #[derive(Clone, Default)]
 pub struct Control(Arc<Mutex<State>>, Arc<Condvar>);
 impl Control {
+    pub(super) fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).activation = Arc::downgrade(wake);
+    }
     pub fn apply(&self, sources: Vec<Source>) -> Result<String, String> {
         validate_sources(&sources, &sources, false)?;
         let mut s = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -56,6 +60,7 @@ impl Control {
         s.phase = phase.into();
         s.reason = reason.into();
         self.1.notify_all();
+        if let Some(wake) = s.activation.upgrade() { wake.notify(); }
     }
     pub(super) fn wait_phase(&self, job: &str, restoring: bool, budget: Duration) -> Result<bool, String> {
         let pending = |state: &State| busy(&state.phase) && (restoring || state.phase != "active");
@@ -94,11 +99,38 @@ mod tests {
         let reader = control.clone();
         let exact = job.clone();
         let waiter = std::thread::spawn(move || reader.wait_phase(&exact, true, Duration::from_secs(2)));
+        let activation = Arc::new(osg_streams::NativeWake::default());
+        control.watch_activation(&activation);
+        let revision = activation.observed();
         control.update("restored", "Done");
+        assert_ne!(activation.observed(), revision);
         assert!(waiter.join().unwrap().unwrap());
         control.apply(vec![source()]).unwrap();
         assert!(control.wait_phase(&job, true, Duration::ZERO).is_err());
     }
+    #[test]
+    fn poisoned_capture_lock_preserves_the_owned_job_and_activation_wake() {
+        let control = Control::default();
+        let job = control.apply(vec![source()]).unwrap();
+        let activation = Arc::new(osg_streams::NativeWake::default());
+        control.watch_activation(&activation);
+
+        let capture = control.clone();
+        assert!(std::thread::spawn(move || {
+            let _locked = capture.0.lock().unwrap();
+            panic!("Capture exited while holding its state");
+        }).join().is_err());
+
+        assert!(matches!(control.take(), Some(Command::Apply { id, .. }) if id == job));
+        assert!(control.active());
+        let revision = activation.observed();
+        control.update("active", "Capture active");
+        assert_ne!(activation.observed(), revision);
+        assert!(control.wait_phase(&job, false, Duration::ZERO).unwrap());
+        control.stop(Some(&job)).unwrap();
+        assert!(matches!(control.take(), Some(Command::Stop)));
+    }
+
     fn source() -> Source {
         Source {
             id: uuid::Uuid::new_v4().to_string(),

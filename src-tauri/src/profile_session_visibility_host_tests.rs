@@ -1,4 +1,15 @@
-use super::*;
+use super::{wait as wait_with_wake, *};
+
+fn wait(
+    visibility: &mut Visibility,
+    restoring: bool,
+    timeout: Duration,
+    guard: impl FnMut() -> Result<(), String>,
+    renew: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    wait_with_wake(visibility, restoring, timeout, guard, renew, None)
+}
+
 use crate::profile_session_visibility::tests::{owner, plan, snapshot, Fake};
 
 fn visibility(io: Arc<Fake>) -> Visibility {
@@ -7,6 +18,46 @@ fn visibility(io: Arc<Fake>) -> Visibility {
         .unwrap()
         .bind(&owner())
         .unwrap()
+}
+
+#[test]
+fn pending_visibility_wakes_on_cancellation_before_native_completion() {
+    let io = Fake::new();
+    *io.start_pending.lock().unwrap() = true;
+    *io.maintenance_waits.lock().unwrap() = 1;
+    let mut visibility = visibility(io.clone());
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let epoch = Arc::new(AtomicU64::new(1));
+    let (ready, waiting) = std::sync::mpsc::channel();
+    let cancel = {
+        let epoch = epoch.clone();
+        let wake = wake.clone();
+        std::thread::spawn(move || {
+            waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+            epoch.store(2, Ordering::Release);
+            wake.notify();
+        })
+    };
+    let mut checks = 0;
+    let started = Instant::now();
+    let result = wait_with_wake(
+        &mut visibility, false, Duration::from_secs(2),
+        || {
+            NativeProfileHost::check_epoch(&epoch, 1)?;
+            checks += 1;
+            if checks == 3 { ready.send(()).unwrap(); }
+            Ok(())
+        },
+        || Ok(()),
+        Some(&wake),
+    );
+    cancel.join().unwrap();
+    assert!(result.unwrap_err().contains("cancelled"));
+    assert!(started.elapsed() < Duration::from_millis(1500));
+    assert!(visibility.needs_cleanup());
+    assert!(io.calls.lock().unwrap().iter().all(|(op, _)| op != "poll"));
+    wait(&mut visibility, true, Duration::from_secs(2), || Ok(()), || Ok(())).unwrap();
 }
 
 #[test]
@@ -413,6 +464,7 @@ fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutraliz
     host.enter(ApplyPhase::Visibility, &prepared, &incoming)
         .unwrap();
     assert_ne!(*io.driver.lock().unwrap(), before);
+    *io.asynchronous.lock().unwrap() = true;
     host.neutralize(&incoming).unwrap();
     host.restore(&incoming, false).unwrap();
     assert_eq!(*io.driver.lock().unwrap(), before);

@@ -115,6 +115,7 @@ pub struct Worker {
     reads: Option<SyncSender<ReadRequest>>,
     pub(super) changed: Option<Arc<dyn Fn() + Send + Sync>>,
     pub(super) routing: std::sync::Weak<osg_streams::NativeWake>,
+    pub(super) activation: std::sync::Weak<osg_streams::NativeWake>,
 }
 impl Default for Worker {
     fn default() -> Self {
@@ -126,6 +127,7 @@ impl Default for Worker {
             reads: None,
             changed: None,
             routing: Default::default(),
+            activation: Default::default(),
         }
     }
 }
@@ -219,7 +221,9 @@ impl Worker {
         let job = status.job_id.clone();
         let changed = self.changed.clone();
         let routing = self.routing.clone();
+        let activation = self.activation.clone();
         let notify = move || {
+            if let Some(wake) = activation.upgrade() { wake.notify(); }
             if let Some(wake) = routing.upgrade() { wake.notify(); }
             if let Some(changed) = &changed { changed(); }
         };

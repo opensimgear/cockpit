@@ -16,6 +16,7 @@ fn wait(
     timeout: Duration,
     mut guard: impl FnMut() -> Result<(), String>,
     mut renew: impl FnMut() -> Result<(), String>,
+    activation: Option<&osg_streams::NativeWake>,
 ) -> Result<(), String> {
     if visibility.is_empty() {
         return Ok(());
@@ -50,10 +51,16 @@ fn wait(
         guard()?;
         renew()?;
         let remaining = deadline.saturating_duration_since(Instant::now());
-        // Apply still checks cancellation and services outputs at its original
-        // cadence. A maintenance wake does not inspect visibility status.
-        let budget = if restoring { remaining } else { remaining.min(Duration::from_millis(5)) };
-        if visibility.wait_phase(restoring, budget)? {
+        let ready = if let Some(wake) = activation {
+            let revision = wake.observed();
+            guard()?;
+            let ready = visibility.wait_phase(false, Duration::ZERO)?;
+            if !ready { wake.wait(revision, remaining); }
+            ready
+        } else {
+            visibility.wait_phase(restoring, remaining)?
+        };
+        if ready {
             progress = if restoring { visibility.stop()? } else { visibility.poll()? };
         }
     }
@@ -64,19 +71,21 @@ impl NativeProfileHost {
         if !self.run(owner)?.visibility.is_empty() {
             self.report_progress(owner, "hiding-peripherals", "Hiding peripherals");
         }
+        if self.run(owner)?.visibility.is_empty() { return Ok(()); }
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        wake.bind_thread(std::thread::current())
+            .map_err(|_| "Cannot bind the visibility activation waiter.")?;
+        self.games.read_model_signal().watch_profile_admission(&wake);
         let state = self.run(owner)?;
+        state.visibility.watch_activation(&wake);
         let expected = state.admission_epoch;
         wait(
             &mut state.visibility,
             false,
             Duration::from_secs(3),
             || Self::check_epoch(&epoch, expected),
-            || {
-                state
-                    .output
-                    .as_mut()
-                    .map_or(Ok(()), |output| output.keep_alive())
-            },
+            || Ok(()),
+            Some(&wake),
         )
     }
     pub(super) fn restore_visibility(&mut self, run: &OwnedRun) -> Result<(), String> {
@@ -94,6 +103,7 @@ impl NativeProfileHost {
                 Duration::from_secs(3),
                 || Ok(()),
                 || Ok(()),
+                None,
             );
         }
         if !self.recovery_visibility.contains_key(&owner_key) {
@@ -115,6 +125,7 @@ impl NativeProfileHost {
             Duration::from_secs(3),
             || Ok(()),
             || Ok(()),
+            None,
         )?;
         self.recovery_visibility.remove(&owner_key);
         Ok(())

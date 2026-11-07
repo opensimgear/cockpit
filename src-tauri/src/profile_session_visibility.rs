@@ -18,10 +18,14 @@ use std::{
 const KIND: &str = "controller-visibility";
 const RESOURCE: &str = "controller-visibility";
 pub(crate) trait VisibilityIo: Send + Sync {
+    fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>);
     fn request(&self, operation: &str, value: &Value) -> Result<Value, String>;
     fn wait_phase(&self, owner: &str, restoring: bool, budget: std::time::Duration) -> Result<bool, String>;
 }
 impl VisibilityIo for osg_controller_input::ControllerService {
+    fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.watch_visibility_activation(wake);
+    }
     fn request(&self, operation: &str, value: &Value) -> Result<Value, String> {
         self.game_visibility(operation, value)
     }
@@ -511,6 +515,9 @@ impl Visibility {
             return Err("Owned visibility ended; disarm profile delivery before cleanup.".into());
         }
         Ok(progress)
+    }
+    pub(crate) fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.io.watch_activation(wake);
     }
     pub(crate) fn wait_phase(&self, restoring: bool, budget: std::time::Duration) -> Result<bool, String> {
         let receipt = self.receipt.as_ref().ok_or("No visibility receipt to wait for.")?;

@@ -170,9 +170,13 @@ impl Fake {
     }
 }
 impl VisibilityIo for Fake {
-    fn wait_phase(&self, _: &str, _: bool, _: std::time::Duration) -> Result<bool, String> {
+    fn watch_activation(&self, _: &Arc<osg_streams::NativeWake>) {}
+    fn wait_phase(&self, _: &str, restoring: bool, _: std::time::Duration) -> Result<bool, String> {
         let mut pending = self.maintenance_waits.lock().unwrap();
-        if *pending == 0 { return Ok(true); }
+        if *pending == 0 {
+            if restoring { *self.asynchronous.lock().unwrap() = false; }
+            return Ok(true);
+        }
         *pending -= 1;
         Ok(false)
     }

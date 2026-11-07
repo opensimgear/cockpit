@@ -50,6 +50,9 @@ wake. A pre-Start desktop owner has no registration to renew and can also
 park. Physical action workers renew their own neutral leases and notify the
 host on loss. Windows visibility worker changes wake the host and inventory.
 The worker still verifies the device and policy on its own cadence.
+Visibility activation waits for the Windows worker or capture-owned
+suppression to report phase completion, for admission cancellation, or for
+the original phase deadline. Output renewal stays with the enclosing phase.
 An otherwise qualified active profile also uses that wake for owned visibility.
 Active native USB and CAN panel inputs can park when the reader owns the
 exact admitted source ports and tokens. Native capture expiry wakes routing
