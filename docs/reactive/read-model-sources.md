@@ -59,6 +59,17 @@ restore through the native and browser-dev transports. Two inventory readers
 see the same commit while the selected input reader remains ready. A closed
 reader misses the restore and receives the current name immediately on reopen.
 
+The mounted Devices sidebar shares the `profiles.resources` catalogue with
+the Profiles editor for identity correlation and its live device count.
+The resource reopen fixture renames an attached controller through the native
+gateway with the editor open, then renames it again after closing the editor.
+The palette follows the visible commit. The shared reader fetches the second
+committed revision while the editor is closed, and the reopened palette shows
+the current name without another subscription or catalogue read. The native
+WebView and Edge browser-dev passed this check against separate private
+databases. The fixture uses metadata only and restores the controller name
+through the standard command before deleting its temporary profile.
+
 The attached-controller visibility check verifies an external save while the
 detail is open, then closes the detail and observes its reader retire. Restoring
 the saved preference while the detail is closed produces no visibility status
