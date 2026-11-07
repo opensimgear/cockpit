@@ -96,6 +96,21 @@ The discovery fixture runs against native Cockpit with
 of a known title, a generic executable, same-volume relocation, and explicit
 removal. The browser fixture also covers the first-start results banner.
 
+DCS setup watches the configured Windows Saved Games path even when the
+directory is missing. Its nearest existing ancestor wakes the native owner on
+creation. The owner then registers the non-recursive child watch before
+rebuilding the setup snapshot. The same path recovers after directory removal
+and recreation. The filter admits matching DCS profile names and ignores
+unrelated descendants.
+
+The Windows native regression creates, removes and recreates a private watch
+root and verifies matching child creation and removal in both generations.
+The running dev Cockpit fixture separately creates and removes a private DCS
+profile under the existing Saved Games root. The native suite passed 2,374
+tests with 18 existing ignores. Line and function coverage reached 88.04% and
+82.61% for the watch and 84.04% and 72.04% for DCS setup. Branches were not
+instrumented.
+
 On November 7, the navigation fixture passed in the running WebView and in
 Edge through the isolated browser-dev gateway built from `65c2c653`. Two
 navigation cycles across Devices, Profiles, Games, Companions, Debug and

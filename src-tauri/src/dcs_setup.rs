@@ -629,6 +629,9 @@ pub(crate) fn discover_user_folders(_install_path: Option<&Path>) -> Result<Vec<
 }
 #[cfg(windows)]
 pub(crate) fn saved_games_root() -> Result<PathBuf, String> {
+    // Resolve the configured path even before the folder exists, so its
+    // parent can be watched for creation.
+    const KF_FLAG_DONT_VERIFY: u32 = 0x00004000;
     #[repr(C)]
     struct Guid {
         a: u32,
@@ -656,7 +659,7 @@ pub(crate) fn saved_games_root() -> Result<PathBuf, String> {
         d: [0xb5, 0xb4, 0x2d, 0x72, 0xe5, 0x4e, 0xaa, 0xa4],
     };
     let mut pointer = std::ptr::null_mut();
-    if unsafe { SHGetKnownFolderPath(&id, 0, std::ptr::null_mut(), &mut pointer) } < 0
+    if unsafe { SHGetKnownFolderPath(&id, KF_FLAG_DONT_VERIFY, std::ptr::null_mut(), &mut pointer) } < 0
         || pointer.is_null()
     {
         return Err("Windows could not resolve your Saved Games folder. Select the DCS user folder explicitly.".into());

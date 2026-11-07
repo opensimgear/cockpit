@@ -53,9 +53,11 @@ impl Watch {
         let (mut targets, directories) = configuration(paths)?;
         if let Some((root, filter)) = children {
             let root = comparison_path(root);
-            if !directories.contains_key(&root) {
-                return Err("Cannot watch child entries of an unavailable directory.".into());
+            if !targets.paths.contains(&root) {
+                return Err("The child watch root must be an exact source target.".into());
             }
+            // If the directory is absent, its nearest existing ancestor wakes
+            // the owner on creation so it can register the child watch.
             targets.children = Some((root, filter));
         }
         let mut replacement = native_watcher(self.targets.clone(), self.changed.clone())?;

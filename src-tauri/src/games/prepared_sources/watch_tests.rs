@@ -304,3 +304,32 @@ fn child_filter_wakes_for_matching_directories_without_recursive_noise() {
     fs::remove_dir(profile).unwrap();
     changed(&receive);
 }
+
+#[test]
+fn child_watch_rearms_when_its_missing_root_is_created_or_replaced() {
+    let directory = crate::test_directory();
+    let root = directory.path().join("Saved Games");
+    let paths = std::slice::from_ref(&root);
+    let filter: ChildFilter = |name| name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("DCS.fixture"));
+    let children = Some((root.as_path(), filter));
+    let (mut watch, receive) = watched(paths);
+    assert!(watch.replace_with_children(&[], children).is_err());
+    watch.replace_with_children(paths, children).unwrap();
+
+    for _ in 0..2 {
+        fs::create_dir(&root).unwrap();
+        changed(&receive);
+        watch.replace_with_children(paths, children).unwrap();
+        settled(&receive);
+        fs::create_dir(root.join("DCS.fixture")).unwrap();
+        changed(&receive);
+        settled(&receive);
+        fs::remove_dir(root.join("DCS.fixture")).unwrap();
+        changed(&receive);
+        settled(&receive);
+        fs::remove_dir(&root).unwrap();
+        changed(&receive);
+        watch.replace_with_children(paths, children).unwrap();
+        settled(&receive);
+    }
+}
