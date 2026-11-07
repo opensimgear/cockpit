@@ -314,6 +314,7 @@ impl NativeProfileHost {
         let wake = Arc::new(osg_streams::NativeWake::default());
         wake.bind_thread(std::thread::current())
             .map_err(|_| "Cannot bind the native companion baseline waiter.")?;
+        self.games.read_model_signal().watch_profile_admission(&wake);
         hub.observe_presence(wake.clone());
         hub.observe_record_changes(wake.clone());
         hub.observe_panel_operations(wake.clone());
@@ -324,16 +325,9 @@ impl NativeProfileHost {
         let mut progress = std::collections::BTreeMap::<String, (Value, Instant, Value)>::new();
         let mut live_seen = BTreeSet::new();
         let mut latest_operation = None;
-        let service_leases = |host: &mut Self| -> Result<(), String> {
-            host.check_transition(owner)?;
-            let state = host.run(owner)?;
-            if let Some(output) = state.output.as_mut() { output.keep_alive()?; }
-            if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
-            Ok(())
-        };
         loop {
-            service_leases(self)?;
             let observed = wake.observed();
+            self.check_transition(owner)?;
             let mut wait_until = deadline;
             // The independent inventory worker publishes the replacement
             // browser's actual generation. Wait for that cached observation:
@@ -415,13 +409,13 @@ impl NativeProfileHost {
             if Instant::now() >= deadline {
                 return Err(panel_load_timeout(latest_operation.as_ref(), true));
             }
-            // Service neutral leases and cancellation independently of readiness.
-            // Only a producer commit or a panel deadline requests another scan.
+            // The surrounding activation phase owns prepared output renewal.
+            // Only producer changes and panel deadlines request another scan.
             while wake.observed() == observed {
                 let remaining = wait_until.saturating_duration_since(Instant::now());
                 if remaining.is_zero() { break; }
-                wake.wait(observed, remaining.min(std::time::Duration::from_millis(5)));
-                service_leases(self)?;
+                wake.wait(observed, remaining);
+                self.check_transition(owner)?;
             }
         }
     }

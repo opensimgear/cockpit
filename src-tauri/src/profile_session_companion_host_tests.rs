@@ -806,6 +806,7 @@ fn native_control_cancels_a_loading_companion_without_waiting_for_its_deadline()
     fixture.baseline_delay_ms.store(10_000, Ordering::Release);
     let waiting = fixture.baseline_waiting.clone();
     let epoch = fixture.epoch.clone();
+    let admission = fixture.games.read_model_signal();
     let canceller = std::thread::spawn(move || {
         let deadline = Instant::now() + std::time::Duration::from_secs(2);
         while !waiting.load(Ordering::Acquire) {
@@ -816,6 +817,7 @@ fn native_control_cancels_a_loading_companion_without_waiting_for_its_deadline()
         // Stop/Recover invalidate this atomic epoch before taking the profile
         // coordinator lock, which is held by the pending activation.
         epoch.fetch_add(1, Ordering::AcqRel);
+        admission.wake_profile_admission();
         cancelled
     });
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
