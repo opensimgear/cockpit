@@ -10,13 +10,16 @@ import {connect} from 'node:tls';
 import {readFile} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {openCompanionTunnel} from './companion-transport-tunnel.mjs';
 test('compiled browser input reaches the profile and returns host feedback', {timeout:90000}, async(t)=>{
   const qualifyHostWake=process.env.OSG_COMPANION_HOST_WAKE_NATIVE==='1';
   const qualifyFeedback=process.env.OSG_COMPANION_FEEDBACK_NATIVE==='1';
   const recoveryProbe=process.env.OSG_COMPANION_RECOVERY_VJOY_PROBE;
   const slowFeedback=process.env.OSG_COMPANION_SLOW_FEEDBACK_NATIVE==='1';
   const qualifyReplacement=process.env.OSG_COMPANION_REPLACEMENT_NATIVE==='1';
+  const abruptLoss=process.env.OSG_COMPANION_ABRUPT_LOSS_NATIVE==='1';
   if(slowFeedback)assert.ok(recoveryProbe,'Slow feedback qualification requires the vJoy probe');
+  if(abruptLoss)assert.ok(slowFeedback,'Abrupt loss qualification requires a stalled feedback reader');
   const cockpit=await nativePage();
   const clientId='compiled-companion-qualification';
   const request=async(command,params={})=>{
@@ -28,7 +31,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
   const id='reactive-'+randomUUID();
   const publication=JSON.parse(await readFile(new URL('../../scripts/fixtures/compiled-flight-publication.json',import.meta.url)));
   const {chromium}=createRequire(import.meta.url)(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-  let browser, peer, profile, desktopPreferences, slot, probe;
+  let browser, peer, profile, desktopPreferences, slot, probe, tunnel;
   const inventory=async()=>(await request('system_inventory')).systemInventory.virtualDevices;
   const desktop=async()=>(await request('profile_desktop_status')).desktop;
   const assertHostWake=async phase=>{
@@ -59,7 +62,9 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
      try{resolve(createHash('sha256').update(new X509Certificate(socket.getPeerCertificate().raw).publicKey.export({type:"spki",format:"der"})).digest('base64'));}catch(error){reject(error);}finally{socket.destroy();}
     });socket.on('error',reject);
    });
-   browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,args:['--ignore-certificate-errors-spki-list='+pin]});
+   if(abruptLoss)tunnel=await openCompanionTunnel(url);
+   browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,
+    args:['--ignore-certificate-errors-spki-list='+pin,...(tunnel?.browserArgs??[])]});
    const page=await browser.newPage();
    await page.addInitScript(slowFeedback=>{
     window.__feedbackProbe=[];
@@ -128,7 +133,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     document.bindings.push({id:'constant-text',from:{nodeId:'text-constant',portId:'out'},to:{nodeId:'browser-panel',portId:'text'}});
    }
    if(recoveryProbe){
-    slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)
+    slot=(await inventory()).find(device=>device.status==='free'&&device.buttons>=(abruptLoss?2:1)&&Array.isArray(device.axes)
      &&!device.discreteHats&&!device.forceFeedback&&device.buttons+device.axes.length+device.continuousHats<=128);
     assert.ok(slot,'A compatible free vJoy slot is required');
     const layout={
@@ -142,9 +147,11 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
      const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
      document.resources.push({id:'independent',name:'Independent debug source',kind:'debug-controller',
       required:false,ports:[{id:'button-1',name:'Button',direction:'output',contract}]});
-     return graphConnect(graphSetVirtual({document,assignments:[]},
+     const draft=graphConnect(graphSetVirtual({document,assignments:[]},
       {id:'recovery-vjoy',name:'Recovery test output',required:true,layout:${JSON.stringify(layout)}}),
-      {nodeId:'independent',portId:'button-1'},{nodeId:'recovery-vjoy',portId:'button-1'}).document;
+      {nodeId:'independent',portId:'button-1'},{nodeId:'recovery-vjoy',portId:'button-1'});
+     return (${abruptLoss}?graphConnect(draft,{nodeId:'browser-panel',portId:'button'},
+      {nodeId:'recovery-vjoy',portId:'button-2'}):draft).document;
     })()`);
     Object.assign(document,draft);
    }
@@ -252,26 +259,51 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    const independent=(sequence,value)=>request('profile_debug_controller_input',{owner,nodeId:'independent',
     streamId,sequence:String(sequence),changes:[{portId:'button-1',value}]});
    const probeLines=[];
-   let probeDone;
+   let probeDone, probeSpawnedNs, probeReadyNs, transportCutNs;
    const assertRawTransitions=async expected=>{
     assert.equal((await probeDone)[0],0);
-    const events=JSON.parse(probeLines.at(-1)).buttonEvents.filter(event=>event.report===slot.slot);
+    const report=JSON.parse(probeLines.at(-1));
+    const events=report.buttonEvents.filter(event=>event.report===slot.slot);
     assert.ok(events.every(event=>event.status===0x00110000));
     assert.equal(new Set(events.map(event=>event.device)).size,1);
-    assert.deepEqual(events.map(event=>event.pressed),expected);
+    if(tunnel){
+     const active=events.findIndex(event=>event.pressed);
+     assert.ok(active>=0,'The independent vJoy source must press before loss');
+     const pairs=events.slice(active).map(event=>[event.pressed,event.peerPressed]);
+     assert.deepEqual(pairs,[[true,true],[true,false],[true,true],[false,true],[true,true]]);
+     const start=BigInt(report.receiverStartedTicks), hz=BigInt(report.receiverTickHz);
+     const ns=ticks=>ticks*1_000_000_000n/hz;
+     assert.ok(ns(start)>=probeSpawnedNs&&ns(start)<=probeReadyNs,'The probe and Node must share the Windows monotonic clock');
+     const release=ns(start+BigInt(events[active+1].receivedTicks));
+     const cutToReleaseMs=Number(release-transportCutNs)/1e6;
+     assert.ok(cutToReleaseMs>=0&&cutToReleaseMs<=1000,'Panel release must follow the cut within the recovery budget');
+     t.diagnostic(JSON.stringify({rawInputTransitions:pairs,cutToReleaseMs}));
+    }else assert.deepEqual(events.map(event=>event.pressed),expected);
    };
    if(slot){
-    probe=spawn(recoveryProbe,['--vjoy-button'],{windowsHide:true});
+    probeSpawnedNs=process.hrtime.bigint();
+    probe=spawn(recoveryProbe,[tunnel?'--vjoy-buttons':'--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     probeDone=once(probe,'close');
     const [line]=await Promise.race([once(lines,'line'),probeDone.then(()=>{throw Error('vJoy probe exited before registration');})]);
+    probeReadyNs=process.hrtime.bigint();
     assert.equal(line,'ready');
     lines.on('line',value=>probeLines.push(value));
     await independent(1,true);
    }
+   let lostSession, cutConnections;
    if(slot){
+    if(tunnel){
+     assert.ok(tunnel.established>0,'The browser must use the controlled TLS tunnel');
+     lostSession=await readInstance();
+     assert.ok(lostSession?.armed&&lostSession.sessionId&&lostSession.values['flight-input-0']===true);
+     await page.evaluate(()=>{window.__feedbackStall.enabled=true;});
+     await until(()=>page.evaluate(()=>window.__feedbackStall.held.length===1),Boolean,2500);
+     await page.evaluate(()=>{window.__retiredFeedbackRelease=window.__feedbackStall.release;});
+    }
     const lossStarted=performance.now();
-    await page.goto('about:blank',{waitUntil:'domcontentloaded'});
+    if(tunnel){transportCutNs=process.hrtime.bigint();tunnel.drop();}
+    else await page.goto('about:blank',{waitUntil:'domcontentloaded'});
     await until(readInstance,row=>row&&!row.connected&&!row.armed,3000);
     await until(async()=>{
      const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
@@ -279,12 +311,28 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
     },Boolean,1000);
     assert.equal((await inventory()).find(device=>device.slot===slot.slot)?.status,'busy');
     t.diagnostic(`Browser loss and affected contribution withdrawal observed within ${Math.round(performance.now()-lossStarted)} ms`);
-    await page.goto(url.href,{waitUntil:'domcontentloaded'});
+    if(tunnel){
+     assert.deepEqual((await request('profile_status')).profiles.profileSession.owner,owner);
+     await page.evaluate(()=>{window.__feedbackProbe.length=0;window.__feedbackTrace.length=0;});
+     cutConnections=tunnel.established;
+     tunnel.restore();
+    }else await page.goto(url.href,{waitUntil:'domcontentloaded'});
    }else{
     await page.reload({waitUntil:'domcontentloaded'});
    }
    await page.getByText('Connected · panel active',{exact:true}).waitFor({timeout:15000});
-   await until(readInstance,row=>row?.connected&&row.armed&&row.values['flight-input-0']===false,15000);
+   const recovered=await until(readInstance,row=>row?.connected&&row.armed&&row.values['flight-input-0']===false&&row,15000);
+   if(lostSession){
+    assert.ok(tunnel.established>cutConnections,'Automatic reconnect must use a new tunnel');
+    assert.notEqual(recovered.sessionId,lostSession.sessionId);
+    assert.equal(recovered.instanceId,lostSession.instanceId);
+    assert.equal(recovered.publicationHash,lostSession.publicationHash);
+    await page.evaluate(()=>{window.__retiredFeedbackRelease();delete window.__retiredFeedbackRelease;});
+    const afterLateReceipt=await readInstance();
+    assert.equal(afterLateReceipt.sessionId,recovered.sessionId);
+    assert.ok(afterLateReceipt.armed&&afterLateReceipt.values['flight-input-0']===false);
+    t.diagnostic('Abrupt TLS loss withdrew the held panel contribution. Automatic reconnect started neutral and ignored the old acknowledgement.');
+   }
    await until(async()=>{
     const {profileInspection}=await request('profile_runtime_inspect',{owner,nodeId:'browser-panel'});
     const expected=panelValues(false);
@@ -397,7 +445,7 @@ test('compiled browser input reaches the profile and returns host feedback', {ti
    if(peer)await cleanup(()=>companion('companion_unassign',{instanceId:id}));
    if(peer)await cleanup(()=>companion('companion_revoke',{companionId:peer.companionId}));
    if(probe&&probe.exitCode===null&&probe.signalCode===null)probe.kill();
-   try{await browser?.close();}finally{cockpit.close();}
+   try{await browser?.close();}finally{try{await tunnel?.close();}finally{cockpit.close();}}
    if(cleanupErrors.length)throw new AggregateError(cleanupErrors,'Companion native qualification cleanup failed');
   }
 

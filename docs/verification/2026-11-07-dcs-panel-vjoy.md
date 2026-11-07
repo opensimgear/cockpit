@@ -425,3 +425,40 @@ DCS and combined MCP modes with `OSG_DCS_PHYSICS_NATIVE=1` and
 the duration gate. This fixture exercises real Windows output and browser
 rendering with authored inputs. Physical-controller latency and live simulator
 effects are tracked in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+## Abrupt browser transport loss
+
+`tests/ui/profile-companion-compiled-native.mjs` can cut a real loopback
+TLS tunnel while a held browser control and a separate authored debug control
+feed different buttons on the same Windows vJoy slot. The CONNECT tunnel
+preserves the real listener's origin and TLS identity. The fixture destroys
+the sockets without navigating, unloading or sending a WebSocket close frame.
+
+Two runs on the Windows desktop binary with SHA-256
+`9b69eea9eb3edeaa2b4356ef5d29a01e335993f986737e45d52580096ffd8881`
+withheld one feedback acknowledgement before the cut. Windows Raw Input saw
+the panel's button release **1.61 ms** and **1.98 ms** after the cut on the
+same verified monotonic clock. The independent button stayed held. Both runs
+captured the exact pairs `[true,true]`, `[true,false]`, `[true,true]`,
+`[false,true]`, `[true,true]` in independent-button, panel-button order.
+
+The same browser page reconnected automatically, with a new session ID and
+the original installation, publication and profile owner. The replacement
+armed from a neutral baseline. Releasing the old acknowledgement after
+rearm preserved the new session and its neutral input. A new panel press
+worked, and Windows continued to receive independent transitions while a
+replacement feedback acknowledgement was held. Stop freed the vJoy slot
+in 322–323 ms. The test then changed the connected panel publication and
+restored it. Each change required a neutral baseline.
+
+The 167 controller-input tests, 59 streams tests, 11 browser transport tests
+and browser feedback coverage gate passed. The fault is a real software
+transport interruption on Windows. Physical-device unplug and simulator
+effects remain in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+To repeat, enable the companion listener on an isolated running Windows
+Cockpit on loopback. Set `OSG_COMPANION_ABRUPT_LOSS_NATIVE=1`,
+`OSG_COMPANION_FEEDBACK_NATIVE=1`, `OSG_COMPANION_REPLACEMENT_NATIVE=1`
+and `OSG_COMPANION_SLOW_FEEDBACK_NATIVE=1`. Set
+`OSG_COMPANION_RECOVERY_VJOY_PROBE` to the compiled Raw Input probe and run
+`node --test tests/ui/profile-companion-compiled-native.mjs`.
