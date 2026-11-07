@@ -47,6 +47,8 @@ static char request_detail[192],fault_detail[192];
 static const char *request_label="Request";
 static void update_screen(void);
 static char pending[65], assigned[65], publication[72];
+static char status_watch[65];
+static bool status_resync;
 static uint64_t next_request, pair_deadline;
 static const char *phases[]={"offline","pairing","awaiting-approval","authenticating","awaiting-assignment","opening-panel","live-disarmed","error","panel-error","preparing-panel"};
 typedef struct {
@@ -59,6 +61,18 @@ typedef struct {
     osg_panel_source_diagnostic diagnostic;
 } panel_operation;
 static panel_operation operation;
+typedef struct {
+    panel_operation operation;
+    phase state;
+    uint64_t arm_epoch;
+    uint16_t width,height;
+    bool armed,ready,has_session,touch,saved,direct,password_saved,has_detail;
+    char companion[sizeof(settings.companion)],name[sizeof(settings.name)],ssid[sizeof(settings.ssid)];
+    char session[sizeof(session.session)],generation[sizeof(session.generation)],publication[sizeof(session.publication)];
+    char detail[sizeof(fault_detail)];
+} status_projection;
+static status_projection last_status_projection;
+static bool status_projection_valid;
 static uint32_t operation_attempt;
 static uint64_t operation_reported;
 static cJSON *interrupted_command;
@@ -401,14 +415,48 @@ static void wifi_feedback(void){
         if(osg_wifi_feedback_start(&settings,waiting?NULL:&session,primary_connection)&&!waiting)session.feedback_stream=true;
     }
 }
-void osg_network_status(const char *request_id){
-    cJSON *v=cJSON_CreateObject();char encoded[4096],epoch[21];
+/* Called under ui.mutex. Compare public state before building any JSON. */
+static bool project_status(status_projection *projection,bool armed,bool ready,bool has_session){
+    memset(projection,0,sizeof(*projection));
+    if(detail&&strlen(detail)>=sizeof(projection->detail))return false;
+    projection->state=state;projection->armed=armed;projection->ready=ready;
+    projection->width=ui.runtime->display.width;projection->height=ui.runtime->display.height;
+    projection->touch=ui.touch_capable;projection->saved=installation_saved;
+    projection->direct=settings.direct;projection->password_saved=settings.password[0]!=0;
+    projection->has_detail=detail!=NULL;
+    if(detail)osg_copy(projection->detail,sizeof(projection->detail),detail);
+    osg_copy(projection->companion,sizeof(projection->companion),settings.companion);
+    osg_copy(projection->name,sizeof(projection->name),settings.name);
+    osg_copy(projection->ssid,sizeof(projection->ssid),settings.ssid);
+    projection->has_session=has_session;
+    if(has_session){
+        projection->arm_epoch=input.epoch;
+        osg_copy(projection->session,sizeof(projection->session),session.session);
+        osg_copy(projection->generation,sizeof(projection->generation),session.generation);
+        osg_copy(projection->publication,sizeof(projection->publication),session.publication);
+    }
+    if(operation.phase)memcpy(&projection->operation,&operation,sizeof(operation));
+    return true;
+}
+static bool emit_status(const char *request_id,bool event){
+    char encoded[4096],epoch[21];status_projection projection;
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
-    const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
+    const bool armed=state==LIVE&&input.mode==OSG_INPUT_ARMED;
+    const bool ready=state==LIVE&&!remote_armed&&osg_input_can_arm(&input,millis());
+    const bool has_session=(state==LIVE||state==OPEN||state==PREPARING||state==PANEL_ERROR||state==FAULT)&&session.session[0];
+    const bool projected=event&&project_status(&projection,armed,ready,has_session);
+    if(projected&&status_projection_valid&&!status_resync&&!memcmp(&projection,&last_status_projection,sizeof(projection))){
+        xSemaphoreGive(ui.mutex);
+        return true;
+    }
+    cJSON *v=cJSON_CreateObject();
+    const char *status=armed?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
     if(detail)cJSON_AddStringToObject(v,"statusMessage",detail);
     if(osg_stable_id(request_id))cJSON_AddStringToObject(v,"requestId",request_id);
+    if(event)cJSON_AddStringToObject(v,"type","status-event");
     cJSON_AddNumberToObject(v,"protocolVersion",2);
+    cJSON_AddBoolToObject(v,"statusEvents",true);
     cJSON_AddStringToObject(v,"deviceType","esp32");
     cJSON_AddStringToObject(v,"firmwareVersion",OSG_FIRMWARE_VERSION);
     cJSON_AddStringToObject(v,"boardProfile",OSG_BOARD_PROFILE);
@@ -421,15 +469,48 @@ void osg_network_status(const char *request_id){
     cJSON_AddStringToObject(v,"name",settings.name);
     cJSON_AddStringToObject(v,"ssid",settings.ssid);
     cJSON_AddBoolToObject(v,"wifiPasswordSaved",settings.password[0]!=0);
-    cJSON_AddBoolToObject(v,"readyForArm",state==LIVE&&!remote_armed&&osg_input_can_arm(&input,millis()));
-    if((state==LIVE||state==OPEN||state==PREPARING||state==PANEL_ERROR||state==FAULT)&&session.session[0]){
+    cJSON_AddBoolToObject(v,"readyForArm",ready);
+    if(has_session){
         snprintf(epoch,sizeof(epoch),"%" PRIu64,input.epoch);
         cJSON_AddStringToObject(v,"sessionId",session.session);cJSON_AddStringToObject(v,"generation",session.generation);
         cJSON_AddStringToObject(v,"publicationHash",session.publication);cJSON_AddStringToObject(v,"armEpoch",epoch);
     }
     add_operation(v);
     xSemaphoreGive(ui.mutex);
-    if(v&&cJSON_PrintPreallocated(v,encoded,sizeof(encoded),false)){puts(encoded);fflush(stdout);}cJSON_Delete(v);
+    bool published=v&&cJSON_PrintPreallocated(v,encoded,sizeof(encoded),false);
+    if(published){
+        published=(!status_resync||putchar('\n')!=EOF)&&puts(encoded)!=EOF&&fflush(stdout)==0;
+        status_resync=!published;
+        if(event&&published){
+            status_projection_valid=projected;
+            if(projected)memcpy(&last_status_projection,&projection,sizeof(projection));
+        }
+    }
+    cJSON_Delete(v);
+    return published;
+}
+static bool publish_status_event(void){return status_watch[0]&&emit_status(status_watch,true);}
+bool osg_network_status_command(const cJSON *command){
+    const char *type=osg_string(command,"command");
+    if(!equal(type,"status")&&!equal(type,"status-watch")&&!equal(type,"status-ping"))return false;
+    const char *id=osg_string(command,"requestId");
+    if(equal(type,"status")){emit_status(id,false);return true;}
+    if(equal(type,"status-watch")){
+        if(osg_stable_id(id)){
+            osg_copy(status_watch,sizeof(status_watch),id);
+            status_projection_valid=false;
+            publish_status_event();
+        }
+        return true;
+    }
+    if(!status_watch[0]||!equal(osg_string(command,"watchId"),status_watch)||!osg_stable_id(id))return true;
+    if(!publish_status_event())return true;
+    cJSON *reply=cJSON_CreateObject();char encoded[256];
+    cJSON_AddStringToObject(reply,"type","status-alive");
+    cJSON_AddStringToObject(reply,"requestId",id);
+    cJSON_AddStringToObject(reply,"watchId",status_watch);
+    if(cJSON_PrintPreallocated(reply,encoded,sizeof(encoded),false)){puts(encoded);fflush(stdout);}
+    cJSON_Delete(reply);return true;
 }
 static void arm(const cJSON *command){
     uint64_t challenge,epoch=0;
@@ -697,7 +778,7 @@ static void install_identity(void){
 }
 static void command(cJSON *v){
     const char *type=osg_string(v,"command");
-    if(equal(type,"status")){osg_network_status(osg_string(v,"requestId"));return;}
+    if(osg_network_status_command(v))return;
     if(equal(type,"scan-wifi")){
         stop();osg_wifi_stop();cJSON *list=osg_wifi_scan(),*reply=cJSON_CreateObject();
         cJSON_AddStringToObject(reply,"status",list?"wifi-networks":"wifi-scan-failed");
@@ -858,6 +939,7 @@ static void network_task(void *arg){
             int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
         }
         usb_assignments();update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();
+        publish_status_event();
         if(!interrupted_command)interrupted_command=osg_serial_take_command();
         if(!interrupted_command)(void)ulTaskNotifyTake(pdTRUE,network_wait());
     }

@@ -107,9 +107,7 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         const char *command=osg_string(v,"command");
         /* Keep USB liveness responsive throughout multi-chunk panel downloads.
          * Mutating commands still wait for the outer network task. */
-        if(command&&!strcmp(command,"status")){
-            osg_network_status(osg_string(v,"requestId"));cJSON_Delete(v);continue;
-        }
+        if(osg_network_status_command(v)){cJSON_Delete(v);continue;}
         if(command&&!strcmp(command,"serial-feedback")){
             osg_serial_receive_feedback(s,v);cJSON_Delete(v);continue;
         }

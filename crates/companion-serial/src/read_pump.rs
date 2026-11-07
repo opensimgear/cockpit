@@ -21,7 +21,7 @@ impl ReadPump {
         Self::start(native_duplex::open(path, baud)?, baud, wake)
     }
 
-    fn start(parts: DuplexParts, baud: u32, wake: Arc<NativeWake>) -> Result<Self, String> {
+    pub(super) fn start(parts: DuplexParts, baud: u32, wake: Arc<NativeWake>) -> Result<Self, String> {
         let DuplexParts { mut receiver, mut writer, cancel } = parts;
         let _ = writer.control_lines(false, false);
         let (send, received) = mpsc::sync_channel(16);

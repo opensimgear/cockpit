@@ -3,9 +3,12 @@
 #include <sys/select.h>
 static int serial_getchar(void);
 static int serial_select(int,fd_set *,fd_set *,fd_set *,struct timeval *);
+static int serial_puts(const char *);
 #define getchar serial_getchar
 #define select serial_select
+#define puts serial_puts
 #include "../network/serial_wire.c"
+#undef puts
 #undef getchar
 #undef select
 #include <assert.h>
@@ -23,7 +26,13 @@ static bool sha(const void *p,size_t n,char out[72]){unsigned char d[32];SHA256(
 static bool decode(const char *s,unsigned char *out,size_t capacity,size_t *n){size_t len=strlen(s);if(!len||len%4)return false;unsigned char *tmp=malloc(len);assert(tmp);int count=EVP_DecodeBlock(tmp,(const unsigned char *)s,(int)len);if(count<0){free(tmp);return false;}if(s[len-1]=='=')count--;if(s[len-2]=='=')count--;if((size_t)count>capacity){free(tmp);return false;}memcpy(out,tmp,(size_t)count);free(tmp);*n=(size_t)count;return true;}
 const osg_crypto osg_platform_crypto={sha,decode};
 static const char *incoming;
-static unsigned probes, feedback_events;
+static char last_output[8192];
+static int serial_puts(const char *record){
+    snprintf(last_output,sizeof(last_output),"%s",record);
+    return puts(record);
+}
+static unsigned probes, watches, pings, feedback_events;
+static const char *feedback_expected_link="test-link";
 static int64_t now;
 static unsigned waits;
 static int select_error;
@@ -45,12 +54,21 @@ static int serial_select(int count,fd_set *readable,fd_set *writeable,fd_set *er
 }
 void esp_fill_random(void *p,size_t n){memset(p,42,n);}
 void mbedtls_platform_zeroize(void *p,size_t n){memset(p,0,n);}
-void osg_network_status(const char *id){
+bool osg_network_status_command(const cJSON *command){
+    const char *type=osg_string(command,"command"),*id=osg_string(command,"requestId");
+    if(!type)return false;
+    if(!strcmp(type,"status-watch")){assert(id&&!strcmp(id,"watch"));watches++;return true;}
+    if(!strcmp(type,"status-ping")){
+        const char *watch=osg_string(command,"watchId");
+        assert(watches==1&&watch&&!strcmp(watch,"watch"));pings++;return true;
+    }
+    if(strcmp(type,"status"))return false;
     char expected[16];snprintf(expected,sizeof(expected),"probe-%u",++probes);
     assert(id&&!strcmp(id,expected));
+    return true;
 }
 void osg_network_serial_feedback(const cJSON *record){
-    assert(!strcmp(osg_string(record,"linkId"),"test-link"));
+    assert(!strcmp(osg_string(record,"linkId"),feedback_expected_link));
     feedback_events++;
 }
 static void chunked_feedback(osg_socket *socket,bool valid){
@@ -99,6 +117,86 @@ static void large_reply(osg_socket *socket,bool accepted){
     else assert(!reply&&!strcmp(socket->request_error,"Invalid USB reply data or checksum"));
     cJSON_Delete(reply);incoming="";free(stream);free(payload);
 }
+static void feedback_frame_for(const osg_socket *socket,const char *link,const char *body){
+    cJSON *record=cJSON_CreateObject();
+    if(link)cJSON_AddStringToObject(record,"linkId",link);
+    if(body){cJSON *frame=osg_json_parse(body,strlen(body));assert(frame);cJSON_AddItemToObject(record,"frame",frame);}
+    osg_serial_receive_feedback(socket,record);
+    cJSON_Delete(record);
+}
+static void feedback_frame(const osg_socket *socket,const char *body){
+    feedback_frame_for(socket,socket->link,body);
+}
+static void reject_incomplete_feedback(void){
+    osg_socket socket;
+    assert(osg_serial_open(&socket)&&socket.direct&&!strncmp(socket.link,"usb-",4));
+    feedback_expected_link=socket.link;
+    const unsigned before=feedback_events;
+    feedback_frame(&socket,NULL);
+    feedback_frame(&socket,"{\"type\":\"transfer-start\",\"bytes\":0}");
+    feedback_frame(&socket,"{\"type\":\"transfer-start\",\"bytes\":1000000000}");
+    feedback_frame(&socket,"{\"type\":\"transfer-end\",\"id\":\"missing-start\"}");
+    feedback_frame_for(&socket,"old-link","{\"type\":\"feedback-event\"}");
+    feedback_frame_for(&socket,NULL,"{\"type\":\"assignments-event\"}");
+    assert(!feedback_transfer.bytes&&feedback_events==before);
+    feedback_frame(&socket,"{\"type\":\"transfer-start\",\"bytes\":16,\"id\":\"old\",\"sha256\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}");
+    assert(feedback_transfer.bytes);
+    osg_serial_close(&socket);
+    feedback_frame(&socket,"{\"type\":\"transfer-end\",\"id\":\"old\"}");
+    feedback_frame(&socket,"{\"type\":\"feedback-event\"}");
+    assert(!feedback_transfer.bytes&&feedback_events==before+1);
+    socket.direct=false;
+    feedback_frame(&socket,"{\"type\":\"feedback-event\"}");
+    assert(feedback_events==before+1);
+    socket.direct=true;
+    feedback_frame(&socket,"{\"type\":\"paired\"}");
+    feedback_frame(&socket,"{\"ok\":false,\"error\":\"Pairing expired\"}");
+    feedback_frame(&socket,"{\"ok\":false,\"error\":12}");
+    assert(feedback_events==before+3);
+    feedback_expected_link="test-link";
+}
+static void reject_unusable_requests(osg_socket *socket){
+    const uint64_t original_sequence=socket->serial_sequence;
+    socket->serial_sequence=UINT64_MAX;
+    cJSON *reply=NULL;
+    assert(!osg_serial_request(socket,cJSON_CreateObject(),&reply,10));
+    assert(!reply&&!strcmp(socket->request_error,"USB sequence exhausted"));
+    socket->serial_sequence=original_sequence;
+    char payload[8192];memset(payload,'x',sizeof(payload)-1);payload[sizeof(payload)-1]=0;
+    cJSON *request=cJSON_CreateObject();cJSON_AddStringToObject(request,"payload",payload);
+    assert(!osg_serial_request(socket,request,&reply,10));
+    assert(!reply&&!strcmp(socket->request_error,"USB request exceeds buffer"));
+    incoming="{\"command\":\"connect\"}\n{\"command\":\"arm\"}\n";
+    assert(!osg_serial_request(socket,cJSON_CreateObject(),&reply,10));
+    assert(!reply&&!strcmp(socket->request_error,"Too many pending USB commands"));
+    cJSON *command=osg_serial_take_command();
+    assert(command&&!strcmp(osg_string(command,"command"),"connect"));
+    cJSON_Delete(command);
+    assert(!osg_serial_take_command());
+}
+static void request_feature_flags(osg_socket *socket){
+    const struct { const char *type; bool feedback_ready, assignments, feedback; } cases[] = {
+        {"auth",false,true,false}, {"baseline",false,false,true},
+        {"heartbeat",false,false,false}, {"heartbeat",true,false,true},
+        {"open",true,false,false},
+    };
+    for(size_t i=0;i<sizeof(cases)/sizeof(cases[0]);i++){
+        char response[192];
+        snprintf(response,sizeof(response),
+            "{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"%" PRIu64 "\",\"frame\":{\"ok\":true}}\n",
+            socket->serial_sequence+1);
+        incoming=response;
+        socket->feedback_ready=cases[i].feedback_ready;
+        cJSON *request=cJSON_CreateObject(),*reply=NULL;
+        cJSON_AddStringToObject(request,"type",cases[i].type);
+        assert(osg_serial_request(socket,request,&reply,10));
+        cJSON_Delete(reply);
+        cJSON *sent=osg_json_parse(last_output,strlen(last_output));assert(sent);
+        assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(sent,"pushAssignments"))==cases[i].assignments);
+        assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(sent,"pushFeedback"))==cases[i].feedback);
+        cJSON_Delete(sent);
+    }
+}
 int main(void){
     osg_json_init();
     assert(osg_json_configure(512*1024,sizeof(reply_storage),4096));
@@ -108,13 +206,15 @@ int main(void){
     assert(!allocation_failure&&!strcmp(socket.request_error,"USB reply workspace allocation failed"));storage_ready=true;
     /* An arm command must remain deferred while any number of probes are served. */
     incoming="{\"command\":\"arm\",\"armEpoch\":\"1\"}\n"
+        "{\"command\":\"status-watch\",\"requestId\":\"watch\"}\n"
+        "{\"command\":\"status-ping\",\"requestId\":\"ping\",\"watchId\":\"watch\"}\n"
         "{\"command\":\"status\",\"requestId\":\"probe-1\"}\n"
         "{\"command\":\"status\",\"requestId\":\"probe-2\"}\n"
         "{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"ok\":true,\"type\":\"feedback-event\"}}\n"
         "{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"1\",\"frame\":{\"ok\":true,\"type\":\"image-chunk\",\"offset\":0}}\n";
     cJSON *reply=NULL;
     assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,3000));
-    assert(probes==2&&feedback_events==1&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==0);
+    assert(probes==2&&watches==1&&pings==1&&feedback_events==1&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==0);
     cJSON_Delete(reply);
     /* load_images issues its next request before draining deferred commands. */
     incoming="{\"command\":\"status\",\"requestId\":\"probe-3\"}\n"
@@ -215,6 +315,9 @@ int main(void){
     select_error=EIO;
     assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
     assert(!reply&&!strcmp(socket.request_error,"USB console receive failed"));
+    reject_incomplete_feedback();
+    reject_unusable_requests(&socket);
+    request_feature_flags(&socket);
     assert(!osg_json_allocated());
     puts("Serial status probes remain responsive; fragmented records survive idle/request handoffs and timeouts");
 }

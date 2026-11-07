@@ -47,7 +47,7 @@ typedef struct {
 } osg_network_ui;
 void osg_network_start(osg_network_ui);
 /* Read-only status probes may arrive while a serial request is in flight. */
-void osg_network_status(const char *request_id);
+bool osg_network_status_command(const cJSON *command);
 void osg_network_serial_feedback(const cJSON *record);
 void osg_network_touch(bool valid, bool down, int x, int y);
 void osg_network_render(const osg_panel *, bool finished, bool success);

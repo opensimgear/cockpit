@@ -63,6 +63,31 @@ fn refresh_panel_recovery(state:&mut Value,device:&Value,blocked:&mut Option<Str
 fn same_usb_candidate(candidate: &Value, current: &Value) -> bool {
     ["port", "vid", "pid", "serial"].iter().all(|key| candidate[key] == current[key])
 }
+fn accepts_status(frame: &Value, nonce: &str, watch: Option<&str>, companion: Option<&str>) -> bool {
+    if frame["protocolVersion"] != 2 || frame["deviceType"] != "esp32" {
+        return false;
+    }
+    match frame.get("type") {
+        Some(kind) if kind == "status-event" => watch.is_some()
+            && companion.is_some()
+            && frame["requestId"].as_str() == watch
+            && frame["companionId"].as_str() == companion,
+        None => !nonce.is_empty() && frame["requestId"].as_str() == Some(nonce),
+        _ => false,
+    }
+}
+fn status_probe(nonce: &str, watch: Option<&str>, revalidate: bool) -> Value {
+    match watch.filter(|_| !revalidate) {
+        Some(watch) => json!({"command":"status-ping","requestId":nonce,"watchId":watch}),
+        None => json!({"command":"status","requestId":nonce}),
+    }
+}
+
+fn accepts_status_pong(frame: &Value, nonce: &str, watch: Option<&str>) -> bool {
+    frame["type"] == "status-alive" && !nonce.is_empty()
+        && watch.is_some() && frame["watchId"].as_str() == watch
+        && frame["requestId"].as_str() == Some(nonce)
+}
 fn safe_panel_operation(device: &Value) -> Option<Value> {
     let operation = device.get("operation")?;
     let safe = osg_companion_service::operation::validate_panel_operation(operation,
@@ -226,7 +251,8 @@ impl Manager {
         let wake = Arc::new(NativeWake::default());
         let worker_wake = wake.clone();
         let join = thread::spawn(move || {
-            let result = worker(&path, &hub, &rx, &public, expected.as_deref(), &observer, worker_wake);
+            let result = worker(&hub, &rx, &public, expected.as_deref(), &observer, worker_wake,
+                |baud, wake| ReadPump::open(&path, baud, wake));
             if let Err(error) = result {
                 let paired=hub.command(&json!({"command":"companion_status"})).ok();
                 let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
@@ -564,16 +590,16 @@ fn approve(hub: &Hub, id: &str) -> Result<bool, String> {
     Ok(false)
 }
 fn worker(
-    path: &str,
     hub: &Hub,
     rx: &Receiver<Action>,
     public: &Arc<Mutex<Value>>,
     expected: Option<&str>,
     observer: &StatusObserver,
     wake: Arc<NativeWake>,
+    mut open: impl FnMut(u32, Arc<NativeWake>) -> Result<ReadPump, String>,
 ) -> Result<(), String> {
     let _ = wake.bind_thread(thread::current());
-    let mut port = ReadPump::open(path, 115200, wake.clone())?;
+    let mut port = open(115200, wake.clone())?;
     let mut wire = Wire::new(wake.clone());
     let result = (|| {
         let started = Instant::now();
@@ -587,6 +613,10 @@ fn worker(
         let mut stopped_panel:Option<String>=None;
         let mut ready = false;
         let mut nonce = String::new();
+        let mut snapshot_requested = false;
+        let mut status_watch: Option<String> = None;
+        let mut status_watch_ready = false;
+        let mut recoverable = false;
         let mut provision: Option<(String, Instant, Option<Value>)> = None;
         let mut line = Vec::new();
         let mut overflow = false;
@@ -613,15 +643,20 @@ fn worker(
             if !ready && baud_switched.elapsed() > Duration::from_secs(2) {
                 let baud = if port.baud == 115200 { 921600 } else { 115200 };
                 drop(port);
-                port = ReadPump::open(path, baud, wake.clone())?;
+                port = open(baud, wake.clone())?;
                 line.clear();
                 overflow = false;
                 baud_switched = Instant::now();
                 probe_framing_error = false;
             }
-            if last_probe.elapsed() > Duration::from_millis(if ready { 1000 } else { 500 }) {
+            if last_probe.elapsed() >= Duration::from_millis(if ready { 1000 } else { 500 }) {
                 nonce = uuid::Uuid::new_v4().to_string();
-                serial_write::send_native(&mut *port.writer,port.baud,&json!({"command":"status","requestId":nonce}),public,true)?;
+                // Ping can prompt firmware to retry the first event if its write
+                // failed. Full probes would keep an unconfirmed watch alive.
+                let probe = status_probe(&nonce, status_watch.as_deref(),
+                    status_watch_ready && recoverable && recovery.due(Instant::now()));
+                snapshot_requested = probe["command"] == "status";
+                serial_write::send_native(&mut *port.writer,port.baud,&probe,public,true)?;
                 last_probe = Instant::now();
             }
             // One local command per loop; no provisioning retries.
@@ -664,6 +699,16 @@ fn worker(
                                 ]);
                             }
                             send(&mut port,&v,public)?;
+                            if v["command"] == "forget" {
+                                // Forget can clear the device identity. Establish it
+                                // again through a correlated one-shot response.
+                                status_watch = None;
+                                status_watch_ready = false;
+                                nonce.clear();
+                                recoverable = false;
+                                recovery.reset();
+                                last_probe = Instant::now() - Duration::from_secs(1);
+                            }
                         },
                         Action::Provision(mut v, id) => {
                             if provision.is_some() {
@@ -782,10 +827,19 @@ fn worker(
                                         }
                                     }
                                     _ => {
-                                        if v["protocolVersion"] == 2
-                                            && v["deviceType"] == "esp32"
-                                            && v["requestId"].as_str() == Some(&nonce)
-                                        {
+                                        let current_companion = public.lock().unwrap_or_else(|p|p.into_inner())["device"]["companionId"].as_str().map(str::to_owned);
+                                        let expected_companion = provision.as_ref()
+                                            .map(|(id, _, _)| id.as_str())
+                                            .filter(|id| v["companionId"].as_str() == Some(*id))
+                                            .or(current_companion.as_deref());
+                                        let snapshot_nonce = if snapshot_requested { &nonce } else { "" };
+                                        let snapshot = v.get("type").is_none();
+                                        let foreign_recovery = snapshot && ready && recoverable && provision.is_none()
+                                            && v["companionId"].as_str() != expected_companion;
+                                        if !foreign_recovery && accepts_status(&v, snapshot_nonce, status_watch.as_deref(), expected_companion) {
+                                            if snapshot {
+                                                nonce.clear();
+                                            }
                                             if !ready
                                                 && expected.is_some_and(|id| {
                                                     v["companionId"] != id
@@ -813,11 +867,12 @@ fn worker(
                                             let now=Instant::now();
                                             let healthy=matches!(v["status"].as_str(),Some("live-armed"|"live-disarmed"|"awaiting-assignment"));
                                             if !retry_allowed || !paired || v["setupSaved"]!=true || v["connectionMode"]!="serial" || assigned.is_none() { recovery.reset(); }
-                                            let recoverable=paired && v["setupSaved"]==true && v["connectionMode"]=="serial"
+                                            recoverable=paired && v["setupSaved"]==true && v["connectionMode"]=="serial"
                                                 && assigned.is_some() && retry_allowed
                                                 && (v["status"]=="offline" || recovery::transport_failure(&v));
                                             recovery.observe(now,assigned.as_deref(),recoverable,healthy);
-                                            let auto_retry=ready && recoverable && recovery.due(now);
+                                            let auto_retry = ready && snapshot && recoverable && recovery.due(now)
+                                                && v["companionId"].as_str() == expected_companion;
                                             if v["setupSaved"] == true && retry_allowed && (!ready || auto_retry) {
                                                 if auto_retry {
                                                     // Retire the old native source before asking
@@ -837,6 +892,7 @@ fn worker(
                                                 )?;
                                             }
                                             ready = true;
+                                            status_watch_ready |= v["type"] == "status-event";
                                             last_status = Some(Instant::now());
                                             let mut safe = json!({});
                                             for key in [
@@ -862,8 +918,8 @@ fn worker(
                                                 }
                                             }
                                             if let Some(operation) = safe_panel_operation(&v) {
-                                                // Only nonce-bound status reaches this path. Events
-                                                // may be delayed and never update session metadata.
+                                                // Only scoped status reaches this path. The Hub
+                                                // also checks the exact active session and generation.
                                                 let _ = hub.record_serial_panel_operation(
                                                     v["companionId"].as_str().unwrap_or(""),
                                                     v["sessionId"].as_str().unwrap_or(""),
@@ -904,6 +960,19 @@ fn worker(
                                                 provision = None;
                                                 observer.set(public, "provisioning", json!(false));
                                             }
+                                            if v["statusEvents"] == true && status_watch.is_none() {
+                                                let id = uuid::Uuid::new_v4().to_string();
+                                                send(&mut port, &json!({"command":"status-watch","requestId":id}), public)?;
+                                                status_watch = Some(id);
+                                            }
+                                        } else if !snapshot_requested && accepts_status_pong(&v, &nonce, status_watch.as_deref().filter(|_| status_watch_ready)) {
+                                            nonce.clear();
+                                            last_status = Some(Instant::now());
+                                            public.lock().unwrap_or_else(|p|p.into_inner())["_statusObservedMs"] = json!(status_clock_ms());
+                                        } else if matches!(v["type"].as_str(), Some("status-event" | "status-alive"))
+                                            || (v["deviceType"] == "esp32" && v.get("requestId").is_some())
+                                        {
+                                            // Ignore unmatched status replies before handling command diagnostics.
                                         } else if v["status"] == "wifi-networks" {
                                             scan_started=None;last_status=Some(Instant::now());
                                             observer.set_fields(public, [
@@ -969,8 +1038,42 @@ fn worker(
     result
 }
 #[cfg(test)]
+mod usb_status_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_status_watch_uses_liveness_only_unless_recovery_needs_a_snapshot() {
+        assert_eq!(status_probe("probe", None, false)["command"], "status");
+        assert_eq!(status_probe("probe", Some("watch"), true)["command"], "status");
+        let ping = status_probe("probe", Some("watch"), false);
+        assert_eq!(ping, json!({"command":"status-ping","requestId":"probe","watchId":"watch"}));
+        let pong = json!({"type":"status-alive","requestId":"probe","watchId":"watch"});
+        assert!(accepts_status_pong(&pong, "probe", Some("watch")));
+        assert!(!accepts_status_pong(&pong, "old", Some("watch")));
+        assert!(!accepts_status_pong(&pong, "probe", Some("old")));
+        assert!(!accepts_status_pong(&pong, "probe", None));
+        assert!(!accepts_status(&pong, "probe", Some("watch"), Some("screen")));
+    }
+
+    #[test]
+    fn status_events_require_the_current_watch_and_companion_identity() {
+        let mut frame = json!({"protocolVersion":2,"deviceType":"esp32","type":"status-event",
+            "requestId":"watch","companionId":"screen"});
+        assert!(accepts_status(&frame, "probe", Some("watch"), Some("screen")));
+        assert!(!accepts_status(&frame, "probe", Some("old"), Some("screen")));
+        assert!(!accepts_status(&frame, "probe", Some("watch"), Some("other")));
+        assert!(!accepts_status(&frame, "probe", None, Some("screen")));
+        assert!(!accepts_status(&frame, "probe", Some("watch"), None));
+        frame["deviceType"] = json!("other");
+        assert!(!accepts_status(&frame, "probe", Some("watch"), Some("screen")));
+        frame["deviceType"] = json!("esp32");
+        frame.as_object_mut().unwrap().remove("type");
+        assert!(!accepts_status(&frame, "probe", Some("watch"), Some("screen")));
+        frame["requestId"] = json!("probe");
+        assert!(accepts_status(&frame, "probe", Some("watch"), Some("screen")));
+    }
     #[test]
     fn terminal_operation_blocks_automatic_retry_only_for_its_exact_assignment() {
         let hash=format!("sha256:{}","a".repeat(64));

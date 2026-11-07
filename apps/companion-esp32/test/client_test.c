@@ -1,13 +1,21 @@
 #define _DEFAULT_SOURCE
 #include "panel.h"
+#include "render_profile.h"
 #include <openssl/evp.h>
+#include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
 static int fake_settimeofday(const struct timeval *,const struct timezone *);
 static int fake_getchar(void);
+static int capture_puts(const char *);
+static cJSON *count_render_profile(uint16_t,uint16_t);
 #define settimeofday fake_settimeofday
 #define getchar fake_getchar
+#define puts capture_puts
+#define osg_render_profile_json count_render_profile
 #include "../network/client.c"
+#undef osg_render_profile_json
+#undef puts
 #undef settimeofday
 #undef getchar
 #include <assert.h>
@@ -39,6 +47,24 @@ static cJSON *fixture;
 static const char *mock_serial_input;
 static size_t mock_serial_at;
 static bool serial_during_finish,serial_during_baseline,serial_during_image;
+static unsigned status_events;
+static unsigned status_pongs;
+static unsigned rendered_profiles;
+static cJSON *count_render_profile(uint16_t width,uint16_t height){
+    rendered_profiles++;
+    return osg_render_profile_json(width,height);
+}
+static bool reject_status_write;
+static char captured_status[4096];
+static int capture_puts(const char *line){
+    if(strstr(line,"\"type\":\"status-alive\""))status_pongs++;
+    if(strstr(line,"\"type\":\"status-event\"")){
+        if(reject_status_write)return EOF;
+        status_events++;
+        osg_copy(captured_status,sizeof(captured_status),line);
+    }
+    return puts(line);
+}
 static int fake_getchar(void){if(!mock_serial_input)return EOF;int c=(unsigned char)mock_serial_input[mock_serial_at++];if(!mock_serial_input[mock_serial_at]){mock_serial_input=NULL;mock_serial_at=0;}return c;}
 static int fake_settimeofday(const struct timeval *v,const struct timezone *zone){(void)zone;return clock_ok&&v->tv_sec>0?0:-1;}
 int64_t esp_timer_get_time(void){return (int64_t)fake_ms*1000;}
@@ -168,6 +194,36 @@ static void arm_text(char out[1024]){
     snprintf(out,1024,"{\"command\":\"arm\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\",\"armEpoch\":\"%" PRIu64 "\"}",session.session,session.generation,session.publication,input.epoch);
 }
 static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED&&!strcmp(operation.phase,"ready"));advance();}
+static void status_watch_tests(void){
+    publish_status_event();
+    assert(status_events==0);
+    cmd("{\"command\":\"status-watch\",\"requestId\":\"watch-one\"}");
+    assert(status_events==1&&strstr(captured_status,"\"requestId\":\"watch-one\""));
+    unsigned encoded=rendered_profiles;
+    for(unsigned i=0;i<100;i++)assert(publish_status_event());
+    assert(status_events==1);
+    assert(rendered_profiles==encoded);
+    const char *previous=detail;
+    detail="Fixture status changed";
+    publish_status_event();
+    assert(status_events==2&&strstr(captured_status,"Fixture status changed"));
+    cmd("{\"command\":\"status\",\"requestId\":\"one-shot\"}");
+    assert(status_events==2);
+    cmd("{\"command\":\"status-watch\",\"requestId\":\"watch-two\"}");
+    assert(status_events==3&&strstr(captured_status,"\"requestId\":\"watch-two\""));
+    cmd("{\"command\":\"status-ping\",\"requestId\":\"ping\",\"watchId\":\"watch-one\"}");
+    assert(status_pongs==0);
+    cmd("{\"command\":\"status-ping\",\"requestId\":\"ping\",\"watchId\":\"watch-two\"}");
+    assert(status_pongs==1&&status_events==3);
+    detail=previous;
+    reject_status_write=true;
+    cmd("{\"command\":\"status-ping\",\"requestId\":\"ping-two\",\"watchId\":\"watch-two\"}");
+    assert(status_pongs==1&&status_events==3);
+    reject_status_write=false;
+    cmd("{\"command\":\"status-ping\",\"requestId\":\"ping-two\",\"watchId\":\"watch-two\"}");
+    assert(status_pongs==2&&status_events==4);
+    status_watch[0]=0;
+}
 static void live_wake_tests(void){
     live_ready();
     network_owner=xTaskGetCurrentTaskHandle();network_wakes=0;
@@ -191,7 +247,7 @@ static void live_input_tests(void){
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
     osg_network_touch(true,true,100,100);char held[1024];arm_text(held);cmd(held);assert(!test_runtime.armed&&baseline_requests==baselines);
     osg_network_touch(true,false,0,0);cmd(held);assert(baseline_requests==baselines);arm_text(stale);live_arm();assert(baseline_requests==baselines+1);cmd(stale);assert(baseline_requests==baselines+1);
-    osg_network_status("status-request");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
+    cmd("{\"command\":\"status\",\"requestId\":\"status-request\"}");fake_ms++;osg_network_touch(true,true,100,100);assert(input.count==1);advance();assert(mock_button&&input_sequence==1&&input.count==0);
     int sent=input_requests;fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(input_requests==sent&&mock_button);
     fake_ms++;osg_network_touch(true,false,0,0);advance();assert(!mock_button&&input_sequence==2);
     fake_ms+=20;osg_network_touch(true,true,100,100);advance();assert(mock_button);sent=input_requests;
@@ -577,7 +633,7 @@ int main(int argc,char **argv){
     usb_assignments();assert(state==OPEN&&!remote_armed);
     cJSON_Delete(assignment_event);mock_serial_assignments=false;
     stop();
-    live_wake_tests();candidate_handoff_tests();portable_delivery_tests();
+    status_watch_tests();live_wake_tests();candidate_handoff_tests();portable_delivery_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     osg_scene_banks_destroy(&banks);cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }
