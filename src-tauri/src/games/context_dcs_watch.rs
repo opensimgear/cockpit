@@ -19,7 +19,7 @@ impl DcsWatch {
         self.source.retry_at().into_iter().chain(self.catalogue.retry_at()).min()
     }
 
-    pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
+    pub(super) fn refresh(&mut self, inner: &Inner) {
         let catalogue = inner.setup.dcs_catalogue_watch_path();
         let children = catalogue.as_deref().map(|root| {
             (root, catalogue_file as prepared_sources::watch::ChildFilter)
@@ -61,7 +61,6 @@ impl DcsWatch {
                 if !self.pending { inner.changes.mark_resources(); }
             }
         }
-        self.pending
     }
 }
 

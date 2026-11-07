@@ -232,8 +232,8 @@ impl GamesRuntime {
                 let updated = update_wake.observed();
                 let epoch = (library, processes);
                 let sdk_changed = sdk_watches.refresh(&inner);
-                let assetto_setup_pending = assetto_watches.refresh(&inner);
-                let dcs_setup_pending = dcs_watch.refresh(&inner);
+                assetto_watches.refresh(&inner);
+                dcs_watch.refresh(&inner);
                 let scope = inner.changes.context_process_live(library).then_some(epoch);
                 inner.refresh_game_contexts_with_inventory(library != last_library, |games| {
                     let rows = process_cache.read(inner.platform.as_ref(), games,
@@ -249,9 +249,7 @@ impl GamesRuntime {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
                     let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at()]
                         .into_iter().flatten().min().map(|at| at.saturating_duration_since(Instant::now()));
-                    let maintenance = context_sdk_watch::maintenance_delay(
-                        &inner, live, started, assetto_setup_pending || dcs_setup_pending,
-                    );
+                    let maintenance = context_sdk_watch::maintenance_delay(&inner, live, started);
                     context_wake.wait_scheduled(library, maintenance.into_iter().chain(watch_retry).min());
                 }
             }

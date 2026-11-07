@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, MutexGuard, OnceLock, TryLockError,
     },
     thread::{self, JoinHandle},
 };
@@ -25,6 +25,7 @@ struct Inner {
     catalogues: Mutex<provider_settings::CatalogueCache>,
     catalogue_generation: [std::sync::atomic::AtomicU64; 3],
     watched_setup: Mutex<std::collections::BTreeSet<String>>,
+    watched_setup_waiting: AtomicBool,
     dcs_discovery_watched: AtomicBool,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
@@ -55,6 +56,20 @@ pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
     admission: Mutex<()>,
+}
+struct SetupAdmission<'a> {
+    lock: Option<MutexGuard<'a, ()>>,
+    inner: &'a Inner,
+}
+impl Drop for SetupAdmission<'_> {
+    fn drop(&mut self) {
+        drop(self.lock.take());
+        if self.inner.watched_setup_waiting.swap(false, Ordering::AcqRel) {
+            if let Some(changes) = self.inner.changes.get() {
+                changes.context_update_wake.notify();
+            }
+        }
+    }
 }
 mod car_publication;
 mod settings;
@@ -116,6 +131,7 @@ impl GameIntegrationSetup {
                 catalogues: Mutex::new(BTreeMap::new()),
                 catalogue_generation: Default::default(),
                 watched_setup: Default::default(),
+                watched_setup_waiting: AtomicBool::new(false),
                 dcs_discovery_watched: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
@@ -131,6 +147,19 @@ impl GameIntegrationSetup {
     }
     pub(crate) fn watch_changes(&self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let _ = self.inner.changes.set(changes);
+    }
+    fn lock_admission(&self) -> SetupAdmission<'_> {
+        let lock = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        SetupAdmission { lock: Some(lock), inner: &self.inner }
+    }
+
+    fn try_watched_admission(&self) -> Option<SetupAdmission<'_>> {
+        let lock = match self.admission.try_lock() {
+            Ok(lock) => lock,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        Some(SetupAdmission { lock: Some(lock), inner: &self.inner })
     }
     /// New preparation forces a content hash; subsequent native admission checks
     /// metadata immediately, independently of the passive observer's interval.
@@ -209,7 +238,7 @@ impl GameIntegrationSetup {
         }
     }
     pub(crate) fn refresh(&self, catalogue: &[Value]) {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        let _admission = self.lock_admission();
         self.inner.retain_setup_scopes(catalogue);
         self.refresh_admitted(catalogue);
     }
@@ -262,8 +291,19 @@ impl GameIntegrationSetup {
         if active { watched.insert(id.into()); } else { watched.remove(id); }
     }
 
+    pub(crate) fn needs_external_setup(&self, id: &str) -> bool {
+        (id == "dcs" && !self.dcs_setup_fully_watched())
+            || (id.starts_with("assetto-corsa") && !self.catalogue_watched(id))
+    }
+
     pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
-        let Ok(_admission) = self.admission.try_lock() else { return false; };
+        if self.busy() { return false; }
+        let Some(_admission) = self.try_watched_admission().or_else(|| {
+            // Retry after recording demand so a release between the first
+            // attempt and registration cannot strand the pending file change.
+            self.inner.watched_setup_waiting.store(true, Ordering::Release);
+            self.try_watched_admission()
+        }) else { return false; };
         if self.busy() { return false; }
         if id == "dcs" {
             self.invalidate_dcs_catalogue();
@@ -275,16 +315,17 @@ impl GameIntegrationSetup {
     }
 
     pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        let mut candidates = catalogue.iter().filter_map(|game| {
+            let key = crate::game_discovery::integration_key(game)?;
+            self.needs_external_setup(key).then_some((game, key))
+        }).peekable();
+        if candidates.peek().is_none() { return; }
+        let _admission = self.lock_admission();
         let watched = self.inner.watched_setup.lock().unwrap_or_else(|error| error.into_inner()).clone();
-        for game in catalogue.iter().filter(|game| {
-            match crate::game_discovery::integration_key(game) {
-                Some("dcs") => !watched.contains("dcs") || self.inner.dcs_discovery_changed(game),
-                Some(key) => key.starts_with("assetto-corsa") && !watched.contains(key),
-                None => false,
+        for (game, key) in candidates {
+            if !watched.contains(key) || (key == "dcs" && self.inner.dcs_discovery_changed(game)) {
+                self.refresh_admitted(std::slice::from_ref(game));
             }
-        }) {
-            self.refresh_admitted(std::slice::from_ref(game));
         }
     }
 
@@ -303,7 +344,7 @@ impl GameIntegrationSetup {
         }
     }
     pub(crate) fn shutdown(&self) {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        let _admission = self.lock_admission();
         self.inner.closed.store(true, Ordering::Release);
         // Closing always stops further work; an already reserved durable commit
         // finishes before the existing worker join returns.

@@ -18,7 +18,7 @@ impl AssettoWatches {
         self.0.iter().filter_map(|watch| watch.source.retry_at()).min()
     }
 
-    pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
+    pub(super) fn refresh(&mut self, inner: &Inner) {
         let games = {
             let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
             PROVIDERS.map(|provider| settings.catalogue.iter()
@@ -39,6 +39,5 @@ impl AssettoWatches {
                 }
             }
         }
-        self.0.iter().any(|watch| watch.pending)
     }
 }

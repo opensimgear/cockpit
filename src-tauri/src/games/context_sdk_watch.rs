@@ -93,20 +93,16 @@ pub(super) fn publish_change(inner: &Inner) {
     inner.changes.mark_resources();
 }
 
-pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant,
-    setup_pending: bool) -> Option<Duration> {
+pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant) -> Option<Duration> {
     let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
     let mut configured = Vec::new();
-    let mut needs_setup_maintenance = setup_pending;
+    let mut needs_setup_maintenance = false;
     for game in &settings.catalogue {
         let Some(key) = crate::game_discovery::integration_key(game) else { continue; };
         let Some(id) = game["id"].as_str() else { continue; };
         if game["installed"] == true || game["executable"].is_string() || game["installPath"].is_string() {
             configured.push(id.to_owned());
-            // DCS needs both the setup and Saved Games discovery watches.
-            // Assetto only needs its executable watch.
-            needs_setup_maintenance |= (key == "dcs" && !inner.setup.dcs_setup_fully_watched())
-                || (key.starts_with("assetto-corsa") && !inner.setup.catalogue_watched(key));
+            needs_setup_maintenance |= inner.setup.needs_external_setup(key);
         }
     }
     drop(settings);

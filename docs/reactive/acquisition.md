@@ -178,6 +178,11 @@ earliest due watch alongside its existing deadlines. A successful retry
 clears its deadline and publishes a fresh source baseline. An unchanged
 failed registration preserves the current read-model generation, and a
 removed scope clears the deadline.
+When a watched DCS or Assetto setup inspection meets an occupied setup gate,
+it retains its pending work. The synchronous gate owner wakes game context
+after unlocking. An async setup worker wakes context when it clears its busy
+state. Only uncovered setup scopes still schedule the external inspection
+fallback.
 X-Plane passive inspection schedules explicit demand at its lease deadline.
 Closing an observation wakes the vehicle worker to release its channels even
 when the native capture has no updates.

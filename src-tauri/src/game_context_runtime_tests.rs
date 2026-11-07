@@ -114,8 +114,8 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     *platform.process.lock().unwrap() = None;
     runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
     wait_for_setup();
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now(), false), Some(Duration::from_millis(500)));
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), false), None);
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), Some(Duration::from_millis(500)));
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now()), None);
 
     let mut catalogue = platform.catalogue(&BTreeMap::new());
     catalogue.push(json!({"id":"assetto-corsa","provider":"assetto-corsa",
@@ -123,11 +123,10 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(catalogue);
     wait_for_setup();
-    let delay = |pending| context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), pending);
-    assert!(delay(false).is_some(), "An unwatched Assetto installation needs maintenance");
+    let delay = || context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now());
+    assert!(delay().is_some(), "An unwatched Assetto installation needs maintenance");
     runtime.inner.setup.set_setup_watch("assetto-corsa", true);
-    assert_eq!(delay(false), None, "A watched idle Assetto installation can park");
-    assert!(delay(true).is_some(), "Pending setup reinspection needs a retry");
+    assert_eq!(delay(), None, "A watched Assetto installation waits for its source or setup owner");
     runtime.inner.setup.set_setup_watch("assetto-corsa", false);
 
     let mut catalogue = platform.catalogue(&BTreeMap::new());
@@ -136,15 +135,14 @@ fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_reg
     *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(catalogue);
     wait_for_setup();
-    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now(), false)
+    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now())
         .is_some_and(|delay| delay > Duration::from_millis(500)));
     runtime.inner.setup.set_dcs_discovery_watch(true);
-    assert!(delay(false).is_some(), "Discovery alone cannot cover DCS setup files");
+    assert!(delay().is_some(), "Discovery alone cannot cover DCS setup files");
     runtime.inner.setup.set_setup_watch("dcs", true);
-    assert_eq!(delay(false), None, "Fully watched idle DCS can park");
-    assert!(delay(true).is_some(), "Pending DCS inspection needs a retry");
+    assert_eq!(delay(), None, "Fully watched DCS waits for its source or setup owner");
     runtime.inner.setup.set_dcs_discovery_watch(false);
-    assert!(delay(false).is_some(), "Watching setup files alone cannot cover discovery");
+    assert!(delay().is_some(), "Watching setup files alone cannot cover discovery");
     runtime.shutdown();
 }
 

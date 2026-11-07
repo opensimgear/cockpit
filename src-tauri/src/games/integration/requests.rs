@@ -8,7 +8,7 @@ impl GameIntegrationSetup {
     ) -> Result<(), String> {
         let bound = bound_game(game)?;
         let game = &bound;
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        let _admission = self.lock_admission();
         if self.inner.closed.load(Ordering::Acquire) {
             return Err("The integration setup runtime has closed.".into());
         }
