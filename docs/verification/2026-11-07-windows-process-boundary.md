@@ -98,3 +98,24 @@ To repeat on a disposable running Windows dev Cockpit, set
 `OSG_GAME_PROCESS_BOUNDARY_BROWSER_URL` to the local frontend URL backed by the
 Windows gateway service. Run `node --test tests/ui/game-process-boundary-native.mjs`.
 The fixture uses its authored children and removes its registered game afterward.
+
+## Alternative Windows event sources
+
+A capability probe from the same ordinary Windows account called
+`StartTraceW` with real-time mode, no log file and a small buffer pool.
+It returned Windows error 5 (`ERROR_ACCESS_DENIED`) before the process provider
+could be enabled. The token was neither an effective administrator nor a
+member of Performance Log Users. Microsoft documents the trace-controller
+privilege boundary. [StartTraceW return codes](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-starttracew#return-value)
+
+The installed `Microsoft-Windows-Kernel-Process` provider has an Analytical
+channel, which was disabled on this host. The Event Log subscription API
+accepts Admin and Operational channels. Reading the local process creation
+and termination audit policy returned error 1314, so audit-log availability
+was unverified. No privilege, audit or channel settings were changed.
+[Windows Event Log subscriptions](https://learn.microsoft.com/en-us/windows/win32/wes/subscribing-to-events)
+
+A first `logman` probe hit its system-drive space requirement. The memory-only
+native call isolated the permission result. The existing scoped WMI helper
+remains the Windows event path that requires operator acceptance. The
+decision on keeping the 500 ms discovery fallback remains open in #189.
