@@ -3,7 +3,7 @@
 use super::*;
 use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner};
 #[path = "games/context/process_cache.rs"]
-mod process_cache;
+pub(super) mod process_cache;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -115,7 +115,9 @@ impl GamesRuntime {
     ) -> impl FnMut() -> Result<Instant, String> + Send + 'static {
         let inner = self.inner.clone();
         move || {
-            let observed = observe_preparation_inner(&inner, &proof)?;
+            let observed = observe_preparation_inner(&inner, &proof, |game, expected| {
+                inner.observe_profile_process(game, expected)
+            })?;
             if let Some(token) = &context {
                 if !token.matches_preparation(&proof) {
                     return Err("The delivered game context differs from its preparation.".into());
@@ -222,7 +224,11 @@ impl GamesRuntime {
                 let dcs_setup_pending = dcs_watch.refresh(&inner);
                 let scope = inner.changes.context_process_live(library).then_some(epoch);
                 inner.refresh_game_contexts_with_inventory(library != last_library, |games| {
-                    process_cache.read(inner.platform.as_ref(), games, scope.filter(|_| process_wake.observed() == processes && inner.changes.context_process_live(library)))
+                    let rows = process_cache.read(inner.platform.as_ref(), games,
+                        scope.filter(|_| inner.current_process_epoch() == Some(epoch)));
+                    let snapshot = if inner.current_process_epoch() == Some(epoch) { process_cache.snapshot() } else { None };
+                    *inner.context_process_inventory.lock().unwrap_or_else(|p| p.into_inner()) = snapshot;
+                    rows
                 });
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;

@@ -1,16 +1,16 @@
 fn validate_preparation_inner(inner: &Inner, proof: &GamePreparation) -> Result<(), String> {
-    observe_preparation_inner(inner, proof).map(|_| ())
+    observe_preparation_inner(inner, proof, |game, expected| inner.exact_process_current(game, expected)).map(|_| ())
 }
 
-fn observe_preparation_inner(inner: &Inner, proof: &GamePreparation) -> Result<Instant, String> {
+fn observe_preparation_inner(inner: &Inner, proof: &GamePreparation,
+    verify: impl FnOnce(&Value, &crate::game_discovery::ProcessIdentity) -> Result<bool, String>,
+) -> Result<Instant, String> {
     let game = validate_preparation_state(inner, proof)?;
     inner.setup.validate_native_build(&game, false)?;
     // Expensive catalogue/build work precedes this exact process observation.
     // Its own duration still counts against the unchanged process lease.
     let observed = Instant::now();
-    if inner.platform.integration_process(&game)?.as_ref() != Some(&proof.process)
-        || !inner.platform.alive(&proof.process)?
-    {
+    if !verify(&game, &proof.process)? {
         return Err("The prepared game process exited, was replaced or became ambiguous.".into());
     }
     // A completed observation cannot publish over settings, catalogue, aircraft
@@ -19,6 +19,32 @@ fn observe_preparation_inner(inner: &Inner, proof: &GamePreparation) -> Result<I
         return Err("The selected game installation changed.".into());
     }
     Ok(observed)
+}
+
+impl Inner {
+    fn current_process_epoch(&self) -> Option<(u64, u64)> {
+        let library = self.changes.context_wake.observed();
+        let processes = self.changes.context_process_wake.observed();
+        (!self.closed.load(Ordering::Acquire) && self.changes.context_process_live(library))
+            .then_some((library, processes))
+    }
+
+    fn exact_process_current(&self, game: &Value, expected: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
+        Ok(self.platform.integration_process(game)?.as_ref() == Some(expected) && self.platform.alive(expected)?)
+    }
+
+    fn observe_profile_process(&self, game: &Value, expected: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
+        if let Some(epoch) = self.current_process_epoch() {
+            let snapshot = self.context_process_inventory.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            if let Some(process) = snapshot.as_ref().and_then(|snapshot| snapshot.process(game, epoch)) {
+                // Even inside a live inventory epoch, the exact process must
+                // still be alive. Commands use independent strict discovery.
+                let live = if process.as_ref() == Some(expected) { self.platform.alive(expected) } else { Ok(false) };
+                if self.current_process_epoch() == Some(epoch) { return live; }
+            }
+        }
+        self.exact_process_current(game, expected)
+    }
 }
 
 fn validate_preparation_state(inner: &Inner, proof: &GamePreparation) -> Result<Value, String> {

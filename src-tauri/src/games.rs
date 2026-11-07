@@ -55,6 +55,7 @@ struct Inner {
     vehicles: Mutex<crate::game_vehicles::Tracker>,
     dcs_vehicle_catalogues: Mutex<std::collections::BTreeSet<String>>,
     context_setup_check: Mutex<Option<Instant>>,
+    context_process_inventory: Mutex<Option<Arc<context_runtime::process_cache::Snapshot>>>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
     discovery:Mutex<discovery_review::Review>,
@@ -168,6 +169,7 @@ impl GamesRuntime {
                 vehicles: Mutex::new(vehicles),
                 dcs_vehicle_catalogues: Mutex::new(Default::default()),
                 context_setup_check: Mutex::new(None),
+                context_process_inventory: Mutex::new(None),
                 activation,
                 settings: Mutex::new(Settings {
                     saved,

@@ -15,6 +15,39 @@ fn process_evidence_is_timestamped_before_native_work() {
 }
 
 #[test]
+fn active_telemetry_reuses_only_live_inventory_and_commands_still_check_exactly() {
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    let prepared = runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
+    runtime.set_profile_context_owner(Some(owner(Some("x-plane-12")))).unwrap();
+    let token = runtime.admit_prepared_game_context(&prepared.proof).unwrap();
+    let inner = &runtime.inner;
+    let game = runtime.registered_profile_game("x-plane-12").unwrap();
+    let continuity = Arc::new(crate::game_activation::ProcessContinuity::default());
+    assert!(continuity.begin());
+    inner.changes.set_context_process_scope(inner.changes.context_wake.observed(), Some(continuity.clone()));
+    let epoch = inner.current_process_epoch().unwrap();
+    let mut cache = process_cache::Cache::default();
+    assert_eq!(cache.read(platform.as_ref(), &[&game], Some(epoch))[0].as_ref().unwrap().as_ref(), Some(&prepared.proof.process));
+    *inner.context_process_inventory.lock().unwrap() = cache.snapshot();
+
+    let (strict, called) = std::sync::mpsc::channel();
+    *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || strict.send(()).unwrap())));
+    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()));
+    validate().unwrap();
+    assert!(called.try_recv().is_err(), "Active telemetry should use the exact watched inventory row");
+    runtime.validate_admitted_game_context(&token, &prepared.proof).unwrap();
+    called.try_recv().expect("Command authorization must independently check discovery");
+
+    let (fallback, called) = std::sync::mpsc::channel();
+    *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || fallback.send(()).unwrap())));
+    continuity.retire();
+    validate().unwrap();
+    called.try_recv().expect("A retired watch cannot authorize cached lookup");
+    runtime.shutdown();
+}
+
+#[test]
 fn observation_rechecks_setup_preparation_owner_and_installation_before_publishing() {
     for change in ["setup", "preparation", "owner", "executable", "processExecutables", "installPath", "selectedInstallationId"] {
         let scratch = Scratch::new();
