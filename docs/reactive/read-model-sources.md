@@ -121,10 +121,39 @@ with no inventory read, reflected a second profile taking and releasing its
 vJoy slot without re-reading the pin, and made zero pin reads while hidden.
 The picker reopened with one pin read and the current value.
 
-That fixture covers Cockpit-owned claims. A third-party feeder can acquire
-or release the same device without a topology notification. Those ownership
-changes remain a separate acquisition boundary. See the
-[vJoy SDK audit](acquisition.md#external-vjoy-ownership).
+That fixture covers Cockpit-owned claims. Third-party feeders can acquire
+or release a slot without a topology notification. Visible Devices views
+share one status reader and receive changes through `system.inventory`.
+Passive readers, including MCP, consume the same committed inventory. The
+MCP inventory tool can explicitly inspect the driver when the Devices views
+are closed. [vJoy acquisition](acquisition.md#external-vjoy-ownership)
+
+On November 7, the desktop WebView and Edge browser-dev passed
+`tests/ui/external-vjoy-ownership.mjs` against separate private databases and
+the Windows vJoy driver. An independent process claimed and released free
+slot 1. Devices showed busy and free. The virtual-device detail and Settings
+Devices showed the exact owner PID and cleared it on release. Each transport
+opened and retired four exact demand subscriptions. Releasing the slot while
+Overview was open or while the document was hidden produced zero inventory
+reads. Reopening showed the current status without `refresh:true`.
+
+The native test also held two demand readers and verified one helper and one
+query stream, with no further samples after the last reader retired. The
+Windows suite passed 2,396 tests with 18 default ignores and two pinned DCS
+smokes passed separately. The new owner measured 88.24% production line
+coverage and 73.08% function coverage. The virtual-controller coverage gate
+measured 81.11% production line coverage for the status helper. Including its
+real Windows startup, queries and EOF shutdown, LLVM measured 72.22% function
+coverage. The frontend
+visibility helper reached 100% lines, branches and functions in the Devices
+coverage gate.
+
+The desktop executable SHA-256 was
+`348aa36a85df3c1b6d0c65b282ace6498a38b98f7ef9c6cce80ba2bba8b033af`.
+The newly linked browser-dev service SHA-256 was
+`0c5f347b108a8b1562a74eadae63b3f5245ad3a6754b5234ee0c60e8b41cecc8`.
+The local records are `live-detail-native.log` and `live-detail-browser.log`
+under `.research/reactive/vjoy-status/`.
 
 On both transports, the navigation fixture commits desktop output enablement
 through the guarded settings command while Devices Settings is open. It checks

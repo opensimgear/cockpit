@@ -8,6 +8,7 @@
   import { onMount, tick, untrack, type Snippet } from 'svelte';
   import { companionObservations } from './companion-observations';
   import { SharedObservations } from './streams/shared';
+  import { visibleObservation } from './visible-observation';
   import { observeProfileResources } from './profile-resources-shared';
   import { slide } from 'svelte/transition';
   import Icon from './Icon.svelte';
@@ -42,6 +43,7 @@
   let cleanupCurrentId = $state(''), cleanupCancelling = $state(false);
   let cleanupAbort: AbortController | undefined;
   let refreshTask: Promise<SystemSnapshot> | undefined;
+  let vjoyDemand = $state.raw<ReturnType<typeof visibleObservation>>();
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
   const visible = $derived(filterSystem(snapshot.components, search, filters));
@@ -54,6 +56,7 @@
   const cleanupAllSelected = $derived(cleanupAvailable.length > 0 && cleanupSelected.length === cleanupAvailable.length);
   const cleanupPartSelected = $derived(cleanupSelected.length > 0 && !cleanupAllSelected);
   const captureLabels: Record<SystemComponent['capture'], string> = { ready: 'Ready', waiting: 'Waiting', unavailable: 'Unavailable', unknown: 'Unknown' };
+  $effect(() => { vjoyDemand?.setVisible(active && (!showingDetails || selected?.type === 'virtual')); });
   const date = (timestamp: number) => timestamp ? new Date(timestamp).toLocaleString() : 'Never observed connected';
   function select(id: string) { selectedId = id; detailsOpen = true; onNavigate?.(id); }
   export function showInventory() { detailsOpen = false; onNavigate?.(null); }
@@ -159,6 +162,7 @@
     snapshot = controller.snapshot;
     void refresh();
     const inventoryObservations = new SharedObservations();
+    vjoyDemand = visibleObservation(inventoryObservations, 'system.inventory.vjoy', () => {});
     inventoryObservations.subscribe('usb.inventory', state => {
       if (state.status === 'ready') void controller.refreshUsb().catch(reason => { error = String(reason); });
       if (state.status === 'lost' || state.status === 'error') controller.loseUsb(state.error);
@@ -166,7 +170,7 @@
     inventoryObservations.subscribe('system.inventory', state => {
       if (state.status === 'ready') void controller.refreshNative().catch(reason => { error = String(reason); });
     });
-    return () => { reviewEpoch++; cleanupAbort?.abort(); stopResources(); stopCompanions(); stopListener(); stopRemembered(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); stopResources(); stopCompanions(); stopListener(); stopRemembered(); vjoyDemand?.close(); vjoyDemand = undefined; inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 

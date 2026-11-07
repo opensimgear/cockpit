@@ -160,6 +160,7 @@
         "src/lib/persistence/inventory-storage.*",
         "tests/fixtures/system/**",
         "src/lib/controller-observations.*",
+        "src/lib/visible-observation.*",
         "src/lib/controller-read-models/**"
       ],
       "coverageScripts": [
@@ -170,6 +171,19 @@
         "controller-streams:coverage"
       ],
       "coverageTasks": [
+        {
+          "name": "visible-observation-coverage",
+          "tests": ["src/lib/visible-observation.test.mjs"],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/visible-observation.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/visible-observation.test.mjs"
+          ]
+        },
         {
           "name": "controller-read-models-coverage",
           "tests": [

@@ -32,7 +32,7 @@ and source cadences that live inside the owners below.
 | Controller capture | `crates/controller-input/src/capture.rs:320` owns the 500 ms inventory check inside the Linux/macOS qualification probe. Windows production capture wakes on Raw Input reports, device messages and shutdown. Platform probe disposition remains open. |
 | Topology and transport owners | Linux udev waits on its native event and cancellation descriptors. macOS IOKit waits in the cancellable run loop. Windows callbacks wake serial and device inventory; socket connection and teardown use their own operation budgets. See the [native service notes](native-services.md) for related scanner exclusions. |
 | Game process and setup owners | Native process, file and provider watches own topology where available. Scope-specific discovery and qualification can retain timed fallbacks. Assetto shared-memory capture has its recorded approval. The remaining boundaries and ownership evidence are in [acquisition](../acquisition.md#unresolved-acquisition-boundaries). |
-| Devices read model | Cockpit ownership and topology changes publish committed state. External vJoy ownership is a separate query-only SDK boundary. Its source and pending disposition are recorded in [acquisition](../acquisition.md#external-vjoy-ownership). |
+| Devices read model | Cockpit ownership and topology changes publish committed state. The approved Windows check shares one read-only vJoy helper while Devices status is visible. [Acquisition](../acquisition.md#external-vjoy-ownership) |
 
 The [historical frontend migration table](../ui-refresh-classification.md)
 maps retired UI refreshes to current subscriptions. [Acquisition](../acquisition.md)

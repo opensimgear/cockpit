@@ -156,6 +156,30 @@ impl Worker {
         }
         result
     }
+    /// Query a retained status-only inspector using a fresh nonce and absolute deadline.
+    pub(crate) fn status_once(&mut self, nonce: &str, deadline: Instant) -> Result<Value, String> {
+        let result: Result<Value, String> = (|| {
+            if self.hello["backend"] != "vjoy-status-ready" {
+                return Err("This helper is not a ready vJoy status inspector.".into());
+            }
+            let mut bytes = serde_json::to_vec(&serde_json::json!({"nonce":nonce}))
+                .map_err(|e| e.to_string())?;
+            bytes.push(b'\n');
+            if Instant::now() >= deadline {
+                return Err("Output helper response deadline expired before enqueue.".into());
+            }
+            self.outgoing
+                .as_ref()
+                .ok_or("Output helper has stopped.")?
+                .try_send(bytes)
+                .map_err(|_| "Output helper input queue is unavailable.")?;
+            self.reply_before(deadline)
+        })();
+        if result.is_err() {
+            self.terminate();
+        }
+        result
+    }
     fn reply_before(&mut self, deadline: Instant) -> Result<Value, String> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let reply = self.incoming.recv_timeout(remaining).map_err(|error| match error {

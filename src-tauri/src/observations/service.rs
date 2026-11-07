@@ -6,6 +6,10 @@ impl crate::gateways::GatewayManager {
         action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         if topic == "controllers.inventory" {
             self.controllers.observe_inventory(&self.observations.broker(), action)
+        } else if topic == crate::system_inventory::VJOY_DEMAND {
+            let result = action();
+            self.system_inventory_vjoy_reader_changed();
+            result
         } else if let Some(id) = topic.strip_prefix("controllers.input.") {
             self.controllers.observe(&self.observations.broker(), id, action)
         } else if topic.starts_with("profiles.samples.") { self.with_profile_samples(topic, action) }

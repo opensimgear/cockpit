@@ -97,7 +97,11 @@ impl GatewayManager {
                     |sources| manager.system_controller_associations(sources));
                 true
             })?;
+            self.system_inventory.start_vjoy_status()?;
         }
         Ok(())
+    }
+    pub(crate) fn system_inventory_vjoy_reader_changed(&self) {
+        self.system_inventory.vjoy_reader_changed();
     }
 }

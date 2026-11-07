@@ -10,6 +10,7 @@
   import type { VisibilityStatus } from './visibility';
   import type { NativeSystemInventory } from './system-inventory-providers';
   import { SharedObservations, type ObservationState } from './streams/shared';
+  import { visibleObservation } from './visible-observation';
 
   const settingsRequest=guardUiSettings(gatewayRequest);
   let visibility = $state.raw<VisibilityStatus | null>(null);
@@ -117,6 +118,8 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
+    const vjoyDemand = visibleObservation(observations, 'system.inventory.vjoy', () => {});
+    vjoyDemand.setVisible(true);
     const showError = (reason: unknown) => { if (!disposed) error = String(reason); };
     observations.subscribe('settings.desktop', observeDesktopSettings);
     observations.subscribe('system.inventory', state => {
@@ -126,7 +129,7 @@
       }
     });
     void loadVisibility().catch(showError);
-    return () => { disposed = true; observations.close(); };
+    return () => { disposed = true; vjoyDemand.close(); observations.close(); };
   });
 </script>
 

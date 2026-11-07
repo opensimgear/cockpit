@@ -145,6 +145,29 @@ impl Native {
         native.check()?;
         Ok(native)
     }
+
+    /// Query only vJoy's status and owner PID for the retained UI status helper.
+    pub(crate) fn status_only(&mut self, id: u8) -> Result<crate::inspection::SlotStatus, String> {
+        if !(1..=16).contains(&id) {
+            return Err("vJoy slot must be 1–16.".into());
+        }
+        unsafe {
+            let slot = u32::from(id);
+            let status = match (self.api.status)(slot) {
+                0 => Status::Owned,
+                1 => Status::Free,
+                2 => Status::Busy,
+                3 => Status::Missing,
+                _ => Status::Unknown,
+            };
+            let owner_pid = if matches!(status, Status::Owned | Status::Busy) {
+                u32::try_from((self.api.owner)(slot)).ok().filter(|pid| *pid > 0)
+            } else {
+                None
+            };
+            Ok(crate::inspection::SlotStatus { id, status, owner_pid })
+        }
+    }
 }
 impl Driver for Native {
     fn check(&mut self) -> Result<(), String> {

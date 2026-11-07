@@ -4,11 +4,14 @@ use serde_json::{json, Value};
 use std::{sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::{SystemTime, UNIX_EPOCH}};
 
 const TOPIC: &str = "system.inventory";
+pub(crate) const VJOY_DEMAND: &str = "system.inventory.vjoy";
 const VISIBILITY_TOPIC: &str = "controllers.visibility";
 #[path = "system_inventory_associations.rs"]
 mod associations;
 #[path = "optional_dependencies/installed.rs"]
 mod installed;
+#[path = "system_inventory/vjoy_status.rs"]
+mod vjoy_status;
 pub(crate) use associations::collect as controller_associations;
 
 pub(crate) struct Runtime {
@@ -19,11 +22,13 @@ pub(crate) struct Runtime {
     wake: Arc<osg_streams::NativeWake>,
     activity_wake: Mutex<Weak<osg_streams::NativeWake>>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    vjoy_status: vjoy_status::Owner,
     publishers: Mutex<Option<Publishers>>,
 }
 struct Publishers {
     observations: crate::observations::Runtime,
     inventory: osg_streams::Publisher,
+    vjoy_demand: osg_streams::Publisher,
     visibility: osg_streams::Publisher,
 }
 struct Snapshot {
@@ -33,7 +38,7 @@ impl Runtime {
     pub(crate) fn new(native: bool) -> Self {
         Self { native, snapshot: Mutex::new(None), capture_gate: Mutex::new(()),
             stopped: Arc::default(), wake: Arc::default(), activity_wake: Mutex::default(),
-            worker: Mutex::new(None), publishers: Mutex::new(None) }
+            worker: Mutex::new(None), vjoy_status: vjoy_status::Owner::default(), publishers: Mutex::new(None) }
     }
     pub(crate) fn start(&self, capture: impl Fn() -> bool + Send + 'static) -> Result<(), String> {
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -56,20 +61,23 @@ impl Runtime {
     pub(crate) fn shutdown(&self) {
         self.stopped.store(true, Ordering::Release);
         self.wake.notify();
+        self.vjoy_status.shutdown();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             if worker.thread().id() != thread::current().id() { let _ = worker.join(); }
         }
     }
     pub(crate) fn observe(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
         let mut slot = self.publishers.lock().unwrap_or_else(|p| p.into_inner());
-        let register = |topic: &str, source: &str| observations.broker().register(osg_streams::TopicSpec {
+        let register = |topic: &str, source: &str, audiences: Vec<&str>| observations.broker().register(osg_streams::TopicSpec {
             topic: topic.into(), source: source.into(),
-            audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
+            audiences: audiences.into_iter().map(str::to_owned).collect(),
         }, json!({}), observations.captured_us(), topic.into()).map_err(|error| error.to_string());
+        observations.watch_reader_lifecycle(self.vjoy_status.wake.clone());
         *slot = Some(Publishers {
             observations: observations.clone(),
-            inventory: register(TOPIC, "system-inventory")?,
-            visibility: register(VISIBILITY_TOPIC, "controller-visibility")?,
+            inventory: register(TOPIC, "system-inventory", vec!["ui", "browser", "mcp"])?,
+            vjoy_demand: register(VJOY_DEMAND, "system-inventory", vec!["ui", "browser"])?,
+            visibility: register(VISIBILITY_TOPIC, "controller-visibility", vec!["ui", "browser", "mcp"])?,
         });
         Ok(())
     }
@@ -152,6 +160,7 @@ impl Runtime {
         };
         if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
         self.commit(value);
+        self.vjoy_status.wake.notify();
     }
     fn commit(&self, mut value: Value) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());

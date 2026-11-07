@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./ui-settings-guard','./profile-desktop-runtime']);
+const modules = await loadModules(['./ui-settings-guard','./profile-desktop-runtime','./visible-observation']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const initial = () => ({
   desktop: { enabled: false, qualified: true, state: 'stopped', reason: '', scope: { kind: 'application' } },

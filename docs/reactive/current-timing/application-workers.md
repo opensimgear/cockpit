@@ -52,7 +52,8 @@
 | `src-tauri/src/profile_session/activation_heartbeat.rs:203` | Operation deadline | Wait for acquired source and output readiness until the current activation deadline. |
 | `src-tauri/src/profile_session/game_publication.rs:149` | Operation deadline | Wait for a returning reader's exact baseline or its deadline; the reader selects a bounded fallback if it cannot notify. |
 | `src-tauri/src/profile_system_notification.rs:326` | Operation recovery | Recheck a missing Windows toast update for at most 50 ms on its worker so an in-flight dismissal can arrive. |
-| `src-tauri/src/system_inventory.rs:50` | Source wake | Wait for committed topology, output or other inventory invalidation. External vJoy slot ownership has a separate unresolved acquisition boundary. |
-| `src-tauri/src/system_inventory.rs:276,282,307,315` | Fixture | Bound inventory commit and slow-provider isolation checks. |
+| `src-tauri/src/system_inventory.rs:55` | Source wake | Wait for committed topology, output or other inventory invalidation. |
+| `src-tauri/src/system_inventory.rs:285,291,316,324` | Fixture | Bound inventory commit and slow-provider isolation checks. |
+| `src-tauri/src/system_inventory/vjoy_status.rs:141` | Approved acquisition | One Windows owner queries status and owner PID every 500 ms while visible Devices readers exist. Reader lifecycle and cache changes wake the owner. A helper failure uses a three-second retry. With zero readers the owner parks without a timer. |
 | `src-tauri/src/window_persistence.rs:12` | User debounce | Coalesce window moves and resizes before saving the latest geometry. |
 | `src-tauri/src/window_persistence.rs:50,54,57,65` | Fixture | Bound window geometry coalescing and shutdown assertions. |

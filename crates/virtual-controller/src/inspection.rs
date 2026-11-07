@@ -5,6 +5,8 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+mod status;
+pub use status::{SlotStatus, StatusReader};
 pub const ARGUMENT: &str = "--osg-inspect-vjoy";
 const SAMPLE_ARGUMENT: &str = "--osg-sample-vjoy";
 /// The timestamp precedes the complete inventory query, after driver readiness.
@@ -183,6 +185,9 @@ pub fn response(result: Result<Vec<Slot>, String>) -> Value {
 /// Called before native UI/platform services start. Inspect never acquires a slot.
 pub fn helper_main() -> Option<i32> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == status::ARGUMENT {
+        return status::helper_main();
+    }
     if args.len() != 1 || (args[0] != ARGUMENT && args[0] != SAMPLE_ARGUMENT) {
         return None;
     }

@@ -101,6 +101,11 @@ shared-memory adapters. Preserve packet identities, mapping generations, capture
 timestamps and freshness. Publish detected changes to the shared stream for
 profiles, inspector and MCP consumers. Controller input is outside the exception.
 
+One shared Windows check is also approved for external vJoy ownership while
+Devices status is visible. This check supplies status and owner PID to the
+inventory stream. Controller capture and virtual dispatch keep their own
+native paths. [vJoy decision](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6704680610)
+
 Other sampled acquisition requires a producer bridge or an explicit
 feature-level decision. The shared channel contract applies to each adapter.
 [Assetto decision](https://github.com/opensimgear/cockpit/issues/188#issuecomment-6646558859)
