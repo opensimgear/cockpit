@@ -3,7 +3,7 @@
   import { uiPreference, uiPreferences } from './persistence/ui-preferences';
   const tray = uiPreference('tray');
   import Notification from './Notification.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
 
   type Preferences = {
@@ -17,45 +17,79 @@
     autostartEnabled: boolean;
     autostartError: string | null;
   };
+  let { active }: { active: boolean } = $props();
   let preferences = $state<Preferences>();
   let desktop = $state(false);
+  let documentVisible = $state(false);
   let loading = $state(true);
   let busy = $state(false);
   let error = $state('');
   let message = $state('');
+  const visible = $derived(desktop && active && documentVisible);
+  let readEpoch = 0;
 
   async function load() {
+    if (!visible || busy) return;
+    const epoch = ++readEpoch;
     loading = true;
     error = '';
-    try { preferences = await invoke<Preferences>('desktop_preferences'); }
-    catch (e) { error = String(e); }
-    finally { loading = false; }
+    try {
+      const current = await invoke<Preferences>('desktop_preferences');
+      if (epoch === readEpoch) preferences = current;
+    } catch (e) {
+      if (epoch === readEpoch) error = String(e);
+    } finally {
+      if (epoch === readEpoch) loading = false;
+    }
   }
 
   onMount(() => {
     desktop = isTauri();
-    if (desktop) void load();
-    else loading = false;
+    if (!desktop) {
+      loading = false;
+      return;
+    }
+    const syncVisibility = () => { documentVisible = !document.hidden; };
+    syncVisibility();
+    document.addEventListener('visibilitychange', syncVisibility);
+    return () => {
+      documentVisible = false;
+      readEpoch++;
+      document.removeEventListener('visibilitychange', syncVisibility);
+    };
+  });
+
+  $effect(() => {
+    if (visible) untrack(() => { void load(); });
+    else if (desktop) {
+      readEpoch++;
+      preferences = undefined;
+      loading = true;
+    }
   });
 
   async function toggle(key: 'closeToTray' | 'minimizeToTray' | 'autostartEnabled') {
-    if (!preferences || busy) return;
+    const current = preferences;
+    if (!visible || !current || busy) return;
     busy = true;
     error = ''; message = '';
     try {
       if (key === 'autostartEnabled') {
-        const enabled = !preferences.autostartEnabled;
-        preferences.autostartEnabled = await invoke<boolean>('set_autostart', { enabled });
-        if (preferences.autostartEnabled !== enabled) throw new Error('The operating system did not apply the auto-start change.');
-        preferences.autostartError = null;
+        const enabled = !current.autostartEnabled;
+        const applied = await invoke<boolean>('set_autostart', { enabled });
+        if (preferences === current) preferences = { ...current, autostartEnabled: applied, autostartError: null };
+        if (applied !== enabled) throw new Error('The operating system did not apply the auto-start change.');
       } else {
         const next = { ...$tray.value, [key]: !$tray.value[key] };
         await tray.save(next);
-        preferences = { ...preferences, ...next, settingsError: null };
+        if (preferences === current) preferences = { ...current, ...next, settingsError: null };
       }
       message = 'Preference saved.';
     } catch (e) { error = String(e); }
-    finally { busy = false; }
+    finally {
+      busy = false;
+      if (!preferences) void load();
+    }
   }
 </script>
 

@@ -31,6 +31,13 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 
 The dedicated native activation window consumes `profiles.activation-window`, a window-scoped, UI-only projection of the activation progress owner. The main native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
 
+The `windows` persistence key applies to next-start geometry. Saving that key
+through MCP has no current-session portal consumer. General Settings uses the
+shared `tray` and `progress` preference revisions for saved values. It reads
+native desktop status only while General and the document are visible and
+discards replies from retired views. External OS auto-start changes still need
+a committed producer while General is open. [Running verification](../verification/2026-11-07-desktop-preferences-lifetime.md)
+
 The artwork regression runs against the native gateway over both transports.
 It changes, deletes and restores an owned file and checks every transition in
 the exact `games.detail.<id>` subscriber without fixture gateway reads between

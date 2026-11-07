@@ -46,7 +46,7 @@
 </div>
 
 <div class="settings-content" id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" tabindex="0" hidden={selected !== 'general'}>
-  <DesktopPreferences />
+  <DesktopPreferences active={selected === 'general'} />
   <section class="panel preferences-panel canvas-settings" aria-label="Canvas navigation">
     <div class="panel-heading"><h2>Canvas</h2></div>
     <div class="preference-row">
