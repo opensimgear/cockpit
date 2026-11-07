@@ -67,8 +67,7 @@ impl DcsWatch {
 
 fn dcs_profile_directory(kind: EventKind, name: &std::ffi::OsStr) -> bool {
     matches!(kind, EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)))
-        && name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("dcs")
-            || name.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("dcs.")))
+        && crate::dcs_setup::is_profile_folder_name(name)
 }
 
 fn catalogue_file(_: EventKind, name: &std::ffi::OsStr) -> bool {

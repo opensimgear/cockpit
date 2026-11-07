@@ -1,6 +1,7 @@
 //! Pinned DCS-Skunkworks installation. No game installation files or Lua execute here.
 //! A write-ahead journal owns only matching bytes; recovery preserves external edits.
 mod aircraft;
+mod discovery;
 mod physics;
 mod recovery;
 mod setup_watch_paths;
@@ -21,6 +22,9 @@ pub(crate) const ARCHIVE_URL: &str =
 pub(crate) const ARCHIVE_SHA256: &str =
     "3272bc07210fa6c560f115cfb5dc8881accf7af5e7a5e218e2c46e1fd89e3292";
 pub(crate) use setup_watch_paths::{install_discovery_watch_paths, setup_watch_paths};
+pub(crate) use discovery::is_profile_folder_name;
+#[cfg(any(windows, test))]
+use discovery::candidates;
 const ARCHIVE_SIZE: usize = 8_234_988;
 const MAX_UNPACKED: usize = 96 * 1024 * 1024;
 const MAX_FILE: usize = 8 * 1024 * 1024;
@@ -569,60 +573,6 @@ fn checked_target(target: &Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-/// Portable folder discovery; an explicitly supplied custom user folder is selected by the caller.
-pub(crate) fn candidates(
-    saved_games: &Path,
-    install_path: Option<&Path>,
-) -> Result<Vec<PathBuf>, String> {
-    if !saved_games.is_absolute() {
-        return Err("The Saved Games location must be absolute.".into());
-    }
-    let mut paths = BTreeSet::new();
-    for name in ["DCS", "DCS.openbeta"] {
-        let p = saved_games.join(name);
-        if p.is_dir() {
-            paths.insert(p);
-        }
-    }
-    if let Ok(entries) = fs::read_dir(saved_games) {
-        for entry in entries.take(128) {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if entry.file_type().map_err(|e| e.to_string())?.is_dir()
-                && entry.file_name().to_string_lossy().starts_with("DCS.")
-            {
-                paths.insert(entry.path());
-            }
-        }
-    }
-    if let Some(root) = install_path {
-        let variant = root.join("dcs_variant.txt");
-        if variant.exists() {
-            let raw = read(&variant, 256)?;
-            let text = String::from_utf8(raw)
-                .map_err(|_| "The DCS user-folder override is not valid UTF-8.")?;
-            let suffix = text.trim_start_matches('\u{feff}').trim();
-            if suffix.is_empty()
-                || suffix.len() > 128
-                || suffix.contains(['/', '\\', ':'])
-                || suffix.chars().any(char::is_control)
-                || suffix == "."
-                || suffix == ".."
-            {
-                return Err(
-                    "The DCS user-folder override is ambiguous. Select its user folder explicitly."
-                        .into(),
-                );
-            }
-            let selected = saved_games.join(format!("DCS.{suffix}"));
-            if selected.is_dir() {
-                paths.insert(selected);
-            } else {
-                return Err(format!("DCS selects {}. Start this installation once or select its user folder explicitly.",selected.display()));
-            }
-        }
-    }
-    Ok(paths.into_iter().collect())
-}
 #[cfg(not(windows))]
 pub(crate) fn discover_user_folders(_install_path: Option<&Path>) -> Result<Vec<PathBuf>, String> {
     Err("Automatic Saved Games discovery requires Windows; select a user folder explicitly for fixture verification.".into())

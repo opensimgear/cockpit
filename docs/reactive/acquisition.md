@@ -254,6 +254,12 @@ intact and force another pass if they arrive during inspection. Failed watch
 registration and missing process-event coverage still use their scoped
 deadlines above.
 
+DCS Saved Games discovery and the directory watcher share the same
+case-insensitive profile names. Discovery enumerates the selected Saved Games
+root and retains at most 128 custom profiles in path order. Unrelated entries
+do not use that capacity. Standard profiles and an installation's explicit
+variant remain eligible independently of the cap.
+
 The pinned ESP-IDF console forwards readiness registration to its primary
 device. The UART driver signals receive readiness on interrupt and checks
 already buffered bytes during registration. [Console VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_vfs_console/vfs_console.c) · [UART VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_uart/src/uart_vfs.c)
