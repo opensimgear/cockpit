@@ -118,9 +118,34 @@ BIOS and ownship recovery, and process exit with no cleanup errors.
 Executable SHA-256 was
 `4AE8A5A13979A5265DBCCC82BC92EEB1C5CD3CE8760C276626F5B21C716D8FCA`.
 
-Transient lookup failure was injected in the native tests. The separate
-queued DCS command lane still cancels on a failed strict proof. Its interaction
-with active telemetry recovery and full cross-adapter qualification remain open.
+Transient lookup failure was injected in the native tests. Cross-adapter
+contention and qualification remain open.
+
+### Queued DCS commands during an unavailable lookup
+
+Every queued DCS command still requires a successful exact process check.
+An unavailable lookup rejects the command and cancels the lane. The host
+discards work queued behind it and reports the rejection once. An effect
+submitted while that cancellation is pending cannot reopen the lane.
+Later effects use a new lane and must pass the same strict validation.
+An owner retired during a lookup still takes the terminal path.
+
+The Windows native suite passed 2,390 tests with 18 default ignores. Both
+pinned DCS-BIOS archive checks passed separately. Native regressions
+injected lookup unavailability and covered lane cancellation, racing
+submission, owner retirement and BIOS telemetry on the retained reader.
+Production line coverage was 86.55% for the command worker, 71.19% for
+session delivery, 85.29% for session reads and 91.50% for the context runtime.
+The test executable retained coverage instrumentation. The linker retry
+omitted the optional symbol database after the disk filled.
+
+The authored DCS dev smoke passed competing-process withdrawal, independent
+BIOS and ownship recovery, and process exit with no cleanup errors. It used
+real local UDP and a fixture process. The isolated dev executable used only
+the Rust library format. Its SHA-256 was
+`1BC4039FB1B88EC72D7DF26DBAFDFAE0EB748CD3DEDB45FDD1C51138B9D5241F`.
+Unavailable command proof was injected in the native suite. Simulator
+command effects remain in #199.
 
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots

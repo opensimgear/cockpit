@@ -48,6 +48,21 @@ pub(crate) struct GamePreparation {
     pub catalogue_revision: String,
     pub vehicle_id: Option<String>,
 }
+
+#[derive(Debug)]
+pub(crate) enum ValidationFailure {
+    ProcessUnavailable(String),
+    Invalid(String),
+}
+
+impl From<ValidationFailure> for String {
+    fn from(failure: ValidationFailure) -> Self {
+        match failure {
+            ValidationFailure::ProcessUnavailable(message) | ValidationFailure::Invalid(message) => message,
+        }
+    }
+}
+
 impl ContextToken {
     pub(crate) fn matches_preparation(&self, prepared: &GamePreparation) -> bool {
         self.game_id == prepared.game_id

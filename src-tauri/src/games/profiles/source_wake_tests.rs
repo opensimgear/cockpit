@@ -196,3 +196,39 @@ fn unavailable_notification_capacity_does_not_withdraw_valid_native_samples() {
     source.refresh_source_wakes(&games).unwrap();
     source.stop();
 }
+
+#[test]
+fn unavailable_command_lane_is_discarded_while_native_bios_keeps_its_reader() {
+    let (mut source, address, folder) = baseline_reader();
+    source.authored_fixture = false;
+    let games = wake_test_games(folder.path());
+    let producer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let clock = source.clock;
+    for counter in 1..=2 {
+        producer.send_to(&bytes(counter, true), address).unwrap();
+        wait_committed_counter(&source, u16::from(counter));
+        assert_eq!(source.poll(&games, || clock.now_us()).fresh, counter == 2);
+    }
+    let reader = source.reader_session.clone();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let lane = command_worker::Worker::start(Some(Arc::downgrade(&wake))).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let observed = wake.observed();
+    lane.submit(|_| Err(command_worker::Failure::ProcessUnavailable("Inventory busy".into()))).unwrap();
+    while wake.observed() == observed {
+        assert!(Instant::now() < deadline, "Command rejection did not wake the consumer");
+        wake.wait(observed, deadline.saturating_duration_since(Instant::now()));
+    }
+    source.command_worker = Some(lane);
+    producer.send_to(&bytes(3, false), address).unwrap();
+    wait_committed_counter(&source, 3);
+    let poll = source.poll(&games, || clock.now_us());
+    assert!(poll.fresh && !poll.context_lost && !poll.frames.is_empty());
+    assert_eq!(source.reader_session, reader);
+    assert!(source.command_worker.is_none());
+    assert!(poll.diagnostics.iter().any(|message| message.contains("Pending commands were discarded")));
+    assert!(!source.poll(&games, || clock.now_us()).diagnostics.iter()
+        .any(|message| message.contains("Pending commands were discarded")));
+    source.stop();
+}

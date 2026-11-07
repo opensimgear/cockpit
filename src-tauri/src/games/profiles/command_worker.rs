@@ -11,7 +11,33 @@ const QUEUE_CAPACITY: usize = 32;
 const WORKER_LIMIT: usize = 16;
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
 
-type Job = Box<dyn FnOnce(&AtomicBool) -> Result<(), String> + Send>;
+type Job = Box<dyn FnOnce(&AtomicBool) -> Result<(), Failure> + Send>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Failure {
+    ProcessUnavailable(String),
+    Terminal(String),
+}
+
+impl From<String> for Failure {
+    fn from(reason: String) -> Self {
+        Self::Terminal(reason)
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(reason: &str) -> Self {
+        Self::Terminal(reason.to_owned())
+    }
+}
+
+impl From<Failure> for String {
+    fn from(failure: Failure) -> Self {
+        match failure {
+            Failure::ProcessUnavailable(reason) | Failure::Terminal(reason) => reason,
+        }
+    }
+}
 
 struct Permit;
 
@@ -34,7 +60,7 @@ impl Drop for Permit {
 
 #[derive(Default)]
 struct State {
-    error: Option<String>,
+    error: Option<Failure>,
     wake: Option<Weak<NativeWake>>,
 }
 
@@ -44,7 +70,7 @@ struct Shared {
 }
 
 impl Shared {
-    fn fail(&self, error: String) {
+    fn fail(&self, error: Failure) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if self.cancelled.swap(true, Ordering::AcqRel) {
             return;
@@ -95,7 +121,9 @@ impl Worker {
                             break;
                         }
                         Err(_) => {
-                            worker.fail("The simulator command worker panicked.".into());
+                            worker.fail(Failure::Terminal(
+                                "The simulator command worker panicked.".into(),
+                            ));
                             break;
                         }
                     }
@@ -110,31 +138,32 @@ impl Worker {
 
     pub(super) fn submit(
         &self,
-        job: impl FnOnce(&AtomicBool) -> Result<(), String> + Send + 'static,
-    ) -> Result<(), String> {
+        job: impl FnOnce(&AtomicBool) -> Result<(), Failure> + Send + 'static,
+    ) -> Result<(), Failure> {
         self.poll()?;
         let sender = self
             .sender
             .as_ref()
-            .ok_or("The simulator command worker stopped.")?;
+            .ok_or_else(|| Failure::Terminal("The simulator command worker stopped.".into()))?;
         match sender.try_send(Box::new(job)) {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(_)) => {
-                self.shared.fail(
+                self.shared.fail(Failure::Terminal(
                     "The simulator command queue overflowed; pending commands were discarded."
                         .into(),
-                );
+                ));
                 self.poll()
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
-                self.shared
-                    .fail("The simulator command worker stopped.".into());
+                self.shared.fail(Failure::Terminal(
+                    "The simulator command worker stopped.".into(),
+                ));
                 self.poll()
             }
         }
     }
 
-    pub(super) fn poll(&self) -> Result<(), String> {
+    pub(super) fn poll(&self) -> Result<(), Failure> {
         if !self.shared.cancelled.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -142,7 +171,9 @@ impl Worker {
         Err(state
             .error
             .clone()
-            .unwrap_or_else(|| "The simulator command worker stopped.".into()))
+            .unwrap_or_else(|| {
+                Failure::Terminal("The simulator command worker stopped.".into())
+            }))
     }
 
     pub(super) fn set_wake(&self, wake: Option<Weak<NativeWake>>) {
@@ -247,7 +278,7 @@ mod tests {
         }
         drop(submitted);
         let error = worker.submit(|_| Ok(())).unwrap_err();
-        assert!(error.contains("overflow"));
+        assert!(matches!(error, Failure::Terminal(ref message) if message.contains("overflow")));
         assert_eq!(worker.poll(), Err(error));
         wait_for_wake(&wake, 1);
         release.send(()).unwrap();
@@ -313,7 +344,43 @@ mod tests {
             .unwrap();
         release.send(()).unwrap();
         wait_for_wake(&wake, 1);
-        assert_eq!(worker.poll(), Err("exact game identity changed".into()));
+        assert_eq!(
+            worker.poll(),
+            Err(Failure::Terminal("exact game identity changed".into()))
+        );
+        assert_eq!(
+            replay.recv_timeout(TIMEOUT),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn unavailable_cancels_queued_jobs_and_preserves_typed_failure_for_new_submits() {
+        let wake = Arc::new(NativeWake::default());
+        let worker = Worker::start(Some(Arc::downgrade(&wake))).unwrap();
+        let (entered, started) = mpsc::channel();
+        let (release, held) = mpsc::channel();
+        let (submitted, replay) = mpsc::channel();
+        worker
+            .submit(move |_| {
+                entered.send(()).unwrap();
+                held.recv_timeout(TIMEOUT).unwrap();
+                Err(Failure::ProcessUnavailable("simulator exited".into()))
+            })
+            .unwrap();
+        started.recv_timeout(TIMEOUT).unwrap();
+        worker
+            .submit(move |_| {
+                submitted.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+
+        release.send(()).unwrap();
+        wait_for_wake(&wake, 1);
+        let failure = Failure::ProcessUnavailable("simulator exited".into());
+        assert_eq!(worker.poll(), Err(failure.clone()));
+        assert_eq!(worker.submit(|_| Ok(())), Err(failure));
         assert_eq!(
             replay.recv_timeout(TIMEOUT),
             Err(mpsc::RecvTimeoutError::Disconnected)

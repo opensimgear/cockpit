@@ -88,7 +88,7 @@ impl GameSources {
             return Ok(());
         };
         if let Some(context) = &self.context {
-            games.validate_admitted_game_context(context, &game.proof)
+            games.validate_admitted_game_context(context, &game.proof).map_err(Into::into)
         } else {
             games.validate_game_preparation(&game.proof)
         }
@@ -108,9 +108,19 @@ impl GameSources {
                 ..Default::default()
             };
         }
-        if let Some(worker) = &mut self.command_worker {
-            if let Err(error) = worker.poll() { return self.lose(clock(), error); }
-        }
+        let rejection = match self.command_worker.as_ref().map(command_worker::Worker::poll) {
+            Some(Err(command_worker::Failure::ProcessUnavailable(reason))) => {
+                self.stop_commands();
+                Some(format!("DCS command process verification is unavailable. Pending commands were discarded. {reason}"))
+            }
+            Some(Err(command_worker::Failure::Terminal(error))) => return self.lose(clock(), error),
+            _ => None,
+        };
+        let mut result = self.poll_native(games, clock, baseline);
+        result.diagnostics.extend(rejection);
+        result
+    }
+    fn poll_native(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64, baseline: bool) -> GamePoll {
         let wake_error = self.refresh_source_wakes(games).err();
         if baseline {
             let began = Instant::now();

@@ -114,7 +114,8 @@ fn unavailable_lookup_withholds_proof_and_commands_then_recovers_the_same_contex
     assert!(validate().unwrap().is_some());
 
     platform.failed.store(true, Ordering::Release);
-    assert!(runtime.validate_admitted_game_context(&token, &prepared.proof).is_err());
+    assert!(matches!(runtime.validate_admitted_game_context(&token, &prepared.proof),
+        Err(ValidationFailure::ProcessUnavailable(_))));
     runtime.inner.refresh_game_contexts(false);
     assert!(validate().unwrap().is_none());
     {
@@ -133,5 +134,22 @@ fn unavailable_lookup_withholds_proof_and_commands_then_recovers_the_same_contex
     });
     assert!(validate().is_err());
     assert!(runtime.inner.contexts.lock().unwrap().token("x-plane-12").is_err());
+    runtime.shutdown();
+}
+
+#[test]
+fn unavailable_command_lookup_does_not_mask_owner_retirement_during_native_io() {
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    let prepared = runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
+    runtime.set_profile_context_owner(Some(owner(Some("x-plane-12")))).unwrap();
+    let token = runtime.admit_prepared_game_context(&prepared.proof).unwrap();
+    platform.failed.store(true, Ordering::Release);
+    let inner = runtime.inner.clone();
+    *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || {
+        inner.contexts.lock().unwrap().set_owner(None).unwrap();
+    })));
+    assert!(matches!(runtime.validate_admitted_game_context(&token, &prepared.proof),
+        Err(ValidationFailure::Invalid(_))));
     runtime.shutdown();
 }

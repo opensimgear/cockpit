@@ -1,7 +1,7 @@
 //! Process observation is native background work. UI reads do not authorize an
 //! applied profile, start a provider, or turn an installation into live identity.
 use super::*;
-use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner};
+use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner, ValidationFailure};
 #[path = "games/context/process_cache.rs"]
 pub(super) mod process_cache;
 #[derive(Clone, Debug)]
@@ -102,13 +102,16 @@ impl GamesRuntime {
         }))
     }
     pub(crate) fn validate_game_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
+        self.validate_game_preparation_strict(proof).map_err(Into::into)
+    }
+    fn validate_game_preparation_strict(&self, proof: &GamePreparation) -> Result<(), ValidationFailure> {
         match observe_preparation_inner(&self.inner, proof, |game, expected| self.inner.exact_process_current(game, expected)) {
             Ok(ProcessEvidence::Verified(_)) => Ok(()),
-            Ok(ProcessEvidence::Unavailable(error)) => Err(error),
+            Ok(ProcessEvidence::Unavailable(error)) => Err(ValidationFailure::ProcessUnavailable(error)),
             Err(error) => {
                 self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner())
                     .invalidate_preparation(proof, error.clone());
-                Err(error)
+                Err(ValidationFailure::Invalid(error))
             }
         }
     }
@@ -158,16 +161,19 @@ impl GamesRuntime {
         &self,
         token: &ContextToken,
         proof: &GamePreparation,
-    ) -> Result<(), String> {
-        self.validate_game_preparation(proof)?;
+    ) -> Result<(), ValidationFailure> {
+        let result = self.validate_game_preparation_strict(proof);
+        if matches!(result, Err(ValidationFailure::Invalid(_))) { return result; }
         if !token.matches_preparation(proof) {
-            return Err("The delivered game context differs from its preparation.".into());
+            return Err(ValidationFailure::Invalid("The delivered game context differs from its preparation.".into()));
         }
         self.inner
             .contexts
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .validate(token)
+            .map_err(ValidationFailure::Invalid)?;
+        result
     }
     pub(super) fn start_context_observer(&self) {
         if !self.inner.platform.integration_setup_supported() {

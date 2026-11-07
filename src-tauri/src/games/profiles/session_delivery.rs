@@ -132,7 +132,7 @@ impl GameSources {
                 self.notification_wake().as_ref().map(Arc::downgrade),
             )?);
         }
-        self.command_worker.as_mut().unwrap().submit(move |stopped| {
+        let submission = self.command_worker.as_ref().unwrap().submit(move |stopped| {
             let retired = || stopped.load(Ordering::Acquire) || revoked.load(Ordering::Acquire)
                 || epoch.0.load(Ordering::Acquire) != epoch.1;
             if retired() { return Ok(()); }
@@ -141,15 +141,28 @@ impl GameSources {
                 if Instant::now() >= deadline { return Err("The queued DCS command expired before dispatch.".into()); }
                 Ok(())
             };
-            let result = (|| {
+            let result = (|| -> Result<(), command_worker::Failure> {
                 check()?;
-                games.validate_admitted_game_context(&context, &game.proof)?;
+                games.validate_admitted_game_context(&context, &game.proof).map_err(|failure| {
+                    match failure {
+                        crate::game_context::ValidationFailure::ProcessUnavailable(reason) =>
+                            command_worker::Failure::ProcessUnavailable(reason),
+                        crate::game_context::ValidationFailure::Invalid(reason) =>
+                            command_worker::Failure::Terminal(reason),
+                    }
+                })?;
                 catalogue.lock().unwrap_or_else(|error| error.into_inner()).validate(true)?;
                 resources.validate_delivery(&token)?;
-                sender.send(&command, &argument, game.proof.vehicle_id.as_deref(), check)
+                sender.send(&command, &argument, game.proof.vehicle_id.as_deref(), check).map_err(Into::into)
             })();
             if retired() { Ok(()) } else { result }
-        })
+        });
+        // A completion can cancel the lane between the last telemetry poll
+        // and this submission. The poll will report the refusal once.
+        match submission {
+            Ok(()) | Err(command_worker::Failure::ProcessUnavailable(_)) => Ok(()),
+            Err(failure) => Err(failure.into()),
+        }
     }
 
     #[cfg(test)]
@@ -300,6 +313,7 @@ impl GameSources {
         if self.command_worker.is_none() {
             self.command_worker = Some(command_worker::Worker::start(None)?);
         }
-        self.command_worker.as_ref().unwrap().submit(job)
+        self.command_worker.as_ref().unwrap().submit(move |cancelled| job(cancelled).map_err(Into::into))
+            .map_err(Into::into)
     }
 }
