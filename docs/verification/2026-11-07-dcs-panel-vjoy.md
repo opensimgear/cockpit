@@ -462,3 +462,32 @@ Cockpit on loopback. Set `OSG_COMPANION_ABRUPT_LOSS_NATIVE=1`,
 and `OSG_COMPANION_SLOW_FEEDBACK_NATIVE=1`. Set
 `OSG_COMPANION_RECOVERY_VJOY_PROBE` to the compiled Raw Input probe and run
 `node --test tests/ui/profile-companion-compiled-native.mjs`.
+
+## Authenticated encoder burst under native load
+
+Two Windows runs of `tests/ui/companion-encoder-vjoy-native.mjs` held one
+MCP sample reader unread. A real loopback WSS peer offered 24 authored
+encoder detents as alternating press/release frames on the fixture's encoder
+control. In-process Cockpit sources offered debug input at **998.70–1000.08 Hz**
+and **124.85–125.02 Hz**. The peer offered **124.93–125.11 detents/s**.
+All three offer intervals overlapped for **187.83–188.10 ms**.
+
+Windows Raw Input received all **48 encoder edges** and **193 fast debug
+edges** in order on two buttons of the same vJoy slot. The slower native
+source terminated in an identity node. The encoder peer verified 48 ordered
+WSS acknowledgements, the independent MCP reader saw the encoder input and
+both readers retired on Stop. The native admission pending peak was three.
+Stop released the held debug button in **34.44–44.36 ms** and freed the slot.
+
+The verified Windows monotonic clock measured offer-to-Raw-Input latency.
+Encoder p50 was **0.94–0.99 ms**, p95 **1.41–1.44 ms**, and p99 **3.76–3.79 ms**.
+Fast debug p50 was **1.26–1.34 ms**, p95 **2.02–2.29 ms**, and p99
+**2.39–2.67 ms**. This is one direction of authored encoder pulse traffic.
+Physical controller capture and simulator effects remain in #199.
+
+To repeat, enable the listener on loopback in a disposable Windows Cockpit
+started with `OSG_REACTIVE_QUALIFICATION=1`. Set `OSG_ENCODER_VJOY_NATIVE=1`
+and `OSG_COMPANION_RECOVERY_VJOY_PROBE`, then run
+`node --test tests/ui/companion-encoder-vjoy-native.mjs`. Set `OSG_PYTHON`
+if Python is outside PATH. The 12 Python companion mapping tests and the
+frontend stream coverage gate also passed.
