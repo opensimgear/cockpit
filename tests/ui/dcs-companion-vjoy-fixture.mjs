@@ -10,6 +10,7 @@ import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
+import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
 
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
@@ -57,6 +58,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,
       args:['--ignore-certificate-errors-spki-list='+pin]});
     page=await browser.newPage();
+    await tracePanelCanvas(page);
     await page.addInitScript(()=>{
       window.__combinedLamp=[];
       const Worker=window.SharedWorker;
@@ -70,7 +72,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
             const sample=feedback?.values?.find(row=>row.channelId==='flight-channel-0'
               &&row.outputId==='flight-output-0');
             if(sample&&window.__combinedLamp.length<512)window.__combinedLamp.push({
-              sequence:feedback.sequence,status:sample.status,value:sample.value,sourceKind:sample.sourceKind,
+              sequence:feedback.sequence,status:sample.status,value:sample.value,sourceKind:sample.sourceKind,receivedAt:performance.now(),
             });
           });
         }
@@ -79,7 +81,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     await page.goto(url.href,{waitUntil:'domcontentloaded'});
     peer=await until(async()=>(await companion('companion_status')).host.clients
       .find(row=>!before.has(row.companionId)));
-    const bytes=await readFile(new URL('../../scripts/fixtures/compiled-flight-publication.json',import.meta.url));
+    const bytes=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
     const publication=JSON.parse(bytes);
     const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
     for(let offset=0;offset<bytes.length;offset+=8192){
@@ -140,6 +142,11 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
   async function bind(profile) {
     await request({command:'profile_virtual_slot_set',id:profile.id,expectedRevision:profile.revision,
       nodeId:outputNode,slot:slot.slot});
+  }
+
+  async function measurePresentation(submitOwnship) {
+    await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
+    return measurePanelPresentation(page,submitOwnship);
   }
 
   const expected=Array.from({length:65},(_,index)=>index%2===0);
@@ -288,5 +295,5 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
       }
     }
   }
-  return {prepare,bind,openInspector,burst,withPreviewsClosed,stopped,close};
+  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stopped,close};
 }

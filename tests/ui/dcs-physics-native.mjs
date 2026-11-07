@@ -91,6 +91,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
   }
   let initialGames, initialProfiles, before, installationBefore, fixtureInstallation, profile, child, producer, timer, fixtureSetup = false;
   let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true, biosMode = 'full';
+  let nextOwnshipSubmission;
   const aircraft = 'A-10C_2', biosId = 'common:CommonData:ALT_MSL_FT:0';
   const nativeValues = {'flight.airspeed.true': 210.25, 'flight.engine.left.speedPercent': 74.5,
     'flight.acceleration.x': 3, 'flight.acceleration.y': 4, 'flight.acceleration.z': 0,
@@ -208,7 +209,10 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       if (!['baseline', 'frozen', 'respawn-wait'].includes(mode)) modelTime += 0.05;
       const packet = {schemaVersion: 1, source: 'osg-dcs-ownship', session: 'native-fixture-mission', sequence: sequence++ >>> 0,
         modelTime, aircraft, planeId, allowed: mode !== 'denied', paused: mode === 'paused', activePause: mode === 'active-pause', stopped: mode === 'stopped', values: nativeValues};
-      producer.send(Buffer.from(JSON.stringify(packet)), 7781, '127.0.0.1');
+      const bytes = Buffer.from(JSON.stringify(packet));
+      const submittedMs = nextOwnshipSubmission ? Number(process.hrtime.bigint()) / 1e6 : undefined;
+      producer.send(bytes, 7781, '127.0.0.1');
+      nextOwnshipSubmission?.({packetSequence: packet.sequence, submittedMs});
     }, 40);
     await until(async () => (await game()).currentVehicle?.id === aircraft, 'Verified fixture BIOS identity was not discovered');
     evidence.baseline = await absent('flight.airspeed.true');
@@ -297,6 +301,19 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       nativeValues['flight.ownship.inAir'] = airborne;
       selected['flight.ownship.inAir'] = airborne;
     };
+    const submitOwnship = airborne => new Promise((resolve,reject) => {
+      assert.equal(nextOwnshipSubmission, undefined);
+      setAirborne(airborne);
+      const timeout=setTimeout(() => {
+        nextOwnshipSubmission=undefined;
+        reject(Error('The DCS fixture did not send the changed ownship value'));
+      },1000);
+      nextOwnshipSubmission = submission => {
+        clearTimeout(timeout);
+        nextOwnshipSubmission=undefined;
+        resolve(submission);
+      };
+    });
     await combined?.openInspector();
     await cdp.evaluate(`(async()=>{
       const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
@@ -312,6 +329,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
+      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(submitOwnship);
       const before = (await readers()).fast;
       const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
         setAirborne,
@@ -358,9 +376,11 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     mode = 'live'; await live(); await checkpoint('respawn requires advancing ownship baseline');
     mode = 'stopped'; evidence.phases.stopped = await withdrawn('mission stopped');
     mode = 'live'; await live();
+    evidence.phases.beforeProcessExit = (await status()).profileSession;
     child.kill(); await until(() => child.exitCode !== null || child.signalCode !== null, 'Fixture process did not exit');
     evidence.phases.exit = await absent('flight.airspeed.true'); await absent(biosId);
     await until(async () => { const page = await samples(); return !page || Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, 'Process exit retained processing values');
+    evidence.phases.afterProcessExit = (await status()).profileSession;
     checks.push('Independent inspection and selected native/canonical profile values preserve zero/false and units; unbound wind and BIOS aircraft gauge remain inspectable.');
     checks.push('Counter-only BIOS renewals preserve retained values; BIOS expiry withdraws its identity output without withdrawing fresh ownship; a new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
@@ -372,6 +392,11 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
   } finally {
     clearInterval(timer); if (producer) producer.close();
     await cleanup('Stop profile', () => request({command: 'profile_stop'}));
+    if (cleanupErrors.length) await cleanup('Recover failed Stop', async () => {
+      const current = (await status()).profileSession;
+      evidence.cleanupProfileSession = current;
+      if (['faulted', 'recovery-needed'].includes(current.state)) await request({command: 'profile_recover'});
+    });
     if (combined) await cleanup('Close combined panel and probe', () => combined.close());
     if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await sleep(200); }
     if (profile) await cleanup('Delete temporary profile', () => request({command: 'profile_delete', id: profile.id, expectedRevision: profile.revision}));

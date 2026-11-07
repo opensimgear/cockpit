@@ -5,7 +5,7 @@ import {canonicalWidget,widgetDigest,BROWSER_WIDGET_CAPABILITIES} from '../packa
 import {createCompiledPanel,compiledPanelCapabilityProjection,verifyCompiledPanelPublication} from '../packages/widget-runtime/src/panel.ts';
 
 // These are protocol probes, not shipped controls or a slider implementation.
-function source(id,{controls=true,feedback=true,bulk=false}={}){
+function source(id,{controls=true,feedback=true,bulk=false,visibleLamp=false}={}){
   const inputPorts=controls?[...['button','shared','encoder','macro'].map(id=>({id,label:id,type:'boolean',signal:id+'Value'})),{id:'axis',label:'Axis',type:'number',signal:'axisValue',min:0,max:1}]:[];
   const signals=[...inputPorts.map(p=>({id:p.signal,source:'local',type:p.type,initial:p.type==='boolean'?false:0,...(p.type==='number'?{min:0,max:1}:{})})),...(feedback?[{id:'lamp',source:'feedback',type:'boolean',initial:false},
     {id:'caption',source:'feedback',type:'enum',initial:bulk?'L'.repeat(64):'local',values:bulk?['L'.repeat(64),'blank']:['local','blank']},
@@ -20,16 +20,19 @@ function source(id,{controls=true,feedback=true,bulk=false}={}){
       {id:'caption',label:'Text',type:'enum',signal:'caption',values:['local','blank']},
       {id:'level',label:'Gauge',type:'number',signal:'level',min:0,max:100}]):[],
     hitRegions:controls?[{id:'press',x:0,y:0,width:32,height:32,events:{activate:'activate'}}]:[],
-    scene:[{id:'pixels',kind:'rectangle',x:0,y:0,width:32,height:32,fill:'#71e5c3'}],motions:[],sounds:[],assets:[]};
+    scene:[{id:'pixels',kind:'rectangle',x:0,y:0,width:32,height:32,fill:'#71e5c3'},
+      ...(visibleLamp?[{id:'lit',kind:'rectangle',x:0,y:0,width:32,height:32,fill:'#ff2020',visible:{ref:'lamp'}}]:[])],
+    motions:[],sounds:[],assets:[]};
 }
 const options={size:{width:32,height:32},motion:false,sound:false};
 const normal=await compileWidget(source('acceptance-probe'),options);
+const timing=await compileWidget(source('acceptance-timing',{visibleLamp:true}),options);
 const inputOnly=await compileWidget(source('acceptance-input',{feedback:false}),options);
 const textOnly=await compileWidget(source('acceptance-text',{controls:false,bulk:true}),options);
-async function publication(name,bulk=false){
+async function publication(name,bulk=false,probe=normal){
   const placement=(id,bundle,index=0)=>({id,pageId:'page',label:id,bounds:{x:(index%10)/10,y:Math.floor(index/10)/10,width:32/800,height:32/480},bundle});
   const panel=await createCompiledPanel({id:name+'-panel',title:name,viewports:[{pageId:'page',title:'Page',width:800,height:480}]},
-    bulk?[placement('probe',inputOnly),...Array.from({length:64},(_,i)=>placement('bulk-'+i,textOnly,i))]:[placement('probe',normal)]);
+    bulk?[placement('probe',inputOnly),...Array.from({length:64},(_,i)=>placement('bulk-'+i,textOnly,i))]:[placement('probe',probe)]);
   const d=panel.document,ids=new Map();
   const inputOrder={button:0,shared:1,axis:2,encoder:5,macro:6};
   d.ui.controls.forEach(c=>{const binding=d.presentation.widgets.flatMap(w=>w.inputBindings).find(b=>b.controlId===c.id);const id=name+'-input-'+inputOrder[binding.portId];ids.set(c.id,id);c.id=id;});
@@ -48,8 +51,8 @@ async function publication(name,bulk=false){
   await verifyCompiledPanelPublication(panel);
   return {canonicalDocument:canonicalWidget(d),publicationHash:panel.publicationHash,capabilityFingerprint:panel.capabilityFingerprint,assets:panel.assets};
 }
-for(const [name,bulk] of [['flight',false],['racing',false],['bounded-feedback',true]]){
-  const path=new URL('./fixtures/compiled-'+name+'-publication.json',import.meta.url),text=JSON.stringify(await publication(name,bulk),null,2)+'\n';
+for(const [name,bulk,probe,suffix=''] of [['flight',false],['racing',false],['bounded-feedback',true],['flight',false,timing,'-timing']]){
+  const path=new URL('./fixtures/compiled-'+name+suffix+'-publication.json',import.meta.url),text=JSON.stringify(await publication(name,bulk,probe),null,2)+'\n';
   if(process.argv.includes('--check'))assert.equal((await readFile(path,'utf8')).replaceAll('\r\n','\n'),text,'Compiled acceptance fixture is stale: '+name);
   else await writeFile(path,text);
 }

@@ -57,3 +57,10 @@ and builds. The idle gateway trace does not measure owner continuity, panel
 presentation, queue peaks, or capture-to-destination latency under concurrent
 sources and stalled consumers. Physical input and output acceptance stays in
 #199.
+
+The panel trace adds 24 clock-aligned samples from authored ownship UDP to the real browser
+canvas while a native telemetry reader withholds its acknowledgement. The
+passing run measured 49.19 ms p95 with 0.18 ms alignment uncertainty. This
+covers one loopback panel. The concurrent dual-rate, two-panel, UI and MCP
+workload and full budget gate remain open.
+[DCS panel canvas trace](2026-11-07-dcs-panel-vjoy.md#authored-udp-to-browser-canvas-timing)
