@@ -33,7 +33,7 @@
   function watchInputs() {
     const id = nodeId, savedId = profileId, savedRevision = revision;
     samples = []; mode = 'preview';
-    if (!mounted || !active || !savedId || !savedRevision || document.hidden) return;
+    if (!mounted || !active || !savedId || !savedRevision) return;
     let disposed = false, stopRuntime: (() => void) | undefined, stopSamples: (() => void) | undefined;
     let sampleOwner: DeepReadonly<NativeProfileOwner> | undefined, knownAppliedOwner = false;
     const current = () => !disposed && !document.hidden;
@@ -65,7 +65,7 @@
       else if (!stopRuntime && !disposed) { knownAppliedOwner = false; mode = 'preview'; stopRuntime = observeProfileRuntime(runtimeChanged); }
     }
     document.addEventListener('visibilitychange', visibility);
-    stopRuntime = observeProfileRuntime(runtimeChanged);
+    visibility();
     return () => { disposed = true; document.removeEventListener('visibilitychange', visibility); stopRuntime?.(); clearSamples(); };
   }
   $effect(watchInputs);

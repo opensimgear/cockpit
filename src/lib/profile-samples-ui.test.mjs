@@ -30,3 +30,22 @@ test('visibility and inactive lifecycle detach streams and a visible return need
  cleanup();assert.equal(h.events.size,0);assert.equal(h.sampleObservers[1].stopped,true);
  const inactive=await harness({active:false});const stop=inactive.handlers.mount();assert.equal(inactive.handlers.mode,'preview');assert.equal(inactive.sampleObservers.length,0);stop?.();
 });
+
+test('a virtual preview mounted while hidden observes the runtime once visible', async () => {
+ const h = await harness();
+ h.document.hidden = true;
+ const cleanup = h.handlers.mount();
+ h.runtime.send({status:'ready',value:{profileSession:applied(true)}});
+ assert.equal(h.sampleObservers.length,0);
+ assert.equal(h.events.has('visibilitychange'),true);
+
+ h.document.hidden = false;
+ h.events.get('visibilitychange')();
+ h.runtime.send({status:'ready',value:{profileSession:applied(true)}});
+ assert.equal(h.sampleObservers.length,1);
+ h.samples.send(h.sampleObservers[0],{status:'ready',value:sample('steer')});
+ assert.equal(h.handlers.mode,'live');
+
+ cleanup();
+ assert.equal(h.sampleObservers[0].stopped,true);
+});
