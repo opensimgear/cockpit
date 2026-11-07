@@ -69,6 +69,14 @@ loopback port, observes the waiting state, releases the port with Settings
 hidden, and checks that reopen shows Listening. A committed disable updates
 the pairing form while the hidden listener settings make no reads.
 
+Debug's Runtime & recovery tab reads status after its observation baseline.
+Hiding the document or switching tabs retires that reader. Reopening starts
+with a new baseline before cached recovery actions can be used. The native
+WebView and browser-dev fixtures held the real subscription request and
+verified no status read before release, one after each of three opens,
+and the exact unsubscribe on each close. Before the change both transports
+made an early read. The fixture issues no recovery commands.
+
 The Companion library fixture opens a second Edge tab in the same browser
 context. The second tab commits a draft to IndexedDB while the first tab
 shows the library. The first tab receives both addition and removal. The

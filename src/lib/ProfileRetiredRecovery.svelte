@@ -7,31 +7,39 @@
  let{active=true,controller:supplied}:{active?:boolean;controller?:RetiredRecoveryController}=$props();
  const provided=untrack(()=>supplied),controller=provided??new RetiredRecoveryController(new RetiredRecoveryClient(async request=>(await gatewayRequest(request)).retiredRecovery));
  let view=$state.raw(controller.state),mounted=$state(false),acknowledged=$state<string[]>([]);
- let refreshPending=$state(false),observationError=$state('');
+ let shown=$state(false),baselineReady=$state(false),refreshPending=$state(false),observationError=$state('');
  const visible=$derived(needsRetiredRecovery(view.status)||!!view.error||!!observationError);
- const blocked=$derived(!active||view.stale||!!view.pending||!!observationError);
+ const blocked=$derived(!active||!shown||!baselineReady||refreshPending||view.loading||view.stale||!!view.pending||!!observationError);
  const refKey=(ref:DeepReadonly<RetiredJournalRef>)=>JSON.stringify(ref);
  function confirm(ref:DeepReadonly<RetiredJournalRef>,checked:boolean){const key=refKey(ref);acknowledged=checked?[...acknowledged.filter(v=>v!==key),key]:acknowledged.filter(v=>v!==key);}
  async function output(ref:DeepReadonly<RetiredJournalRef>,acknowledge=false){if(blocked||!view.status?.outputQualified||acknowledge&&!acknowledged.includes(refKey(ref)))return;await controller.output(ref,acknowledge);acknowledged=[];}
  async function recoverProvision(ref:DeepReadonly<RetiredProvisionRef>){if(blocked||!view.status?.provisioningQualified)return;await controller.recoverProvision(ref);}
- function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
+ function mountStatus(){
+   const visibility=()=>{shown=!document.hidden;};
+   visibility();
+   document.addEventListener('visibilitychange',visibility);
+   mounted=true;
+   const stop=controller.subscribe(next=>view=next);
+   return()=>{mounted=false;stop();document.removeEventListener('visibilitychange',visibility);};
+ }
  onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
  $effect(()=>{
-   if(!mounted||!active)return;
+   if(!mounted||!active||!shown)return;
    const observations=new SharedObservations();
-   const refresh=()=>{if(!document.hidden)refreshPending=true;};
    observations.subscribe('profiles.retired-recovery',state=>{
-     if(state.status==='ready'){observationError='';refresh();}
-     if(state.status==='lost'||state.status==='error')observationError=state.error??'Native cleanup observation unavailable.';
+     if(state.status==='ready'){baselineReady=true;observationError='';refreshPending=true;}
+     if(state.status==='lost'||state.status==='error'){
+       baselineReady=false;
+       refreshPending=false;
+       observationError=state.error??'Native cleanup observation unavailable.';
+     }
    });
-   refresh();
-   document.addEventListener('visibilitychange',refresh);
-   return()=>{observations.close();document.removeEventListener('visibilitychange',refresh);};
+   return()=>{observations.close();baselineReady=false;refreshPending=false;};
  });
  $effect(()=>{
-   if(!mounted||!active||!refreshPending||view.loading||view.pending)return;
+   if(!mounted||!active||!shown||!refreshPending||view.loading||view.pending)return;
    refreshPending=false;
-   if(!document.hidden)untrack(()=>void controller.refresh());
+   untrack(()=>void controller.refresh());
  });
 </script>
 {#if visible}
