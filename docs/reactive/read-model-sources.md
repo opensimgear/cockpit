@@ -12,7 +12,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `system.inventory` | Supplemental system inventory invalidation through `system_inventory.rs` and gateway topology commits | Devices and Settings Devices read the affected inventory. External driver changes have explicit inspection paths. |
 | `profiles.library`, `profiles.runtime` | Native profile read models publish saved document and applied owner changes separately | Profile list, editor, activation controls and shell. The clean editor follows MCP commits. A dirty editor keeps its draft and the revision guard rejects stale Save. |
 | `profiles.resources` | Resource observation owner publishes committed availability and route changes | Profile resource selection and live resource resolution. |
-| `profiles.activation`, `profiles.learning` | Activation progress and native input learning publish their own lifecycle revisions | Activation window and learning controls. |
+| `profiles.activation`, `profiles.learning` | Activation progress and native input learning publish their own lifecycle revisions | Activation window and MCP passive input learning. The profile editor no longer mounts the learning panel after the controller settings simplification in `2013ce62`. |
 | `profiles.desktop`, `settings.desktop` | Runtime readiness from profile read models and committed output settings from the desktop settings owner | Profile Debug and Settings Devices respectively. |
 | `profiles.debug-inputs`, `profiles.samples.<owner-node>` | Gateway debug input publication and the exact applied profile owner and node sample publisher | Authored input controls and live profile block previews. |
 | `profiles.retired-recovery` | Retained recovery owner publishes recovery and provisioning transitions | Recovery controls and status. |
@@ -88,6 +88,19 @@ WebView and browser-dev fixtures held the real subscription request and
 verified no status read before release, one after each of three opens,
 and the exact unsubscribe on each close. Before the change both transports
 made an early read. The fixture issues no recovery commands.
+
+The Debug Profile inspection tab shares exact node sample readers between
+its Applied port samples and Applied path activity views. The Windows WebView
+and Edge browser-dev ran `tests/ui/profile-inspection-lifetime.mjs`. Both
+showed an authored value in the first profile and retired both node readers
+when the document hid. While hidden, a separate command stopped that owner,
+applied a different profile and changed its input. The hidden tab opened no
+readers and made no topology or inspection requests. Reopening read one
+inspection page and two topology pages for the new owner, shared two exact
+node readers, and showed only the new topology and current input. Switching
+tabs retired both new readers. The two profiles had no hardware outputs.
+Eleven focused UI tests and all three topology and inspection coverage gates
+passed. The tested view, controllers and shared sample module matched main.
 
 The profile editor's Debug controller inspector retires its input reader
 when the Cockpit document becomes hidden. Its held buttons follow the existing
