@@ -386,6 +386,8 @@ impl Inner {
             status["connection"] = defaults(id);
         }
         if id == "dcs" {
+            status["catalogueGeneration"] =
+                json!(self.catalogue_generation[2].load(Ordering::Acquire).to_string());
             status["aircraftModule"] = saved["aircraftModule"].clone();
             if saved["userFolder"].is_string() {
                 status["userFolder"] = saved["userFolder"].clone();

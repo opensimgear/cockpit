@@ -13,7 +13,7 @@ use std::{
 const MAX_TARGETS: usize = 2048;
 const MAX_DIRECTORIES: usize = 64;
 const MAX_ERROR_BYTES: usize = 1024;
-pub(in crate::games) type ChildFilter = fn(&std::ffi::OsStr) -> bool;
+pub(in crate::games) type ChildFilter = fn(EventKind, &std::ffi::OsStr) -> bool;
 type Changed = Arc<dyn Fn(Result<(), String>) + Send + Sync>;
 type Targets = Arc<Mutex<Arc<TargetFilter>>>;
 
@@ -138,10 +138,8 @@ fn dispatch(event: notify::Result<Event>, targets: &Targets, changed: &Changed) 
         }
         targets.paths.iter().any(|target| target.starts_with(&path))
             || targets.children.as_ref().is_some_and(|(root, filter)| {
-                matches!(event.kind, EventKind::Create(_) | EventKind::Remove(_)
-                    | EventKind::Modify(ModifyKind::Name(_)))
-                    && path.parent() == Some(root.as_path())
-                    && path.file_name().is_some_and(filter)
+                path.parent() == Some(root.as_path())
+                    && path.file_name().is_some_and(|name| filter(event.kind, name))
             })
     }) {
         changed(Ok(()));

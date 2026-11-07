@@ -1,9 +1,11 @@
 //! Native invalidation for the selected DCS setup files.
 use super::*;
+use notify::{event::ModifyKind, EventKind};
 
 #[derive(Default)]
 pub(super) struct DcsWatch {
     source: context_sdk_watch::SourceWatch,
+    catalogue: context_sdk_watch::SourceWatch,
     scope: Option<(PathBuf, Option<PathBuf>)>,
     paths: Vec<PathBuf>,
     pending: bool,
@@ -14,6 +16,15 @@ pub(super) struct DcsWatch {
 
 impl DcsWatch {
     pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
+        let catalogue = inner.setup.dcs_catalogue_watch_path();
+        let children = catalogue.as_deref().map(|root| {
+            (root, catalogue_file as prepared_sources::watch::ChildFilter)
+        });
+        if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children) {
+            inner.setup.invalidate_dcs_catalogue();
+            inner.changes.mark(crate::game_read_models::signals::Domain::Setup);
+            inner.changes.mark_resources();
+        }
         let game = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
             .catalogue.iter().find(|game| crate::game_discovery::integration_key(game) == Some("dcs")).cloned();
         let installed = game.as_ref().is_some_and(|game| game["installed"] == true);
@@ -50,7 +61,13 @@ impl DcsWatch {
     }
 }
 
-fn dcs_profile_directory(name: &std::ffi::OsStr) -> bool {
-    name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("dcs")
-        || name.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("dcs.")))
+fn dcs_profile_directory(kind: EventKind, name: &std::ffi::OsStr) -> bool {
+    matches!(kind, EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)))
+        && name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("dcs")
+            || name.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("dcs.")))
+}
+
+fn catalogue_file(_: EventKind, name: &std::ffi::OsStr) -> bool {
+    Path::new(name).extension().and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
 }

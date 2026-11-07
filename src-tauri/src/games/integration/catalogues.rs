@@ -16,6 +16,8 @@ impl GameIntegrationSetup {
             return Err("Choose an available telemetry integration.".into());
         }
         let (record, revision) = self.provider_snapshot(id);
+        let generation = self.inner.catalogue_generation(id);
+        let catalogue_generation = generation.map(|counter| counter.load(Ordering::Acquire));
         let module = if id == "dcs" {
             validate_connection(id, &record["connection"])?;
             let path = Path::new(
@@ -43,8 +45,6 @@ impl GameIntegrationSetup {
         }
         // SDK metadata can block on filesystem access. Capture it before taking
         // the shared cache mutex used by passive catalogue metadata readers.
-        let sdk_counter = self.inner.catalogue_generation(id);
-        let catalogue_generation = sdk_counter.map(|counter| counter.load(Ordering::Acquire));
         let sdk_source_stamp = sdk_stamp(id, &record);
         let cached = {
             let cache = self
@@ -52,6 +52,9 @@ impl GameIntegrationSetup {
                 .catalogues
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
+            if generation.map(|counter| counter.load(Ordering::Acquire)) != catalogue_generation {
+                return Err("The provider catalogue changed during capture; refresh the catalogue.".into());
+            }
             cache
                 .get(&key)
                 .filter(|(at, known, result)| {
@@ -129,7 +132,7 @@ impl GameIntegrationSetup {
         }
         let cached = result.map(Arc::new);
         let mut cache = self.inner.catalogues.lock().unwrap_or_else(|p| p.into_inner());
-        if sdk_counter.map(|counter| counter.load(Ordering::Acquire)) != catalogue_generation {
+        if generation.map(|counter| counter.load(Ordering::Acquire)) != catalogue_generation {
             return Err("The provider catalogue changed during capture; refresh the catalogue.".into());
         }
         cache.insert(key, (Instant::now(), revision, cached.clone()));

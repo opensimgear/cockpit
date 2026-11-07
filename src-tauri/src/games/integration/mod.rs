@@ -225,6 +225,17 @@ impl GameIntegrationSetup {
     pub(crate) fn catalogue_generation(&self, id: &str) -> Option<u64> {
         self.inner.catalogue_generation(id).map(|generation| generation.load(Ordering::Acquire))
     }
+    pub(crate) fn dcs_catalogue_watch_path(&self) -> Option<PathBuf> {
+        let (record, _) = self.inner.provider_snapshot("dcs");
+        record["connection"]["cataloguePath"].as_str().map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    }
+
+    pub(crate) fn invalidate_dcs_catalogue(&self) {
+        let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
+        self.inner.catalogue_generation[2].fetch_add(1, Ordering::AcqRel);
+        cache.retain(|key, _| !key.starts_with("dcs:"));
+    }
     pub(crate) fn catalogue_watched(&self, id: &str) -> bool {
         self.inner.watched_setup.lock().unwrap_or_else(|p| p.into_inner()).contains(id)
     }
@@ -255,9 +266,7 @@ impl GameIntegrationSetup {
         let Ok(_admission) = self.admission.try_lock() else { return false; };
         if self.busy() { return false; }
         if id == "dcs" {
-            let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
-            self.inner.catalogue_generation[2].fetch_add(1, Ordering::AcqRel);
-            cache.retain(|key, _| !key.starts_with("dcs:"));
+            self.invalidate_dcs_catalogue();
         } else {
             self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
         }

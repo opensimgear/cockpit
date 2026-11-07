@@ -55,7 +55,7 @@
   let editingName = $state(false), nameDraft = $state('');
   let gameState=$state.raw<GameModelState<GamesSummaryState>>({status:'connecting'}),gameDetailState=$state.raw<GameModelState<{gameId:string;scope:string;value:Game}>>({status:'connecting'}),integrationDropBusy=$state(false);
   let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);
-  let requestedDcsCatalogue='',dcsCatalogueEpoch=0;
+  let requestedDcsCatalogue='',dcsCatalogueScope='',dcsCatalogueEpoch=0;
   const editor = $derived(workspace.editor);
   const editorInventory=$derived([...workspace.inventory,...Object.values(dcsCatalogues).filter(source=>!workspace.inventory.some(current=>current.id===source.id))]);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
@@ -65,7 +65,6 @@
   const contextGame=$derived.by(()=>{const registered=$registeredGames.find(game=>game.id===selectedGame);if(gameDetailState.value?.gameId===selectedGame)return gameDetailState.value.value as Game;return registered;});
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
   const integrationsEnabled=$derived(!!selectedGame&&contextDetailReady&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
-  const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'?`${editor?.document.id}/${vehicleTabs.map(scope=>scope.vehicleId).join('/')}`:'');
   const routingInventory=$derived(editorInventory);
   const inventoryRevision=$derived.by(()=>{void workspace;return store.inventoryRevision+dcsCatalogueRevision;});
   const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of (contextDetailReady?contextGame?.vehicleSupport?.vehicles:[])??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextDetailReady&&contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
@@ -81,6 +80,13 @@
   const appliedSnapshot=$derived(runtimeState.status?.owner&&!runtimeState.stale?runtimeState.status.appliedSnapshot:null);
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
+  const dcsProvider=$derived(summaryGame?.integrationSetup);
+  const dcsSourceScope=$derived(active&&selectedGame==='dcs'&&dcsProvider?.providerSetupRevision
+    ? JSON.stringify([editorContext,gameState.session,dcsProvider.providerSetupRevision,dcsProvider.catalogueGeneration])
+    : '');
+  const dcsCatalogueKey=$derived(dcsSourceScope&&vehicleTabs.length
+    ? JSON.stringify([dcsSourceScope,vehicleTabs.map(tab=>[tab.id,tab.vehicleId])])
+    : '');
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));const stopLibrary=observeProfileLibrary(state=>store.observeLibrary(state)),stopRuntime=observeProfileRuntime(state=>store.observeRuntime(state)),stopGames=observeGamesState(state=>gameState=state);return()=>{stopRuntime();stopLibrary();stopGames();stop();stopSaved();}; });
   onDestroy(() => { dcsCatalogueEpoch++;companionCatalogueEpoch++;companionDropEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
@@ -90,7 +96,16 @@
   $effect(()=>{void editorContext;paletteDrag=null;});
   $effect(()=>{void editorContext;companionDropEpoch++;companionDropBusy=false;});
   $effect(()=>{if(active&&editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>{const next=profileSyncGameContext(editor,editorInventory);change(next.document,next.assignments,'Select integration catalogue');});});
-  $effect(()=>{const key=dcsCatalogueKey;if(requestedDcsCatalogue===key)return;requestedDcsCatalogue=key;dcsCatalogueEpoch++;dcsCatalogueBusy=false;dcsCatalogueError='';if(key)untrack(()=>void loadDcsVehicleCatalogue());});
+  $effect(()=>{
+    const scope=dcsSourceScope,key=dcsCatalogueKey;
+    if(dcsCatalogueScope!==scope){dcsCatalogueScope=scope;dcsCatalogues={};}
+    if(requestedDcsCatalogue===key)return;
+    requestedDcsCatalogue=key;
+    dcsCatalogueEpoch++;
+    dcsCatalogueBusy=false;
+    dcsCatalogueError='';
+    if(key)untrack(()=>void loadDcsVehicleCatalogue());
+  });
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
@@ -111,27 +126,30 @@
   function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
   async function loadDcsVehicleCatalogue(){
     const current=store.state.editor,profileId=current?.document.id;if(!current||selectedGame!=='dcs')return;
+    const key=dcsCatalogueKey,editorEpoch=store.editorEpoch;
     const scopes=[...(current.document.vehicleTabs??[])],epoch=++dcsCatalogueEpoch,failures:string[]=[];dcsCatalogueBusy=true;dcsCatalogueError='';
+    const currentRequest=()=>epoch===dcsCatalogueEpoch&&key===dcsCatalogueKey&&editorEpoch===store.editorEpoch;
     try{for(const scope of scopes){try{
-      const source=await resources.dcsVehicle(scope.vehicleId);if(epoch!==dcsCatalogueEpoch)return;
+      const source=await resources.dcsVehicle(scope.vehicleId);if(!currentRequest())return;
       dcsCatalogues={...dcsCatalogues,[source.id]:source};dcsCatalogueRevision++;
       let latest=store.state.editor;if(!latest||latest.document.id!==profileId)return;
       if(!workspace.readOnly&&!workspace.busy&&!libraryBusy){
         const configured=latest.document.resources.some(node=>node.kind==='game'&&scope.nodeIds.includes(node.id)&&node.ports.length&&latest!.assignments.find(pin=>pin.resourceId===node.id)?.sourceId!==source.id);
-        const ports=configured?(await resources.inspectAll(source.id)).ports:[];if(epoch!==dcsCatalogueEpoch)return;
+        const ports=configured?(await resources.inspectAll(source.id)).ports:[];if(!currentRequest())return;
         latest=store.state.editor;if(!latest||latest.document.id!==profileId)return;
+        if(workspace.readOnly||workspace.busy||libraryBusy)continue;
         const next=profileReconcileDcsVehicleCatalogue(latest,scope.id,source,ports,editorInventory);if(JSON.stringify(next.assignments)!==JSON.stringify(latest.assignments))change(next.document,next.assignments,'Select integration catalogue');
       }
-    }catch(error){failures.push(`${scope.vehicleName}: ${error instanceof Error?error.message:String(error)}`);}}}
-    finally{if(epoch===dcsCatalogueEpoch){dcsCatalogueBusy=false;dcsCatalogueError=failures.join(' ');}}
+    }catch(error){if(!currentRequest())return;failures.push(`${scope.vehicleName}: ${error instanceof Error?error.message:String(error)}`);}}}
+    finally{if(currentRequest()){dcsCatalogueBusy=false;dcsCatalogueError=failures.join(' ');}}
   }
   async function addIntegration(vehicle:{id:string;name:string},position?:CanvasPoint){
     const current=store.state.editor,gameId=selectedGame;if(!current||!gameId||!contextDetailReady||!canDropComponent({kind:'integration',gameId,vehicleId:vehicle.id,vehicleName:vehicle.name}))return;
-    const context=editorContext,epoch=store.editorEpoch;integrationDropBusy=true;notice='';
+    const context=editorContext,epoch=store.editorEpoch,sourceScope=dcsSourceScope;integrationDropBusy=true;notice='';
     try{
       let source:DeepReadonly<ResourceSummary>|undefined;
       if(gameId==='dcs'&&vehicle.id)source=await resources.dcsVehicle(vehicle.id);
-      if(context!==editorContext||epoch!==store.editorEpoch||!active)return;
+      if(context!==editorContext||epoch!==store.editorEpoch||sourceScope!==dcsSourceScope||!active)return;
       if(source){dcsCatalogues={...dcsCatalogues,[source.id]:source};dcsCatalogueRevision++;}
       const latest=store.state.editor;if(!latest||selectedGame!==gameId||workspace.readOnly||workspace.busy||libraryBusy)return;
       const before=latest.document,existing=new Set(before.resources.map(node=>node.id));let next;

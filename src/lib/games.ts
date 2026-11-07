@@ -49,7 +49,7 @@ export type GameIntegrationSetup = {
   channels?: Record<string, { status: string; value?: unknown }>; optionalMaxRpm?: boolean;
   probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
   aircraftExports?: { aircraft: string; detected: boolean; compatible: boolean; installed: boolean; path?: string | null; capability: string; message: string }[];
-  providerSetupRevision?: string; catalogueRevision?: string | null; aircraftModule?: string | null;
+  providerSetupRevision?: string; catalogueRevision?: string | null; catalogueGeneration?: string; aircraftModule?: string | null;
   activeAircraftModule?: string | null; aircraftModuleAutomatic?: boolean;
 };
 export type GameIntegrationContext = {

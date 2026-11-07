@@ -35,6 +35,19 @@ coverage command also passed. The WebView loaded the development frontend,
 which contained unrelated local profile edits. The component review used
 committed main. The physical VKB and broader background/reopen gates remain open.
 
+The DCS aircraft editor follows provider settings and changes to JSON in the
+selected DCS-BIOS catalogue directory through native file notifications. The
+prior desktop build reproduced a stale port list after an in-place module edit.
+Desktop and browser-dev fixtures verify path changes, in-place edits and alias
+remaps while the profile remains open, then another edit while it is closed.
+The open draft retains its unsaved rename and layout. Reopening shows the
+current ports, and the saved profile and assignments retain their original
+values. The fixtures use private databases and authored catalogue files.
+The Windows suite passed 2,393 tests with 18 default ignores. The four
+configured native coverage gates passed. The additional DCS context watcher
+measured 81.13% production line coverage. All 19 local Nx projects passed their
+applicable check, test and build targets.
+
 ## R3 adapter evidence
 
 The adapter evidence item is checked. Each supported adapter has automated

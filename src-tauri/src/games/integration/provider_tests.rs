@@ -381,3 +381,36 @@ fn xplane_sdk_invalidation_keeps_the_other_version_cache_and_generation() {
     assert_eq!(setup.inner.catalogue_generation(id).unwrap().load(Ordering::Acquire), 1);
     assert_eq!(setup.inner.catalogue_generation(other).unwrap().load(Ordering::Acquire), 0);
 }
+
+#[test]
+fn dcs_catalogue_invalidation_fences_a_prepared_alias_read() {
+    let scratch = Scratch::new();
+    let catalogue = scratch.0.join("catalogue");
+    fs::create_dir(&catalogue).unwrap();
+    fs::write(catalogue.join("AircraftAliases.json"), r#"{"Fixture":["Module"]}"#).unwrap();
+    fs::write(catalogue.join("Module.json"), "{}").unwrap();
+    let setup = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
+    let mut games = vec![game("dcs")];
+    setup.save_provider_settings(&json!({
+        "command":"game_integration_settings_save",
+        "expectedSetupRevision":setup.provider_setup_revision("dcs"),
+        "connection":dcs_connection(&catalogue),
+        "userFolder":scratch.0
+    }), &games[0]).unwrap();
+    assert_eq!(setup.dcs_catalogue_watch_path().as_deref(), Some(catalogue.as_path()));
+    setup.decorate_summary(&mut games);
+    let before = games[0]["integrationSetup"].clone();
+    let (entered, observed) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    *setup.inner.catalogue_stamp_pause.lock().unwrap() = Some((entered, blocked));
+    thread::scope(|scope| {
+        let read = scope.spawn(|| setup.resource_integration_catalogue_for_vehicle("dcs", Some("Fixture")));
+        observed.recv_timeout(Duration::from_secs(3)).unwrap();
+        setup.invalidate_dcs_catalogue();
+        release.send(()).unwrap();
+        assert!(read.join().unwrap().unwrap_err().contains("changed during capture"));
+    });
+    setup.decorate_summary(&mut games);
+    assert_ne!(games[0]["integrationSetup"]["catalogueGeneration"], before["catalogueGeneration"]);
+    assert_eq!(games[0]["integrationSetup"]["providerSetupRevision"], before["providerSetupRevision"]);
+}

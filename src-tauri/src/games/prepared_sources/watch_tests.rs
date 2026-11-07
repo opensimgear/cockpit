@@ -285,8 +285,9 @@ fn child_filter_wakes_for_matching_directories_without_recursive_noise() {
     let mut watch = Watch::new(Arc::new(move |change| {
         let _ = send.send(change);
     })).unwrap();
-    watch.replace_with_children(&[root.to_path_buf()], Some((root, |name| {
-        name.to_str().is_some_and(|name| name.starts_with("dcs.") || name.starts_with("DCS."))
+    watch.replace_with_children(&[root.to_path_buf()], Some((root, |kind, name| {
+        matches!(kind, EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)))
+            && name.to_str().is_some_and(|name| name.starts_with("dcs.") || name.starts_with("DCS."))
     }))).unwrap();
 
     let unrelated = root.join("Other Game");
@@ -310,7 +311,7 @@ fn child_watch_rearms_when_its_missing_root_is_created_or_replaced() {
     let directory = crate::test_directory();
     let root = directory.path().join("Saved Games");
     let paths = std::slice::from_ref(&root);
-    let filter: ChildFilter = |name| name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("DCS.fixture"));
+    let filter: ChildFilter = |_, name| name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("DCS.fixture"));
     let children = Some((root.as_path(), filter));
     let (mut watch, receive) = watched(paths);
     assert!(watch.replace_with_children(&[], children).is_err());
@@ -332,4 +333,20 @@ fn child_watch_rearms_when_its_missing_root_is_created_or_replaced() {
         watch.replace_with_children(paths, children).unwrap();
         settled(&receive);
     }
+}
+
+#[test]
+fn file_child_filter_wakes_for_in_place_writes() {
+    let directory = crate::test_directory();
+    let root = directory.path();
+    let module = root.join("Module.json");
+    fs::write(&module, "{}").unwrap();
+    let (mut watch, receive) = watched(&[root.to_path_buf()]);
+    watch.replace_with_children(&[root.to_path_buf()], Some((root, |_, name| {
+        Path::new(name).extension().is_some_and(|extension| extension == "json")
+    }))).unwrap();
+    fs::write(root.join("notes.txt"), "unrelated").unwrap();
+    quiet(&receive);
+    fs::write(module, r#"{"module":"changed"}"#).unwrap();
+    changed(&receive);
 }
