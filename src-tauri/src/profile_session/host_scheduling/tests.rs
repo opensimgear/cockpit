@@ -187,6 +187,27 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     state.game_preparation = Some(proof);
     state.game = game;
     assert_eq!(capture_driven(&host, &host.prepared[&key(&owner)], &run), cfg!(windows));
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    state.delivery.as_mut().unwrap().sinks.push(osg_profiles::compiler_models::SinkPlan {
+        endpoint: osg_profiles::Endpoint { node_id: "game".into(), port_id: "command".into() },
+        adapter: SinkAdapter::SimulatorCommand,
+        inventory_resource_id: None, observed_port_id: None,
+        contract: osg_profiles::resources_ports::PortContract::Action {
+            parameters: vec![], endpoint: "command".into(), readable: false,
+            semantics: osg_profiles::resources_ports::ActionSemantics::OneShot,
+            display: None, ownership: None,
+        },
+        token: None, preparation: None, route: None, readiness: PlanReadiness::Dormant,
+    });
+    assert_eq!(host.service_interval(&run).is_none(), cfg!(windows));
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    let proof = state.game_preparation.as_mut().unwrap();
+    let integration = std::mem::replace(&mut proof.integration_key, "x-plane".into());
+    assert!(host.service_interval(&run).is_some(), "Other integrations cannot qualify a simulator command sink");
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    state.game_preparation.as_mut().unwrap().integration_key = integration;
+    state.game.stop();
+    assert!(host.service_interval(&run).is_some(), "Losing the DCS watch restores fallback service");
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }

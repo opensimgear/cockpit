@@ -31,6 +31,9 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
         && !state.game_publication.deferred
         && state.desktop.is_none() && state.document.desktop_outputs.is_empty()
         && state.source_document.desktop_outputs.is_empty();
+    // DCS command completion and failure wake the same host as telemetry.
+    let watched_dcs = watched_game && state.game_preparation.as_ref()
+        .is_some_and(|prepared| prepared.integration_key == "dcs");
     cfg!(windows) && host.native && host.native_wake.is_some() && host.input_wake.is_some()
         && state.owner == run.owner && !state.vehicle_paused
         && state.reducer.as_ref().is_some_and(|reducer| reducer.active() && reducer.fault().is_none())
@@ -52,6 +55,7 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
                                 && state.panels.owns_active_source(source))
             }) && plan.sinks.iter().all(|sink| matches!(sink.adapter,
                 SinkAdapter::VirtualController | SinkAdapter::DesktopInput)
+                || sink.adapter == SinkAdapter::SimulatorCommand && watched_dcs
                 || sink.adapter == SinkAdapter::CompanionFeedback
                     && state.companions.has_resource(&sink.endpoint.node_id)
                 || sink.adapter == SinkAdapter::PhysicalAction
