@@ -374,3 +374,67 @@ fn stalled_simulator_command_and_panel_cache_do_not_hold_host_output_or_stop() {
     release_tx.send(()).unwrap();
     assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
 }
+
+#[test]
+fn neutralization_releases_vjoy_before_game_cleanup_progress_can_block() {
+    use std::sync::mpsc;
+
+    let (_directory, mut host, owner, driver, _) = activation_host_fixture();
+    let mut candidate = candidate(1);
+    candidate.document.id = owner.profile_id.clone();
+    let run = run(&candidate, owner.clone());
+    let state = host.run(&owner).unwrap();
+    state.recording = held(&owner, &state.bindings[0]);
+    state.output.as_mut().unwrap().poll(&state.recording).unwrap();
+    let (pid, slot) = {
+        let state = driver.lock().unwrap();
+        let pid = state.slot.owner_pid.unwrap();
+        assert_eq!(state.calls.last(), Some(&format!("submit:{pid}:1:23456")));
+        (pid, state.slot.id)
+    };
+    state.game_preparation = Some(crate::games::PreparedGame {
+        proof: crate::game_context::GamePreparation {
+            session: uuid::Uuid::new_v4().to_string(),
+            game_id: "dcs".into(),
+            process: crate::game_discovery::ProcessIdentity {
+                pid: 42,
+                path: "fixture.exe".into(),
+                epoch: 1,
+            },
+            provider_setup_revision: "fixture-setup".into(),
+            catalogue_revision: "fixture-catalogue".into(),
+            vehicle_id: None,
+        },
+        integration_key: "dcs".into(),
+        connection: json!({}),
+        catalogue: json!({}),
+        aircraft_module: None,
+    });
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let host = host.with_progress(Arc::new(move |_, step, _| {
+        if step == "cleanup-disconnecting-game" {
+            entered_tx.send(()).unwrap();
+            release_rx.lock().unwrap().recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+    }));
+    let cleanup = std::thread::spawn(move || {
+        let mut host = host;
+        host.neutralize(&run)
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("game cleanup progress callback did not block");
+    let (status, stop_sent, fallback_released) = {
+        let state = driver.lock().unwrap();
+        (state.slot.status.clone(),
+            state.messages.iter().any(|(_, message)| matches!(message, Message::Stop { .. })),
+            state.calls.ends_with(&[format!("submit:{pid}:0:0"), format!("release:{pid}:{slot}")]))
+    };
+    release_tx.send(()).unwrap();
+    cleanup.join().unwrap().unwrap();
+    assert_eq!(status, SlotStatus::Free, "Game cleanup began before vJoy released the slot");
+    assert!(stop_sent && fallback_released, "vJoy must receive Stop and apply fallback before game cleanup");
+}

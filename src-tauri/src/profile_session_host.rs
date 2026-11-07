@@ -1082,6 +1082,14 @@ impl Host for NativeProfileHost {
                 report("cleanup-releasing-peripheral-outputs", "Releasing peripheral output controls");
             }
             let _=state.actions.stop();
+            // Release the feeder before teardown that can block on another owner.
+            let mut output_result = Ok(());
+            if let Some(output) = state.output.as_mut() {
+                if output.active() {
+                    report("cleanup-removing-virtual-device", "Neutralizing and removing virtual controller output");
+                }
+                output_result = crate::profile_session_virtual::neutralize_output(output, &state.recording);
+            }
             if state.report.plan.as_ref().is_some_and(|plan|plan.program.nodes.iter()
                 .any(|node|matches!(node.operation,osg_mapping::program::Operation::Script {..}))) {
                 report("cleanup-stopping-scripts", "Stopping profile scripts");
@@ -1097,13 +1105,6 @@ impl Host for NativeProfileHost {
                 report("cleanup-releasing-companion-bindings", "Releasing companion controls and feedback");
             }
             let companion_stop = state.companions.stop_native(&companions);
-            let mut output_result = Ok(());
-            if let Some(output) = state.output.as_mut() {
-                if output.active() {
-                    report("cleanup-removing-virtual-device", "Neutralizing and removing virtual controller output");
-                }
-                output_result = crate::profile_session_virtual::neutralize_output(output, &state.recording);
-            }
             adapter_result=withdrawal.and(output_result).and(companion_stop);
         }
         if let Some(status)=desktop_status {self.last_desktop_status=status;}

@@ -89,4 +89,30 @@ heartbeat expiry from the final Stop after process exit. The feeder fallback
 released ownership, while recovery guards rejected independent cleanup. That
 failure is preserved in `.research/dcs-physics-native/1794039894784/evidence.json`.
 The rerun adds explicit owner and fault snapshots before and after process
-exit. The intermittent Stop fault remains open.
+exit.
+
+## Stop releases vJoy before game teardown
+
+The previous host stopped virtual output after releasing game and companion
+resources. A regression held the host at the start of game cleanup with
+the feeder's button held and axis deflected. The old order still had the
+slot busy at that point. The fixed host releases desktop bindings, records
+the reducer's fallback, revokes peripheral work, and releases the virtual
+feeder before script, game, and companion teardown. With game cleanup held, the test observed the
+feeder's Stop, neutral button and axis report, and slot release.
+
+The final Windows native suite passed 2,394 tests with 18 default ignores.
+Both pinned DCS archive tests passed separately. The repository's line counter
+measured 80.33% production line coverage for the changed host. LLVM measured
+75.55% function coverage. The build did not instrument branches.
+
+Two live runs against separate private Cockpit databases passed with the
+compiled browser panel and Windows vJoy. The first Stop released both held
+buttons in 1.30 and 1.49 ms respectively. After reapply and fixture process
+exit, the same profile owner remained active with only game degradation and
+no fault. The final Stop and teardown completed cleanly in both runs.
+The fixture uses authored DCS packets. The dev executable SHA-256 was
+`a5a5100a615f96d5b114772994aa0f57ba6441b137f830a92045871880645888`.
+Evidence is in `.research/dcs-physics-native/1794041818786/evidence.json`,
+`.research/dcs-physics-native/1794041878860/evidence.json`, and
+`.research/reactive/vjoy-stop-order/`.
