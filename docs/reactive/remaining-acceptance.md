@@ -333,6 +333,39 @@ HID acquisition and display presentation are separate measurements. Raw
 samples are in `.research/reactive/vjoy-qpc-timing/burst-{1,2,3}.json`
 and `.research/reactive/vjoy-ready-timing/burst-{1,2,3}.json`.
 
+### Two authored sources to the same Windows vJoy slot
+
+Three isolated running-Cockpit runs preserved 193 fast and 25 peer button
+transitions per run. One preview held its first delivery, the other advanced
+by 14 reports, and an MCP reader went unread for 1.63–1.68 seconds. The
+independent MCP reader observed an active value. Stop released both buttons
+after 41.93–50.20 ms at Windows Raw Input, and the slot was free on Settings
+reopen. The largest observed debug input queue depth was one frame.
+
+| Source | Measured submission rate | Largest per-run submission-to-receipt upper bound p50 / p95 / p99 |
+| --- | --- | --- |
+| Fast, 1 ms target | 663.21–698.94 Hz | 1.46 / 1.82 / 2.58 ms |
+| Peer, 8 ms target | 125.07–126.05 Hz | 1.54 / 2.33 / 5.13 ms |
+
+The test brackets the WebView clock before and after each burst. The
+combined bracket widths were 0.85–0.91 ms. The development executable from
+`3592e502` has SHA-256
+`16781f2732f42e6d689ec9c740489c8d08a8bbb5cd13f5c78b5a3db575802ac5`.
+Use `OSG_VJOY_DUAL_RATE=1` with the existing vJoy fixture and rebuild
+`RawInputProbe.cs` for the two-button receiver. The original single-source
+burst also passed with the rebuilt probe. The local records are in
+`.research/reactive/dual-rate-live/`.
+
+Overlapping WebView calls reached approximately 1 kHz twice. A third attempt
+arrived out of order and Cockpit rejected a stale sequence. The committed
+fixture awaits acknowledgement on each source independently. The native
+journal and reducer regression separately passed at 1,001.17 Hz and
+125.12 Hz. It preserved all 288 expected reports before overflow, then
+verified fresh baselines and fenced the replaced source.
+Stable live 1 kHz delivery and the combined simulator/panel load remain open.
+
+### November 7 single-source comparisons
+
 The November 7 comparison used the same dev executable for both 65-edge
 bursts (SHA-256 `EF370AE5C5FC7AF25BA877B822195DBBF0882DC1A9BFEF21C987202EFBED1623`).
 Both runs delivered every authored edge and the separate Stop release to

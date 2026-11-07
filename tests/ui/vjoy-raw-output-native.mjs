@@ -11,6 +11,7 @@ import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 const probeExecutable=process.env.OSG_VJOY_RAW_PROBE;
 const slowPreview=process.env.OSG_VJOY_SLOW_PREVIEW==='1';
 const settingsInventory=process.env.OSG_VJOY_SETTINGS_INVENTORY==='1';
+const dualRate=process.env.OSG_VJOY_DUAL_RATE==='1';
 // Opt in with the full executable path of the dedicated dev Cockpit at the CDP URL.
 const faultApp=process.env.OSG_VJOY_FAULT_APP;
 
@@ -48,7 +49,94 @@ function summarizeMilliseconds(values) {
   return { count: sorted.length, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: sorted.at(-1) };
 }
 
+const dualRateLanes = [
+  {nodeId:'debug', field:'pressed', intervalMs:1, count:193},
+  {nodeId:'debug-peer', field:'peerPressed', intervalMs:8, count:25},
+];
+const intervals = values => values.slice(1).map((value,index) => value - values[index]);
+
+async function submitDualRate(page, owner) {
+  const lanes = dualRateLanes.map(lane => ({...lane, streamId:randomUUID()}));
+  return page.evaluate(`(async () => {
+    const owner = ${JSON.stringify(owner)};
+    const lanes = ${JSON.stringify(lanes)};
+    const start = performance.now() + 15;
+    const results = await Promise.allSettled(lanes.map(async lane => {
+      const submissions = [];
+      for (let index = 0; index < lane.count; index++) {
+        const remaining = start + index * lane.intervalMs - performance.now();
+        if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+        const value = index % 2 === 0;
+        const sequence = String(index + 1);
+        const at = performance.now();
+        const reply = await window.__TAURI_INTERNALS__.invoke('gateway_request', {request:{
+          command:'profile_debug_controller_input', clientId:'vjoy-dual-rate-fixture',
+          owner, nodeId:lane.nodeId, streamId:lane.streamId, sequence, changes:[{portId:'button-1',value}],
+        }});
+        const state = reply.state?.debugController;
+        if (!reply.ok || state?.sequence !== sequence || state.replayed
+          || !Number.isInteger(state.pendingFrames) || state.pendingFrames < 1 || state.pendingFrames > 256) {
+          throw Error(lane.nodeId + ' update ' + sequence + ' was not accepted: ' + JSON.stringify(reply));
+        }
+        submissions.push({at, roundTripMs:performance.now() - at, pendingFrames:state.pendingFrames, value});
+      }
+      return submissions;
+    }));
+    return results.map(result => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
+  })()`);
+}
+
+async function bracketWebViewClock(page, reference) {
+  const samples = [];
+  for (let index = 0; index < 8; index++) {
+    const before = Number(process.hrtime.bigint() - reference) / 1e6;
+    const browser = await page.evaluate('performance.now()');
+    const after = Number(process.hrtime.bigint() - reference) / 1e6;
+    // Leave 0.25 ms on each side for WebView timer quantization.
+    samples.push({low:before - browser - 0.25, high:after - browser + 0.25});
+  }
+  return samples.reduce((best, sample) => sample.high - sample.low < best.high - best.low ? sample : best);
+}
+
+function dualRateResults(submissions, events, receiverTickHz, receiptMs, clock, stopMs) {
+  return dualRateLanes.map((lane, index) => {
+    const samples = submissions[index];
+    let last = false;
+    const edges = events.filter(event => {
+      assert.equal(typeof event[lane.field], 'boolean', 'Rebuild RawInputProbe with two-button mode');
+      const changed = event[lane.field] !== last;
+      last = event[lane.field];
+      return changed;
+    });
+    const targetHz = 1000 / lane.intervalMs;
+    const submissionsMs = samples.map(sample => sample.at);
+    const actualHz = (samples.length - 1) * 1000 / (submissionsMs.at(-1) - submissionsMs[0]);
+    const receiverMs = edges.slice(0, -1).map(event => event.receivedTicks * 1000 / receiverTickHz);
+    const expected = samples.map(sample => sample.value).concat(false);
+    const received = edges.map(event => event[lane.field]);
+    const intact = expected.length === received.length && expected.every((value,i) => value === received[i]);
+    const latency = intact ? edges.slice(0, -1).map((event,i) => receiptMs(event) - samples[i].at) : [];
+    return {
+      ...lane, targetHz, actualHz,
+      submissionIntervalsMs:summarizeMilliseconds(intervals(submissionsMs)),
+      gatewayRoundTripMs:summarizeMilliseconds(samples.map(sample => sample.roundTripMs)),
+      pendingFramesPeak:Math.max(...samples.map(sample => sample.pendingFrames)),
+      receiverIntervalsMs:receiverMs.length > 1 ? summarizeMilliseconds(intervals(receiverMs)) : null,
+      submissionToReceiverMs: intact ? {
+        lower:summarizeMilliseconds(latency.map(ms => Math.max(0, ms - clock.high))),
+        upper:summarizeMilliseconds(latency.map(ms => ms - clock.low)),
+      } : null,
+      stopReleaseMs: intact ? receiptMs(edges.at(-1)) - stopMs : null,
+      expected, received,
+    };
+  });
+}
+
 test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact Windows Raw Input slot':
+  dualRate?'two paced authored sources deliver ordered vJoy transitions during the same live run':
   'authored vJoy button transitions reach the exact Windows Raw Input slot',{
   skip:process.platform!=='win32'||!probeExecutable,timeout:60000,
 },async()=>{
@@ -71,10 +159,12 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
   const visibleSlot=name=>page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Configured virtual controllers"] li'))
     .find(row => row.querySelector('strong')?.textContent === ${JSON.stringify(name)})?.querySelector('span')?.textContent`);
   try {
+    await until(()=>page.evaluate(`!!document.querySelector('nav[aria-label="Main navigation"]')`));
+    if(dualRate)assert.ok(!faultApp,'Run feeder loss and dual-rate delivery as separate scenarios');
     if(faultApp)assert.notEqual(process.env.OSG_MCP_SLOW_VJOY,'1','Run feeder loss and MCP Stop as separate scenarios');
     assert.equal((await status()).owner,null);
     const slot=await until(async ()=>(await inventory()).find(device=>
-      device.status==='free'&&device.buttons>0&&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
+      device.status==='free'&&device.buttons>=(dualRate?2:1)&&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
       &&device.buttons+device.axes.length+device.continuousHats<=128))
       .catch(cause=>{throw new Error('A compatible free vJoy slot is required',{cause});});
     if(settingsInventory){
@@ -93,9 +183,12 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       const boolean={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
       document.resources=[{id:'debug',name:'Debug input',kind:'debug-controller',required:false,
         ports:[{id:'button-1',name:'Button',direction:'output',contract:boolean}]}];
-      return graphConnect(graphSetVirtual({document,assignments:[]},
+      if (${dualRate}) document.resources.push({...document.resources[0],id:'debug-peer',name:'Peer debug input'});
+      const wired=graphConnect(graphSetVirtual({document,assignments:[]},
         {id:'fixture-vjoy',name:'Fixture',required:true,layout:${JSON.stringify(layout)}}),
-        {nodeId:'debug',portId:'button-1'},{nodeId:'fixture-vjoy',portId:'button-1'}).document;
+        {nodeId:'debug',portId:'button-1'},{nodeId:'fixture-vjoy',portId:'button-1'});
+      return (${dualRate}?graphConnect(wired,{nodeId:'debug-peer',portId:'button-1'},
+        {nodeId:'fixture-vjoy',portId:'button-2'}):wired).document;
     })()`);
     saved=(await request({command:'profile_editor_save',document:draft,assignments:[],expectedRevision:saved.revision})).profiles.document;
     await request({command:'profile_virtual_slot_set',id:saved.id,expectedRevision:saved.revision,nodeId:'fixture-vjoy',slot:slot.slot});
@@ -105,7 +198,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     if(settingsInventory)await until(()=>visibleSlot(slot.name), value=>value?.startsWith('busy'));
     await until(inventory,devices=>devices.find(device=>device.slot===slot.slot)?.status==='busy');
     await new Promise(resolve=>setTimeout(resolve,600));
-    if(process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
+    if(dualRate||process.env.OSG_MCP_SLOW_VJOY==='1')observation=await mcpVjoyObservation(page,started.owner);
     let previewBefore;
     if(slowPreview){
       await page.evaluate(`(async()=>{
@@ -130,7 +223,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
         return s.held===1?s.fast:null;})()`));
     }
     const beforeProbe=process.hrtime.bigint();
-    probe=spawn(probeExecutable,['--vjoy-button'],{windowsHide:true});
+    probe=spawn(probeExecutable,[dualRate?'--vjoy-buttons':'--vjoy-button'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const trace=[];
     let markReady;
@@ -144,7 +237,11 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const levels=Array.from({length:burst?65:3},(_,index)=>index%2===0);
     const intervalMs=burst?8:250;
     const startedAt=performance.now(), submissions=[], submittedNs=[], gatewayRoundTrips=[];
-    for(const [index,value] of levels.entries()){
+    const clockBefore=dualRate?await bracketWebViewClock(page,beforeProbe):null;
+    const dualSubmissions=dualRate?await submitDualRate(page,started.owner):null;
+    const clockAfter=dualRate?await bracketWebViewClock(page,beforeProbe):null;
+    if(dualRate)await observation.sample(true);
+    if(!dualRate)for(const [index,value] of levels.entries()){
       const remaining=startedAt+index*intervalMs-performance.now();
       if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
       const submitted=performance.now();
@@ -155,7 +252,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       await observation?.sample(value);
     }
     const authoredSpanMs=performance.now()-startedAt;
-    if(!burst)await new Promise(resolve=>setTimeout(resolve,intervalMs));
+    if(!dualRate&&!burst)await new Promise(resolve=>setTimeout(resolve,intervalMs));
     // Hold for several renewals and more than one complete 250 ms feeder
     // lease. The final release must come from Stop, not the input fixture.
     const heldMs=750;
@@ -173,6 +270,7 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
       await overview();
       await until(()=>page.evaluate(`!document.querySelector('[aria-label="Controller and desktop output settings"]')`));
     }
+    const stopNs=process.hrtime.bigint();
     const stopReplyMs=observation?await observation.stop():null;
     if(faultApp){
       await terminateFixtureFeeder();
@@ -192,7 +290,6 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const events=report.buttonEvents.filter(event=>event.report===slot.slot);
     assert.ok(events.every(event=>event.status===0x00110000),'HID button decoding must succeed');
     assert.equal(new Set(events.map(event=>event.device)).size,1,'The exact slot must appear on one Raw Input device');
-    assert.deepEqual(events.map(event=>event.pressed),[...levels,false]);
     assert.ok(Number.isSafeInteger(report.receiverTickHz) && report.receiverTickHz > 0,
       'Rebuild RawInputProbe from the current source to collect receiver timing');
     assert.ok(events.every((event,index) => Number.isSafeInteger(event.receivedTicks)
@@ -204,7 +301,24 @@ test(faultApp?'owned vJoy feeder loss faults the profile and releases the exact 
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(startTicks)>=beforeProbe&&qpcNs(startTicks)<=afterReady,
       'Raw Input and Node must share the Windows performance counter');
-    const intervals = values => values.slice(1).map((value,index) => value - values[index]);
+    if(dualSubmissions){
+      assert.ok(clockBefore.low<=clockAfter.high && clockAfter.low<=clockBefore.high,
+        'WebView clock brackets must agree before and after the burst');
+      const clock={low:Math.min(clockBefore.low,clockAfter.low),high:Math.max(clockBefore.high,clockAfter.high)};
+      const receiptMs=event=>Number(qpcNs(startTicks+BigInt(event.receivedTicks))-beforeProbe)/1e6;
+      const lanes=dualRateResults(dualSubmissions,events,report.receiverTickHz,receiptMs,clock,Number(stopNs-beforeProbe)/1e6);
+      await mkdir('.research/reactive',{recursive:true});
+      await writeFile('.research/reactive/vjoy-dual-rate-result.json',JSON.stringify({
+        slot:slot.slot,heldMs,stopReplyMs,slowReader,preview,previewBefore,lanes,submissions:dualSubmissions,
+        webViewClock:{before:clockBefore,after:clockAfter,offset:clock},...report,
+      },null,2));
+      for(const lane of lanes){
+        assert.deepEqual(lane.received,lane.expected,`${lane.nodeId} ordered delivery and Stop release`);
+        assert.ok(lane.stopReleaseMs>=0,`${lane.nodeId} released before Stop`);
+      }
+      return;
+    }
+    assert.deepEqual(events.map(event=>event.pressed),[...levels,false]);
     const receiverMs = events.slice(0,-1).map(event => event.receivedTicks * 1000 / report.receiverTickHz);
     const submissionToReceiverMs=events.slice(0,-1).map((event,index)=>
       Number(qpcNs(startTicks+BigInt(event.receivedTicks))-submittedNs[index])/1e6);

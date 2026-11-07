@@ -48,7 +48,8 @@ class RawInputProbe {
     static HashSet<string> changes = new HashSet<string>();
     static HashSet<IntPtr> vjoyDevices = new HashSet<IntPtr>();
     static List<object> vjoyButtons = new List<object>();
-    static Dictionary<IntPtr,bool> lastButton = new Dictionary<IntPtr,bool>();
+    static Dictionary<IntPtr,int> lastButtons = new Dictionary<IntPtr,int>();
+    static bool observeSecondButton;
     static WndProc callback = Handle;
     static long vjoyCaptureStarted;
     static uint HeaderSize { get { return (uint)(8 + IntPtr.Size * 2); } }
@@ -68,10 +69,13 @@ class RawInputProbe {
                 uint length = (uint)usages.Length;
                 int status = HidP_GetUsages(0, 9, 0, usages, ref length, descriptor, report, item);
                 bool pressed = status == 0x00110000 && Array.IndexOf(usages, (ushort)1, 0, (int)length) >= 0;
-                bool previous;
-                if (status != 0x00110000 || !lastButton.TryGetValue(device, out previous) || previous != pressed) {
-                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, status=status, receivedTicks=receivedTicks });
-                    lastButton[device] = pressed;
+                bool peerPressed = observeSecondButton && status == 0x00110000
+                    && Array.IndexOf(usages, (ushort)2, 0, (int)length) >= 0;
+                int buttons = (pressed ? 1 : 0) | (peerPressed ? 2 : 0);
+                int previous;
+                if (status != 0x00110000 || !lastButtons.TryGetValue(device, out previous) || previous != buttons) {
+                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, peerPressed=peerPressed, status=status, receivedTicks=receivedTicks });
+                    lastButtons[device] = buttons;
                 }
             }
         } finally { Marshal.FreeHGlobal(descriptor); }
@@ -155,8 +159,9 @@ class RawInputProbe {
 
 
     static int Main(string[] args) {
-        bool observeVjoy = args.Length == 1 && args[0] == "--vjoy-button";
-        if (args.Length > 0 && !observeVjoy) throw new ArgumentException("Expected --vjoy-button or no arguments.");
+        observeSecondButton = args.Length == 1 && args[0] == "--vjoy-buttons";
+        bool observeVjoy = observeSecondButton || (args.Length == 1 && args[0] == "--vjoy-button");
+        if (args.Length > 0 && !observeVjoy) throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons, or no arguments.");
         var devices = new List<object>();
         uint count = 0;
         if (GetRawInputDeviceList(null, ref count, (uint)Marshal.SizeOf(typeof(Device))) == uint.MaxValue || count > 256)
