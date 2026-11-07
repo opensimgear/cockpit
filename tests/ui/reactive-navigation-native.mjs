@@ -174,7 +174,7 @@ test(`${transport} main view navigation retires observation readers without dupl
     await navigate('Debug');
     const clickDebugTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Debug sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
-    const debugTopics = ['profiles.desktop', 'profiles.retired-recovery'];
+    const debugTopics = ['profiles.retired-recovery'];
     const firmwareTopics = ['companion.firmware', 'companion.firmware-releases'];
     const detailsTopics = [...debugTopics, ...firmwareTopics];
     const firmwareReaders = () => [...active.entries()]
@@ -184,14 +184,22 @@ test(`${transport} main view navigation retires observation readers without dupl
     const companionDetails = () => page.evaluate(`[...document.querySelectorAll('.profile-debug details')]
       .find(item => item.querySelector('summary')?.textContent.trim() === 'Companion loading and image cache details')
       ?.querySelector('pre')?.textContent.trim()`);
-    const companionsOpen = open => page.evaluate(`(() => {
+    const setDebugDetails = (label, open) => page.evaluate(`(() => {
       const summary = [...document.querySelectorAll('.profile-debug details > summary')]
-        .find(row => row.textContent.trim() === 'Companion loading and image cache details');
+        .find(row => row.textContent.trim() === ${JSON.stringify(label)});
       if (summary.parentElement.open !== ${open}) summary.click();
     })()`);
+    const companionsOpen = open => setDebugDetails('Companion loading and image cache details', open);
+    const desktopOpen = open => setDebugDetails('Native runtime and desktop output details', open);
     await settled(['games.telemetry']);
     for (let cycle = 0; cycle < 2; cycle++) {
       await clickDebugTab('Runtime & recovery');
+      await settled(debugTopics, true);
+      await desktopOpen(true);
+      await settled([...debugTopics, 'profiles.desktop'], true);
+      const desktopReader = [...active.entries()].find(([, reader]) => reader.topic === 'profiles.desktop')[0];
+      await desktopOpen(false);
+      await until(() => retired.has(desktopReader));
       await settled(debugTopics, true);
       const beforeOpen = companionReads;
       await companionsOpen(true);

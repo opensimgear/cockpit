@@ -31,6 +31,7 @@
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),signature=$state(''),environment=$state(''),busy=$state(false);
   let diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),offset=$state(0),offsets=$state([0]);
   let desktop=$state.raw<unknown>(null),desktopReadiness=$state.raw<{state:'stopped'|'active'|'paused'|'waiting'|'faulted'|'recovery-needed'}|null>(null);
+  let desktopDetailsOpen=$state(false);
   let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false,companionEpoch=0;
   const debugId=$props.id();
   const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
@@ -47,7 +48,7 @@
   $effect(()=>{if(!source&&profiles.length)source=runtimeState.status?.owner?.profileId??profiles[0].id;});
   $effect(()=>{if(mounted&&active&&section==='profile'&&source&&source!=='draft'&&!saved&&!loading&&!error)untrack(()=>void read());});
   $effect(()=>{
-    if(!mounted||!active||section!=='runtime'){desktopReadiness=null;return;}
+    if(!mounted||!active||section!=='runtime'||!desktopDetailsOpen){desktopReadiness=null;return;}
     let observations:SharedObservations|undefined;
     const stop=()=>{observations?.close();observations=undefined;desktopReadiness=null;};
     const syncVisibility=()=>{
@@ -150,7 +151,7 @@
   </div>
   <div id={`${debugId}-runtime-panel`} role="tabpanel" aria-labelledby={`${debugId}-runtime-tab`} hidden={section!=='runtime'}>
   {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} active={active&&section==='runtime'} onState={onRuntimeState}/>{/if}
-  <details class="panel native-details"><summary>Native runtime and desktop output details</summary><p>Desktop readiness: <strong>{desktopReadiness?.state??'Unavailable'}</strong></p><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
+  <details class="panel native-details" ontoggle={event=>desktopDetailsOpen=event.currentTarget.open}><summary>Native runtime and desktop output details</summary><p>Desktop readiness: <strong>{desktopReadiness?.state??'Unavailable'}</strong></p><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
   <details class="panel native-details" ontoggle={event=>companionDetailsOpen=event.currentTarget.open}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
   <ProfileRetiredRecovery active={active&&section==='runtime'}/>
   </div>
