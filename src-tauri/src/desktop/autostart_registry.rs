@@ -10,12 +10,30 @@ use windows_sys::Win32::{
             RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER,
             HKEY_LOCAL_MACHINE, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME,
         },
-        Threading::{CreateEventW, WaitForMultipleObjects, INFINITE},
+        Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE},
     },
 };
 
 const RUN: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 const APPROVED: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+#[derive(Clone)]
+pub(super) struct Source;
+
+pub(super) struct Stop(OwnedHandle);
+
+impl Stop {
+    pub(super) fn new() -> io::Result<Self> { event().map(Self) }
+
+    pub(super) fn signal(&self) { unsafe { SetEvent(self.0.as_raw_handle()) }; }
+}
+
+impl Source {
+    pub(super) fn run(&self, stop: &Stop, capture: impl FnMut()) -> io::Result<()> {
+        watch(&stop.0, &[(HKEY_CURRENT_USER, RUN), (HKEY_LOCAL_MACHINE, RUN),
+            (HKEY_CURRENT_USER, APPROVED), (HKEY_LOCAL_MACHINE, APPROVED)], capture)
+    }
+}
 
 pub(super) fn event() -> io::Result<OwnedHandle> {
     let handle = unsafe { CreateEventW(null(), 0, 0, null()) };
@@ -89,11 +107,6 @@ impl Watch {
         }
         Err(io::Error::other("The auto-start registry keys changed while opening notifications."))
     }
-}
-
-pub(super) fn run(stop: &OwnedHandle, capture: impl FnMut()) -> io::Result<()> {
-    watch(stop, &[(HKEY_CURRENT_USER, RUN), (HKEY_LOCAL_MACHINE, RUN),
-        (HKEY_CURRENT_USER, APPROVED), (HKEY_LOCAL_MACHINE, APPROVED)], capture)
 }
 
 fn watch(stop: &OwnedHandle, paths: &[(HKEY, &str)], mut capture: impl FnMut()) -> io::Result<()> {

@@ -11,10 +11,16 @@ use tauri::{
     Manager,
 };
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod autostart_observation;
 #[cfg(windows)]
 mod autostart_registry;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+mod autostart_files;
+#[cfg(windows)]
+use autostart_registry as autostart_source;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use autostart_files as autostart_source;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase",deny_unknown_fields)]
@@ -31,7 +37,7 @@ pub struct DesktopState {
     window_save: crate::window_persistence::SaveWorker,
     geometry: crate::persistence::ui::window_writer::WindowWriter,
     window_error: Mutex<Option<String>>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     autostart: Option<autostart_observation::Observer>,
 }
 
@@ -98,11 +104,15 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         };
         app.handle().plugin(builder.build())?;
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let autostart = {
         let app_handle = app.handle().clone();
         let observations = app.state::<crate::NativeGateway>().0.observation_runtime();
-        match autostart_observation::Observer::register(observations) {
+        #[cfg(windows)]
+        let source = Ok(autostart_source::Source);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let source = autostart_source::Source::registration(&app.package_info().name);
+        match source.and_then(|source| autostart_observation::Observer::register(observations, source)) {
             Ok(observer) => {
                 observer.ensure(move || read_autostart(&app_handle));
                 Some(observer)
@@ -129,7 +139,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray_error,
         minimized_handled: AtomicBool::new(false),
         window_save, geometry, window_error:Mutex::new(window_error),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         autostart,
     });
     Ok(())
@@ -146,14 +156,14 @@ pub async fn desktop_preferences(
     let settings_revision=loaded.as_ref().map(|row|row.revision).unwrap_or(0);
     let preferences:TrayPreferences=loaded.ok().and_then(|row|serde_json::from_value(row.value).ok()).unwrap_or_default();
     let autostart = read_autostart(&app);
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     if let Some(observer) = &state.autostart {
         let app_handle = app.clone();
         observer.ensure(move || read_autostart(&app_handle));
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let autostart_observed = state.autostart.is_some();
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     let autostart_observed = false;
     Ok(json!({
         "closeToTray": preferences.close_to_tray,
@@ -272,7 +282,7 @@ fn save_window_state(app:&tauri::AppHandle){
 }
 pub(crate) fn shutdown(app:&tauri::AppHandle){
     if let Some(state)=app.try_state::<DesktopState>(){
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         if let Some(autostart) = &state.autostart { autostart.stop(); }
         state.window_save.stop();save_window_state(app);
         if let Err(error)=state.geometry.flush(){eprintln!("Could not flush window geometry: {error}");}

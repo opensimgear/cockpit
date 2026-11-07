@@ -30,7 +30,7 @@ const FIXED_TOPICS: [(&str, &str); 28] = [
     ("system.inventory", "Supplemental system inventory revision"),
     ("system.inventory.drivers", "Installed optional Windows driver metadata"),
     ("settings.desktop", "Committed keyboard and mouse output settings"),
-    ("settings.autostart", "Windows auto-start registration status"),
+    ("settings.autostart", "Native auto-start registration status"),
     ("storage.backups", "Backup inventory and operation phase"),
     ("designer.workspace", "Latest designer workspace commit revisions"),
 ];

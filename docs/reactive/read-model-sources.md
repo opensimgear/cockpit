@@ -15,7 +15,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `profiles.resources` | Resource observation owner publishes committed availability and route changes | Profile resource selection and live resource resolution. |
 | `profiles.activation`, `profiles.learning` | Activation progress and native input learning publish their own lifecycle revisions | Activation window and MCP passive input learning. The profile editor no longer mounts the learning panel after the controller settings simplification in `2013ce62`. |
 | `profiles.desktop`, `settings.desktop` | Runtime readiness from profile read models and committed output settings from the desktop settings owner | Profile Debug and Settings Devices respectively. |
-| `settings.autostart` | Windows Run and StartupApproved notifications wake the desktop auto-start owner before the retained status changes | General Settings reads the stream only while visible. MCP exposes the same snapshot from the native desktop. |
+| `settings.autostart` | Windows Run and StartupApproved events, macOS LaunchAgent file events, and Linux XDG registration file events wake the desktop auto-start owner before the retained status changes | General Settings reads the stream only while visible. MCP exposes the same snapshot from the native desktop. |
 | `profiles.debug-inputs`, `profiles.samples.<owner-node>` | Gateway debug input publication and the exact applied profile owner and node sample publisher | Authored input controls and live profile block previews. |
 | `profiles.retired-recovery` | Retained recovery owner publishes recovery and provisioning transitions | Recovery controls and status. |
 | `games.state`, `games.detail.<id>` | Game read-model worker captures prepared caches after source revisions | Game library and scoped game details. Immutable page reads follow the exact projected references. |
@@ -36,9 +36,14 @@ The `windows` persistence key applies to next-start geometry. Saving that key
 through MCP has no current-session portal consumer. General Settings uses the
 shared `tray` and `progress` preference revisions for saved values. It reads
 native desktop status only while General and the document are visible and
-discards replies from retired views. Windows auto-start updates also follow
-the registry observation. macOS LaunchAgent and Linux XDG external changes
-still need a committed source while General is open. [Running verification](../verification/2026-11-07-desktop-autostart-observation.md)
+discards replies from retired views. Auto-start updates use the same retained
+topic on Windows, macOS, and Linux. Windows follows the registry. The file
+watcher follows the registration paths used by the pinned plugin. [Registry verification](../verification/2026-11-07-desktop-autostart-observation.md) · [File watcher verification](../verification/2026-11-07-desktop-autostart-files.md)
+
+Window geometry persistence can set `windowStateError` after an asynchronous
+save. General currently reads that diagnostic on visible open, so the live
+diagnostic still needs a producer. The saved geometry itself applies on the
+next launch.
 
 The artwork regression runs against the native gateway over both transports.
 It changes, deletes and restores an owned file and checks every transition in

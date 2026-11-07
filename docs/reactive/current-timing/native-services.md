@@ -6,8 +6,9 @@ Production timing includes startup, command, lease, freshness and recovery waits
 
 | Site | Category | Owner, wake and remaining gate |
 | --- | --- | --- |
-| `src-tauri/src/desktop/autostart_registry.rs:108` | Event wait | Windows auto-start parks on Run and StartupApproved registry notifications or shutdown. It rearms before reading and publishes changed status. |
-| `src-tauri/src/desktop/autostart_registry.rs:168` | Fixture | The private registry fixture bounds each creation, change, deletion and recreation observation at 3 s. |
+| `src-tauri/src/desktop/autostart_files.rs:147` | Event wait | macOS and Linux auto-start park on registration file or ancestor changes, notification loss, or shutdown. The worker rearms before reading and publishes changed status. |
+| `src-tauri/src/desktop/autostart_registry.rs:121` | Event wait | Windows auto-start parks on Run and StartupApproved registry notifications or shutdown. It rearms before reading and publishes changed status. |
+| `src-tauri/src/desktop/autostart_registry.rs:181` | Fixture | The private registry fixture bounds each creation, change, deletion and recreation observation at 3 s. |
 | `src-tauri/src/gateways.rs:489` | Acquisition fallback | Native profile coordinator waits for committed input and ownership changes, source notifications, or shutdown. It takes the earlier of an actual runtime deadline and the optional 5 ms service interval. Idle and qualified capture-driven or internal runs park when no deadline is due. Unqualified active routes, mixed adapters with missing watches and unqualified launch holds still need the interval. Complete producer wake coverage is the remaining gate. |
 | `src-tauri/src/gateways.rs:1854,1859,1860,1862` | Fixture | Idle profile wake test. The worker parks until a committed notification. The harness allows 2 s for entry and completion and checks a 40 ms quiet window before notifying. |
 | `src-tauri/src/gateways.rs:1879,1882,1883,1888,1892,1895` | Fixture | Profile admission race test. The 5 s step barriers stage before-park, during-poll and burst delivery. A zero-duration park consumes the park token so the 30 s test wait must exit on the changed epoch. |

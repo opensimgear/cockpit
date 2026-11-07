@@ -1,12 +1,11 @@
+use super::autostart_source::{Source, Stop};
 use crate::observations::Runtime;
 use osg_streams::{Publisher, TopicSpec};
 use serde_json::{json, Value};
 use std::{
-    os::windows::io::{AsRawHandle, OwnedHandle},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
-use windows_sys::Win32::System::Threading::SetEvent;
 
 pub(super) const TOPIC: &str = "settings.autostart";
 
@@ -42,6 +41,7 @@ impl Projection {
 }
 
 pub(super) struct Observer {
+    source: Source,
     projection: Arc<Mutex<Projection>>,
     worker: Mutex<Worker>,
 }
@@ -53,13 +53,13 @@ enum Worker {
 }
 
 struct Task {
-    stop: Arc<OwnedHandle>,
+    stop: Arc<Stop>,
     thread: JoinHandle<()>,
 }
 
 impl Observer {
-    pub(super) fn register(runtime: Runtime) -> Result<Self, String> {
-        Ok(Self { projection: Arc::new(Mutex::new(Projection::register(runtime)?)), worker: Mutex::new(Worker::Idle) })
+    pub(super) fn register(runtime: Runtime, source: Source) -> Result<Self, String> {
+        Ok(Self { source, projection: Arc::new(Mutex::new(Projection::register(runtime)?)), worker: Mutex::new(Worker::Idle) })
     }
 
     pub(super) fn ensure(&self, read: impl Fn() -> Result<bool, String> + Send + 'static) {
@@ -73,18 +73,19 @@ impl Observer {
         match self.start(read) {
             Ok(task) => *worker = Worker::Running(task),
             Err(error) => self.projection.lock().unwrap_or_else(|error| error.into_inner())
-                .capture(Err(format!("Cannot start Windows auto-start observation: {error}"))),
+                .capture(Err(format!("Cannot start auto-start observation: {error}"))),
         }
     }
 
     fn start(&self, read: impl Fn() -> Result<bool, String> + Send + 'static) -> std::io::Result<Task> {
-        let stop = Arc::new(super::autostart_registry::event()?);
+        let stop = Arc::new(Stop::new()?);
+        let source = self.source.clone();
         let projection = self.projection.clone();
         let capture = move |status| projection.lock().unwrap_or_else(|error| error.into_inner()).capture(status);
         let worker_stop = stop.clone();
         let thread = thread::Builder::new().name("desktop-autostart".into()).spawn(move || {
-            if let Err(error) = super::autostart_registry::run(&worker_stop, || capture(read())) {
-                capture(Err(format!("Cannot observe Windows auto-start: {error}")));
+            if let Err(error) = source.run(&worker_stop, || capture(read())) {
+                capture(Err(format!("Cannot observe auto-start: {error}")));
             }
         })?;
         Ok(Task { stop, thread })
@@ -93,7 +94,7 @@ impl Observer {
     pub(super) fn stop(&self) {
         let mut worker = self.worker.lock().unwrap_or_else(|error| error.into_inner());
         if let Worker::Running(task) = std::mem::replace(&mut *worker, Worker::Closed) {
-            unsafe { SetEvent(task.stop.as_raw_handle()) };
+            task.stop.signal();
             let _ = task.thread.join();
         }
     }
@@ -108,13 +109,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_worker_publishes_a_baseline_and_joins_on_stop() {
+    fn native_worker_publishes_a_baseline_and_joins_on_stop() {
         let runtime = Runtime::new();
-        let observer = Observer::register(runtime.clone()).unwrap();
+        #[cfg(windows)]
+        let source = Source;
+        #[cfg(not(windows))]
+        let source = Source::new(std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()));
+        let observer = Observer::register(runtime.clone(), source).unwrap();
         let expired = thread::spawn(|| {});
         while !expired.is_finished() { thread::yield_now(); }
         *observer.worker.lock().unwrap() = Worker::Running(Task {
-            stop: Arc::new(super::super::autostart_registry::event().unwrap()), thread: expired,
+            stop: Arc::new(Stop::new().unwrap()), thread: expired,
         });
         observer.ensure(|| Ok(true));
         observer.ensure(|| panic!("An existing watcher must not be replaced"));
