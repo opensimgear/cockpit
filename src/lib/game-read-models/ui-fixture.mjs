@@ -9,6 +9,7 @@ export async function installGameReadModelFixture(modules){
   modules.set('./game-read-models/shared',{
     gameUiState,gameUiSummary,gameUiDetail,
     observeGamesState(listener){listener(gameUiSummary());return()=>{};},
+    observeGameDiscovery(listener){listener({status:'connecting'});return()=>{};},
     observeGameDetails(id,listener){listener(gameUiDetail(undefined,id));return()=>{};},
     observeGameJobs(listener){listener({status:'ready',value:{jobs:[]}});return()=>{};},
     observeGameAsset(_reference,listener){listener({status:'error',error:'SSR must not fetch game images.'});return()=>{};},

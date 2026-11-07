@@ -20,6 +20,7 @@ export const models=await load('./models');
 export const imageModule=await load('./image');
 export const game=(id='dcs',name='DCS')=>({id,name,installed:true,launchSupported:true});
 export const summary=(rows=[game()])=>({catalogue:rows,detectedGames:[],detectionErrors:[],tags:{}});
+export const discovery=(changes={})=>({scanId:'scan-one',status:'ready',libraries:[{id:'steam',name:'Steam',status:'complete',found:1}],entries:[{id:'entry-one',name:'DCS',library:'Steam',installPath:'C:/Games/DCS',action:'add',selected:true,executableCandidates:['C:/Games/DCS/DCS.exe']}],diagnostics:[],firstStart:false,...changes});
 export const frame=(payload,topic='games.state',changes={})=>({kind:'snapshot',topic,source:'games',session:'broker',generation:'1',revision:'1',sequence:'1',capturedUs:'1',clockId:'games:11111111-1111-4111-8111-111111111111',continuity:'baseline',payload,...changes});
 export const change=(revision=2,extras={})=>({kind:'change',continuity:'continuous',revision:String(revision),sequence:String(revision),...extras});
 export function harness(getPage){

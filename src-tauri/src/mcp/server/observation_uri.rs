@@ -4,7 +4,7 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 24] = [
+const FIXED_TOPICS: [(&str, &str); 25] = [
     ("activity.log", "Activity log revision"),
     ("settings.activity", "Committed activity retention settings"),
     ("profiles.library", "Saved profile library"),
@@ -17,6 +17,7 @@ const FIXED_TOPICS: [(&str, &str); 24] = [
     ("profiles.resources", "Profile resource inventory revision"),
     ("workspace.state", "Gateway workspace state"),
     ("games.state", "Configured games"),
+    ("games.discovery", "Game discovery review"),
     ("games.jobs", "Game discovery and artwork jobs"),
     ("games.telemetry", "Game telemetry revision"),
     ("companion.listener", "Companion listener settings revision"),
@@ -123,6 +124,7 @@ mod tests {
             "profiles.resources",
             "workspace.state",
             "games.state",
+            "games.discovery",
             "games.jobs",
             "games.telemetry",
             "games.detail.dcs",

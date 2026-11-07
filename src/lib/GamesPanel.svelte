@@ -2,7 +2,7 @@
   import {gameImage,gameImageSource} from './game-read-models/image';
   import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
-  import {observeGamesState,observeGameDetails,observeGameJobs,type GameModelState,type GamesSummaryState,type GameDetailModel,type GameJobsModel} from './game-read-models/shared';
+  import {observeGamesState,observeGameDiscovery,observeGameDetails,observeGameJobs,type GameModelState,type GamesSummaryState,type GameDiscoveryModel,type GameDetailModel,type GameJobsModel} from './game-read-models/shared';
   import {gameDetailMatches,selectedGameView,gamesWithJobs} from './game-read-models/views';
   import {pickGameExecutable} from './gateway';
   import Icon from './Icon.svelte';
@@ -30,7 +30,7 @@
     profileBlockedReason?:string;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
     onNavigate?:(gameId:GameId|'')=>void;discoveryView?:boolean;
   }=$props();
-  let localModel=$state<GameModelState<GamesSummaryState>>({status:'connecting'}),detailModel=$state<GameModelState<GameDetailModel>>({status:'connecting'}),jobsModel=$state<GameModelState<GameJobsModel>>({status:'connecting'});
+  let localModel=$state<GameModelState<GamesSummaryState>>({status:'connecting'}),discoveryModel=$state<GameModelState<GameDiscoveryModel>>({status:'connecting'}),detailModel=$state<GameModelState<GameDetailModel>>({status:'connecting'}),jobsModel=$state<GameModelState<GameJobsModel>>({status:'connecting'});
   let initializedGameId=$state<GameId|''>('');
   let initializedInstallationId=$state<string|undefined>();
   let pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
@@ -42,7 +42,10 @@
   let nameDraft=$state(''),nameBase=$state(''),openedFirstScan=$state('');
   const currentModel=$derived(modelState??(status?{status:'ready' as const,error:undefined}:localModel));
   const receivedStatus=$derived(status??localModel.value as GamesState|undefined);
-  const gameState:GamesState=$derived(gamesWithJobs(receivedStatus??{catalogue:[]},jobsModel.status==='ready'?jobsModel.value:undefined));
+  const liveDiscovery=$derived(!!modelState||!status);
+  const discoveryFresh=$derived(!liveDiscovery||discoveryModel.status==='ready');
+  const discoveryValue=$derived((liveDiscovery?discoveryModel.value:status?.discovery) as GamesState['discovery']);
+  const gameState:GamesState=$derived(gamesWithJobs({...(receivedStatus??{catalogue:[]}),discovery:discoveryValue},jobsModel.status==='ready'?jobsModel.value:undefined));
   const streamReady=$derived(currentModel.status==='ready');
   const tags=$derived(gameState.tags??{});
   const games=$derived(filterGameList(gameState.catalogue,filters,profiles));
@@ -64,13 +67,15 @@
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   $effect(()=>{if(status||modelState)return;return observeGamesState(state=>localModel=state);});
+  $effect(()=>{if(liveDiscovery)return observeGameDiscovery(state=>discoveryModel=state);});
   $effect(()=>{const id=selectedGameId;detailModel={status:'connecting'};if(id)return observeGameDetails(id,state=>detailModel=state);});
   $effect(()=>observeGameJobs(state=>jobsModel=state));
-  $effect(()=>{if(gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
+  $effect(()=>{if(discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
   $effect(()=>{if(selected&&detailReady&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
   $effect(()=>{if(selected&&selected.id===initializedGameId&&selected.name!==nameBase){if(nameDraft===nameBase)nameDraft=selected.name;nameBase=selected.name;}});
   async function send(command:GameRequest):Promise<GamesState|false>{
     if(!streamReady||selectedGameId&&!detailReady)return false;
+    if(['game_discovery_start','game_discovery_apply'].includes(command.command)&&!discoveryFresh)return false;
     pending=true;notice='';
     try{const result=await request(command);if(result)notice=result.error??'';else notice='The request did not complete. Check the connection and try again.';return result;}
     catch(error){notice=error instanceof Error?error.message:String(error);if(['game_add','game_background_preview','game_tag_definitions_save','game_tags_save','game_save','game_background_save','game_discovery_start','game_discovery_apply'].includes(command.command))throw error;return false;}
@@ -108,7 +113,7 @@
     catch(error){notice=error instanceof Error?error.message:String(error);}
     finally{pending=false;}
   }
-  async function discoverInstallation(){discoveryView=true;try{await send({command:'game_discovery_start'});}catch{/* The actionable failure remains in the panel notice. */}}
+  async function discoverInstallation(){if(!discoveryFresh)return;discoveryView=true;try{await send({command:'game_discovery_start'});}catch{/* The actionable failure remains in the panel notice. */}}
   async function rescanGame(game:Game){
     if(locked||refreshing)return;refreshing=true;
     try{const result=await send({command:'game_rescan',gameId:game.id});if(result&&!result.error)artworkRefresh++;}
@@ -132,7 +137,8 @@
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
   {#if discoveryView}
-    <GameDiscoveryView {gameState} job={discoveryJob} busy={locked} request={send} close={()=>discoveryView=false}/>
+    {#if !discoveryFresh}<p class="game-status-loading" role="status">{discoveryModel.error??'Waiting for a current discovery review.'} Review actions are paused.</p>{/if}
+    <GameDiscoveryView {gameState} job={discoveryJob} busy={locked||!discoveryFresh} request={send} close={()=>discoveryView=false}/>
   {:else if selected}
     <PageHeader title={selected.name} subtitle={selected.installed?'Installation found':'Installation not found'} onback={allGames} backLabel="All games">
       {#snippet leading()}<div class="game-detail-mark"><Icon name="gamepad" size={32}/></div>{/snippet}
@@ -214,12 +220,12 @@
         {:else}<section class="panel game-binding-context"><div class="sidebar-title"><Icon name="gamepad" size={18}/><h3>Bindings and profile activation</h3></div><p>Set this game as a profile’s game context. Context scoped keyboard and mouse bindings work while its verified process is in front. Automatic mode activates a matching saved profile when the game runs.</p><p>{selected.executable?'This game uses process detection. No telemetry integration is needed.':'Choose its executable to enable process detection and scoped bindings.'}</p></section>{/if}
     </div>
   {:else}
-    <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.length} discovered · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<button class="secondary-button filter-button" class:active={filtersOpen||filterCount>0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter games" title={filterCount?`Filter games (${filterCount} selected)`:'Filter games'} onclick={()=>filtersOpen=!filtersOpen}><Icon name="sliders" size={17}/></button><button class="secondary-button" disabled={locked} onclick={()=>addDialog=true}><Icon name="plus" size={14}/>Add</button><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="refresh" size={14}/>Rescan</button>{/snippet}</PageHeader>
-    {#if gameState.discovery?.firstStart&&gameState.discovery.status!=='applied'}
+    <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.length} discovered · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<button class="secondary-button filter-button" class:active={filtersOpen||filterCount>0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter games" title={filterCount?`Filter games (${filterCount} selected)`:'Filter games'} onclick={()=>filtersOpen=!filtersOpen}><Icon name="sliders" size={17}/></button><button class="secondary-button" disabled={locked} onclick={()=>addDialog=true}><Icon name="plus" size={14}/>Add</button><button class="secondary-button" disabled={locked||!discoveryFresh} onclick={discoverInstallation}><Icon name="refresh" size={14}/>Rescan</button>{/snippet}</PageHeader>
+    {#if discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status!=='applied'}
       <section class:scanning={gameState.discovery.status==='scanning'} class="panel initial-discovery" role="status" aria-live="polite"><Icon name={gameState.discovery.status==='scanning'?'refresh':'info'} size={20}/><div><strong>{gameState.discovery.status==='scanning'?'Discovering your games…':'Review discovered games'}</strong><p>{gameState.discovery.libraries.filter(library=>library.status==='complete'||library.status==='preparing').length} of {gameState.discovery.libraries.length} libraries checked · {gameState.discovery.libraries.reduce((total,library)=>total+library.found,0)} installations found. {gameState.discovery.status==='scanning'?'Your game list will be ready after you review and apply the results.':'Open the scan results to select the changes to apply.'}</p></div><button class="secondary-button" onclick={()=>discoveryView=true}><Icon name="search" size={14}/>View results</button></section>
     {/if}
     {#if filtersOpen}<div id={filterPanelId}><GameListFilters games={gameState.catalogue} {tags} busy={locked} bind:filters manageTags={()=>tagsDialog=true} onclear={()=>filtersOpen=false}/></div>{/if}
-    {#if receivedStatus&&!games.length&&!(gameState.discovery?.firstStart&&gameState.discovery.status!=='applied')}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>{filters=emptyGameListFilters();filtersOpen=false;}}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
+    {#if receivedStatus&&!games.length&&!(discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status!=='applied')}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>{filters=emptyGameListFilters();filtersOpen=false;}}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked||!discoveryFresh} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}

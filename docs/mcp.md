@@ -326,7 +326,8 @@ For game discovery, subscribe to `games.jobs` before calling
 `game_discovery_start`. Match the job's `run` to the returned `scanId`.
 A `ready` phase means the scan results are available for review. The job
 can still advance to `applied`. Once ready, use `game_discovery_status`
-to read the desired result page.
+to read the desired result page, or observe `games.discovery` for the review
+projection and resolve its immutable page references.
 
 Use a write credential and a unique operation ID for these integration actions.
 Subscribe to `games.jobs` and `games.detail.<gameId>` before starting a job.

@@ -1,12 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {game,summary,harness,frame,change,blobs,deferred,until,models} from './test-fixture.mjs';
+import {game,summary,discovery,harness,frame,change,blobs,deferred,until,models} from './test-fixture.mjs';
 
 test('exact game topics share immutable projections, independent subscribers and final transport disposal',async()=>{
   const h=harness(),a=[],b=[];const one=h.client.observeGamesState(state=>a.push(state)),two=h.client.observeGamesState(state=>b.push(state));assert.equal(h.opens.length,1);
   h.send({value:summary()});await until(()=>a.at(-1).status==='ready');assert.equal(a.at(-1).value,b.at(-1).value);assert.equal(Object.isFrozen(a.at(-1).value.catalogue[0]),true);
   one();one();assert.equal(h.opens[0].signal.aborted,false);two();assert.equal(h.opens[0].signal.aborted,true);
   const stop=h.client.observeGamesState(()=>{});assert.equal(h.opens.length,2);stop();
+});
+
+test('discovery has an independent lazy topic and cannot invalidate the game catalogue',async()=>{
+  const f=blobs(),h=harness(f.get),games=[],reviews=[];
+  const stopGames=h.client.observeGamesState(state=>games.push(state));
+  assert.deepEqual(h.opens.map(open=>open.topic),['games.state']);
+  const stopDiscovery=h.client.observeGameDiscovery(state=>reviews.push(state));
+  assert.deepEqual(h.opens.map(open=>open.topic),['games.state','games.discovery']);
+  h.send({value:summary()}, {}, h.opens[0]);await until(()=>games.at(-1).status==='ready');
+  const root=f.add({type:'leaf',entries:Object.entries(discovery())},'object');
+  h.send({value:root}, {}, h.opens[1]);await until(()=>reviews.at(-1).status==='ready');
+  const catalogue=games.at(-1).value;
+  assert.equal(catalogue.catalogue.map(item=>item.id).join(','),'dcs');
+  assert.equal(Object.hasOwn(catalogue,'discovery'),false);
+  assert.equal(reviews.at(-1).value.entries[0].id,'entry-one');
+  assert.equal(f.calls.length,1);
+  const next=f.add({type:'leaf',entries:Object.entries(discovery({status:'scanning'}))},'object');
+  h.send({value:next},change(2),h.opens[1]);
+  await until(()=>reviews.at(-1).status==='ready'&&reviews.at(-1).value.status==='scanning');
+  assert.equal(games.at(-1).value,catalogue);
+  stopDiscovery();stopGames();
+});
+
+test('discovery loss retains its last review as stale and requires a new snapshot before ready',async()=>{
+  const h=harness(),states=[],off=h.client.observeGameDiscovery(state=>states.push(state));
+  h.send({value:discovery()});await until(()=>states.at(-1).status==='ready');const cached=states.at(-1).value;
+  h.send(undefined,{kind:'loss',continuity:'lost',generation:'2',revision:'2',sequence:'2',reason:'reset'});
+  assert.equal(states.at(-1).status,'lost');assert.equal(states.at(-1).value,cached);
+  h.send({value:discovery({status:'scanning'})},change(3));assert.equal(states.at(-1).status,'lost');
+  h.send({value:discovery({status:'scanning'})},{generation:'2',revision:'4',sequence:'4'});
+  await until(()=>states.at(-1).status==='ready');assert.equal(states.at(-1).value.status,'scanning');off();
 });
 
 test('new frames replace pending pages atomically and old resolutions cannot overwrite current values',async()=>{
@@ -77,4 +108,7 @@ test('source, scope and summary fields are validated before partial results beco
   h.send({value:summary()},change(3,{clockId:'games:22222222-2222-4222-8222-222222222222'}));assert.equal(states.at(-1).status,'error');off();
   assert.throws(()=>models.captureEnvelope(frame({value:summary()},'games.state',{source:'profiles'}),'games.state'));
   assert.throws(()=>models.captureEnvelope(frame({gameId:'wrong',scope:'bad',value:game()},'games.detail.dcs'),'games.detail.dcs'));
+  assert.throws(()=>models.captureGamesState({...summary(),discovery:discovery()}));
+  assert.throws(()=>models.captureGameDiscovery({...discovery(),firstStart:'yes'}));
+  assert.throws(()=>models.captureEnvelope(frame({value:discovery()},'games.discovery',{source:'profiles'}),'games.discovery'));
 });

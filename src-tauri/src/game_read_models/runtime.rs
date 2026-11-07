@@ -123,6 +123,7 @@ impl Jobs {
 #[derive(Default)]
 struct Worker {
     state: Option<Publisher>,
+    discovery_publisher: Option<Publisher>,
     jobs: Option<Publisher>,
     telemetry: Option<Publisher>,
     previous: Option<Value>,
@@ -175,7 +176,6 @@ impl Worker {
         let catalogue = projection.encode(&parts.catalogue)?;
         let state = parts.meta.as_object_mut().ok_or("Invalid game read-model metadata.")?;
         state.insert("catalogue".into(), catalogue);
-        state.insert("discovery".into(), discovery.clone());
         let payload = json!({"value":projection.encode(&parts.meta)?});
         // All current roots, including unchanged detail/discovery nodes, are retained.
         projection.commit("games.state")?;
@@ -190,6 +190,14 @@ impl Worker {
         if let Some(publisher) = &self.state {
             publish(observations, publisher, clock, payload.clone(), self.previous.as_ref(), lost, false)?;
         } else { self.state = Some(topic(&broker, observations, clock, "games.state", payload.clone())?); }
+        if lost || self.discovery.as_ref() != Some(&discovery) {
+            let payload = json!({"value":discovery});
+            if let Some(publisher) = &self.discovery_publisher {
+                publish(observations, publisher, clock, payload, None, lost, false)?;
+            } else {
+                self.discovery_publisher = Some(topic(&broker, observations, clock, "games.discovery", payload)?);
+            }
+        }
         self.previous = Some(payload);
         self.discovery = Some(discovery);
         Ok(())
@@ -223,6 +231,7 @@ fn finish(inner: &Inner, broker: &Broker, pages: &Pages, worker: Worker, result:
         slot.ready = Some(Err(result.as_ref().err().cloned().unwrap_or_else(|| "Game read models are closed.".into())));
     }
     if let Some(publisher) = worker.state { broker.retire(&publisher); }
+    if let Some(publisher) = worker.discovery_publisher { broker.retire(&publisher); }
     if let Some(publisher) = worker.jobs { broker.retire(&publisher); }
     if let Some(publisher) = worker.telemetry { broker.retire(&publisher); }
     if let Err(error) = result { registry.ready = Some(Err(error)); }

@@ -1,4 +1,4 @@
-import type { Game, GamesState } from '../games.ts';
+import type { Game, GameDiscovery, GamesState } from '../games.ts';
 import type { DeepReadonly } from '../profiles.ts';
 import type { WireFrame } from '../streams/protocol.ts';
 import { digestId, record, valid } from './pages.ts';
@@ -7,7 +7,8 @@ export type GameSummary = Omit<Game, 'vehicleSupport'> & {
   detailsRevision?: string;
   vehicleSupport?: Omit<NonNullable<Game['vehicleSupport']>, 'vehicles'> & { vehicleCount: number };
 };
-export type GamesSummaryState = Omit<GamesState, 'catalogue'> & { catalogue: GameSummary[] };
+export type GamesSummaryState = Omit<GamesState, 'catalogue' | 'discovery'> & { catalogue: GameSummary[] };
+export type GameDiscoveryModel = GameDiscovery;
 export type GameDetailModel = { gameId: string; scope: string; value: Game };
 export type GameJob = { key: string; run: string; phase: string; message: string; percent?: number; terminal: boolean; truncated?: boolean };
 export type GameJobsModel = { jobs: GameJob[] };
@@ -53,7 +54,7 @@ export function captureEnvelope(frame: WireFrame, topic: string): Record<string,
   valid(frame.topic === topic && frame.source === 'games' && /^games:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(frame.clockId)
     && frame.kind !== 'loss' && record(frame.payload));
   const payload = frame.payload;
-  if (topic === 'games.state') valid(Object.keys(payload).length === 1 && Object.hasOwn(payload, 'value'));
+  if (topic === 'games.state' || topic === 'games.discovery') valid(Object.keys(payload).length === 1 && Object.hasOwn(payload, 'value'));
   else if (topic.startsWith('games.detail.')) valid(Object.keys(payload).length === 3 && payload.gameId === topic.slice('games.detail.'.length)
     && gameId(payload.gameId) && digestId(payload.scope) && Object.hasOwn(payload, 'value'));
   else valid(topic === 'games.jobs' && Object.keys(payload).length === 1 && Array.isArray(payload.jobs));
@@ -62,6 +63,7 @@ export function captureEnvelope(frame: WireFrame, topic: string): Record<string,
 /** Already decoded immutable nodes are returned directly, preserving hash-based identity. */
 export function captureGamesState(value: unknown): DeepReadonly<GamesSummaryState> {
   valid(record(value) && Array.isArray(value.catalogue));
+  valid(!Object.hasOwn(value, 'discovery'));
   const ids = new Set<string>();
   for (const item of value.catalogue) { game(item, true); valid(!ids.has(item.id)); ids.add(item.id); }
   if (value.tags !== undefined) valid(record(value.tags) && Object.values(value.tags).every(text));
@@ -69,15 +71,22 @@ export function captureGamesState(value: unknown): DeepReadonly<GamesSummaryStat
   valid(value.detectionErrors === undefined || strings(value.detectionErrors));
   valid(value.artworkPending === undefined || typeof value.artworkPending === 'boolean');
   valid(value.addedGameId === undefined || value.addedGameId === null || gameId(value.addedGameId)); valid(optionalText(value.error));
-  if (value.discovery !== undefined) {
-    const discovery = value.discovery;
-    valid(record(discovery) && text(discovery.scanId) && ['idle', 'scanning', 'ready', 'applied', 'failed'].includes(discovery.status as string)
-      && Array.isArray(discovery.libraries) && Array.isArray(discovery.entries) && strings(discovery.diagnostics) && typeof discovery.firstStart === 'boolean');
-    valid(discovery.entries.every(entry => record(entry) && text(entry.id) && text(entry.name) && text(entry.library) && text(entry.installPath)
-      && ['add', 'update', 'remove'].includes(entry.action as string) && typeof entry.selected === 'boolean' && strings(entry.executableCandidates)));
-  }
   if (value.backgroundPreview !== undefined) valid(record(value.backgroundPreview) && text(value.backgroundPreview.image));
   return value as DeepReadonly<GamesSummaryState>;
+}
+/** Discovery is a separate, lazily observed projection so scan churn cannot invalidate the game catalogue. */
+export function captureGameDiscovery(value: unknown): DeepReadonly<GameDiscoveryModel> {
+  valid(record(value) && text(value.scanId) && ['idle', 'scanning', 'ready', 'applied', 'failed'].includes(value.status as string)
+    && Array.isArray(value.libraries) && Array.isArray(value.entries) && strings(value.diagnostics) && typeof value.firstStart === 'boolean');
+  valid(value.libraries.every(library => record(library) && text(library.id) && text(library.name)
+    && ['queued', 'scanning', 'preparing', 'complete', 'unavailable', 'failed'].includes(library.status as string)
+    && count(library.found) && optionalText(library.message)));
+  valid(value.entries.every(entry => record(entry) && text(entry.id) && text(entry.name) && text(entry.library) && text(entry.installPath)
+    && ['add', 'update', 'remove'].includes(entry.action as string) && typeof entry.selected === 'boolean' && strings(entry.executableCandidates)));
+  if (value.observations !== undefined) valid(Array.isArray(value.observations) && value.observations.every(item => record(item)
+    && text(item.id) && text(item.client) && text(item.name) && text(item.installPath) && strings(item.executableCandidates)
+    && (item.gameId === undefined || gameId(item.gameId)) && optionalText(item.kind)));
+  return value as DeepReadonly<GameDiscoveryModel>;
 }
 export function captureGameDetail(payload: Record<string, unknown>, value: unknown): DeepReadonly<GameDetailModel> {
   game(value, false); valid(value.id === payload.gameId);

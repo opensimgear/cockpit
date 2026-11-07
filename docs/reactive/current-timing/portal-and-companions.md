@@ -43,7 +43,7 @@
 | `src/lib/CompiledCompanionDesigner.svelte:200` | Resource cleanup | Revoke the export blob URL after its download click. |
 | `src/lib/controller-observations.ts:14` | Declaration | Testable interface for a display-frame callback. |
 | `src/lib/controller-observations.ts:222` | Presentation | Draw the latest continuous sample once when the capture makes the preview dirty. |
-| `src/lib/game-read-models/test-fixture.mjs:37` | Fixture | Bound the test helper's wait for a read-model condition. |
+| `src/lib/game-read-models/test-fixture.mjs:38` | Fixture | Bound the test helper's wait for a read-model condition. |
 | `src/lib/gateway-workspace.ts:65,66` | Lease deadline | Schedule or cancel renewal of editing claims already held by this client. Workspace data comes from the native observation. |
 | `src/lib/GenericWidgetDesigner.svelte:194` | Resource cleanup | Revoke the compiled export blob URL after its download click. |
 | `src/lib/notifications.ts:15` | Declaration | Handle and deadline for one dismissible notification. |

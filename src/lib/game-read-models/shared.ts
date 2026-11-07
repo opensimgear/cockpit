@@ -4,9 +4,9 @@ import type { DeepReadonly } from '../profiles.ts';
 import { claimObservedGameCatalogue, updateGameCatalogue } from '../games.ts';
 import type { Game } from '../games.ts';
 import { assetReference, GamePages, valid, type GamePageGetter } from './pages.ts';
-import { captureEnvelope, captureGameDetail, captureGameJobs, captureGamesState, type GameDetailModel, type GameJobsModel,
+import { captureEnvelope, captureGameDetail, captureGameDiscovery, captureGameJobs, captureGamesState, type GameDetailModel, type GameDiscoveryModel, type GameJobsModel,
   type GameListener, type GameModelState, type GamesSummaryState } from './models.ts';
-export type { GameDetailModel, GameJobsModel, GameJob, GameModelState, GamesSummaryState, GameSummary } from './models.ts';
+export type { GameDetailModel, GameDiscoveryModel, GameJobsModel, GameJob, GameModelState, GamesSummaryState, GameSummary } from './models.ts';
 export type { GamePageGetter } from './pages.ts';
 
 interface Resolution { key: string; controller: AbortController; frame: WireFrame; }
@@ -26,6 +26,7 @@ export class GameReadModels {
   private pages: GamePages;
   constructor(private observations: Pick<SharedObservations, 'subscribe'> = new SharedObservations(), getPage: GamePageGetter = nativePage) { this.pages = new GamePages(getPage); }
   observeGamesState(listener: GameListener<GamesSummaryState>): () => void { return this.observe('games.state', listener); }
+  observeGameDiscovery(listener: GameListener<GameDiscoveryModel>): () => void { return this.observe('games.discovery', listener); }
   observeGameDetails(gameId: string, listener: GameListener<GameDetailModel>): () => void {
     if (!/^[a-z0-9][a-z0-9-]{0,95}$/.test(gameId)) { this.notify(listener, { status: 'error', error: 'Choose an exact game.' }); return () => {}; }
     return this.observe(`games.detail.${gameId}`, listener);
@@ -109,7 +110,8 @@ export class GameReadModels {
       void this.pages.resolve(payload.value, resolution.controller.signal).then(value => {
         if (!active() || entry.resolution !== resolution) return;
         try {
-          const result = topic === 'games.state' ? captureGamesState(value) : captureGameDetail(payload, value);
+          const result = topic === 'games.state' ? captureGamesState(value)
+            : topic === 'games.discovery' ? captureGameDiscovery(value) : captureGameDetail(payload, value);
           if (topic === 'games.state') updateGameCatalogue((result as DeepReadonly<GamesSummaryState>).catalogue as readonly Game[]);
           this.ready(entry, resolution.frame, result); this.cancel(entry);
         } catch (error) { this.fail(entry, error); }
@@ -120,6 +122,7 @@ export class GameReadModels {
 }
 let shared: GameReadModels | undefined;
 export function observeGamesState(listener: GameListener<GamesSummaryState>): () => void { return (shared ??= new GameReadModels()).observeGamesState(listener); }
+export function observeGameDiscovery(listener: GameListener<GameDiscoveryModel>): () => void { return (shared ??= new GameReadModels()).observeGameDiscovery(listener); }
 export function observeGameDetails(gameId: string, listener: GameListener<GameDetailModel>): () => void { return (shared ??= new GameReadModels()).observeGameDetails(gameId, listener); }
 export function observeGameJobs(listener: GameListener<GameJobsModel>): () => void { return (shared ??= new GameReadModels()).observeGameJobs(listener); }
 export function observeGameAsset(reference: string, listener: GameListener<string>): () => void { return (shared ??= new GameReadModels()).observeGameAsset(reference, listener); }

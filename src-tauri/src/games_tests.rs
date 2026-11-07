@@ -265,6 +265,48 @@ fn telemetry_revision_delivery_is_independent_of_catalogue_pages() {
 }
 
 #[test]
+fn discovery_review_changes_do_not_advance_the_catalogue() {
+    let directory = crate::test_directory();
+    let games = Arc::new(seeded_runtime(directory.path(), Arc::new(FakePlatform::default())));
+    let observations = crate::observations::Runtime::new();
+    let broker = observations.broker();
+    let runtime = crate::game_read_models::Runtime::new(observations, games.clone());
+    runtime.start().unwrap();
+    let mut catalogue = broker.subscribe("catalogue-test", "ui", "games.state").unwrap();
+    let mut discovery = broker.subscribe("review-test", "mcp", "games.discovery").unwrap();
+    let summary = catalogue.try_recv().unwrap().unwrap().payload.unwrap();
+    assert!(summary["value"]["catalogue"].is_array());
+    assert!(summary["value"].get("discovery").is_none());
+    assert_eq!(discovery.try_recv().unwrap().unwrap().payload.unwrap()["value"]["status"], "idle");
+
+    {
+        let mut review = games.inner.discovery.lock().unwrap();
+        review.scan_id = "first-scan".into();
+        review.status = "ready".into();
+        review.diagnostics = vec!["x".repeat(5_000)];
+    }
+    games.read_model_signal().mark(crate::game_read_models::signals::Domain::Discovery);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let update = loop {
+        if let Some(frame) = discovery.try_recv().unwrap() { break frame; }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    };
+    let review = &update.payload.as_ref().unwrap()["value"];
+    assert_eq!(review["scanId"], "first-scan");
+    let id = &review["diagnostics"][0]["$gamePage"]["id"];
+    let page = runtime.page(&json!({"command":"game_read_model_page","id":id,"offset":0})).unwrap();
+    assert_eq!(page["chunk"].as_str().unwrap().len(), 5_000);
+    assert!(catalogue.try_recv().unwrap().is_none());
+
+    let mut reopened = broker.subscribe("reopened-review", "ui", "games.discovery").unwrap();
+    assert_eq!(reopened.try_recv().unwrap().unwrap().payload, update.payload);
+    runtime.shutdown();
+    assert!(broker.subscribe("review-after-stop", "ui", "games.discovery").is_err());
+    games.shutdown();
+}
+
+#[test]
 fn game_get_state_does_not_wait_for_metadata_admission_and_keeps_request_validation() {
     let directory = crate::test_directory();
     let runtime = Arc::new(GamesRuntime::test_runtime(
