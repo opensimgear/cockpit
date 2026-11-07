@@ -101,22 +101,21 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
       : undefined;
     const fast = await subscribe();
     const retired = event => event.params?.uri === uri && sampleFrame(event)?.kind === 'loss';
+    const matches = (port, {portId, value}) => port.endpoint.portId === portId && port.sample.value?.value === value;
+    async function samplePorts(expected) {
+      const event = await fast.next(event => {
+        const ports = sampleFrame(event)?.payload?.ports;
+        return event.params?.uri === uri && expected.every(sample => ports?.some(port => matches(port, sample)));
+      });
+      const {kind, topic, generation, revision} = sampleFrame(event);
+      return expected.map(sample => ({...sample, kind, topic, generation, revision}));
+    }
     return {
       async sample(value, portId = 'button-1') {
-        const event = await fast.next(event => event.params?.uri === uri && sampleFrame(event)?.payload?.ports?.some(
-          port => port.endpoint.portId === portId && port.sample.value?.value === value,
-        ));
-        const frame = sampleFrame(event);
-        const port = frame.payload.ports.find(port => port.endpoint.portId === portId);
-        return {
-          value: port.sample.value.value,
-          kind: frame.kind,
-          topic: frame.topic,
-          portId,
-          ...(frame.generation !== undefined ? {generation: frame.generation} : {}),
-          ...(frame.revision !== undefined ? {revision: frame.revision} : {}),
-        };
+        const [sample] = await samplePorts([{value, portId}]);
+        return sample;
       },
+      samplePorts,
       async stop() {
         const startedAt = performance.now();
         const response = await post('tools/call', {name:'profile_stop', arguments:{operationId:randomUUID()}});

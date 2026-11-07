@@ -14,6 +14,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+pub(crate) mod qualification;
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Change {

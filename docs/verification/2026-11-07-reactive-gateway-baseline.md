@@ -79,3 +79,10 @@ retirement after MCP Stop while one MCP response is unread. This run uses
 the 125 Hz authored lane and a real panel press. The full 125 Hz and 1 kHz
 workload with MCP and the sustained load gate remain open.
 [Desktop MCP trace](2026-11-07-dcs-panel-vjoy.md#desktop-mcp-during-dcs-paired-panels-and-vjoy)
+
+A later desktop run removed per-edge IPC from the dual-rate workload.
+Both rates still missed their targets, while all 218 edges arrived in
+order and the panels and MCP delivered updates. The 1.69 ms median
+native gateway call narrows the remaining rate investigation to the
+in-process path. The single-worker schedule also delayed the peer lane.
+[In-process dual-rate trace](2026-11-07-dcs-panel-vjoy.md#in-process-desktop-dual-rate-source)

@@ -335,7 +335,13 @@ async fn gateway_request(
     state: tauri::State<'_, NativeGateway>,
 ) -> Result<Value, String> {
     let service = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || service.request(request))
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        if request["command"] == "qualification_debug_burst" {
+            return profile_debug_controller::qualification::run(&service, request);
+        }
+        service.request(request)
+    })
         .await
         .map_err(|error| error.to_string())
 }

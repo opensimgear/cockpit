@@ -17,6 +17,7 @@ import {browserGateway} from './vjoy-rate-transport.mjs';
 
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
+const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -56,6 +57,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   assert.equal(process.platform, 'win32');
   const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
+  if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
   await mkdir(resolve(userFolder, 'Scripts'), {recursive: true});
@@ -72,7 +74,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       : await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
-  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp}) : null;
+  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates}) : null;
   if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
@@ -399,7 +401,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     if (combined) Object.assign(evidence.phases.combined, await combined.stop(stopNs));
     else await request({command: 'profile_stop'});
     const budgetMisses = combined ? combinedTimingMisses(
-      evidence.phases.panelPresentation, browserUrl ? evidence.phases.combined : null,
+      evidence.phases.panelPresentation, browserUrl || nativeRates ? evidence.phases.combined : null,
     ) : [];
     evidence.budgetMisses = budgetMisses;
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});

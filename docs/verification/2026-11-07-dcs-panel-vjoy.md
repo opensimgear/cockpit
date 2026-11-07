@@ -268,3 +268,63 @@ also passed. The stream and browser-feedback unit coverage gates passed.
 The browser-dev regression completed cleanup and missed only its existing
 1,000 Hz synthetic source gate at 446.28 Hz. Its evidence is in
 `.research/dcs-physics-native/1794047498183/evidence.json`.
+
+## In-process desktop dual-rate source
+
+The opt-in Windows qualification build schedules two authored debug sources
+against the Windows performance counter. It submits each edge through the
+ordinary native gateway with an exact applied owner and a separate ordered
+stream ID per source. One IPC call starts the fixed burst. All 218 edges
+still go through ordinary owner checks, queue admission, reducer delivery
+and the vJoy feeder. The test keeps the same DCS profile, two browser
+panels, the Debug inspector, the stalled native acknowledgement and both
+MCP readers.
+
+| Target | Actual submission rate | Native gateway call p50 | Submission to Raw Input p50 / p95 / p99 |
+| ---: | ---: | ---: | ---: |
+| 1,000 Hz | 442.78 Hz | 1.69 ms | 3.16 / 5.10 / 7.48 ms |
+| 125 Hz | 55.46 Hz | 1.68 ms | 3.15 / 4.23 / 7.78 ms |
+
+The fixture uses one native worker for both lanes. The slower call cadence
+therefore stretched both schedules. The native gateway time persisted
+after removing per-edge WebView and HTTP transport from this test. The
+trace does not separate coordinator lock wait from gateway and reducer
+work. The test retains the original rate and delivery thresholds.
+
+Windows Raw Input received all 193 fast-lane and 25 peer-lane edges in
+order, followed by both Stop releases. Each lane's reported queue peak was
+one frame. Both panel canvases painted during the measured 430.99 ms
+overlap and the 24-change presentation phase measured 7.02 and 9.67 ms
+p95. The fast MCP client saw both held values in one snapshot. The second
+MCP response went unread for 3.41 s and both readers observed retirement.
+Windows received the releases 39.49 ms after MCP Stop submission. The HTTP
+reply arrived at 120.92 ms. Cleanup completed without errors.
+
+A second fresh-owner run reproduced both misses at 430.06 and 53.74 Hz.
+Native gateway medians were 1.71 and 1.70 ms. All 218 edges arrived in
+order, with 5.20 and 4.36 ms p95 to Raw Input. Both panels painted during
+overlap, both MCP readers retired, and cleanup completed. The same
+desktop executable was used for both runs.
+
+Build desktop Cockpit with Cargo feature `reactive-qualification` in a
+Windows debug build. Start a disposable instance with
+`OSG_REACTIVE_QUALIFICATION=1`, then run the desktop MCP fixture with
+`OSG_DCS_COMBINED_NATIVE_RATES=1`. The source admits one fixed burst at a
+time, requires two neutral applied debug buttons, and stops submitting
+when a gateway call fails or the time window expires. It attempts to
+release partial input through the same owner fence on failure. The
+fixture also stops the disposable profile during cleanup.
+
+The feature-enabled Windows test binary passed 2,399 tests with the
+qualification source disabled by default. The explicit enabled test and
+both pinned DCS archive tests passed separately. The qualification module
+reached 90.15% line coverage by the repository counter and 78.57% function
+coverage by LLVM. This build did not instrument branches.
+
+An earlier attempt waited for separate MCP messages when one snapshot
+could carry both values. Exposing the native reply immediately showed
+that the in-process gateway requests lacked the required client ID. The
+corrected runs are `.research/dcs-physics-native/1794048557207/evidence.json`
+and `.research/dcs-physics-native/1794048975685/evidence.json`,
+using desktop SHA-256
+`d517018db2e4becaf6fa2cff8fc3582a68bb356456c3f4fcdf20ec87b39f0ceb`.

@@ -12,13 +12,14 @@ import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
+import {createNativeRateBurst} from './dcs-native-rate-burst.mjs';
 import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 
-export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false}={}) {
+export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false}={}) {
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
@@ -153,8 +154,8 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       axes:slot.axes.map((_,index)=>({portId:'axis-'+(index+1),range:'bipolar',fallback:0})),
       hats:Array.from({length:slot.continuousHats},(_,index)=>'hat-'+(index+1))};
     const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
-    const sources=browserUrl?dualRateLanes.map(lane=>lane.nodeId):[debugNode,panelNode];
-    for(const id of browserUrl?sources:[debugNode])document.resources.push({id,name:'Combined debug '+id,kind:'debug-controller',required:false,
+    const sources=browserUrl||nativeRates?dualRateLanes.map(lane=>lane.nodeId):[debugNode,panelNode];
+    for(const id of browserUrl||nativeRates?sources:[debugNode])document.resources.push({id,name:'Combined debug '+id,kind:'debug-controller',required:false,
       ports:[{id:'button-1',name:'Button',direction:'output',contract}]});
     const draft=await cdp.evaluate(`(async()=>{
       const {graphSetVirtual,graphConnect}=await import('/src/lib/profile-graph.ts');
@@ -162,7 +163,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
         id:outputNode,name:'Combined test output',required:true,layout,
       })});
       draft=graphConnect(draft,{nodeId:'${sources[0]}',portId:'button-1'},{nodeId:'${outputNode}',portId:'button-1'});
-      return graphConnect(draft,{nodeId:'${sources[1]}',portId:'${browserUrl?'button-1':'press'}'},{nodeId:'${outputNode}',portId:'button-2'});
+      return graphConnect(draft,{nodeId:'${sources[1]}',portId:'${browserUrl||nativeRates?'button-1':'press'}'},{nodeId:'${outputNode}',portId:'button-2'});
     })()`);
     Object.assign(document,draft.document);
   }
@@ -252,9 +253,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const before=[previewOpens,previewReads], offset=(await samples()).length;
     closedPreviewAt=process.hrtime.bigint();
     setAirborne(true);
-    if(!browserUrl)await sendDebug(owner,false);
+    if(!browserUrl&&!nativeRates)await sendDebug(owner,false);
     const lamp=await waitLamp(offset,sample=>sample.status==='fresh'&&sample.value===true);
-    if(!browserUrl)await sendDebug(owner,true);
+    if(!browserUrl&&!nativeRates)await sendDebug(owner,true);
     assert.deepEqual([previewOpens,previewReads],before,'Closed previews must not subscribe or read while native routes run');
     return {lamp,retiredReaders:before[0],previewOpens:0,previewReads:0};
   }
@@ -359,6 +360,12 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
     await startProbe();
     if(browserUrl)return browserBurst(owner,setAirborne);
+    if(nativeRates){
+      const result=await createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart})(owner,setAirborne);
+      dualSubmissions=result.submissions;
+      const {submissions,...load}=result;
+      return load;
+    }
     if(observation)return nativeMcpBurst(owner,{setAirborne,setPaused});
     const mark=(await samples()).length;
     setAirborne(true);
@@ -387,7 +394,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
-    if(browserUrl){
+    if(browserUrl||nativeRates){
       const receiver=event=>Number(qpcNs(start+BigInt(event.receivedTicks))-probeStart)/1e6;
       const lanes=dualRateResults(dualSubmissions,events,raw.receiverTickHz,receiver,{low:0,high:0},Number(stopNs-probeStart)/1e6);
       for(const lane of lanes){

@@ -54,6 +54,7 @@ tokio-util = "0.7"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+reactive-qualification = ["windows-sys/Win32_System_Performance"]
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
