@@ -86,7 +86,7 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].id, "x-plane-12");
     let checked = candidates.pop().unwrap()
-        .verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal();
+        .verify(std::slice::from_ref(&game), |_| "setup".into(), |_| Some(true)).without_renewal();
     let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
     tracker.apply_poll(poll.read());
     let entry = &tracker.entries["x-plane-12"];
@@ -95,7 +95,7 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert!(tracker.entries["x-plane-11"].telemetry.is_none());
     let games = [game, other];
     let maintenance = tracker.poll_candidates().into_iter()
-        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true)).collect();
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| Some(true))).collect();
     assert!(tracker.begin_polls(maintenance).is_empty(), "Quiet X-Plane readers need no maintenance projection");
     assert!(tracker.entries["x-plane-12"].observed >= observed);
     let receipt = Arc::new(crate::observations::TelemetryLease::default());
@@ -106,7 +106,7 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert_ne!(wake.observed(), before_close);
     assert!(tracker.capture_deadline().is_some_and(|deadline| deadline <= Instant::now()));
     let release = tracker.capture_candidates().into_iter()
-        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true).without_renewal()).collect();
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| Some(true)).without_renewal()).collect();
     let mut release = tracker.begin_polls(release);
     assert_eq!(release.len(), 1, "Closing a quiet inspection must still update native demand");
     let poll = release.pop().unwrap();
@@ -114,7 +114,7 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert!(poll.inspection.is_empty());
     tracker.apply_poll(poll.read());
     let exited = tracker.poll_candidates().into_iter()
-        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| false)).collect();
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| Some(false))).collect();
     assert!(tracker.begin_polls(exited).is_empty());
     assert!(tracker.entries["x-plane-12"].telemetry.is_none());
 }
@@ -127,10 +127,34 @@ fn capture_drain_does_not_extend_the_process_observation() {
     entry.observed = Instant::now() - Duration::from_secs(1);
     let observed = entry.observed;
     let checked = tracker.poll_candidates().pop().unwrap()
-        .verify(&[game], |_| "setup".into(), |_| true).without_renewal();
+        .verify(&[game], |_| "setup".into(), |_| Some(true)).without_renewal();
     let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
     tracker.apply_poll(poll.read());
     assert_eq!(tracker.entries["x-plane-12"].observed, observed);
+}
+
+#[test]
+fn unavailable_process_probe_neither_retires_a_current_reader_nor_renews_it() {
+    let (_directory, mut tracker, game) = fixture();
+    let id = "x-plane-12";
+    let observed = tracker.entries[id].observed;
+    let generation = tracker.entries[id].generation;
+    let qualify = |candidate: Qualification| {
+        candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| None)
+    };
+    let candidates = tracker.poll_candidates().into_iter().map(qualify).collect();
+    let poll = tracker.begin_polls(candidates).pop().unwrap().read()
+        .verify(std::slice::from_ref(&game), |_| "setup".into(), |_| None);
+    tracker.apply_poll(poll);
+    assert_eq!(tracker.entries[id].observed, observed);
+    assert_eq!(tracker.entries[id].generation, generation);
+    assert!(tracker.entries[id].reader.is_some());
+
+    tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
+    let candidates = tracker.poll_candidates().into_iter().map(qualify).collect();
+    assert!(tracker.begin_polls(candidates).is_empty());
+    assert!(tracker.entries[id].reader.is_none());
+    assert!(tracker.telemetry(&game).is_none());
 }
 
 #[test]
@@ -151,7 +175,7 @@ fn late_poll_cannot_restore_replaced_or_withdrawn_process_reader() {
             poll = poll.verify(
                 &[current_game],
                 |_| if changed == "setup" { "new" } else { "setup" }.into(),
-                |_| changed != "process",
+                |_| Some(changed != "process"),
             );
         }
         tracker.apply_poll(poll);
@@ -170,7 +194,7 @@ fn late_projection_preserves_the_current_reader_without_refreshing_telemetry() {
     tracker.watch_captures(wake);
     let drain = |tracker: &mut Tracker| {
         let candidates = tracker.capture_candidates().into_iter().map(|candidate|
-            candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal()
+            candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| Some(true)).without_renewal()
         ).collect();
         tracker.begin_polls(candidates).pop().unwrap().read()
     };
@@ -201,7 +225,7 @@ fn detached_poll_keeps_conservative_capture_time_and_handles_failure() {
     let (_directory, mut tracker, game) = fixture();
     let poll = take_poll(&mut tracker);
     let captured = poll.at;
-    let poll = poll.read().verify(&[game], |_| "setup".into(), |_| true);
+    let poll = poll.read().verify(&[game], |_| "setup".into(), |_| Some(true));
     tracker.apply_poll(poll);
     assert_eq!(
         tracker.entries["x-plane-12"].telemetry.as_ref().unwrap().at,
@@ -232,7 +256,7 @@ fn detached_verification_and_reads_do_not_retain_the_published_state_mutex() {
             |_| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv().unwrap();
-                true
+                Some(true)
             },
         );
         let polls = peer.lock().unwrap().begin_polls(vec![qualified]);
@@ -365,7 +389,7 @@ fn rejected_and_replaced_readers_are_destroyed_after_the_state_guard_is_released
                         let candidates = state
                             .poll_candidates()
                             .into_iter()
-                            .map(|candidate| candidate.verify(&[], |_| "setup".into(), |_| false))
+                            .map(|candidate| candidate.verify(&[], |_| "setup".into(), |_| Some(false)))
                             .collect();
                         state.begin_polls(candidates);
                     }

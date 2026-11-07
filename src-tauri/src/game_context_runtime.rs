@@ -349,7 +349,7 @@ impl Inner {
         // observation or querying Windows for each packet. The independent
         // maintenance pass checks identities without a retained capture owner.
         let alive = |process: &crate::game_discovery::ProcessIdentity| {
-            capture_only || self.platform.alive(process).unwrap_or(false)
+            if capture_only { None } else { self.platform.alive(process).ok() }
         };
         let verified = candidates.into_iter().map(|candidate| {
             let checked = candidate.verify(&games, |id| {
@@ -476,7 +476,6 @@ impl Inner {
             let Some(id) = game["id"].as_str() else { continue; };
             let Some(integration) = crate::game_discovery::integration_key(game) else { continue; };
             let revision = self.setup.provider_setup_revision(integration);
-            let vehicle_process = process.as_ref().ok().cloned().flatten();
             let error = process.as_ref().err().cloned();
             let connection = self
                 .setup
@@ -484,13 +483,13 @@ impl Inner {
                 .ok()
                 .map(|(connection, _, _)| connection);
             if let Some(connection) = connection {
-                let work = self.update_vehicles(|vehicles| vehicles.begin_observation(&game, &connection, vehicle_process, &revision,
+                let work = self.update_vehicles(|vehicles| vehicles.begin_inventory_observation(&game, &connection, process.clone(), &revision,
                         supported && game["integrationSetup"]["state"] == "ready", epoch));
                 if let Some(work) = work {
                     let observed = work.read();
                     let current_games = self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone();
                     let observed = observed.verify(&current_games, &self.setup.provider_setup_revision(integration),
-                        |process| self.platform.alive(process).unwrap_or(false));
+                        |process| self.platform.alive(process));
                     self.update_vehicles(|vehicles| vehicles.apply_observation(observed));
                 }
             }

@@ -57,6 +57,19 @@ The full native suite passed 2,375 tests with 18 existing ignores. The
 vehicle polling module reached 95.73% line and 100% function coverage.
 Process inventory contention and real simulator qualification remain open.
 
+Passive telemetry now distinguishes an unavailable process lookup from a
+confirmed exit. A lookup error preserves the reader for the same installation
+and setup under its existing process evidence. It cannot extend the lease or
+publish a newly opened reader. Setup replacement, confirmed exit and expiry
+still withdraw the affected reader. This change covers the passive reader.
+Active game-context and command validation have their own proof requirements.
+The native suite passed 2,378 tests with 18 default ignores. Both pinned
+DCS archive smoke tests passed separately. Production line coverage was
+91.30% for the context runtime, 98.62% for vehicle observation, and 94.94%
+for vehicle polling using the setup coverage gate's counting rules. The
+supplementary LLVM report measured 65.85% functions for the context runtime.
+The rebuilt Cockpit passed the authored DCS fixture, including process exit.
+
 The active companion feedback publisher now emits an initial snapshot and
 per-channel changes/independent freshness renewals rather than full snapshots
 every 34 ms. One latest pending projection and exact acknowledgements bound

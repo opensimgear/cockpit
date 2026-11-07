@@ -259,7 +259,7 @@ fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
     *physics_retry = Instant::now();
     assert_eq!(tracker.maintenance_delay(deadline), Some(Duration::ZERO));
     let candidates = tracker.capture_candidates().into_iter().map(|candidate| {
-        candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal()
+        candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| Some(true)).without_renewal()
     }).collect();
     let poll = tracker.begin_polls(candidates).pop().unwrap();
     tracker.apply_poll(poll.read());

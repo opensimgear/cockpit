@@ -36,6 +36,45 @@ fn read(work: VehicleObservation) -> VehicleObservation {
         })
     })
 }
+
+#[test]
+fn inventory_errors_preserve_only_the_existing_configuration_and_lease() {
+    let (_directory, mut tracker) = tracker();
+    let game = game();
+    let id = "x-plane-12";
+    let connection = crate::xplane::defaults(12);
+    let initial = read(work(&mut tracker, 1));
+    tracker.apply_observation(initial);
+    let generation = tracker.entries[id].generation;
+    let observed = tracker.entries[id].observed;
+
+    assert!(tracker.begin_inventory_observation(&game, &connection, Err("inventory busy".into()),
+        "setup", true, 2).is_none());
+    assert_eq!(tracker.entries[id].generation, generation);
+    assert_eq!(tracker.entries[id].observed, observed);
+    assert!(tracker.entries[id].reader.is_some());
+
+    let current = work(&mut tracker, 3).verify(std::slice::from_ref(&game), "setup", |_| Err("access denied".into()));
+    tracker.apply_observation(current);
+    assert_eq!(tracker.entries[id].generation, generation);
+    assert!(tracker.entries[id].reader.is_some());
+
+    tracker.begin_inventory_observation(&game, &connection, Err("inventory busy".into()), "replacement", true, 4);
+    assert_ne!(tracker.entries[id].generation, generation);
+    assert!(tracker.entries[id].reader.is_none());
+    assert!(tracker.entries[id].process.is_none());
+}
+
+#[test]
+fn failed_verification_cannot_publish_a_new_reader() {
+    let (_directory, mut tracker) = tracker();
+    let opened = read(work(&mut tracker, 1)).verify(&[game()], "setup", |_| Err("access denied".into()));
+    tracker.apply_observation(opened);
+    let entry = &tracker.entries["x-plane-12"];
+    assert!(entry.reader.is_none());
+    assert!(entry.opening.is_none());
+    assert!(entry.retry > Instant::now());
+}
 #[test]
 fn quiet_reader_admission_wakes_idle_maintenance_and_withdrawal_parks_it() {
     let (_directory, mut tracker) = tracker();
@@ -87,13 +126,13 @@ fn detached_observation_publishes_only_matching_current_identity_and_epoch() {
         tracker.entries["x-plane-12"].reader.is_some(),
         "A later matching observation must preserve the sole opener"
     );
-    tracker.apply_observation(current.verify(&[game()], "setup", |p| p == &process()));
+    tracker.apply_observation(current.verify(&[game()], "setup", |p| Ok(p == &process())));
     assert!(
         tracker.entries["x-plane-12"].reader.is_some(),
         "Concurrent observation cannot open a second reader"
     );
     let current = read(work(&mut tracker, 3));
-    tracker.apply_observation(current.verify(&[game()], "setup", |p| p == &process()));
+    tracker.apply_observation(current.verify(&[game()], "setup", |p| Ok(p == &process())));
     assert!(tracker.entries["x-plane-12"].reader.is_some());
     assert!(tracker
         .begin_observation(&game(), &json!({}), None, "setup", false, 1)
@@ -124,7 +163,7 @@ fn failed_post_read_requalification_or_expiry_cannot_publish_a_reader() {
         let observed = observed.verify(
             &[current_game],
             if changed == "setup" { "new" } else { "setup" },
-            |_| changed != "process",
+            |_| Ok(changed != "process"),
         );
         if changed == "expiry" {
             tracker.entries.get_mut("x-plane-12").unwrap().observed -= Duration::from_secs(3);

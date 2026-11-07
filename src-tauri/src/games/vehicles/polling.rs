@@ -23,18 +23,22 @@ impl Qualification {
         mut self,
         games: &[Value],
         mut setup_revision: impl FnMut(&str) -> String,
-        mut alive: impl FnMut(&ProcessIdentity) -> bool,
+        mut alive: impl FnMut(&ProcessIdentity) -> Option<bool>,
     ) -> Self {
-        self.qualified = Some(
-            self.enabled
+        self.qualified = if self.enabled
                 && games.iter().any(|game| {
                     game["id"] == self.id
                         && game["installed"] == true
                         && Tracker::installation_matches(&self.installation, game)
                 })
                 && setup_revision(&self.id) == self.setup_revision
-                && self.process.as_ref().is_some_and(|process| self.retained_process || alive(process)),
-        );
+        {
+            self.process.as_ref().map_or(Some(false), |process| {
+                if self.retained_process { Some(true) } else { alive(process) }
+            })
+        } else {
+            Some(false)
+        };
         self
     }
 }
@@ -82,7 +86,7 @@ impl VehiclePoll {
         mut self,
         games: &[Value],
         setup_revision: impl FnMut(&str) -> String,
-        alive: impl FnMut(&ProcessIdentity) -> bool,
+        alive: impl FnMut(&ProcessIdentity) -> Option<bool>,
     ) -> Self {
         self.qualification = self.qualification.verify(games, setup_revision, alive);
         self
@@ -316,7 +320,7 @@ impl Tracker {
         let qualified = self
             .poll_candidates()
             .into_iter()
-            .map(|candidate| candidate.verify(games, &mut setup_revision, &mut alive))
+            .map(|candidate| candidate.verify(games, &mut setup_revision, |process| Some(alive(process))))
             .collect();
         let polls = self.begin_polls(qualified);
         drop(self.take_retired());

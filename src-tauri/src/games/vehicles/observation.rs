@@ -15,7 +15,7 @@ pub(crate) struct VehicleObservation {
     installation: String,
     setup_revision: String,
     identity: Option<ProcessIdentity>,
-    verified: bool,
+    verified: Option<bool>,
 }
 impl VehicleObservation {
     pub(crate) fn read(self) -> Self {
@@ -49,13 +49,15 @@ impl VehicleObservation {
         mut self,
         games: &[Value],
         revision: &str,
-        mut alive: impl FnMut(&ProcessIdentity) -> bool,
+        mut alive: impl FnMut(&ProcessIdentity) -> Result<bool, String>,
     ) -> Self {
-        self.verified = self.setup_revision == revision
-            && games.iter().any(|game| {
+        self.verified = if self.setup_revision == revision && games.iter().any(|game| {
                 game["id"] == self.id && Tracker::installation(game) == self.installation
-            })
-            && self.identity.as_ref().is_none_or(&mut alive);
+            }) {
+            self.identity.as_ref().map_or(Ok(true), &mut alive).ok()
+        } else {
+            Some(false)
+        };
         self
     }
 }
@@ -77,6 +79,26 @@ impl Tracker {
             self.apply_observation(work.read());
         }
         drop(self.take_retired());
+    }
+    pub(crate) fn begin_inventory_observation(
+        &mut self,
+        game: &Value,
+        connection: &Value,
+        process: Result<Option<ProcessIdentity>, String>,
+        setup_revision: &str,
+        enabled: bool,
+        observation_epoch: u64,
+    ) -> Option<VehicleObservation> {
+        let integration = crate::game_discovery::integration_key(game).unwrap_or("");
+        let enabled = enabled && !integration.is_empty();
+        if process.is_err() && game["id"].as_str().and_then(|id| self.entries.get(id)).is_some_and(|entry| {
+            entry.enabled == enabled && entry.integration == integration
+                && entry.setup_revision == setup_revision && Self::installation_matches(&entry.installation_fields, game)
+        }) {
+            // A failed lookup cannot revoke or renew the existing process proof.
+            return None;
+        }
+        self.begin_observation(game, connection, process.unwrap_or(None), setup_revision, enabled, observation_epoch)
     }
     pub(crate) fn begin_observation(
         &mut self,
@@ -185,7 +207,7 @@ impl Tracker {
             installation: entry.installation.clone(),
             setup_revision: entry.setup_revision.clone(),
             identity: entry.process.clone(),
-            verified: true,
+            verified: Some(true),
         };
         self.publish_visible(id);
         Some(observation)
@@ -208,7 +230,13 @@ impl Tracker {
             self.publish_visible(&observation.id);
             return;
         }
-        if !observation.verified || entry.observed.elapsed() > Duration::from_secs(2) {
+        if observation.verified.is_none() {
+            if owns_opening { entry.retry = Instant::now() + Duration::from_secs(2); }
+            self.retired.extend(observation.reader.and_then(Result::ok));
+            self.publish_visible(&observation.id);
+            return;
+        }
+        if observation.verified == Some(false) || entry.observed.elapsed() > Duration::from_secs(2) {
             entry.generation = entry.generation.wrapping_add(1);
             entry.polling = false;
             entry.opening = None;
