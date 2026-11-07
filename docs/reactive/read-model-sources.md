@@ -118,6 +118,19 @@ The discovery fixture runs against native Cockpit with
 of a known title, a generic executable, same-volume relocation, and explicit
 removal. The browser fixture also covers the first-start results banner.
 
+After the discovery stream split, the running Windows WebView and Edge
+browser-dev navigation fixture each opened one `games.discovery` reader and
+one `games.jobs` reader per Games visit. Both readers retired on leaving the
+view in both cycles. Edge also passed the full review, apply, move and removal
+workflow with no page errors. The real MCP client discovered `games.discovery`
+through `resources/list`, resolved its snapshot through the immutable page
+tool, and matched the two expected fixture entries to the exact ready scan.
+The same MCP run applied and replayed its operation, then removed its fixture
+game. The local MCP fixture waits for WebView readiness and any first-start
+scan before starting its own scan. Logs are `parity-native.log`,
+`parity-browser.log` and `parity-mcp.log` under
+`.research/reactive/r0-baseline-clean/`.
+
 DCS setup watches the configured Windows Saved Games path even when the
 directory is missing. Its nearest existing ancestor wakes the native owner on
 creation. The owner then registers the non-recursive child watch before

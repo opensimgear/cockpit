@@ -1,12 +1,13 @@
 // Real MCP SDK -> running native Cockpit. Discovery fixtures are never launched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {randomUUID} from 'node:crypto';
 import {mkdir,writeFile,rm} from 'node:fs/promises';
 import {resolve,relative,isAbsolute} from 'node:path';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {GamePages} from '../../src/lib/game-read-models/pages.ts';
+import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
 const enabled=process.platform==='win32'&&process.env.OSG_GAME_DISCOVERY_NATIVE==='1';
 const normalize=value=>(value??'').replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
@@ -15,17 +16,13 @@ const within=(parent,path)=>{const child=relative(parent,path);return child!==''
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 test('native game discovery MCP scans, pages, applies and replays fixture actions',{skip:!enabled,timeout:240_000},async()=>{
-  const require=createRequire(import.meta.url),module=process.env.OSG_PLAYWRIGHT_MODULE??'playwright';
-  const {chromium}=require(module);
-  const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
-  const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/127\.0\.0\.1:142[01]|tauri\.localhost/.test(page.url())&&!page.url().includes('profile-activation-window'));
-  assert.ok(page,'Start the native dev Cockpit with CDP before running this acceptance test.');
+  const page=await nativePage();
   const artifacts=resolve('.research/game-discovery-mcp-native'),fixtures=resolve(artifacts,'fixtures-'+Date.now());
   const installs=[resolve(fixtures,'Fixture Copy One'),resolve(fixtures,'Fixture Copy Two')];
   const executableBytes='Harmless game discovery fixture; this file is never launched.\n';
   await mkdir(artifacts,{recursive:true});
   for(const directory of installs){await mkdir(directory,{recursive:true});await writeFile(resolve(directory,'FixtureGame.exe'),executableBytes);}
-  const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
+  const invoke=(command,args={})=>page.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
   const native=async request=>{const reply=await invoke('gateway_request',{request:{...request,clientId:'game-discovery-mcp-native'}});assert.equal(reply.ok,true,request.command+': '+reply.error);return reply.state;};
   const snapshot=async()=>(await native({command:'game_get_state'})).games;
   const saved=state=>state.catalogue.map(game=>({id:game.id,name:game.name,selectedInstallationId:game.selectedInstallationId,installations:game.installations}));
@@ -42,7 +39,7 @@ test('native game discovery MCP scans, pages, applies and replays fixture action
   const mutation=args=>({...args,operationId:randomUUID()});
   const clients=[];let settings,credentialId,createdGameId,installationIds=[];const evidence={nativeCockpit:true,gameLaunches:false,fixtureDirectories:installs,checks:[]};
   try{
-    assert.equal(await page.evaluate(()=>!!window.__TAURI_INTERNALS__?.invoke),true);
+    await until(()=>page.evaluate("Boolean(window.__TAURI_INTERNALS__?.invoke && document.querySelector('main'))"));
     const before=await snapshot();settings=await readSettings();
     const credential=await mcpSettings('mcp_credential_create',{name:'Game discovery acceptance',scope:'write'});credentialId=credential.credential.id;
     const enabledSettings=await mcpSettings('mcp_settings_update',{enabled:true,port:settings.port});
@@ -51,7 +48,11 @@ test('native game discovery MCP scans, pages, applies and replays fixture action
     const exposed=(await client.listTools()).tools.map(tool=>tool.name);
     for(const name of ['game_discovery_start','game_discovery_status','game_discovery_apply','game_save','game_installation_select','game_remove'])assert.ok(exposed.includes(name),`MCP did not expose ${name}`);
     evidence.tools=exposed.filter(name=>name.startsWith('game_'));
+    const discoveryUri='cockpit://observations/games.discovery';
+    assert.ok((await client.listResources()).resources.some(resource=>resource.uri===discoveryUri));
+    const pages=new GamePages((id,offset)=>call(client,'game_read_model_page',{id,offset}));
 
+    if(before.discovery?.status==='scanning')await pauseUntilReady(client,before.discovery.scanId);
     const started=await call(client,'game_discovery_start',mutation({paths:[fixtures]}));
     assert.ok(started.scanId);assert.ok(['scanning','ready'].includes(started.status));
     const immediatelyAfterStart=await snapshot();assert.deepEqual(saved(immediatelyAfterStart),saved(before),'Starting discovery must not change the saved game catalogue.');
@@ -64,6 +65,21 @@ test('native game discovery MCP scans, pages, applies and replays fixture action
     while(next!==null){const pageResult=await call(client,'game_discovery_status',{scanId:started.scanId,offset:next,limit:32});entries.push(...pageResult.entries);next=pageResult.nextOffset;}
     const fixtureEntries=entries.filter(inFixture);assert.equal(fixtureEntries.length,2,'Both local fixture copies must be present in the full paged result.');
     assert.ok(fixtureEntries.every(entry=>entry.action==='add'&&entry.selected));
+    const deadline=Date.now()+15_000;
+    let review;
+    do {
+      const resource=await client.readResource({uri:discoveryUri});
+      const {frame}=JSON.parse(resource.contents[0].text);
+      assert.equal(frame.kind,'snapshot');
+      assert.equal(frame.topic,'games.discovery');
+      review=await pages.resolve(frame.payload.value,AbortSignal.timeout(15_000));
+      if(review.scanId===started.scanId&&review.status==='ready')break;
+      await pause(50);
+    } while(Date.now()<deadline);
+    assert.equal(review.scanId,started.scanId);
+    assert.equal(review.status,'ready');
+    assert.deepEqual(review.entries.filter(inFixture).map(entry=>entry.id).sort(),fixtureEntries.map(entry=>entry.id).sort());
+    evidence.checks.push('MCP discovery observation baseline and immutable page reads match the exact ready scan.');
     const beforeApply=await snapshot();assert.deepEqual(saved(beforeApply),saved(before),'Reading paged discovery results must not edit saved records.');
     evidence.checks.push('Asynchronous MCP start returned a scan ID; exact-scan status polling paged two local fixture candidates; saved catalogue stayed unchanged.');
 
@@ -104,7 +120,7 @@ test('native game discovery MCP scans, pages, applies and replays fixture action
       if(settings)await mcpSettings('mcp_settings_update',{enabled:settings.enabled,port:settings.port}).catch(()=>{});
       evidence.cleanup='Fixture game removed if created, fixture directories deleted, and temporary MCP credential revoked.';
       await import('node:fs/promises').then(({writeFile})=>writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n'));
-      await browser.close();
+      page.close();
     }
   }
 });

@@ -126,7 +126,7 @@ test(`${transport} main view navigation retires observation readers without dupl
     const views = [
       ['Devices', []],
       ['Profiles', []],
-      ['Games', ['games.jobs']],
+      ['Games', ['games.discovery', 'games.jobs']],
       ['Companions', companionLibraryTopics],
       ['Debug', ['games.telemetry']],
       ['Activity', ['activity.log']],
