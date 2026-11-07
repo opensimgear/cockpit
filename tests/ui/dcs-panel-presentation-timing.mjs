@@ -34,21 +34,32 @@ function summarize(values) {
   return {count:values.length,p50:percentile(.5),p95:percentile(.95),p99:percentile(.99),max:sorted.at(-1)};
 }
 
-export async function measurePanelPresentation(page, submitOwnship) {
-  assert.equal(await page.evaluate(()=>document.visibilityState),'visible');
-  const initial=await alignClock(page), samples=[];
+export async function measurePanelPresentation(target, submitOwnship) {
+  const pages=Array.isArray(target)?target:[target];
+  const initial=await Promise.all(pages.map(async page=>{
+    assert.equal(await page.evaluate(()=>document.visibilityState),'visible');
+    return alignClock(page);
+  }));
+  const traces=pages.map(()=>[]);
   for(let index=0;index<24;index++){
     const lit=index%2===0;
-    const offsets=await page.evaluate(()=>({feedback:window.__combinedLamp.length,paint:window.__panelPaints.length}));
+    const offsets=await Promise.all(pages.map(page=>page.evaluate(()=>({feedback:window.__combinedLamp.length,paint:window.__panelPaints.length}))));
     const submission=await submitOwnship(lit);
-    const match=await page.waitForFunction(({lit,offsets})=>{
-      const feedback=window.__combinedLamp.slice(offsets.feedback).find(row=>row.status==='fresh'&&row.value===lit);
-      const paint=feedback&&window.__panelPaints.slice(offsets.paint).find(row=>row.lit===lit&&row.at>=feedback.receivedAt);
-      return paint?{feedback,paint}:null;
-    },{lit,offsets},{timeout:3500});
-    try {samples.push({lit,...submission,...await match.jsonValue()});} finally {await match.dispose();}
+    await Promise.all(pages.map(async(page,panel)=>{
+      const match=await page.waitForFunction(({lit,offsets})=>{
+        const feedback=window.__combinedLamp.slice(offsets.feedback).find(row=>row.status==='fresh'&&row.value===lit);
+        const paint=feedback&&window.__panelPaints.slice(offsets.paint).find(row=>row.lit===lit&&row.at>=feedback.receivedAt);
+        return paint?{feedback,paint}:null;
+      },{lit,offsets:offsets[panel]},{timeout:3500});
+      try {traces[panel].push({lit,...submission,...await match.jsonValue()});} finally {await match.dispose();}
+    }));
   }
-  const final=await alignClock(page);
+  const final=await Promise.all(pages.map(alignClock));
+  const results=traces.map((samples,index)=>summarizePresentation(samples,initial[index],final[index]));
+  return Array.isArray(target)?results:results[0];
+}
+
+function summarizePresentation(samples,initial,final) {
   const low=Math.max(initial.low,final.low),high=Math.min(initial.high,final.high);
   assert.ok(high>=low,'Node and browser clock alignment changed during the sample');
   const offset=(low+high)/2,uncertaintyMs=(high-low)/2;
@@ -63,6 +74,5 @@ export async function measurePanelPresentation(page, submitOwnship) {
   const udpToBrowserMs=summarize(samples.map(row=>row.feedback.receivedAt-row.submittedMs-offset));
   const udpToCanvasMs=summarize(samples.map(row=>row.paint.at-row.submittedMs-offset));
   const browserToCanvasMs=summarize(samples.map(row=>row.paint.at-row.feedback.receivedAt));
-  assert.ok(udpToCanvasMs.p95+uncertaintyMs<=150,'Loopback authored UDP to browser canvas exceeded 150 ms');
   return {initial,final,uncertaintyMs,udpToBrowserMs,udpToCanvasMs,browserToCanvasMs,samples};
 }

@@ -1,5 +1,5 @@
-// IPC-only acceptance against the running native Cockpit. The simulator process,
-// BIOS frames and ownship envelopes are authored fixtures; no hardware outputs.
+// Acceptance against desktop Cockpit or its browser-dev gateway. The simulator
+// process, BIOS frames and ownship envelopes are authored fixtures.
 // OSG_DCS_COMBINED_VJOY_PROBE adds a browser panel and a temporary vJoy slot.
 // Setup and Repair write only to the private user folder.
 // The opt-in discovery test briefly adds an empty, uniquely named profile directory.
@@ -11,8 +11,11 @@ import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createSocket} from 'node:dgram';
 import {createHash, randomUUID} from 'node:crypto';
-import {nativePage} from '../../scripts/reactive/cdp.mjs';
-import {combinedDcsFixture} from './dcs-companion-vjoy-fixture.mjs';
+import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
+import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
+import {browserGateway} from './vjoy-rate-transport.mjs';
+
+const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -46,23 +49,28 @@ async function fixtureExecutable(directory) {
   return executable;
 }
 
-test('native managed DCS ownship physics and BIOS remain independent through withdrawal and rearm', {
-  skip: process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000,
+test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and BIOS remain independent through withdrawal and rearm`, {
+  skip: !browserUrl && process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000,
 }, async () => {
   assert.equal(process.platform, 'win32');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
   await mkdir(resolve(userFolder, 'Scripts'), {recursive: true});
-  const cdp = await nativePage(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9224'), checks = [], cleanupErrors = [];
-  const evidence = {actualNativeCockpit: true, ipcOnly: true, noPhysicalOutputs: true,
+  const browserGatewayClient = browserUrl ? browserGateway(new URL(browserUrl)) : null;
+  const cdp = browserUrl ? await browserPage(browserUrl) : await nativePage(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9224');
+  const checks = [], cleanupErrors = [];
+  const evidence = {transport: browserUrl ? 'browser-dev' : 'native', actualNativeCockpit: !browserUrl,
+    actualBrowserCockpit: !!browserUrl, ipcOnly: !browserUrl, noPhysicalOutputs: true,
     authoredTelemetry: true, fixtureProcess: true, actualSimulatorQualified: false,
     directory, userFolder, startedAt: new Date().toISOString(), checks, cleanupErrors, phases: {}};
   const request = async value => {
-    const reply = await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
+    const reply = browserUrl
+      ? await browserGatewayClient.request({...value, clientId: 'dcs-physics-native'})
+      : await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
   const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
-  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe) : null;
+  const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl}) : null;
   if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
@@ -316,15 +324,39 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     });
     await combined?.openInspector();
     await cdp.evaluate(`(async()=>{
-      const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
       const {SharedObservations}=await import('/src/lib/streams/shared.ts');
-      const cancel=new AbortController(), fast=new SharedObservations();
-      const trace=window.__dcsSlowReader={fast:0,slow:0,error:null,close:()=>{cancel.abort();fast.close();}};
-      createNativeObservationTransport().open('games.telemetry',{
-        frame(_envelope,ack){trace.slow++;if(trace.slow===1)trace.release=ack;else void ack();},
+      const cancel=new AbortController();
+      const originalFetch=window.fetch;
+      const trace=window.__dcsSlowReader={fast:0,slow:0,error:null,
+        close:()=>{cancel.abort();trace.fastReader.close();window.fetch=originalFetch;}};
+      const browser=${!!browserUrl};
+      let transport;
+      if(browser){
+        const {createBrowserObservationTransport}=await import('/src/lib/streams/browser.ts');
+        // The browser transport requires a synchronous acknowledgement call.
+        // Hold only this reader's HTTP receipt on the real shared connection.
+        window.fetch=(url,init)=>{
+          const receipt=typeof url==='string'&&url.endsWith('/api/observe/ack')&&JSON.parse(init.body);
+          if(receipt&&receipt.subscriptionId===trace.slowId&&receipt.delivery==='1'){
+            return new Promise((resolve,reject)=>{
+              trace.release=()=>originalFetch.call(window,url,init).then(resolve,reject);
+              init.signal?.addEventListener('abort',()=>reject(init.signal.reason),{once:true});
+            });
+          }
+          return originalFetch.call(window,url,init);
+        };
+        transport=createBrowserObservationTransport();
+      }else{
+        const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
+        transport=createNativeObservationTransport();
+      }
+      trace.fastReader=new SharedObservations(transport);
+      transport.open('games.telemetry',{
+        frame(envelope,ack){trace.slow++;trace.slowId=envelope.subscriptionId;
+          if(browser||trace.slow>1)void ack();else trace.release=ack;},
         error(error){trace.error=error;}
       },cancel.signal);
-      fast.subscribe('games.telemetry',state=>{if(state.status==='ready')trace.fast++;});
+      trace.fastReader.subscribe('games.telemetry',state=>{if(state.status==='ready')trace.fast++;});
     })()`);
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
@@ -364,6 +396,10 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     const stopNs = process.hrtime.bigint();
     await request({command: 'profile_stop'});
     if (combined) Object.assign(evidence.phases.combined, await combined.stopped(stopNs));
+    const budgetMisses = combined ? combinedTimingMisses(
+      evidence.phases.panelPresentation, browserUrl ? evidence.phases.combined : null,
+    ) : [];
+    evidence.budgetMisses = budgetMisses;
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     evidence.phases.ownshipOnlyStart = await until(async () => {
       const page = await samples();
@@ -385,6 +421,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     checks.push('Counter-only BIOS renewals preserve retained values; BIOS expiry withdraws its identity output without withdrawing fresh ownship; a new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
+    assert.deepEqual(budgetMisses, [], 'Combined software timing budgets');
   } catch (error) {
     evidence.failure = String(error); evidence.failureInspection = await samples().catch(() => null);
     evidence.failureBios = await inspect(biosId).catch(() => null); evidence.failurePhysics = await inspect('flight.airspeed.true').catch(() => null);
@@ -441,8 +478,10 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     if (initialProfiles?.session.selectedProfileId) await cleanup('Restore selected profile', () => request({command: 'profile_select', id: initialProfiles.session.selectedProfileId, selectionSource: 'manual'}));
     if (initialProfiles?.session.selectionMode) await cleanup('Restore selection mode', () => request({command: 'profile_selection_mode', mode: initialProfiles.session.selectionMode}));
     await cleanup('Leave profile stopped', () => request({command: 'profile_stop'}));
+    if (browserGatewayClient) await cleanup('Close direct browser gateway transport', () => browserGatewayClient.close());
+    await cleanup('Close Cockpit page', () => cdp.close());
     evidence.finishedAt = new Date().toISOString();
-    await writeFile(resolve(directory, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n'); cdp.close();
+    await writeFile(resolve(directory, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
     console.log(JSON.stringify({directory, checks, cleanupErrors})); assert.deepEqual(cleanupErrors, []);
   }
 });

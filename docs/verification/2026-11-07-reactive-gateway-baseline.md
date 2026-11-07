@@ -64,3 +64,11 @@ passing run measured 49.19 ms p95 with 0.18 ms alignment uncertainty. This
 covers one loopback panel. The concurrent dual-rate, two-panel, UI and MCP
 workload and full budget gate remain open.
 [DCS panel canvas trace](2026-11-07-dcs-panel-vjoy.md#authored-udp-to-browser-canvas-timing)
+
+The same-service browser-dev run adds two panels and ordered Windows vJoy
+delivery while one telemetry reader holds its acknowledgement. Both panels
+painted during the 190.21 ms dual-source overlap. The synthetic 1,000 Hz
+source sustained 442.04 Hz, and the second panel exceeded the 150 ms p95
+budget in the 24-change panel measurement. The combined budget stays open,
+including same-service MCP and sustained load.
+[Combined browser-dev trace](2026-11-07-dcs-panel-vjoy.md#two-browser-panels-and-dual-rate-vjoy-in-one-service)

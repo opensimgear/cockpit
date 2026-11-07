@@ -1,4 +1,4 @@
-// One applied profile owns authored DCS telemetry, a real browser panel and vJoy.
+// One applied profile owns authored DCS telemetry, paired browser panels and vJoy.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createHash, randomUUID, X509Certificate} from 'node:crypto';
@@ -11,22 +11,24 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
+import {dualRateLanes,dualRateResults,submitBrowserRate} from './vjoy-rate-transport.mjs';
 
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 
-export function combinedDcsFixture(cdp, request, probeExecutable) {
+export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl}={}) {
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
   const inventory = async () => (await request({command:'system_inventory'})).systemInventory.virtualDevices;
-  let browser, page, peer, slot, probe, report, probeStart, probeReady, listenerEnabled=false;
-  const samples=()=>page.evaluate(()=>window.__combinedLamp);
-  const waitLamp=(offset,predicate)=>until(async()=>(await samples()).slice(offset).find(predicate))
-    .catch(async error=>{throw new Error('Panel feedback did not arrive: '+JSON.stringify((await samples()).slice(-5)),{cause:error});});
+  let browser, page, slot, probe, report, probeStart, probeReady, listenerEnabled=false, dualSubmissions, presentation;
+  const panels=[];
+  const samples=(target=page)=>target.evaluate(()=>window.__combinedLamp);
+  const waitLamp=(offset,predicate,target=page)=>until(async()=>(await samples(target)).slice(offset).find(predicate))
+    .catch(async error=>{throw new Error('Panel feedback did not arrive: '+JSON.stringify((await samples(target)).slice(-5)),{cause:error});});
 
-  async function connectPanel() {
+  async function enableListener() {
     const current=await listener();
     assert.equal(current.configuredEnabled,false,'Use a disposable Cockpit with its listener disabled');
     const reservation=createServer();
@@ -39,12 +41,16 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     await companion('companion_enable',{address:'127.0.0.1',advertisedHost:'127.0.0.1',port,
       discovery:false,expectedSettingsRevision:current.settingsRevision});
     listenerEnabled=true;
+  }
+
+  async function connectPanel() {
     const {host}=await companion('companion_status');
     const before=new Set(host.clients.map(row=>row.companionId));
     const offer=await companion('companion_pair_offer',{kind:'browser'});
     const url=new URL(offer.pairing.browserUrl);
     assert.equal(url.hostname,'127.0.0.1');
-    const pin=await new Promise((resolve,reject)=>{
+    if(!browser){
+      const pin=await new Promise((resolve,reject)=>{
       const socket=connect({host:url.hostname,port:Number(url.port),rejectUnauthorized:false},()=>{
         try {
           const cert=new X509Certificate(socket.getPeerCertificate().raw);
@@ -52,14 +58,17 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
         } catch(error){reject(error);} finally {socket.destroy();}
       });
       socket.once('error',reject);
-    });
-    const require=createRequire(import.meta.url);
-    const {chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'playwright');
-    browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,
-      args:['--ignore-certificate-errors-spki-list='+pin]});
-    page=await browser.newPage();
-    await tracePanelCanvas(page);
-    await page.addInitScript(()=>{
+      });
+      const require=createRequire(import.meta.url);
+      const {chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'playwright');
+      browser=await chromium.launch({channel:process.env.OSG_BROWSER_CHANNEL??'msedge',headless:true,
+        args:['--ignore-certificate-errors-spki-list='+pin,
+          // The test's two headless contexts represent separately visible panels.
+          ...(browserUrl?['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']:[])]});
+    }
+    const panel=await browser.newPage();
+    await tracePanelCanvas(panel);
+    await panel.addInitScript(()=>{
       window.__combinedLamp=[];
       const Worker=window.SharedWorker;
       window.SharedWorker=class extends Worker {
@@ -72,15 +81,22 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
             const sample=feedback?.values?.find(row=>row.channelId==='flight-channel-0'
               &&row.outputId==='flight-output-0');
             if(sample&&window.__combinedLamp.length<512)window.__combinedLamp.push({
-              sequence:feedback.sequence,status:sample.status,value:sample.value,sourceKind:sample.sourceKind,receivedAt:performance.now(),
+              sequence:feedback.sequence,status:sample.status,value:sample.value,sourceKind:sample.sourceKind,
+              sourceAgeMs:sample.sourceAgeMs,receivedAt:performance.now(),
             });
           });
         }
       };
     });
-    await page.goto(url.href,{waitUntil:'domcontentloaded'});
-    peer=await until(async()=>(await companion('companion_status')).host.clients
+    await panel.goto(url.href,{waitUntil:'domcontentloaded'});
+    const peer=await until(async()=>(await companion('companion_status')).host.clients
       .find(row=>!before.has(row.companionId)));
+    const connected={page:panel,peer};
+    panels.push(connected);
+    return connected;
+  }
+
+  async function publishPanel() {
     const bytes=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
     const publication=JSON.parse(bytes);
     const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
@@ -91,8 +107,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     return publication.publicationHash;
   }
 
-  async function prepare(document, assignments) {
-    const publicationHash=await connectPanel();
+  async function assignPanel(document, assignments, publicationHash, {page,peer}, nodeId) {
     const resource=await until(async()=>(await request({command:'profile_resources_list',limit:128}))
       .profileResources.resources.find(row=>row.attributes?.companionId===peer.companionId
         &&row.attributes.componentKind==='paired-companion'));
@@ -112,13 +127,22 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
         &&live.contractHash===port.contractHash));
     });
     const mapped=selected.map((port,index)=>({...port.descriptor,id:['press','lamp'][index]}));
-    document.resources.push({id:panelNode,name:'Combined browser panel',kind:'companion',required:false,ports:mapped});
-    document.companionAssignments.push({resourceId:panelNode,publicationHash});
-    document.bindings.push({id:'combined-dcs-lamp',from:{nodeId:'telemetry',portId:'flight.ownship.inAir'},
-      to:{nodeId:panelNode,portId:'lamp'}});
-    assignments.push({resourceId:panelNode,sourceId:resource.id,ports:selected.map((port,index)=>({
+    document.resources.push({id:nodeId,name:'Combined browser panel '+panels.length,kind:'companion',required:false,ports:mapped});
+    document.companionAssignments.push({resourceId:nodeId,publicationHash});
+    document.bindings.push({id:nodeId+'-lamp',from:{nodeId:'telemetry',portId:'flight.ownship.inAir'},
+      to:{nodeId,portId:'lamp'}});
+    assignments.push({resourceId:nodeId,sourceId:resource.id,ports:selected.map((port,index)=>({
       profilePortId:mapped[index].id,observedPortId:port.descriptor.id,expectedContractHash:port.contractHash,
     }))});
+  }
+
+  async function prepare(document, assignments) {
+    await enableListener();
+    const first=await connectPanel();
+    page=first.page;
+    const publicationHash=await publishPanel();
+    await assignPanel(document,assignments,publicationHash,first,panelNode);
+    if(browserUrl)await assignPanel(document,assignments,publicationHash,await connectPanel(),panelNode+'-peer');
     slot=await until(async()=>(await inventory()).find(device=>device.status==='free'&&device.buttons>=2
       &&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
       &&device.buttons+device.axes.length+device.continuousHats<=128));
@@ -126,15 +150,16 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
       axes:slot.axes.map((_,index)=>({portId:'axis-'+(index+1),range:'bipolar',fallback:0})),
       hats:Array.from({length:slot.continuousHats},(_,index)=>'hat-'+(index+1))};
     const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
-    document.resources.push({id:debugNode,name:'Combined debug source',kind:'debug-controller',required:false,
+    const sources=browserUrl?dualRateLanes.map(lane=>lane.nodeId):[debugNode,panelNode];
+    for(const id of browserUrl?sources:[debugNode])document.resources.push({id,name:'Combined debug '+id,kind:'debug-controller',required:false,
       ports:[{id:'button-1',name:'Button',direction:'output',contract}]});
     const draft=await cdp.evaluate(`(async()=>{
       const {graphSetVirtual,graphConnect}=await import('/src/lib/profile-graph.ts');
       let draft=graphSetVirtual(${JSON.stringify({document,assignments})},${JSON.stringify({
         id:outputNode,name:'Combined test output',required:true,layout,
       })});
-      draft=graphConnect(draft,{nodeId:'${debugNode}',portId:'button-1'},{nodeId:'${outputNode}',portId:'button-1'});
-      return graphConnect(draft,{nodeId:'${panelNode}',portId:'press'},{nodeId:'${outputNode}',portId:'button-2'});
+      draft=graphConnect(draft,{nodeId:'${sources[0]}',portId:'button-1'},{nodeId:'${outputNode}',portId:'button-1'});
+      return graphConnect(draft,{nodeId:'${sources[1]}',portId:'${browserUrl?'button-1':'press'}'},{nodeId:'${outputNode}',portId:'button-2'});
     })()`);
     Object.assign(document,draft.document);
   }
@@ -145,8 +170,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
   }
 
   async function measurePresentation(submitOwnship) {
-    await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
-    return measurePanelPresentation(page,submitOwnship);
+    await Promise.all(panels.map(panel=>waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false,panel.page)));
+    presentation=await measurePanelPresentation(browserUrl?panels.map(panel=>panel.page):page,submitOwnship);
+    return presentation;
   }
 
   const expected=Array.from({length:65},(_,index)=>index%2===0);
@@ -166,13 +192,17 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
       const id=params?.requestId;
       if(method==='Network.requestWillBeSent'&&params.request.postData){
         const path=new URL(params.request.url).pathname;
-        if(!['/gateway_request','/observation_subscribe','/observation_unsubscribe'].includes(path))return;
+        const gateway=browserUrl?'/api/gateway/':'/gateway_request';
+        const subscribe=browserUrl?'/api/observe/subscribe':'/observation_subscribe';
+        const unsubscribe=browserUrl?'/api/observe/unsubscribe':'/observation_unsubscribe';
+        if(![gateway,subscribe,unsubscribe].includes(path))return;
         const body=JSON.parse(params.request.postData);
-        if(path==='/gateway_request'&&['game_telemetry_inspect','profile_runtime_inspect'].includes(body.request?.command))previewReads++;
-        if(path==='/observation_subscribe'&&/^(games\.telemetry$|profiles\.samples\.|controllers\.input\.)/.test(body.topic)){
+        if(path===gateway&&['game_telemetry_inspect','profile_runtime_inspect'].includes((body.request??body).command))previewReads++;
+        const browserKey=JSON.stringify([body.connectionId,body.requestId]);
+        if(path===subscribe&&/^(games\.telemetry$|profiles\.samples\.|controllers\.input\.)/.test(body.topic)){
           previewOpens++;
-          previewPending.set(id,{topic:body.topic});
-        }else if(path==='/observation_unsubscribe')previewPending.set(id,{token:body.subscriptionId});
+          previewPending.set(id,{topic:body.topic,browserKey});
+        }else if(path===unsubscribe)previewPending.set(id,{token:browserUrl?browserKey:body.subscriptionId});
       }
       const pending=previewPending.get(id);
       if(!pending)return;
@@ -181,9 +211,11 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
       if(pending.topic){
         void cdp.call('Network.getResponseBody',{requestId:id}).then(({body})=>{
           assert.equal(pending.status,200);
-          const token=JSON.parse(body);
+          const response=JSON.parse(body);
+          const token=browserUrl?response.subscriptionId:response;
           assert.equal(typeof token,'string');
-          if(!previewRetired.has(token))previewActive.set(token,pending.topic);
+          const key=browserUrl?pending.browserKey:token;
+          if(!previewRetired.has(key))previewActive.set(key,pending.topic);
         }).catch(error=>previewError=error).finally(()=>previewPending.delete(id));
       }else{
         if(pending.status===200){previewRetired.add(pending.token);previewActive.delete(pending.token);}
@@ -211,20 +243,18 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
         const inspector=document.querySelector('[aria-label="Incoming game telemetry"]');
         return !inspector || !!inspector.closest('[hidden]');
       })()`);
-    });
+    }).catch(error=>{throw new Error(`Preview teardown left ${JSON.stringify([...previewActive.values()])} active with ${previewPending.size} pending calls`,{cause:error});});
     const before=[previewOpens,previewReads], offset=(await samples()).length;
     closedPreviewAt=process.hrtime.bigint();
     setAirborne(true);
-    await sendDebug(owner,false);
+    if(!browserUrl)await sendDebug(owner,false);
     const lamp=await waitLamp(offset,sample=>sample.status==='fresh'&&sample.value===true);
-    await sendDebug(owner,true);
+    if(!browserUrl)await sendDebug(owner,true);
     assert.deepEqual([previewOpens,previewReads],before,'Closed previews must not subscribe or read while native routes run');
     return {lamp,retiredReaders:before[0],previewOpens:0,previewReads:0};
   }
 
-  async function burst(owner, {setAirborne,setPaused}) {
-    await page.getByText('Connected · panel active',{exact:true}).waitFor();
-    await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
+  async function startProbe() {
     probeStart=process.hrtime.bigint();
     probe=spawn(probeExecutable,['--vjoy-buttons'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
@@ -241,6 +271,31 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     lines.on('line',line=>{if(line!=='ready')trace.push(line);});
     assert.deepEqual(await Promise.race([started,report.then(()=>{throw Error('Raw Input probe exited before readiness');})]),['ready']);
     probeReady=process.hrtime.bigint();
+  }
+
+  async function browserBurst(owner,setAirborne) {
+    const offsets=await Promise.all(panels.map(({page})=>page.evaluate(()=>window.__panelPaints.length)));
+    dualSubmissions=await submitBrowserRate(request,owner,probeStart,()=>setAirborne(true));
+    const overlapStart=Math.max(...dualSubmissions.map(rows=>rows[0].at));
+    const overlapEnd=Math.min(...dualSubmissions.map(rows=>rows.at(-1).at));
+    const canvases=await Promise.all(panels.map(async({page},index)=>{
+      const paint=await until(()=>page.evaluate(`window.__panelPaints.slice(${offsets[index]}).find(row=>row.lit)`));
+      const {initial,final}=presentation[index];
+      const low=Math.max(initial.low,final.low), high=Math.min(initial.high,final.high);
+      const reference=Number(probeStart)/1e6;
+      return {panel:index+1,earliestMs:paint.at-high-reference,latestMs:paint.at-low-reference};
+    }));
+    const after=await Promise.all(panels.map(({page})=>samples(page).then(rows=>rows.length)));
+    setAirborne(false);
+    await Promise.all(panels.map(({page},index)=>waitLamp(after[index],sample=>sample.status==='fresh'&&sample.value===false,page)));
+    return {overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases};
+  }
+
+  async function burst(owner, {setAirborne,setPaused}) {
+    await page.getByText('Connected · panel active',{exact:true}).waitFor();
+    await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
+    await startProbe();
+    if(browserUrl)return browserBurst(owner,setAirborne);
     const mark=(await samples()).length;
     setAirborne(true);
     const active=await waitLamp(mark,sample=>sample.status==='fresh'&&sample.value===true);
@@ -269,13 +324,22 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     const events=raw.buttonEvents.filter(event=>event.report===slot.slot);
     assert.equal(new Set(events.map(event=>event.device)).size,1);
     assert.ok(events.every(event=>event.status===0x00110000));
+    const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
+    const qpcNs=ticks=>ticks*1_000_000_000n/hz;
+    assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
+    if(browserUrl){
+      const receiver=event=>Number(qpcNs(start+BigInt(event.receivedTicks))-probeStart)/1e6;
+      const lanes=dualRateResults(dualSubmissions,events,raw.receiverTickHz,receiver,{low:0,high:0},Number(stopNs-probeStart)/1e6);
+      for(const lane of lanes){
+        assert.deepEqual(lane.received,lane.expected,`${lane.nodeId} ordered delivery and Stop release`);
+        assert.ok(lane.stopReleaseMs>=0,`${lane.nodeId} must remain held until Stop`);
+      }
+      return {slot:slot.slot,lanes,submissions:dualSubmissions,slotFree:true};
+    }
     const edges=field=>events.filter((event,index)=>event[field]!==(events[index-1]?.[field]??false));
     const debug=edges('pressed'), panel=edges('peerPressed');
     assert.deepEqual(debug.map(event=>event.pressed),[...expected,false,true,false]);
     assert.deepEqual(panel.map(event=>event.peerPressed),[true,false]);
-    const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
-    const qpcNs=ticks=>ticks*1_000_000_000n/hz;
-    assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
     const closedPreviewEdges=debug.slice(expected.length,-1);
     assert.equal(closedPreviewEdges.length,2);
     assert.ok(closedPreviewEdges.every(event=>qpcNs(start+BigInt(event.receivedTicks))>=closedPreviewAt));
@@ -290,10 +354,36 @@ export function combinedDcsFixture(cdp, request, probeExecutable) {
     probe?.kill();
     stopTrace?.();
     try {await browser?.close();} finally {
-      try {if(peer)await companion('companion_revoke',{companionId:peer.companionId});} finally {
+      try {for(const {peer} of panels)await companion('companion_revoke',{companionId:peer.companionId});} finally {
         if(listenerEnabled)await companion('companion_disable',{expectedSettingsRevision:(await listener()).settingsRevision});
       }
     }
   }
   return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stopped,close};
+}
+
+export function combinedTimingMisses(timing, load) {
+  const misses = [];
+  const panels = Array.isArray(timing) ? timing : [timing];
+  for (const [index, panel] of panels.entries()) {
+    if (panel.udpToCanvasMs.p95 + panel.uncertaintyMs > 150) {
+      misses.push(`Panel ${index + 1} UDP-to-canvas p95 was ${panel.udpToCanvasMs.p95.toFixed(2)} ms with ${panel.uncertaintyMs.toFixed(2)} ms alignment uncertainty`);
+    }
+  }
+  if (!load) return misses;
+  if (load.overlapMs < 180) misses.push('Both input rates must overlap for at least 180 ms');
+  for (const panel of load.canvases) {
+    if (panel.earliestMs < load.overlapStart || panel.latestMs > load.overlapEnd) {
+      misses.push(`Panel ${panel.panel} must update its canvas during simultaneous load`);
+    }
+  }
+  for (const lane of load.lanes) {
+    if (Math.abs(lane.actualHz / lane.targetHz - 1) > .05) {
+      misses.push(`${lane.nodeId} sustained ${lane.actualHz.toFixed(2)} Hz against ${lane.targetHz} Hz`);
+    }
+    if (lane.submissionToReceiverMs.upper.p95 > 20 || lane.submissionToReceiverMs.upper.p99 > 50) {
+      misses.push(`${lane.nodeId} exceeded the software submission-to-Raw-Input budget`);
+    }
+  }
+  return misses;
 }

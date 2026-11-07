@@ -116,3 +116,60 @@ The fixture uses authored DCS packets. The dev executable SHA-256 was
 Evidence is in `.research/dcs-physics-native/1794041818786/evidence.json`,
 `.research/dcs-physics-native/1794041878860/evidence.json`, and
 `.research/reactive/vjoy-stop-order/`.
+
+## Two browser panels and dual-rate vJoy in one service
+
+The browser-dev variant runs authored DCS ownship and BIOS packets, two
+paired browser panels, the real Cockpit Debug inspector, two paced synthetic
+button sources, and a deliberately stalled telemetry reader against one native
+gateway service. The stalled reader holds one acknowledgement on the shared
+browser connection. An independent reader received 32 updates while the same
+profile owner stayed active. Navigation away from Debug retired all three
+telemetry readers, with zero preview opens or reads afterward. Both panel
+canvases painted a correlated DCS change inside the 190.21 ms overlap between
+the two button sources.
+
+Windows Raw Input received all 218 ordered vJoy transitions. Both lanes
+peaked at two pending frames and the held buttons released 1.83 ms after
+Stop. The input-to-receiver timestamps share the Windows performance counter.
+
+| Target | Actual | HTTP round trip p50 | Submission to Raw Input p95 | Submission to Raw Input p99 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 Hz | 442.04 Hz | 1.73 ms | 4.97 ms | 10.84 ms |
+| 125 Hz | 126.18 Hz | 2.19 ms | 5.62 ms | 6.49 ms |
+
+Each lane awaits its HTTP response before sending the next transition. The
+1,000 Hz lane missed the offered-rate target. The measured rate describes the
+closed-loop browser-dev test source. In standalone runs, the previous harness
+also missed the fast target at 845.07 Hz. The extracted harness subsequently
+passed at 980.84 Hz and 124.94 Hz using the same service binary. The physical
+capture path needs its own measurement.
+
+The panel distributions use 24 alternating ownship changes per panel with
+the same profile and stalled observer, before the short dual-rate burst.
+
+| Panel | UDP to page receipt p95 | UDP to canvas p95 | Page receipt to canvas p95 | Alignment uncertainty |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 48.93 ms | 49.23 ms | 0.50 ms | 0.25 ms |
+| 2 | 268.66 ms | 269.16 ms | 0.50 ms | 0.27 ms |
+
+Panel 2 missed the 150 ms budget. The two preceding runs measured 188.58 ms
+and 190.62 ms for panel 2 and 419.26 Hz and 423.77 Hz on the fast lane. The
+measured panel tail occurred before page receipt. The combined test
+preserves the full timing and lifecycle evidence
+before failing its budget assertion. The native single-panel regression
+passed on the same product revision. These runs completed cleanup.
+
+To repeat, point `OSG_DCS_PHYSICS_BROWSER_URL` at a disposable loopback
+browser-dev Cockpit with the managed DCS fixture configured. Set
+`OSG_DCS_COMBINED_VJOY_PROBE` and run
+`node --test tests/ui/dcs-physics-native.mjs`. The browser-dev gateway has
+no MCP listener. This evidence covers authored packets and loopback panels.
+Same-service MCP, the full R0 soak, actual simulator export, physical
+capture, LAN and display scan-out remain separate.
+
+The product revision was `027ee955`. Evidence is in
+`.research/dcs-physics-native/1794045080235/evidence.json`,
+`.research/dcs-physics-native/1794044739216/evidence.json` and
+`.research/dcs-physics-native/1794044555463/evidence.json`. The native
+regression evidence is in `.research/dcs-physics-native/1794044792093/evidence.json`.
