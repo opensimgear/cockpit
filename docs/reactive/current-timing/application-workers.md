@@ -14,10 +14,10 @@
 | `src-tauri/src/hid_names.rs:116` | Command retry | After CDC re-enumeration, the exact HID naming request retries every 100 ms for up to two seconds and honors cancellation. Device arrival wake replacement remains open. |
 | `src-tauri/src/persistence/backup/startup.rs:96` | Operation deadline | Give an explicit restore-restart acknowledgement 500 ms before calling the native restart callback. |
 | `src-tauri/src/persistence/backup/startup.rs:143` | Fixture | Bound the isolated restart callback test's wait for completion. |
-| `src-tauri/src/persistence/ui/window_writer.rs:15` | Source wake | Park the persistence writer until queued geometry or shutdown. |
-| `src-tauri/src/persistence/ui/window_writer.rs:27` | Persistence retry | Retry a busy save after 250 ms if there is no newer queued geometry and the bounded retry count permits it. |
-| `src-tauri/src/persistence/ui/window_writer.rs:41` | Operation deadline | Wait for an explicit flush to complete within its budget. |
-| `src-tauri/src/persistence/ui/window_writer.rs:62,63` | Fixture | Bound the geometry coalescing test's commit barrier. |
+| `src-tauri/src/persistence/ui/window_writer.rs:71` | Source wake | Park the persistence writer until queued geometry or shutdown. |
+| `src-tauri/src/persistence/ui/window_writer.rs:90` | Persistence retry | Retry a busy save after 250 ms if there is no newer queued geometry and the bounded retry count permits it. |
+| `src-tauri/src/persistence/ui/window_writer.rs:104` | Operation deadline | Wait for an explicit flush to complete within its budget. |
+| `src-tauri/src/persistence/ui/window_writer.rs:147,148` | Fixture | Bound the geometry coalescing test's commit barrier. |
 | `src-tauri/src/profile_activation_progress/observation.rs:72` | Source wake and expiry | Committed activation and companion work wake the progress projector. The nearest presentation or retained operation expiry also wakes it. |
 | `src-tauri/src/profile_automatic.rs:861` | Source wake and retry | Reconcile after process, provider or profile changes. Outstanding vehicle and peripheral retries supply the next deadline for the current owner. |
 | `src-tauri/src/profile_debug_controller/qualification.rs:80,222,231` | Fixture | A fixed, explicitly enabled desktop qualification burst offers edges at Windows performance-counter deadlines. Two bounded lane workers submit already available edges through the owner-fenced debug queue. |

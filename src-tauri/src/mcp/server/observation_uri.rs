@@ -4,7 +4,7 @@ use crate::persistence::ui::OBSERVED_KEYS;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 28] = [
+const FIXED_TOPICS: [(&str, &str); 29] = [
     ("activity.log", "Activity log revision"),
     ("settings.activity", "Committed activity retention settings"),
     ("profiles.library", "Saved profile library"),
@@ -31,6 +31,7 @@ const FIXED_TOPICS: [(&str, &str); 28] = [
     ("system.inventory.drivers", "Installed optional Windows driver metadata"),
     ("settings.desktop", "Committed keyboard and mouse output settings"),
     ("settings.autostart", "Native auto-start registration status"),
+    ("settings.window-state", "Native window geometry persistence status"),
     ("storage.backups", "Backup inventory and operation phase"),
     ("designer.workspace", "Latest designer workspace commit revisions"),
 ];
@@ -136,6 +137,7 @@ mod tests {
             "usb.inventory",
             "system.inventory",
             "settings.autostart",
+            "settings.window-state",
             "preferences.remembered",
             "controllers.input.11111111-1111-4111-8111-111111111111",
             "can.inputs.0123456789abcdef01234567.0123456789abcdef0123456789abcdef",

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering}, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tauri::{
@@ -36,7 +36,6 @@ pub struct DesktopState {
     minimized_handled: AtomicBool,
     window_save: crate::window_persistence::SaveWorker,
     geometry: crate::persistence::ui::window_writer::WindowWriter,
-    window_error: Mutex<Option<String>>,
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     autostart: Option<autostart_observation::Observer>,
 }
@@ -125,7 +124,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let tray_error = create_tray(app).err().map(|e|e.to_string());
     preferences.set_tray_available(tray_error.is_none());
     let window_error=crate::desktop_geometry::restore(app.handle()).err();
-    let geometry=crate::persistence::ui::window_writer::WindowWriter::new(preferences.clone());
+    let observations = app.state::<crate::NativeGateway>().0.observation_runtime();
+    let geometry=crate::persistence::ui::window_writer::WindowWriter::observe(preferences.clone(), observations, window_error)?;
     let handle=app.handle().clone();
     let window_save=crate::window_persistence::SaveWorker::new(std::time::Duration::from_millis(300),move || {
         let save_handle=handle.clone();
@@ -138,7 +138,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray_available: tray_error.is_none(),
         tray_error,
         minimized_handled: AtomicBool::new(false),
-        window_save, geometry, window_error:Mutex::new(window_error),
+        window_save, geometry,
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         autostart,
     });
@@ -172,7 +172,7 @@ pub async fn desktop_preferences(
         "trayError": state.tray_error,
         "settingsError": settings_error,
         "settingsRevision":settings_revision,
-        "windowStateError":state.geometry.error().or_else(||state.window_error.lock().unwrap_or_else(|p|p.into_inner()).clone()),
+        "windowStateError":state.geometry.error(),
         "autostartSupported": cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux")),
         "autostartObserved": autostart_observed,
         "autostartEnabled": autostart.as_ref().copied().unwrap_or(false),
@@ -258,7 +258,7 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => state.window_save.changed(),
         // Flush before destruction (or hiding to tray), while the live window
         // can still provide its final size and maximized state to the plugin.
-        tauri::WindowEvent::CloseRequested { .. } => { save_window_state(window.app_handle()); if let Err(error)=state.geometry.flush(){*state.window_error.lock().unwrap_or_else(|p|p.into_inner())=Some(error.clone());eprintln!("Could not flush window geometry: {error}");} },
+        tauri::WindowEvent::CloseRequested { .. } => { save_window_state(window.app_handle()); if let Err(error)=state.geometry.flush(){eprintln!("Could not flush window geometry: {error}");} },
         _ => {},
     }
     if !state.tray_available {
@@ -278,7 +278,8 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 fn save_window_state(app:&tauri::AppHandle){
     let Some(state)=app.try_state::<DesktopState>()else{return};
     let result=crate::desktop_geometry::capture(app).and_then(|value|if value.is_null(){Ok(())}else{state.geometry.queue(value)});
-    if let Err(error)=result{*state.window_error.lock().unwrap_or_else(|p|p.into_inner())=Some(error.clone());eprintln!("Could not save window geometry: {error}");}
+    if let Err(error)=&result{eprintln!("Could not save window geometry: {error}");}
+    state.geometry.capture_result(result.err());
 }
 pub(crate) fn shutdown(app:&tauri::AppHandle){
     if let Some(state)=app.try_state::<DesktopState>(){

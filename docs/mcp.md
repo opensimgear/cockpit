@@ -366,6 +366,7 @@ Several other topics carry a revision and leave the exact read to a tool.
 | `system.inventory` | `system_inventory` for the bounded inventory, or `controller_visibility_status` with a physical source ID. |
 | `settings.desktop` | Committed desktop output enablement, scope and qualification. Use `profile_desktop_status` for an explicit runtime readiness snapshot. |
 | `settings.autostart` | Native auto-start registration status on Windows, macOS, and Linux. The snapshot carries `enabled` and `error`, with `enabled` unset while status is unavailable. |
+| `settings.window-state` | Native window geometry persistence diagnostic. The snapshot carries an `error` string or `null`. |
 | `profiles.desktop` | Current keyboard and mouse readiness. Use `profile_desktop_status` for detailed recovery diagnostics. |
 
 For retained cleanup, pass the exact inspected `reference` to

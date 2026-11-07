@@ -13,7 +13,6 @@
     trayAvailable: boolean;
     trayError: string | null;
     settingsError: string | null;
-    windowStateError?: string | null;
     autostartSupported: boolean;
     autostartObserved: boolean;
     autostartEnabled: boolean;
@@ -28,6 +27,7 @@
   let error = $state('');
   let message = $state('');
   const visible = $derived(desktop && active && documentVisible);
+  let windowStateError = $state<string | null>(null);
   let observedAutostart = $state<{ enabled: boolean | null; error: string | null }>();
   const autostartEnabled = $derived(preferences?.autostartObserved ? observedAutostart?.enabled : preferences?.autostartEnabled);
   const autostartError = $derived(preferences?.autostartObserved ? observedAutostart?.error : preferences?.autostartError);
@@ -71,6 +71,17 @@
       preferences = undefined;
       loading = true;
     }
+  });
+
+  $effect(() => {
+    if (!visible) return;
+    const observations = new SharedObservations();
+    observations.subscribe('settings.window-state', state => {
+      const payload = state.frame?.payload as {error?: unknown} | undefined;
+      windowStateError = state.status === 'ready' && state.frame?.source === 'window-persistence'
+        && typeof payload?.error === 'string' ? payload.error : null;
+    });
+    return () => { observations.close(); windowStateError = null; };
   });
 
   $effect(() => {
@@ -135,7 +146,9 @@
       <div><strong>Start Cockpit when I sign in</strong><p>{preferences.autostartSupported ? 'Automatically launch Cockpit when you sign in to this computer.' : 'Auto-start is not supported on this platform.'}</p></div>
       <button class="toggle" class:on={autostartEnabled === true} role="switch" aria-label="Start Cockpit when I sign in" aria-checked={autostartEnabled ?? false} disabled={busy || !preferences.autostartSupported || autostartEnabled == null} onclick={() => toggle('autostartEnabled')}><span></span></button>
     </div>
-    {#if preferences.windowStateError}<Notification message={'Window geometry could not be saved or restored: ' + preferences.windowStateError} kind="error" />{/if}
+    {#if windowStateError}
+      <div class="preference-row"><p class="geometry-error" role="status">Window geometry could not be saved or restored: {windowStateError}</p></div>
+    {/if}
     {#if preferences.trayError}<Notification message={'The system tray is unavailable: ' + String(preferences.trayError)} kind="error" />{/if}
     {#if preferences.settingsError}<Notification message={'Saved desktop preferences could not be read: ' + String(preferences.settingsError) + '. Normal window behavior is active.'} kind="error" />{/if}
     {#if autostartError}<div class="preference-row"><Notification message={'Auto-start status could not be read: ' + autostartError} kind="error" /><button class="secondary-button" disabled={busy} onclick={load}><Icon name="refresh" size={14} />Retry</button></div>{/if}
@@ -148,5 +161,6 @@
 <style>
   .desktop-preferences { margin-top: var(--ui-section-gap); }
   .preference-row p { line-height: var(--ui-line-height); max-width: 620px; }
+  .geometry-error { color: var(--danger, #e5b19b); }
   .toggle:disabled { opacity: .45; cursor: not-allowed; }
 </style>

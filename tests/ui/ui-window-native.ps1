@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][int]$CockpitPid,[Parameter(Mandatory=$true)][string]$Executable,[Parameter(Mandatory=$true)][ValidateSet('inspect','resize','close','minimize','show')][string]$Action,[long]$WindowHandle=0)
+param([Parameter(Mandatory=$true)][int]$CockpitPid,[Parameter(Mandatory=$true)][string]$Executable,[Parameter(Mandatory=$true)][ValidateSet('inspect','resize','close','minimize','show')][string]$Action,[long]$WindowHandle=0,[ValidateRange(600,2000)][int]$Width=1300,[ValidateRange(500,1600)][int]$Height=900,[switch]$Background)
 $ErrorActionPreference='Stop'
 $uiProcess=Get-Process -Id $CockpitPid
 $uiExecutable=(Resolve-Path -LiteralPath $Executable).Path
@@ -24,7 +24,7 @@ $uiWindowPid=0
 $null=[UiAcceptanceWindow]::GetWindowThreadProcessId($uiHandle,[ref]$uiWindowPid)
 if($uiWindowPid -ne $CockpitPid){throw 'The selected window no longer belongs to the isolated Cockpit.'}
 switch($Action){
- 'resize' {$null=[UiAcceptanceWindow]::ShowWindow($uiHandle,9);if(-not[UiAcceptanceWindow]::SetWindowPos($uiHandle,[IntPtr]::Zero,80,70,1300,900,0x0014)){throw 'Could not resize the acceptance window.'}}
+ 'resize' {if(!$Background){$null=[UiAcceptanceWindow]::ShowWindow($uiHandle,9)};if(-not[UiAcceptanceWindow]::SetWindowPos($uiHandle,[IntPtr]::Zero,80,70,$Width,$Height,0x0014)){throw 'Could not resize the acceptance window.'}}
  'close' {$null=[UiAcceptanceWindow]::PostMessage($uiHandle,0x10,[IntPtr]::Zero,[IntPtr]::Zero)}
  'minimize' {$null=[UiAcceptanceWindow]::ShowWindow($uiHandle,6)}
  'show' {Start-Process -FilePath $uiExecutable -WorkingDirectory (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $uiExecutable)))) -WindowStyle Hidden | Out-Null}

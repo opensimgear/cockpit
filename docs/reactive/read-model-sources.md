@@ -16,6 +16,7 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 | `profiles.activation`, `profiles.learning` | Activation progress and native input learning publish their own lifecycle revisions | Activation window and MCP passive input learning. The profile editor no longer mounts the learning panel after the controller settings simplification in `2013ce62`. |
 | `profiles.desktop`, `settings.desktop` | Runtime readiness from profile read models and committed output settings from the desktop settings owner | Profile Debug and Settings Devices respectively. |
 | `settings.autostart` | Windows Run and StartupApproved events, macOS LaunchAgent file events, and Linux XDG registration file events wake the desktop auto-start owner before the retained status changes | General Settings reads the stream only while visible. MCP exposes the same snapshot from the native desktop. |
+| `settings.window-state` | The native window persistence owner publishes its current restore, capture, save, or flush diagnostic and clears it on recovery | General Settings reads the error while visible. The read-scoped MCP resource carries the same diagnostic. |
 | `profiles.debug-inputs`, `profiles.samples.<owner-node>` | Gateway debug input publication and the exact applied profile owner and node sample publisher | Authored input controls and live profile block previews. |
 | `profiles.retired-recovery` | Retained recovery owner publishes recovery and provisioning transitions | Recovery controls and status. |
 | `games.state`, `games.detail.<id>` | Game read-model worker captures prepared caches after source revisions | Game library and scoped game details. Immutable page reads follow the exact projected references. |
@@ -40,10 +41,9 @@ discards replies from retired views. Auto-start updates use the same retained
 topic on Windows, macOS, and Linux. Windows follows the registry. The file
 watcher follows the registration paths used by the pinned plugin. [Registry verification](../verification/2026-11-07-desktop-autostart-observation.md) · [File watcher verification](../verification/2026-11-07-desktop-autostart-files.md)
 
-Window geometry persistence can set `windowStateError` after an asynchronous
-save. General currently reads that diagnostic on visible open, so the live
-diagnostic still needs a producer. The saved geometry itself applies on the
-next launch.
+Window geometry failures and recovery publish a separate retained diagnostic.
+General retires that reader while hidden and opens on the current diagnostic.
+The saved geometry itself applies on the next launch. [Running verification](../verification/2026-11-07-window-state-observation.md)
 
 The artwork regression runs against the native gateway over both transports.
 It changes, deletes and restores an owned file and checks every transition in
