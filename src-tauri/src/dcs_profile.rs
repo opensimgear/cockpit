@@ -8,6 +8,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -179,7 +180,7 @@ impl TelemetryCatalogue {
             revision: self.revision.clone(),
             files: self.files.clone(),
             checked: Instant::now(),
-            full_checked: Instant::now(),
+            full_checked: Arc::new(Mutex::new(Instant::now())),
         }
     }
 }
@@ -193,7 +194,7 @@ pub(crate) struct DcsCatalogueGuard {
     revision: String,
     files: Vec<(PathBuf, Option<CatalogueFile>)>,
     checked: Instant,
-    full_checked: Instant,
+    full_checked: Arc<Mutex<Instant>>,
 }
 impl DcsCatalogueGuard {
     #[cfg(test)]
@@ -210,11 +211,15 @@ impl DcsCatalogueGuard {
                 return Err(SOURCE_CHANGED.into());
             }
         }
-        if now.duration_since(self.full_checked) >= Duration::from_secs(2) {
+        // The command lane and passive validator hold the same immutable
+        // capture. Share completed content proofs without locking during I/O.
+        let full_checked = *self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
+        if now.saturating_duration_since(full_checked) >= Duration::from_secs(2) {
             if TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision {
                 return Err(SOURCE_CHANGED.into());
             }
-            self.full_checked = now;
+            let mut checked = self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
+            *checked = (*checked).max(now);
         }
         self.checked = now;
         Ok(())
@@ -830,7 +835,7 @@ pub(crate) fn guarded_telemetry_sources(
     }
     let sources = telemetry_sources_from_capture(&capture, &capture.metadata, rows)?;
     let mut guard = capture.guard();
-    guard.full_checked -= Duration::from_secs(2);
+    *guard.full_checked.lock().unwrap() -= Duration::from_secs(2);
     guard.validate(true)?;
     Ok((sources, guard, capture.metadata))
 }

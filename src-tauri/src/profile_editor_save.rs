@@ -123,7 +123,7 @@ impl GatewayManager {
             // Keep the selected profile, Manual/Automatic mode and rule reconciler
             // unchanged. Only this exact active run is replaced.
             coordinator.apply(candidate)?;
-            self.advance_profile_admission();
+            self.commit_profile_apply(&mut coordinator, epoch);
             Ok(())
         })();
         self.finish_profile_activation(&activation_id, &match &result {

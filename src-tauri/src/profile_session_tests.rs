@@ -632,7 +632,7 @@ fn staged_apply_rechecks_stop_admission_and_drops_unarmed_payloads() {
         // admission fence rejects its late result before ownership can return.
         runtime.lock().unwrap().stop()?;
         Ok(stage)
-    }, |_| Err::<(), _>("Stop cancelled the staged admission.".to_owned()), || {});
+    }, |_| Err::<(), _>("Stop cancelled the staged admission.".to_owned()), |_| {});
     assert!(result.is_err());
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.lock().unwrap().status().state, State::Stopped);

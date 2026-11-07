@@ -1,7 +1,6 @@
 // Acceptance against desktop Cockpit or its browser-dev gateway. The simulator
 // process, BIOS frames and ownship envelopes are authored fixtures.
 // OSG_DCS_COMBINED_VJOY_PROBE adds a browser panel and a temporary vJoy slot.
-// Setup and Repair write only to the private user folder.
 // The opt-in discovery test briefly adds an empty, uniquely named profile directory.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,12 +14,10 @@ import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
-
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
 const seconds = soakSeconds(process.env.OSG_DCS_COMBINED_SOAK_SECONDS);
-
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const normalizedPath = value => value.replace(/^\\\\\?\\/, '').replaceAll('/', '\\').toLowerCase().replace(/\\+$/, '');
@@ -28,7 +25,6 @@ const nodeId = id => `value-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 const near = (actual, expected) => typeof expected === 'number'
   ? typeof actual === 'number' && Math.abs(actual - expected) < 1e-7
   : actual === expected;
-
 function block(address, bytes) {
   const header = Buffer.alloc(4); header.writeUInt16LE(address); header.writeUInt16LE(bytes.length, 2);
   return Buffer.concat([header, bytes]);
@@ -52,7 +48,6 @@ async function fixtureExecutable(directory) {
   {windowsHide: true, env: {...process.env, OSG_DCS_PHYSICS_FIXTURE: executable}});
   return executable;
 }
-
 test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and BIOS remain independent through withdrawal and rearm`, {
   skip: !browserUrl && process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000 + seconds * 1000,
 }, async () => {
@@ -60,6 +55,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
   if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
+  const nativeCommands = process.env.OSG_DCS_COMMANDS_NATIVE === '1';
+  if (nativeCommands) assert.ok(nativeRates, 'The DCS command fixture requires native rates');
   if (seconds) assert.ok(observeMcp && !nativeRates, 'Soak requires combined desktop MCP with the debug and panel input profile');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
@@ -172,7 +169,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     await request({command: 'game_installation_select', gameId: 'dcs', installationId: fixtureInstallation.id});
     assert.equal((await game()).selectedInstallationId, fixtureInstallation.id);
     const connection = {...before.connection, cataloguePath: resolve(biosTarget, 'doc/json'), freshnessMs: 600,
-      commandHost: '127.0.0.1', commandPort: 7778, listenAddress: '0.0.0.0', listenPort: 5010,
+      commandHost: '127.0.0.1', commandPort: await combined?.openCommands() ?? 7778, listenAddress: '0.0.0.0', listenPort: 5010,
       multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1'};
     await request({command: 'game_integration_settings_save', gameId: 'dcs', expectedSetupRevision: (await game()).integrationSetup.providerSetupRevision, connection, userFolder, aircraftModule: 'A-10C'});
     assert.notEqual((await game()).integrationSetup.providerSetupRevision, before.providerSetupRevision);
@@ -298,7 +295,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     document.resources.push({id: 'telemetry', name: 'Private DCS telemetry', kind: 'game', required: true, ports: chosen.map(row => ({...row.descriptor, id: row.descriptor.id.slice(8)}))});
     for (const row of chosen) { const id = row.descriptor.id.slice(8), node = nodeId(id); document.processingNodes.push(identity(node, row.descriptor.contract)); document.bindings.push({id: `route-${node}`, from: {nodeId: 'telemetry', portId: id}, to: {nodeId: node, portId: 'in'}}); }
     const assignments = [{resourceId: 'telemetry', sourceId: resource.id, ports: chosen.map(row => ({profilePortId: row.descriptor.id.slice(8), observedPortId: row.descriptor.id, expectedContractHash: row.contractHash}))}];
-    await combined?.prepare(document, assignments);
+    await combined?.prepare(document, assignments, aircraft);
     const saved = (await request({command: 'profile_editor_save', document, assignments, expectedRevision: document.revision})).profiles.document; profile.revision = saved.revision;
     await combined?.bind(profile);
     evidence.captured = {resource, ports: chosen, profile};
@@ -412,8 +409,10 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       evidence.phases.panelPresentation, browserUrl || nativeRates ? evidence.phases.combined : null,
     ) : [];
     evidence.budgetMisses = budgetMisses;
+    if (nativeCommands) biosMode = 'full';
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
-    evidence.phases.ownshipOnlyStart = await until(async () => {
+    if (nativeCommands) evidence.phases.commandReapply = await live();
+    else evidence.phases.ownshipOnlyStart = await until(async () => {
       const page = await samples();
       return page && output(page, biosId)?.status !== 'known'
         && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
@@ -430,7 +429,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     await until(async () => { const page = await samples(); return !page || Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, 'Process exit retained processing values');
     evidence.phases.afterProcessExit = (await status()).profileSession;
     checks.push('Independent inspection and selected native/canonical profile values preserve zero/false and units; unbound wind and BIOS aircraft gauge remain inspectable.');
-    checks.push('Counter-only BIOS renewals preserve retained values; BIOS expiry withdraws its identity output without withdrawing fresh ownship; a new read-only run can start from ownship alone and BIOS recovers independently.');
+    checks.push('Counter-only BIOS renewals preserve retained values. BIOS expiry withdraws its identity output without withdrawing fresh ownship.');
+    checks.push(nativeCommands ? 'A fresh BIOS baseline allows the command profile to reapply without replay.' : 'A new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
     assert.deepEqual(budgetMisses, [], 'Combined software timing budgets');

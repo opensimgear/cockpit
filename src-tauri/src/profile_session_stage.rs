@@ -8,6 +8,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+impl Coordinator<crate::profile_session_host::NativeProfileHost> {
+    pub(crate) fn commit_command_epoch(&mut self, prepared_epoch: u64) -> bool {
+        self.status.owner.as_ref().is_some_and(|owner| {
+            self.host.commit_command_epoch(owner, prepared_epoch)
+        })
+    }
+}
+
 pub(crate) struct Stage {
     fingerprint: [u8; 32],
     payload: Mutex<Option<Box<dyn Any + Send>>>,
@@ -74,7 +82,7 @@ pub(crate) fn apply_staged<H: Host>(
     candidate: Candidate,
     prepare: impl FnOnce(&Candidate) -> Result<Arc<Stage>, String>,
 ) -> Result<(), String> {
-    apply_staged_admitted(coordinator, candidate, prepare, |_| Ok(()), || {})
+    apply_staged_admitted(coordinator, candidate, prepare, |_| Ok(()), |_| {})
 }
 
 /// Native admission is acquired only after the slow preparation. The caller
@@ -85,7 +93,7 @@ pub(crate) fn apply_staged_admitted<H: Host, Guard>(
     candidate: Candidate,
     prepare: impl FnOnce(&Candidate) -> Result<Arc<Stage>, String>,
     admit: impl FnOnce(&Candidate) -> Result<Guard, String>,
-    committed: impl FnOnce(),
+    committed: impl FnOnce(&mut Coordinator<H>),
 ) -> Result<(), String> {
     apply_staged_admitted_checked(coordinator, candidate, prepare, admit, committed, None)
 }
@@ -98,7 +106,7 @@ pub(crate) fn apply_staged_admitted_checked<H: Host, Guard>(
     mut candidate: Candidate,
     prepare: impl FnOnce(&Candidate) -> Result<Arc<Stage>, String>,
     admit: impl FnOnce(&Candidate) -> Result<Guard, String>,
-    committed: impl FnOnce(),
+    committed: impl FnOnce(&mut Coordinator<H>),
     expected_owner: Option<&Option<RunOwner>>,
 ) -> Result<(), String> {
     if candidate.stage.is_some() {
@@ -117,11 +125,8 @@ pub(crate) fn apply_staged_admitted_checked<H: Host, Guard>(
     let result = {
         let mut coordinator = coordinator.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(expected) = expected_owner { coordinator.check_expected_owner(expected)?; }
-        coordinator.apply(candidate)
+        coordinator.apply(candidate).map(|()| committed(&mut coordinator))
     };
-    if result.is_ok() {
-        committed();
-    }
     drop(admission);
     result
 }

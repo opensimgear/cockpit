@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {intervals,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
-export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart}) {
+export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst}) {
   const milliseconds = (value) => Number(BigInt(value)-probeStart)/1e6;
   return async function run(owner,setAirborne) {
     const offsets=await paintOffsets(), startNs=process.hrtime.bigint()+150_000_000n;
@@ -11,9 +11,9 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
         assert.equal(reply.ok,true,`qualification_debug_burst: ${reply.error}`);
         return reply.state.qualificationBurst;
       });
-    const [rows,,mcpSamples,canvases]=await Promise.all([invoke,
+    const [rows,,mcpSamples,canvases,dcsCommands]=await Promise.all([invoke,
       (async()=>{await delay(Number(startNs-process.hrtime.bigint())/1e6+10);setAirborne(true);})(),
-      observation.samplePorts([{portId:'button-1',value:true},{portId:'button-2',value:true}]),litCanvases(offsets)]);
+      observation.samplePorts([{portId:'button-1',value:true},{portId:'button-2',value:true}]),litCanvases(offsets),commandBurst?.(startNs)]);
     assert.equal(rows.length,lanes.length);
     const submissions=rows.map((lane,index)=>{
       assert.equal(lane.length,lanes[index].count);
@@ -29,6 +29,10 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
     const overlapEnd=Math.min(...submissions.map(rows=>rows.at(-1).offerAtMs));
     for(const panel of canvases)assert.ok(panel.earliestMs>=overlapStart&&panel.latestMs<=overlapEnd,
       `Panel ${panel.panel} must paint during native-rate overlap`);
+    for(const packet of dcsCommands?.datagrams??[]){
+      const at=milliseconds(packet.atNs);
+      assert.ok(at>=overlapStart&&at<=overlapEnd,`DCS command ${packet.text.trim()} must arrive during native-rate overlap`);
+    }
     const after=await Promise.all(panels.map(({page})=>samples(page).then(rows=>rows.length)));
     setAirborne(false);
     await Promise.all(panels.map(({page},index)=>waitLamp(after[index],
@@ -45,6 +49,6 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
         dispatchIntervalsMs:summarizeMilliseconds(intervals(dispatch)),
         completionIntervalsMs:summarizeMilliseconds(intervals(admitted))};
     });
-    return {submissions,evidence,mcpSamples,overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases};
+    return {submissions,evidence,mcpSamples,overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases,dcsCommands};
   };
 }

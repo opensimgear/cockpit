@@ -5,6 +5,24 @@ use companion::tests::NativeFixture;
 use std::sync::Mutex;
 
 #[test]
+fn command_epoch_commits_once_and_does_not_adopt_a_newer_stop_epoch() {
+    let fixture = NativeFixture::new();
+    let host = fixture.host();
+    let epoch = host.admission_epoch.clone();
+    let mut coordinator = crate::profile_session::Coordinator::new(host, None);
+    coordinator.apply(fixture.candidate(false)).unwrap();
+    assert!(coordinator.commit_command_epoch(1));
+    assert_eq!(epoch.load(Ordering::Acquire), 2);
+    assert!(!coordinator.commit_command_epoch(1));
+
+    // The Stop request invalidates the epoch before acquiring the coordinator.
+    epoch.fetch_add(1, Ordering::AcqRel);
+    assert!(!coordinator.commit_command_epoch(2));
+    assert_eq!(epoch.load(Ordering::Acquire), 3);
+    coordinator.stop().unwrap();
+}
+
+#[test]
 fn native_progress_follows_actual_companion_apply_order_and_exact_epoch() {
     let fixture = NativeFixture::new();
     let events = Arc::new(Mutex::new(vec![]));

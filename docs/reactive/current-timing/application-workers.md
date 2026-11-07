@@ -19,7 +19,7 @@
 | `src-tauri/src/persistence/ui/window_writer.rs:41` | Operation deadline | Wait for an explicit flush to complete within its budget. |
 | `src-tauri/src/persistence/ui/window_writer.rs:62,63` | Fixture | Bound the geometry coalescing test's commit barrier. |
 | `src-tauri/src/profile_activation_progress/observation.rs:72` | Source wake and expiry | Committed activation and companion work wake the progress projector. The nearest presentation or retained operation expiry also wakes it. |
-| `src-tauri/src/profile_automatic.rs:863` | Source wake and retry | Reconcile after process, provider or profile changes. Outstanding vehicle and peripheral retries supply the next deadline for the current owner. |
+| `src-tauri/src/profile_automatic.rs:861` | Source wake and retry | Reconcile after process, provider or profile changes. Outstanding vehicle and peripheral retries supply the next deadline for the current owner. |
 | `src-tauri/src/profile_debug_controller/qualification.rs:80,222,231` | Fixture | A fixed, explicitly enabled desktop qualification burst offers edges at Windows performance-counter deadlines. Two bounded lane workers submit already available edges through the owner-fenced debug queue. |
 | `src-tauri/src/profile_game_launch.rs:328` | Acquisition fallback | Wait for activation notifications until startup expiry. When the activation worker is unavailable, exact launch verification can still use a scoped 100 ms fallback. |
 | `src-tauri/src/profile_game_orchestration_runtime.rs:380` | Operation deadline | Wait for the started process proof and ownership changes until the held launch expires. |
@@ -39,7 +39,7 @@
 | `src-tauri/src/profile_session_action_host.rs:88` | Operation deadline | Wait for exact physical action acquisition, binding or cleanup evidence until the operation deadline. |
 | `src-tauri/src/profile_session_actions.rs:810` | Lease and binding deadlines | Physical action dispatch wakes for bind, work, Stop or the current lease renewal and bind deadlines. |
 | `src-tauri/src/profile_session_companion_host.rs:417` | Operation deadline | Wait for producer changes or the panel preparation deadline while activation separately renews held outputs. |
-| `src-tauri/src/profile_session_host.rs:302` | Operation deadline | Wait for exact native panel baseline publication until the activation deadline. |
+| `src-tauri/src/profile_session_host.rs:303` | Operation deadline | Wait for exact native panel baseline publication until the activation deadline. |
 | `src-tauri/src/profile_session_launch_host.rs:190` | Operation deadline | Wait for provider notification, validation or baseline deadline. Sources without a wake can retain a bounded fallback. |
 | `src-tauri/src/profile_session_panels_inputs.rs:266` | Fixture | Bounded wait used by the synchronous panel test Start helper; live activation uses the independently woken baseline path. |
 | `src-tauri/src/profile_session_panels_inputs/can_stream.rs:205` | Source wake and expiry | Wait for exact gateway CAN delivery or the original capture freshness deadline. |

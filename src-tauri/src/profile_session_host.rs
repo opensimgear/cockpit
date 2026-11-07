@@ -71,6 +71,7 @@ struct NativeRun {
     sample_revision: Option<Option<u64>>,
     owner: RunOwner,
     admission_epoch: u64,
+    command_epoch: u64,
     report: CompilationReport,
     assignments: Vec<osg_profiles::store::LocalAssignment>,
     document: osg_profiles::ProfileDocument,
@@ -307,6 +308,20 @@ impl NativeProfileHost {
             return Err("Profile takeover was cancelled by a newer native control request.".into());
         }
         Ok(())
+    }
+    pub(crate) fn commit_command_epoch(&mut self, owner: &RunOwner, prepared_epoch: u64) -> bool {
+        let Some(state) = self.prepared.get_mut(&key(owner)).filter(|state| {
+            &state.owner == owner && state.command_epoch == prepared_epoch
+        }) else { return false; };
+        // A control request may advance the epoch before taking the coordinator
+        // lock. Only this Apply's own increment can authorize the new run.
+        let committed_epoch = prepared_epoch.wrapping_add(1);
+        if self.admission_epoch.compare_exchange(prepared_epoch, committed_epoch,
+            Ordering::AcqRel, Ordering::Acquire).is_err() {
+            return false;
+        }
+        state.command_epoch = committed_epoch;
+        true
     }
     fn check_transition(&self, owner: &RunOwner) -> Result<(), String> {
         let state = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner)
@@ -603,7 +618,7 @@ impl NativeProfileHost {
                     .ok_or("The simulator action is dormant or no longer ready.")?;
                 let token = sink.token.as_ref().filter(|token| token.access == osg_profiles::resources::Access::Invoke)
                     .ok_or("The simulator action has no current native invocation token.")?;
-                state.game.queue_command(games, resources, token, &effect, (epoch.clone(), state.admission_epoch))
+                state.game.queue_command(games, resources, token, &effect, (epoch.clone(), state.command_epoch))
             })();
             if let Err(error) = result {
                 let loss = state.game.fail(effect.at_us.0, error);
@@ -927,7 +942,7 @@ impl Host for NativeProfileHost {
         prepared.admission.optional_unavailable.extend(actions.optional_unavailable().iter().cloned());
         self.prepared.insert(key(owner), NativeRun {
             sample_templates, sample_revision: None,
-            owner: owner.clone(), admission_epoch, report, assignments,
+            owner: owner.clone(), admission_epoch, command_epoch: admission_epoch, report, assignments,
             document, source_document:candidate.document.clone(),source_assignments:candidate.assignments.clone(),vehicle_selection,vehicle_paused:false,vehicle_error:None,
             backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),

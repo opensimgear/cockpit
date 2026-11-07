@@ -295,7 +295,7 @@ fn peripheral_reconnect_progress_is_created_only_after_preparation_and_at_handof
         |_| -> Result<(), String> {
             panic!("failed read-only preparation must not announce activation progress");
         },
-        || {},
+        |_| {},
         Some(&Some(run_owner.clone())),
     );
     assert!(failed.is_err());
@@ -315,7 +315,7 @@ fn peripheral_reconnect_progress_is_created_only_after_preparation_and_at_handof
             observed_during_handoff.set(request(manager, "profile_activation_current", json!({}))["state"]["profileActivation"]["activationId"] == id);
             Ok((admission, game))
         },
-        || { manager.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
+        |coordinator| manager.commit_profile_apply(coordinator, epoch),
         Some(&Some(run_owner)),
     );
     assert!(applied.is_ok());

@@ -713,7 +713,7 @@ impl GatewayManager {
                         profiles.request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}))?;
                         Ok((admission, game_admission))
                     },
-                    || { self.advance_profile_admission(); },
+                    |coordinator| self.commit_profile_apply(coordinator, admission_epoch),
                     expected_owner.as_ref(),
                 )?;
             },
@@ -812,6 +812,12 @@ impl GatewayManager {
         let epoch = self.profile_admission_epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         self.games.read_model_signal().wake_profile_admission();
         epoch
+    }
+
+    fn commit_profile_apply(&self, coordinator: &mut crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>, epoch: u64) {
+        if coordinator.commit_command_epoch(epoch) {
+            self.games.read_model_signal().wake_profile_admission();
+        }
     }
 
     fn invalidate_learning(&self)->u64{let epoch=self.advance_profile_admission();self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}

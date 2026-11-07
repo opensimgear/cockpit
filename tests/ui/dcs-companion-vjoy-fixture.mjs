@@ -13,6 +13,7 @@ import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst} from './dcs-native-rate-burst.mjs';
+import {nativeDcsCommands} from './dcs-native-command-fixture.mjs';
 import {runDcsSoak} from './dcs-feature-soak.mjs';
 import {installSoakPanel} from './dcs-soak-panel.mjs';
 import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
@@ -28,6 +29,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   const inventory = async () => (await request({command:'system_inventory'})).systemInventory.virtualDevices;
   let browser, page, slot, probe, report, probeStart, probeReady, listenerEnabled=false, dualSubmissions, presentation;
   let observation, nativeSubmissions;
+  const commands=process.env.OSG_DCS_COMMANDS_NATIVE==='1'?nativeDcsCommands(cdp,request):null;
   const paired=Boolean(browserUrl || observeMcp);
   const panels=[];
   const samples=(target=page)=>target.evaluate(()=>window.__combinedLamp);
@@ -143,7 +145,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     }))});
   }
 
-  async function prepare(document, assignments) {
+  async function prepare(document, assignments, aircraft) {
     await enableListener();
     const first=await connectPanel();
     page=first.page;
@@ -169,6 +171,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       return graphConnect(draft,{nodeId:'${sources[1]}',portId:'${browserUrl||nativeRates?'button-1':'press'}'},{nodeId:'${outputNode}',portId:'button-2'});
     })()`);
     Object.assign(document,draft.document);
+    await commands?.attach(document,assignments,aircraft);
   }
 
   async function bind(profile) {
@@ -374,7 +377,8 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     await startProbe();
     if(browserUrl)return browserBurst(owner,setAirborne);
     if(nativeRates){
-      const result=await createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart})(owner,setAirborne);
+      const commandBurst=commands&&(start=>commands.run(owner,start,()=>page.getByRole('button',{name:'probe: press',exact:true}).click()));
+      const result=await createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst})(owner,setAirborne);
       const {submissions,evidence:nativeRateEvidence,...load}=result;
       dualSubmissions=submissions;
       return {...load,nativeRateEvidence,submissionTimestamp:'source offer'};
@@ -443,7 +447,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   async function close() {
     probe?.kill();
     stopTrace?.();
-    try {await observation?.close();} finally {await closePanels();}
+    try {await observation?.close();} finally {try {await closePanels();} finally {await commands?.close();}}
   }
   async function closePanels() {
     try {await browser?.close();} finally {
@@ -463,7 +467,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     observation=undefined;
     return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:true}};
   }
-  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close};
+  return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close,openCommands:()=>commands?.open()};
 }
 
 export function combinedTimingMisses(timing, load) {

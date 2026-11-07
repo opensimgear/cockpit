@@ -356,7 +356,7 @@ impl GatewayManager {
                 self.note_profile_activation(epoch,"reconnecting-peripherals","Applying fresh device baselines and reconnecting available profile devices…");
                 Ok((admission,game))
             },
-            ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
+            |coordinator| self.commit_profile_apply(coordinator, epoch),Some(&Some(owner.clone())));
         if let Some(id)=activation_id.into_inner() {
             self.finish_profile_activation(&id,&match &result {
                 Ok(())=>json!({"ok":true}),Err(error)=>json!({"ok":false,"error":error}),
@@ -406,7 +406,7 @@ impl GatewayManager {
                     self.note_profile_activation(epoch,"switching-vehicle","Applying the current vehicle settings and retaining Base settings…");
                     Ok((admission,game))
                 },
-                ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
+                |coordinator| self.commit_profile_apply(coordinator, epoch),Some(&Some(owner.clone())));
             if let Err(error)=&result {
                 self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).vehicle_switch_failed(&owner,error);
             }
@@ -815,9 +815,7 @@ impl GatewayManager {
                     profiles.request(&json!({"command":"profile_select","id":target.profile_id,"selectionSource":"automatic"}))?;
                     Ok((admission, game_admission))
                 },
-                || {
-                    self.advance_profile_admission();
-                },
+                |coordinator| self.commit_profile_apply(coordinator, admission_epoch),
             )
         })();
         self.profile_automatic

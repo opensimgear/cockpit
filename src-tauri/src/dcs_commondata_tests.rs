@@ -48,6 +48,20 @@ fn rows() -> Vec<Value> {
 }
 
 #[test]
+fn completed_catalogue_content_check_is_shared_only_with_the_same_capture() {
+    let fixture = Fixture::new();
+    let mut passive = fixture.guard();
+    let command = passive.clone();
+    let independent = fixture.guard();
+    let independent_checked = *independent.full_checked.lock().unwrap();
+    *passive.full_checked.lock().unwrap() -= Duration::from_secs(3);
+    let began = Instant::now();
+    passive.validate(true).unwrap();
+    assert!(*command.full_checked.lock().unwrap() >= began);
+    assert_eq!(*independent.full_checked.lock().unwrap(), independent_checked);
+}
+
+#[test]
 fn explicit_base_catalogue_contains_only_read_only_commondata_and_keeps_aircraft_authority_exact() {
     let fixture = Fixture::new();
     let catalogue = resource_catalogue(&json!({"cataloguePath":fixture.0.path(),"aircraftModule":"CommonData"})).unwrap();
@@ -170,12 +184,12 @@ fn assert_mh6_commondata_only(path: &Path) {
     assert_eq!(catalogue_file(&alias_path).unwrap(), alias_signature);
     // A forced check observes metadata, not an unconditional content digest.
     // Keep this deterministic when Windows preserves a same-size write's time.
-    guard.full_checked = Instant::now();
+    *guard.full_checked.lock().unwrap() = Instant::now();
     guard.validate(true).unwrap();
     assert!(guarded_telemetry_sources(path, "MH-6J", &rows(), revision).is_err());
     assert!(resource_catalogue(&request).is_err());
     guard.checked -= Duration::from_millis(251);
-    guard.full_checked -= Duration::from_secs(3);
+    *guard.full_checked.lock().unwrap() -= Duration::from_secs(3);
     assert!(guard.validate(false).is_err());
 }
 
@@ -387,7 +401,7 @@ fn every_captured_document_and_an_address_only_change_revoke_live_and_prepared_r
     let mut guard = fixture.guard();
     guard.validate(false).unwrap();
     guard.checked -= Duration::from_millis(251);
-    guard.full_checked -= Duration::from_secs(3);
+    *guard.full_checked.lock().unwrap() -= Duration::from_secs(3);
     guard.validate(false).unwrap();
     fixture.edit("CommonData.json", |value| {
         value["Altitude"]["ALT_MSL_FT"]["outputs"][0]["address"] = json!(1078)
@@ -417,7 +431,7 @@ fn same_length_and_restored_timestamp_edits_are_caught_by_the_bounded_full_diges
     // have an explicit two-second bound, not a claim of atomic filesystem I/O.
     guard.validate(true).unwrap();
     guard.checked -= Duration::from_millis(251);
-    guard.full_checked -= Duration::from_secs(3);
+    *guard.full_checked.lock().unwrap() -= Duration::from_secs(3);
     assert!(guard.validate(false).is_err());
 }
 

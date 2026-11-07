@@ -374,6 +374,7 @@ impl NativeProfileHost {
         let state = self.run(&run.owner)?;
         state.delivery = Some(delivery);
         state.admission_epoch = epoch;
+        state.command_epoch = epoch;
         state.launch_epoch_bound = true;
         Ok(())
     }
