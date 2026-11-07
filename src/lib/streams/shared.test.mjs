@@ -164,3 +164,30 @@ test('one listener cannot mutate the shared frame or payload seen by later liste
   });
   client.close();
 });
+
+test('read-only JSON delivery shares frozen state while mutable listeners keep independent copies', () => {
+  const {client, opens} = setup();
+  const states = [];
+  client.subscribe('preferences', state => { if (state.frame) state.frame.payload.items[0].value = 99; });
+  client.subscribeReadonly('preferences', state => states.push(state));
+  const input = delivery({payload:{items:[{value:1}]}});
+  opens[0].observer.frame(input, async () => {});
+  const first = states.at(-1);
+  assert.throws(() => { first.frame.payload.items[0].value = 2; }, TypeError);
+  assert.throws(() => first.frame.payload.items.push({value:3}), TypeError);
+  input.frame.payload.items[0].value = 10;
+  client.subscribeReadonly('preferences', state => states.push(state));
+  assert.equal(states.at(-1), first);
+  assert.equal(first.frame.payload.items[0].value, 1);
+  client.close();
+});
+
+test('read-only delivery clones non-JSON objects with mutable internal state', () => {
+  const {client, opens} = setup();
+  const seen = [];
+  client.subscribeReadonly('preferences', state => state.frame?.payload.date.setUTCFullYear(2000));
+  client.subscribeReadonly('preferences', state => { if (state.frame) seen.push(state.frame.payload.date.getUTCFullYear()); });
+  opens[0].observer.frame(delivery({payload:{date:new Date('2026-01-01T00:00:00Z')}}), async () => {});
+  assert.deepEqual(seen, [2026]);
+  client.close();
+});

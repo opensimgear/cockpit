@@ -1,5 +1,5 @@
 import type { ControllerControl, ControllerResult, HostController } from './controllers.ts';
-import { SharedObservations, type ObservationState } from './streams/shared.ts';
+import { SharedObservations, type ReadonlyObservationState } from './streams/shared.ts';
 import { uint64, type WireFrame } from './streams/protocol.ts';
 import type { DeepReadonly } from './profiles.ts';
 
@@ -100,7 +100,7 @@ function clear(detail: ControllerInputDetail | undefined): ControllerInputDetail
 }
 
 /** Validate into a new result; an invalid frame can never partially update live values. */
-function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBaseline?: Snapshot): Snapshot {
+function reduce(id: string, frame: Readonly<WireFrame>, previous?: Snapshot, descriptorBaseline?: Snapshot): Snapshot {
   const payload = frame.payload;
   requireValid(record(payload) && text(payload.session) && payload.session.length > 0);
   source(payload.source, id);
@@ -248,7 +248,7 @@ export class ControllerInputObservations {
     current.listeners.add(registration);
     this.notify(registration, current.state);
     if (fresh && this.entries.get(sourceId) === current && current.listeners.size > 0) {
-      const stop = this.observations.subscribe(`controllers.input.${sourceId}`, state => {
+      const stop = this.observations.subscribeReadonly(`controllers.input.${sourceId}`, state => {
         if (this.entries.get(sourceId) !== current) return;
         this.accept(sourceId, current, state);
       });
@@ -270,7 +270,7 @@ export class ControllerInputObservations {
   private notify(listener: Listener, state: ControllerInputState): void {
     try { listener(Object.freeze(state)); } catch { /* Frozen views isolate synchronous and delayed consumers without cloning descriptors. */ }
   }
-  private accept(id: string, entry: Entry, state: ObservationState): void {
+  private accept(id: string, entry: Entry, state: ReadonlyObservationState): void {
     if (state.status !== 'ready') {
       entry.state = { status: state.status, detail: clear(entry.baseline ?? entry.state.detail), error: state.error };
       entry.baseline = undefined;

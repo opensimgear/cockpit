@@ -110,3 +110,22 @@ receipt fixture recovered to the current snapshot. All 29 stream and 17
 controller observer tests passed coverage, and Svelte reported zero
 diagnostics. Raw timing is under
 `.research/reactive/held-launch-schedule/controller-copy-1794025246914/`.
+
+## Shared preview delivery
+
+The controller reducer now reads the validated, detached JSON delivery after
+the shared observation layer freezes it. Mutable listeners still receive
+their own copies. Non-JSON values keep clone isolation because freezing
+objects such as dates does not seal their internal state.
+
+Alternating synthetic runs used 137 controls and 4,000 timed deliveries each.
+Median shared delivery cost fell from 611–616 µs to 453 µs. The p95 varied
+between runs. The visible dev Cockpit matched all 125 stationary VKB reports
+over ten seconds and measured 9.87/15.49/16.59 ms journal-to-DOM p50/p95/p99,
+with 2.70 ms clock alignment uncertainty. This trace verifies delivery and
+does not resolve a change in physical latency.
+
+Native delayed receipt recovery and browser-dev controller catalogue rename,
+live input and reopen passed. All 31 stream and 17 controller observer tests
+passed their coverage gates, and Svelte reported zero diagnostics. Local raw
+timing is in `.research/reactive/held-launch-schedule/controller-readonly-1794025476784/`.

@@ -7,6 +7,17 @@ export interface ObservationState {
   error?: string;
 }
 export type ObservationListener = (state: ObservationState) => void;
+export type ReadonlyObservationState = Readonly<Omit<ObservationState, 'frame'>> & {
+  readonly frame?: Readonly<WireFrame>;
+};
+
+function freezeJson(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return true;
+  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (!Object.values(value).every(freezeJson)) return false;
+  Object.freeze(value);
+  return true;
+}
 interface Entry {
   controller: AbortController;
   listeners: Set<ObservationListener>;
@@ -30,14 +41,24 @@ export class SharedObservations {
   }
 
   subscribe(topic: string, listener: ObservationListener): () => void {
+    return this.register(topic, state => listener(structuredClone(state)));
+  }
+
+  /** A read-only consumer can share the detached, frozen JSON delivery. */
+  subscribeReadonly(topic: string, listener: (state: ReadonlyObservationState) => void): () => void {
+    return this.register(topic, state => {
+      // Non-JSON objects can have mutable internal slots even when frozen.
+      listener(Object.isFrozen(state) || freezeJson(state) ? state : structuredClone(state));
+    });
+  }
+
+  private register(topic: string, registration: ObservationListener): () => void {
     if (this.closed) throw new Error('Observations are disposed');
     let entry = this.entries.get(topic);
     if (!entry) {
       entry = { controller: new AbortController(), listeners: new Set(), state: { status: 'connecting' } };
       this.entries.set(topic, entry);
     }
-    // Separate registrations remain independently disposable even for the same callback.
-    const registration: ObservationListener = (state) => listener(state);
     entry.listeners.add(registration);
     this.notify(registration, entry.state);
     const current = entry;
@@ -94,7 +115,7 @@ export class SharedObservations {
   }
 
   private notify(listener: ObservationListener, state: ObservationState): void {
-    try { listener(structuredClone(state)); } catch { /* One consumer cannot stall other observers or ACK. */ }
+    try { listener(state); } catch { /* One consumer cannot stall other observers or ACK. */ }
   }
 
   private publish(entry: Entry, state: ObservationState): void {
