@@ -82,8 +82,10 @@ layout, inventory and CAN route acceptance remain in #199.
 ESP32 Wi-Fi and direct USB pairing now use terminal approval subscriptions
 instead of 400 ms status requests. The software receiver/bridge tests and actual
 Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
-Board compilation and physical transports remain unqualified; the recorded
-ESP-IDF toolchain is unavailable locally. Pico Debug inventory is event-driven
+Current ESP32 direct USB firmware also streams status changes. The host uses
+small liveness messages and requests a full snapshot for discovery and
+identity-bound recovery. Physical transport qualification remains in #199.
+Pico Debug inventory is event-driven
 with an independent watchdog renewal. Cockpit retires the older Pico protocol-1
 adapter by operator decision. The game's 100 ms process and telemetry
 maintenance remain original software work.
@@ -233,6 +235,21 @@ The local `.research/reactive/esp32-board-builds/` directory holds the build
 logs, generated settings, flash manifests and all three images named by each
 manifest. No device was flashed. Boot, transport, touch and timing checks
 remain in #199.
+
+The USB status change in `dfb6bfbb` also cross-builds on both boards with
+ESP-IDF v5.5.2 and the UART console enabled. The application images each leave
+21% of the smallest app partition free.
+
+| Board profile | Application bytes | Application SHA-256 |
+| --- | ---: | --- |
+| `sunton-3248s035r` | 1,652,224 | `3e93879c01e2b09b364d3cdc549f606000b9f8a944bfacf30beb19ad9432a59e` |
+| `waveshare-lcd7-s3` | 1,667,040 | `4bf35961e3a1d09f08984956c63ba9f8aed6de86580f6dfa5bf4d6bb50a8cf8b` |
+
+The local `.research/reactive/esp32-usb-status-builds/` folder holds the
+build logs, generated configurations, flash manifests and installer bundles.
+Both bundles pass Cockpit's local manifest and native installer validators.
+They report firmware version `2026.10.22.7`. Use the source commit and image
+hash to distinguish them from the earlier builds carrying the same version.
 
 The same three images per board were bundled under
 `.research/reactive/esp32-board-builds/installer-bundles/` with their build
