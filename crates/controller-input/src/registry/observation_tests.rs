@@ -4,20 +4,25 @@ use osg_streams::Reader;
 use super::test_support::{encoded_count, wait_processed};
 
 #[test]
-fn closed_preview_defers_encoding_and_reopens_with_current_atomic_baseline() {
+fn closed_preview_skips_typed_updates_and_reopens_with_current_atomic_baseline() {
     let (mut registry,broker,id,mut reader)=setup();
     reader.recv().unwrap();baseline(&mut registry,&id);
     reader.recv().unwrap(); reader.recv().unwrap();
     drop(reader);
     let encoded = encoded_count(&id);
+    let before = registry.stream_snapshot(std::slice::from_ref(&id)).unwrap();
     for value in 0..50 {registry.report(&id,1,&BTreeMap::from([(1,value)])).unwrap();}
-    wait_processed(&registry, &id);
+    assert!(registry.observations.actor.as_ref().unwrap().shared.idle_baseline_pending(&id));
     assert_eq!(encoded_count(&id),encoded,"No unused JSON read model was encoded.");
+    let routed = registry.stream_page(&before.session, before.cursor);
+    assert!(!routed.gap);
+    assert_eq!(routed.events.len(), 50);
     let mut reopened=subscribe(&mut registry,&broker,&id);
     let frame=reopened.recv().unwrap();
     let payload=frame.payload.unwrap();
     assert_eq!(payload["controls"][1]["value"]["native"],49);
     assert_eq!(payload["capturedUs"],registry.sources[&id].captured_us.to_string());
+    assert_eq!(payload["cursor"],routed.events.last().unwrap().cursor.to_string());
     registry.report(&id,1,&BTreeMap::from([(1,50)])).unwrap();
     assert_eq!(reopened.recv().unwrap().kind,"snapshot");
 }

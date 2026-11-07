@@ -104,7 +104,7 @@ impl Registry {
             return;
         };
         if let Some(actor) = &self.observations.actor {
-            actor.shared.capture(id, |slot| {
+            actor.shared.capture(id, reason, |slot| {
                 Update::new(
                     id,
                     &self.session,

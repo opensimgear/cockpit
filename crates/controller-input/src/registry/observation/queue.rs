@@ -1,9 +1,10 @@
 use super::*;
+use osg_streams::Publisher;
 use std::{
     collections::VecDeque,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Condvar, Mutex,
+        Condvar, Mutex, OnceLock,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -25,6 +26,7 @@ pub(super) struct Update {
     pub reason: String,
     pub epoch: u64,
     pub fence: bool,
+    pub idle_baseline: bool,
     pub bytes: usize,
     pub failure: Option<String>,
 }
@@ -46,6 +48,7 @@ impl Update {
             reason: reason.into(),
             epoch,
             fence,
+            idle_baseline: false,
             bytes,
             failure: None,
         }
@@ -112,6 +115,8 @@ pub(super) struct Slot {
     pub broker: Broker,
     pins: AtomicUsize,
     failed: AtomicBool,
+    pub publisher: OnceLock<Publisher>,
+    idle_baseline: AtomicBool,
     progress: Mutex<Progress>,
     ready: Condvar,
     descriptor: Mutex<Option<(u64, String, Arc<Vec<Control>>)>>,
@@ -227,6 +232,8 @@ impl Shared {
                 broker: broker.clone(),
                 pins: AtomicUsize::new(0),
                 failed: AtomicBool::new(false),
+                publisher: OnceLock::new(),
+                idle_baseline: AtomicBool::new(false),
                 progress: Mutex::new(Progress::default()),
                 ready: Condvar::new(),
                 descriptor: Mutex::new(None),
@@ -242,20 +249,35 @@ impl Shared {
         if !slot.pin() {
             return Err("Controller observation retirement in progress; retry.".into());
         }
-        let update = Update::new(id, session, Some(source), "metadata", epoch, true, &slot);
+        let mut update = Update::new(id, session, Some(source), "metadata", epoch, true, &slot);
+        update.idle_baseline = slot.idle_baseline.swap(false, Ordering::Relaxed);
         state.enqueue(slot.clone(), update);
         self.wake.notify_one();
         Ok(slot)
     }
-    pub fn capture(&self, id: &str, update: impl FnOnce(&Slot) -> Update) {
+    pub fn capture(&self, id: &str, reason: &str, update: impl FnOnce(&Slot) -> Update) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.stop {
             return;
         }
-        if let Some(slot) = state.slots.get(id).cloned() {
+        if let Some(slot) = state.slots.get(id) {
             if slot.failed.load(Ordering::Acquire) {
                 return;
             }
+            // Preparation pins the source until its subscription has joined
+            // the journal. The pin and lock-free reader check cover that handoff.
+            if reason == "change"
+                && !slot.pinned()
+                && slot
+                    .publisher
+                    .get()
+                    .is_some_and(|publisher| !publisher.has_reader_demand())
+            {
+                // Both this store and the preparation fence hold the queue lock.
+                slot.idle_baseline.store(true, Ordering::Relaxed);
+                return;
+            }
+            let slot = slot.clone();
             let mut update = update(&slot);
             if update.bytes > MAX_SOURCE_BYTES {
                 let error = "Controller observation snapshot limit reached.".to_string();
@@ -278,6 +300,12 @@ impl Shared {
             .keys()
             .cloned()
             .collect()
+    }
+    #[cfg(test)]
+    pub fn idle_baseline_pending(&self, id: &str) -> bool {
+        self.state.lock().unwrap().slots[id]
+            .idle_baseline
+            .load(Ordering::Relaxed)
     }
     #[cfg(test)]
     pub fn wait_processed(&self, id: &str, epoch: u64) {

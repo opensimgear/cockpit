@@ -13,6 +13,11 @@ impl Publisher {
     pub fn has_readers(&self) -> bool {
         !self.topic.stream.shared.lock().subscribers.is_empty()
     }
+    /// Lock-free demand hint. The owner must coordinate the subscription
+    /// handoff before using a false result to skip updates.
+    pub fn has_reader_demand(&self) -> bool {
+        self.topic.stream.shared.has_readers()
+    }
     /// Withdraw a topic when its owner cannot publish a coherent read model.
     pub fn close(&self) {
         self.topic.stream.close();

@@ -12,7 +12,10 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
     marker::PhantomData,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, MutexGuard,
+    },
     time::{Duration, Instant},
 };
 
@@ -26,6 +29,7 @@ pub(crate) struct Shared {
     pub(crate) limits: Limits,
     pub(crate) state: Mutex<State>,
     pub(crate) wake: Condvar,
+    has_readers: AtomicBool,
 }
 
 pub(crate) struct State {
@@ -129,6 +133,7 @@ where
                     closed: false,
                 }),
                 wake: Condvar::new(),
+                has_readers: AtomicBool::new(false),
             }),
             marker: PhantomData,
         })
@@ -160,6 +165,7 @@ where
                 loss_before_snapshot: false,
             },
         );
+        self.shared.has_readers.store(true, Ordering::Release);
         Ok(Subscription {
             shared: self.shared.clone(),
             id,
@@ -319,8 +325,7 @@ where
 
 impl<S, E> Drop for Subscription<S, E> {
     fn drop(&mut self) {
-        self.shared.lock().subscribers.remove(&self.id);
-        self.shared.wake.notify_all();
+        self.shared.remove_reader(self.id);
     }
 }
 
@@ -391,6 +396,19 @@ pub(crate) fn validate_clock(clock: &str) -> Result<(), PublishError> {
 }
 
 impl Shared {
+    pub(crate) fn has_readers(&self) -> bool {
+        self.has_readers.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn remove_reader(&self, id: u64) {
+        let mut state = self.lock();
+        state.subscribers.remove(&id);
+        self.has_readers
+            .store(!state.subscribers.is_empty(), Ordering::Release);
+        drop(state);
+        self.wake.notify_all();
+    }
+
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
         self.state
             .lock()

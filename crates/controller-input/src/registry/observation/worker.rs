@@ -90,6 +90,7 @@ fn process(
                 .replace_generation(generation, snapshot, source.captured_us, &clock)
                 .map_err(|e| e.to_string())?;
         }
+        work.slot.publisher.get_or_init(|| binding.publisher.clone());
         bindings.insert(work.slot.token, binding);
         return Ok(());
     }
@@ -102,7 +103,7 @@ fn process(
     }
     // Preparation fences wait behind every preceding metadata/report update.
     // A current active topic already has the correct atomic full baseline.
-    if work.update.fence && !binding.dirty && !work.resync {
+    if work.update.fence && !work.update.idle_baseline && !binding.dirty && !work.resync {
         return Ok(());
     }
     let snapshot = snapshot(&work.update, source);

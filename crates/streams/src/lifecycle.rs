@@ -146,7 +146,6 @@ where
 impl crate::journal::Cancellation {
     /// Remove a subscriber and wake any thread blocked in `recv`.
     pub fn cancel(&self) {
-        self.shared.lock().subscribers.remove(&self.id);
-        self.shared.wake.notify_all();
+        self.shared.remove_reader(self.id);
     }
 }

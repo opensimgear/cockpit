@@ -32,7 +32,7 @@ fn native_reports_reuse_immutable_descriptor_and_replace_it_at_generation_bounda
         .unwrap();
     let initial = shared.next().unwrap().update.source.unwrap();
     source.sequence = 1;
-    shared.capture(&source.saved.id, |slot| {
+    shared.capture(&source.saved.id, "change", |slot| {
         Update::new(
             &source.saved.id,
             "session",
@@ -47,7 +47,7 @@ fn native_reports_reuse_immutable_descriptor_and_replace_it_at_generation_bounda
     assert!(Arc::ptr_eq(&initial.controls, &report.controls));
     source.generation += 1;
     source.controls[1].max = 100;
-    shared.capture(&source.saved.id, |slot| {
+    shared.capture(&source.saved.id, "metadata", |slot| {
         Update::new(
             &source.saved.id,
             "session",
@@ -129,7 +129,7 @@ fn overflow_keeps_one_bounded_typed_recovery_and_no_covered_ordered_updates() {
         .unwrap();
     shared.next().unwrap();
     for epoch in 2..1000 {
-        shared.capture(&source.saved.id, |slot| {
+        shared.capture(&source.saved.id, "change", |slot| {
             Update::new(
                 &source.saved.id,
                 "session",

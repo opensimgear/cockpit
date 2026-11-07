@@ -37,6 +37,22 @@ fn discovery_reports_only_current_topics_for_the_audience_without_readers() {
 }
 
 #[test]
+fn reader_demand_survives_cancellation_until_the_last_reader_leaves() {
+    let (broker, publisher) = broker();
+    let first = broker.subscribe("first", "ui", "controls").unwrap();
+    let second = broker.subscribe("second", "mcp", "controls").unwrap();
+    assert!(publisher.has_reader_demand());
+    first.cancellation_handle().cancel();
+    drop(first);
+    assert!(publisher.has_reader_demand());
+    drop(second);
+    assert!(!publisher.has_reader_demand());
+    let final_reader = broker.subscribe("final", "ui", "controls").unwrap();
+    final_reader.cancellation_handle().cancel();
+    assert!(!publisher.has_reader_demand());
+}
+
+#[test]
 fn exact_wire_integers_and_scopes() {
     let (broker, publisher) = broker();
     let mut reader = broker.subscribe("client", "mcp", "controls").unwrap();
