@@ -20,7 +20,8 @@
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { compiledPanelResources, canonicalWidget, type CompiledPanelPublication, type PanelBounds, type CompiledWidgetBundle, type Scalar } from '../../packages/widget-runtime/src/index.ts';
   import { validateWidgetSource, type WidgetSource } from '../../packages/widget-compiler/src/index.ts';
-  import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, mergeWidgetSources, replaceWorkspaceSources, validateCompiledDraft, compilePanelDraft, designerId, type CompiledDraft } from './compiled-companion-library';
+  import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, mergeWidgetSources, replaceWorkspaceSources, validateCompiledDraft, compilePanelDraft, designerId, observeBrowserDesignerCommits, type CompiledDraft } from './compiled-companion-library';
+  import { desktopDesignerStorage } from './persistence/designer-storage';
 
   let { openSettings, initialCompanionId = '', onNavigate, active = true }: { openSettings: () => void; initialCompanionId?: string; onNavigate?: (navigation: CompanionNavigation) => void; active?: boolean } = $props();
   let workspace = $state.raw(emptyCompiledWorkspace()), ready = $state(false), error = $state(''), message = $state('');
@@ -90,22 +91,35 @@
   onMount(() => () => { disposed = true; invalidate(); });
   $effect(() => {
     if (!active || draft || widgetEditor) return;
-    // The app keeps this designer mounted across navigation. Reopen the
-    // library from storage without replacing a retained editor's inputs.
-    untrack(() => {
-      ready = false;
+    let stopped = false, reading = false, pending = false;
+    const refreshLibrary = () => {
+      if (stopped) return;
+      if (reading) { pending = true; return; }
+      reading = true;
       libraryLoad = (async () => {
-        try {
-          const current = await store.load();
-          if (!disposed && !draft && !widgetEditor) {
-            workspace = current;
-            ready = true;
+        do {
+          pending = false;
+          try {
+            const current = await store.load();
+            if (!stopped && !disposed && !draft && !widgetEditor) {
+              workspace = current;
+              ready = true;
+            }
+          } catch (e) {
+            if (!stopped && !disposed) error = `Cannot load designer: ${String(e)}`;
           }
-        } catch (e) {
-          if (!disposed) error = `Cannot load designer: ${String(e)}`;
-        }
+        } while (pending && !stopped);
+        reading = false;
       })();
-    });
+    };
+    ready = false;
+    const stop = desktopDesignerStorage()
+      ? companionObservations().subscribe('designer.workspace', state => {
+          if (state.status === 'ready') refreshLibrary();
+        })
+      : observeBrowserDesignerCommits(refreshLibrary);
+    refreshLibrary();
+    return () => { stopped = true; stop(); };
   });
   $effect(() => { if (!active) untrack(() => { trying = false; player?.reset(); }); });
   function openPanel(id: string, record = true) {

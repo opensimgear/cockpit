@@ -4,7 +4,6 @@ import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {dirname, resolve, toNamespacedPath} from 'node:path';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
-
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
 const browserOpenId = ({ connectionId, requestId }) => JSON.stringify([connectionId, requestId]);
@@ -123,11 +122,12 @@ test(`${transport} main view navigation retires observation readers without dupl
   };
   try {
     await navigate('Overview');
+    const companionLibraryTopics = browserUrl ? [] : ['designer.workspace'];
     const views = [
       ['Devices', []],
       ['Profiles', []],
       ['Games', ['games.jobs']],
-      ['Companions', []],
+      ['Companions', companionLibraryTopics],
       ['Debug', ['games.telemetry']],
       ['Activity', ['activity.log']],
     ];
@@ -214,7 +214,7 @@ test(`${transport} main view navigation retires observation readers without dupl
     for (let cycle = 0; cycle < 2; cycle++) {
       const before = companionReads;
       await navigate('Companions');
-      await settled([], true);
+      await settled(companionLibraryTopics, true);
       await until(() => companionReads > before);
       await new Promise(resolve => setTimeout(resolve, 200));
       assert.ok(companionReads - before <= 2, 'The visible list alone reads companion status at open');
@@ -237,7 +237,7 @@ test(`${transport} main view navigation retires observation readers without dupl
         }
       })()`);
       await until(() => page.evaluate(`!!document.querySelector('section[aria-label="Panels"]')`));
-      await settled([], true);
+      await settled(companionLibraryTopics, true);
       await navigate('Overview');
       await settled([], true);
     }

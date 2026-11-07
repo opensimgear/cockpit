@@ -3,6 +3,28 @@ fn empty()->Value {json!({"sources":builtins()["definitions"],"drafts":[],"publi
 fn read(r:&Runtime)->Value {r.request(&json!({"command":"designer_workspace_read"})).unwrap()}
 fn write(r:&Runtime,revision:u64,value:Value)->Result<Value,String> {r.request(&json!({"command":"designer_workspace_write","expectedRevision":revision,"expectedLibraryRevision":read(r)["libraryRevision"],"value":value}))}
 #[test]
+fn designer_observation_reports_only_committed_workspace_and_widget_revisions() {
+    let storage = Runtime::new(None);
+    let observations = crate::observations::Runtime::new();
+    storage.bind_observation(&observations).unwrap();
+    let broker = observations.broker();
+    for audience in ["ui", "mcp"] {
+        assert!(broker.available_to("designer.workspace", audience));
+    }
+    assert!(!broker.available_to("designer.workspace", "browser"));
+    let mut reader = broker.subscribe("designer-test", "ui", "designer.workspace").unwrap();
+    assert_eq!(reader.try_recv().unwrap().unwrap().payload.unwrap(), json!({"commit":null}));
+    let saved = write(&storage, 0, empty()).unwrap();
+    let commit = reader.try_recv().unwrap().unwrap().payload.unwrap();
+    assert_eq!(commit["commit"], json!({"revision":saved["revision"],"libraryRevision":saved["libraryRevision"]}));
+    assert!(write(&storage, 0, empty()).is_err());
+    assert!(reader.try_recv().unwrap().is_none());
+    let saved_widget = storage.request(&json!({"command":"widget_save","expectedRevision":saved["libraryRevision"],"bundle":builtins()})).unwrap();
+    let commit = reader.try_recv().unwrap().unwrap().payload.unwrap();
+    assert_eq!(commit["commit"]["libraryRevision"], saved_widget["revision"]);
+    assert_eq!(commit["commit"]["revision"], read(&storage)["revision"]);
+}
+#[test]
 fn workspace_sources_and_drafts_survive_native_restart_without_file_stores() {
     let dir=crate::test_directory();let path=dir.path().join("widgets.json");
     std::fs::write(&path,b"retired invalid file").unwrap();

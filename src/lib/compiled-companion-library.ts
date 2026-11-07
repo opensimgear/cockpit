@@ -13,6 +13,60 @@ export interface CompiledWorkspace {
   sources: WidgetSource[]; drafts: CompiledDraft[];
   publications: Record<string, CompiledPanelPublication[]>;
 }
+
+const browserDesignerListeners = new Set<{ onCommit: () => void }>();
+const browserDesignerSource = `${Date.now()}-${Math.random()}`;
+const browserDesignerChannelName = 'opensimgear-cockpit-companion-designer-commits';
+let browserDesignerChannel: BroadcastChannel | undefined;
+
+function deliverBrowserDesignerCommit(): void {
+  for (const listener of [...browserDesignerListeners]) {
+    if (!browserDesignerListeners.has(listener)) continue;
+    try { listener.onCommit(); } catch { /* A reader cannot reject a committed write. */ }
+  }
+}
+
+function openBrowserDesignerChannel(): BroadcastChannel | undefined {
+  if (browserDesignerChannel) return browserDesignerChannel;
+  if (typeof BroadcastChannel === 'undefined') return undefined;
+  try {
+    const channel = new BroadcastChannel(browserDesignerChannelName);
+    channel.onmessage = event => {
+      if (event.data?.source !== browserDesignerSource) deliverBrowserDesignerCommit();
+    };
+    browserDesignerChannel = channel;
+    return channel;
+  } catch {
+    return undefined;
+  }
+}
+
+function publishBrowserDesignerCommit(): void {
+  const channel = openBrowserDesignerChannel();
+  deliverBrowserDesignerCommit();
+  try { channel?.postMessage({ source: browserDesignerSource }); } catch { /* Storage already committed. */ }
+  if (!browserDesignerListeners.size && channel) {
+    channel.close();
+    browserDesignerChannel = undefined;
+  }
+}
+
+/** Observe committed browser designer writes across storage instances and tabs. */
+export function observeBrowserDesignerCommits(onCommit: () => void): () => void {
+  const subscription = { onCommit };
+  browserDesignerListeners.add(subscription);
+  openBrowserDesignerChannel();
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    browserDesignerListeners.delete(subscription);
+    if (!browserDesignerListeners.size && browserDesignerChannel) {
+      browserDesignerChannel.close();
+      browserDesignerChannel = undefined;
+    }
+  };
+}
 export interface CompiledWorkspaceStorage { read(): Promise<unknown>; write(value: CompiledWorkspace): Promise<CompiledWorkspace | void> }
 const MAX_BYTES = 64 * 1024 * 1024;
 const encoder = new TextEncoder();
@@ -139,5 +193,5 @@ export function compiledIndexedDbStorage(factory = globalThis.indexedDB): Compil
       tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error ?? new Error('Designer save cancelled.'));
     });
   }
-  return { read: () => transact(), write: async value => { await transact(value); } };
+  return { read: () => transact(), write: async value => { await transact(value); publishBrowserDesignerCommit(); } };
 }

@@ -633,6 +633,11 @@ impl GatewayManager {
         if let Err(error) = manager.storage.bind_observation(&manager.observations) {
             eprintln!("Backup observation unavailable: {error}");
         }
+        if native {
+            if let Err(error) = manager.widget_library.bind_observation(&manager.observations) {
+                eprintln!("Designer workspace observation unavailable: {error}");
+            }
+        }
         if native { manager.start_activity(); }
         manager
     }

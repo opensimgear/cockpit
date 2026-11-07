@@ -12,7 +12,9 @@ pub(crate) struct Runtime {
     database: OnceLock<osg_persistence::Database>,
     revision: Mutex<u64>,
     workspace: Mutex<(u64, Option<Value>)>,
+    observation: OnceLock<(osg_streams::Publisher, crate::observations::Runtime)>,
 }
+const WORKSPACE_COMMITS: &str = "designer.workspace";
 const MAX_MCP_BYTES: usize = 2 * 1024 * 1024;
 fn builtins() -> Value {
     let source: Value = serde_json::from_str(include_str!(
@@ -55,6 +57,29 @@ impl Runtime {
             database: OnceLock::new(),
             revision: Mutex::new(0),
             workspace: Mutex::new((0, None)),
+            observation: OnceLock::new(),
+        }
+    }
+    pub(crate) fn bind_observation(&self, runtime: &crate::observations::Runtime) -> Result<(), String> {
+        let publisher = runtime.broker().register(
+            osg_streams::TopicSpec {
+                topic: WORKSPACE_COMMITS.into(),
+                source: "designer-storage".into(),
+                audiences: vec!["ui".into(), "mcp".into()],
+            },
+            json!({"commit":null}),
+            runtime.captured_us(),
+            WORKSPACE_COMMITS.into(),
+        ).map_err(|error| error.to_string())?;
+        self.observation.set((publisher, runtime.clone()))
+            .map_err(|_| "Designer workspace observation is already bound.".into())
+    }
+    fn publish_commit(&self, library_revision: u64, workspace_revision: u64) {
+        if let Some((publisher, runtime)) = self.observation.get() {
+            let _ = publisher.publish_latest_state(
+                1, json!({"commit":{"revision":workspace_revision,"libraryRevision":library_revision}}),
+                runtime.captured_us(), WORKSPACE_COMMITS,
+            );
         }
     }
     fn database(&self) -> Result<Option<&osg_persistence::Database>, String> {
@@ -161,6 +186,7 @@ impl Runtime {
                 *library = Some(next.clone());
                 *workspace = (wr, updated);
                 *self.revision.lock().unwrap_or_else(|p| p.into_inner()) = lr;
+                self.publish_commit(lr, wr);
                 Ok(if command == "widget_save" {
                     json!({"definitions":incoming["definitions"],"revision":lr})
                 } else {

@@ -4,7 +4,7 @@ import test from 'node:test';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl = process.env.OSG_COMPANION_LIBRARY_BROWSER_URL;
-test('Companion library reopens with the latest committed drafts', {
+test('Companion library follows visible and hidden draft commits', {
   skip: !browserUrl && process.env.OSG_COMPANION_LIBRARY_NATIVE !== '1', timeout: 60_000,
 }, async () => {
   const page = browserUrl ? await browserPage(browserUrl) : await nativePage();
@@ -28,6 +28,10 @@ test('Companion library reopens with the latest committed drafts', {
     await until(() => page.evaluate(`[...${panels}?.querySelectorAll('button') ?? []]
       .some(button => button.textContent.trim() === 'New' && !button.disabled && button.checkVisibility())`));
     assert.equal(await card(name), false);
+    await writeDraft('add');
+    await until(() => card(name));
+    await writeDraft('remove');
+    await until(() => card(name), visible => !visible);
     await navigate('Overview');
     await until(() => page.evaluate(`!${panels}?.checkVisibility()`));
     await writeDraft('add');

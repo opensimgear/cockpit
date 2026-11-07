@@ -173,6 +173,7 @@ impl Runtime {
         *library = Some(next);
         *workspace = (wr, Some(value.clone()));
         *self.revision.lock().unwrap_or_else(|p| p.into_inner()) = lr;
+        self.publish_commit(lr, wr);
         Ok(json!({"revision":wr,"libraryRevision":lr,"value":value}))
     }
 }

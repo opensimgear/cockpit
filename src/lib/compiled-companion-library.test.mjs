@@ -1,9 +1,56 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, mergeWidgetSources, replaceWorkspaceSources, validateCompiledDraft, compilePanelDraft, publicationMatchesDraft, designerId, compiledIndexedDbStorage } from './compiled-companion-library.ts';
+import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, mergeWidgetSources, replaceWorkspaceSources, validateCompiledDraft, compilePanelDraft, publicationMatchesDraft, designerId, compiledIndexedDbStorage, observeBrowserDesignerCommits } from './compiled-companion-library.ts';
 import { createToggleSource } from '../../packages/widget-compiler/src/seeds.ts';
 
 function memory(initial) { let value = initial, fail = false; return { read: async () => structuredClone(value), write: async next => { if (fail) throw new Error('Disk full'); value = structuredClone(next); }, get value() { return value; }, set fail(v) { fail = v; } }; }
+function indexedDbFixture() {
+  let value, fail = false;
+  return {
+    factory: { open() {
+      const request = {};
+      queueMicrotask(() => {
+        request.result = {
+          createObjectStore() {}, close() {},
+          transaction() {
+            const transaction = {};
+            transaction.objectStore = () => ({
+              get() {
+                const result = {};
+                queueMicrotask(() => { result.result = structuredClone(value); result.onsuccess?.(); transaction.oncomplete?.(); });
+                return result;
+              },
+              put(next) {
+                const result = {};
+                queueMicrotask(() => {
+                  if (fail) { transaction.error = new Error('Disk full'); transaction.onerror?.(); return; }
+                  value = structuredClone(next); result.onsuccess?.(); transaction.oncomplete?.();
+                });
+                return result;
+              },
+            });
+            return transaction;
+          },
+        };
+        request.onupgradeneeded?.(); request.onsuccess?.();
+      });
+      return request;
+    } },
+    set fail(next) { fail = next; },
+  };
+}
+class TestBroadcastChannel {
+  static channels = new Set();
+  constructor(name) { this.name = name; this.onmessage = undefined; this.closed = false; TestBroadcastChannel.channels.add(this); }
+  postMessage(data) {
+    for (const channel of TestBroadcastChannel.channels) {
+      if (channel !== this && !channel.closed && channel.name === this.name) {
+        queueMicrotask(() => channel.onmessage?.({ data: structuredClone(data) }));
+      }
+    }
+  }
+  close() { this.closed = true; TestBroadcastChannel.channels.delete(this); }
+}
 function draftFor(source = createToggleSource()) { const draft = newCompiledDraft('Test', 640, 400); draft.widgets.push({ id: 'switch', pageId: draft.pages[0].id, label: 'Toggle', sourceId: source.id, parameters: {}, bounds: { x: .1, y: .1, width: .2, height: .16 } }); return draft; }
 test('empty storage seeds one plain Toggle and reopens the same workspace', async () => {
   const storage = memory();
@@ -74,6 +121,58 @@ test('panel compilation bakes exact placement size and supports static silent ta
 });
 test('storage reports unavailable IndexedDB instead of claiming a save succeeded', async () => {
   const storage = compiledIndexedDbStorage(null); await assert.rejects(storage.read(), /unavailable/); await assert.rejects(storage.write(emptyCompiledWorkspace()), /unavailable/);
+});
+
+test('browser designer notifications follow successful IndexedDB commits across stores and tabs', async () => {
+  const previousChannel = globalThis.BroadcastChannel;
+  globalThis.BroadcastChannel = TestBroadcastChannel;
+  const idb = indexedDbFixture();
+  const firstStore = new CompiledWorkspaceStore(compiledIndexedDbStorage(idb.factory));
+  const secondStore = new CompiledWorkspaceStore(compiledIndexedDbStorage(idb.factory));
+  const first = [], second = [];
+  const stopFailing = observeBrowserDesignerCommits(() => { throw new Error('Reader failed'); });
+  const stopFirst = observeBrowserDesignerCommits(() => first.push('commit'));
+  const stopSecond = observeBrowserDesignerCommits(() => second.push('commit'));
+  const external = new TestBroadcastChannel('opensimgear-cockpit-companion-designer-commits');
+  try {
+    const workspace = await firstStore.load();
+    assert.equal(first.length, 1, 'Seeding is a committed IndexedDB write');
+    assert.equal(second.length, 1, 'Other local storage instances receive the same commit');
+    await secondStore.save({ ...workspace, drafts: [newCompiledDraft('Saved in another store')] });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(first.length, 2);
+    assert.equal(second.length, 2);
+    const externalMessages = [];
+    external.onmessage = event => externalMessages.push(event.data);
+    await firstStore.save(await secondStore.load());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(externalMessages.length, 1, 'Other tabs receive a message after the IndexedDB transaction commits');
+    idb.fail = true;
+    await assert.rejects(firstStore.save(await firstStore.load()), /Disk full/);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(first.length, 3);
+    assert.equal(second.length, 3);
+  } finally {
+    stopFailing(); stopFirst(); stopSecond(); external.close();
+    if (previousChannel) globalThis.BroadcastChannel = previousChannel;
+    else delete globalThis.BroadcastChannel;
+  }
+  assert.equal(TestBroadcastChannel.channels.size, 0, 'Unsubscribing closes the notification channel');
+});
+
+test('browser designer notifications still work when BroadcastChannel is unavailable', async () => {
+  const previousChannel = globalThis.BroadcastChannel;
+  delete globalThis.BroadcastChannel;
+  const commits = [];
+  const stop = observeBrowserDesignerCommits(() => commits.push('commit'));
+  try {
+    const store = new CompiledWorkspaceStore(compiledIndexedDbStorage(indexedDbFixture().factory));
+    await store.load();
+    assert.deepEqual(commits, ['commit']);
+  } finally {
+    stop();
+    if (previousChannel) globalThis.BroadcastChannel = previousChannel;
+  }
 });
 
 test('desktop defaults use native SQLite exclusively and return merged native sources',async()=>{
