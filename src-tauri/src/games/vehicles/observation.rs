@@ -133,13 +133,15 @@ impl Tracker {
     ) -> Option<VehicleObservation> {
         let integration = crate::game_discovery::integration_key(game).unwrap_or("");
         let enabled = enabled && !integration.is_empty();
-        if matches!(process, Err(crate::game_discovery::ProcessLookupError::Unavailable(_)))
-            && game["id"].as_str().and_then(|id| self.entries.get(id)).is_some_and(|entry| {
-            entry.enabled == enabled && entry.integration == integration
-                && entry.setup_revision == setup_revision && Self::installation_matches(&entry.installation_fields, game)
-        }) {
-            // An unavailable lookup cannot revoke or renew existing proof.
-            return None;
+        if matches!(process, Err(crate::game_discovery::ProcessLookupError::Unavailable(_))) {
+            if let Some(entry) = game["id"].as_str().and_then(|id| self.entries.get_mut(id))
+                .filter(|entry| entry.enabled == enabled && entry.integration == integration
+                    && entry.setup_revision == setup_revision && Self::installation_matches(&entry.installation_fields, game))
+            {
+                // Preserve the reader's proof while fencing older inventory results.
+                entry.observation_epoch = entry.observation_epoch.max(observation_epoch);
+                return None;
+            }
         }
         self.begin_observation(game, connection, process.unwrap_or(None), setup_revision, enabled, observation_epoch)
     }

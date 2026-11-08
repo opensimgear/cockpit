@@ -1,13 +1,17 @@
 use super::*;
 
 fn fixture() -> (UdpSocket, Source) {
+    fixture_with_freshness(500)
+}
+
+fn fixture_with_freshness(freshness_ms: u64) -> (UdpSocket, Source) {
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     server
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let mut connection = defaults(12);
     connection["port"] = json!(server.local_addr().unwrap().port());
-    connection["freshnessMs"] = json!(500);
+    connection["freshnessMs"] = json!(freshness_ms);
     let catalogue = legacy_channels()
         .into_iter()
         .map(|c| (c.id.clone(), c))
@@ -56,6 +60,16 @@ fn send(
     clock: f32,
     speed: f32,
 ) {
+    send_to(server, source.address_test(), indices, clock, speed);
+}
+
+fn send_to(
+    server: &UdpSocket,
+    address: std::net::SocketAddr,
+    indices: &BTreeMap<String, i32>,
+    clock: f32,
+    speed: f32,
+) {
     let mut values = vec![
         (GUARDS[0].to_owned(), 120000.),
         (GUARDS[1].into(), 0.),
@@ -75,7 +89,16 @@ fn send(
         bytes.extend(indices[&path].to_le_bytes());
         bytes.extend(value.to_le_bytes());
     }
-    server.send_to(&bytes, source.address_test()).unwrap();
+    server.send_to(&bytes, address).unwrap();
+}
+
+impl Source {
+    pub(crate) fn vehicle_capture_fixture() -> (Self, impl Fn(f32, f32)) {
+        let (server, source) = fixture_with_freshness(1500);
+        let indices = requests(&server, GUARDS.len() + PATH_BYTES + 1);
+        let address = source.address_test();
+        (source, move |clock, speed| send_to(&server, address, &indices, clock, speed))
+    }
 }
 fn observed(source: &mut Source, predicate: impl Fn(&NativeSnapshot) -> bool) -> NativeSnapshot {
     let until = Instant::now() + Duration::from_secs(3);

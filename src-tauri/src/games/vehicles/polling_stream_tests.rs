@@ -261,6 +261,69 @@ impl Tracker {
         setup_revision: &str,
         source: Box<dyn game_telemetry::Source>,
     ) -> Arc<osg_streams::NativeWake> {
+        self.seed_test_reader(game, setup_revision, Reader::Rally {
+            source, decoder: game_telemetry::Session::new(1500).unwrap(),
+        })
+    }
+
+    pub(crate) fn seed_dcs_capture_reader(
+        &mut self,
+        game: &Value,
+        setup_revision: &str,
+    ) -> (std::net::SocketAddr, impl FnOnce()) {
+        let catalogue_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios");
+        let module = "A-10C";
+        let connection = json!({"cataloguePath":catalogue_path,"commandHost":"127.0.0.1","commandPort":7778,
+            "listenAddress":"127.0.0.1","listenPort":5010,"multicastGroup":"","multicastInterface":"0.0.0.0",
+            "freshnessMs":1500});
+        let mut network = dcs_bios::Network::parse(&connection).unwrap();
+        network.listen_port = 0;
+        let (decoder, guard, catalogue) = dcs_profile::passive_telemetry_sources(&catalogue_path, module, 1500).unwrap();
+        let source = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
+        let address = source.local_addr().unwrap();
+        let watch = self.seed_watched_test_reader(game, setup_revision, Reader::Dcs {
+            source,
+            process_exit: None,
+            decoder,
+            guard: dcs_profile::passive_watch::PassiveCatalogueGuard::without_watch(guard),
+            connection,
+            module: module.into(),
+            resolved_aircraft: None,
+            bios_channels: bios_channel_ids(&catalogue),
+            physics: None,
+            physics_error: None,
+            physics_retry: Instant::now() + Duration::from_secs(60),
+            capture_dirty: false,
+        });
+        (address, move || drop(watch))
+    }
+
+    pub(crate) fn seed_xplane_capture_reader(
+        &mut self,
+        game: &Value,
+        setup_revision: &str,
+    ) -> impl Fn(f32, f32) {
+        let (source, send) = crate::xplane::Source::vehicle_capture_fixture();
+        let watch = self.seed_watched_test_reader(game, setup_revision, Reader::Xplane(source));
+        move |clock, speed| {
+            let _keep_watch = &watch;
+            send(clock, speed);
+        }
+    }
+
+    fn seed_watched_test_reader(&mut self, game: &Value, setup_revision: &str, reader: Reader) -> CaptureWatch {
+        let wake = self.seed_test_reader(game, setup_revision, reader);
+        let id = game["id"].as_str().unwrap();
+        // Keep the real journal watch alongside the fixture process proof.
+        self.entries[id].reader.as_ref().unwrap().capture_watch(wake).unwrap().unwrap()
+    }
+
+    fn seed_test_reader(
+        &mut self,
+        game: &Value,
+        setup_revision: &str,
+        reader: Reader,
+    ) -> Arc<osg_streams::NativeWake> {
         let id = game["id"].as_str().unwrap();
         let process = ProcessIdentity {
             pid: 42, epoch: 10, path: game["executable"].as_str().unwrap().into(),
@@ -275,9 +338,7 @@ impl Tracker {
             wake: wake.clone(),
             drained: 0,
         });
-        entry.reader = Some(Reader::Rally {
-            source, decoder: game_telemetry::Session::new(1500).unwrap(),
-        });
+        entry.reader = Some(reader);
         wake
     }
 }

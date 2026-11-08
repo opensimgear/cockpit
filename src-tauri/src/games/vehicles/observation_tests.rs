@@ -67,6 +67,39 @@ fn inventory_errors_preserve_only_the_existing_configuration_and_lease() {
 }
 
 #[test]
+fn unavailable_inventory_fences_older_process_results_without_renewing_the_reader() {
+    use crate::game_discovery::ProcessLookupError;
+    let (_directory, mut tracker) = tracker();
+    let game = game();
+    let id = game["id"].as_str().unwrap();
+    let connection = crate::xplane::defaults(12);
+    let initial = read(work(&mut tracker, 1));
+    tracker.apply_observation(initial);
+    let generation = tracker.entries[id].generation;
+    let observed = tracker.entries[id].observed;
+    let replacement = ProcessIdentity { pid: 43, ..process() };
+
+    tracker.begin_inventory_observation(&game, &connection,
+        Err(ProcessLookupError::Unavailable("inventory busy".into())), "setup", true, 3);
+    tracker.begin_inventory_observation(&game, &connection, Ok(Some(process())), "setup", true, 2);
+    assert_eq!(tracker.entries[id].observed, observed, "An older result cannot renew the process proof");
+    let late = tracker.begin_inventory_observation(&game, &connection,
+        Ok(Some(replacement.clone())), "setup", true, 2);
+    assert_eq!(tracker.entries[id].generation, generation, "An older result cannot replace the reader");
+    assert!(late.is_none());
+    assert_eq!(tracker.entries[id].observed, observed);
+    assert_eq!(tracker.entries[id].process, Some(process()));
+    assert!(tracker.entries[id].reader.is_some());
+
+    let replacement_work = tracker.begin_inventory_observation(&game, &connection,
+        Ok(Some(replacement.clone())), "setup", true, 4).unwrap();
+    tracker.apply_observation(read(replacement_work));
+    assert_ne!(tracker.entries[id].generation, generation);
+    assert_eq!(tracker.entries[id].process, Some(replacement));
+    assert!(tracker.entries[id].reader.is_some());
+}
+
+#[test]
 fn ambiguous_inventory_retires_the_previously_current_reader() {
     use crate::game_discovery::ProcessLookupError;
     let (_directory, mut tracker) = tracker();
