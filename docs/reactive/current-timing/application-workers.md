@@ -11,7 +11,6 @@
 | `src-tauri/src/desktop/progress/geometry.rs:101` | Operation deadline | Wait up to two seconds for native popup geometry work on the window thread. |
 | `src-tauri/src/desktop/progress/mod.rs:245` | Operation deadline | Wait up to two seconds for the current popup operation on the window thread. |
 | `src-tauri/src/firmware_releases.rs:440,443` | Fixture | Bound start and status barriers while testing firmware release work. |
-| `src-tauri/src/hid_names.rs:116` | Command retry | After CDC re-enumeration, the exact HID naming request retries every 100 ms for up to two seconds and honors cancellation. Device arrival wake replacement remains open. |
 | `src-tauri/src/persistence/backup/startup.rs:96` | Operation deadline | Give an explicit restore-restart acknowledgement 500 ms before calling the native restart callback. |
 | `src-tauri/src/persistence/backup/startup.rs:143` | Fixture | Bound the isolated restart callback test's wait for completion. |
 | `src-tauri/src/persistence/ui/window_writer.rs:71` | Source wake | Park the persistence writer until queued geometry or shutdown. |
@@ -21,7 +20,7 @@
 | `src-tauri/src/profile_activation_progress/observation.rs:72` | Source wake and expiry | Committed activation and companion work wake the progress projector. The nearest presentation or retained operation expiry also wakes it. |
 | `src-tauri/src/profile_automatic.rs:861` | Source wake and retry | Reconcile after process, provider or profile changes. Outstanding vehicle and peripheral retries supply the next deadline for the current owner. |
 | `src-tauri/src/profile_debug_controller/qualification.rs:80,222,231` | Fixture | A fixed, explicitly enabled desktop qualification burst offers edges at Windows performance-counter deadlines. Two bounded lane workers submit already available edges through the owner-fenced debug queue. |
-| `src-tauri/src/profile_game_launch.rs:328` | Acquisition fallback | Wait for activation notifications until startup expiry. When the activation worker is unavailable, exact launch verification can still use a scoped 100 ms fallback. |
+| `src-tauri/src/profile_game_launch.rs:339` | Owned startup deadline | Wait for a process observation, launch control notification or startup expiry. A spurious wake reuses the original deadline. The shared observer owns discovery. |
 | `src-tauri/src/profile_game_orchestration_runtime.rs:380` | Operation deadline | Wait for the started process proof and ownership changes until the held launch expires. |
 | `src-tauri/src/profile_input_learning.rs:503` | Source wake | Park when no active learning operation has capture work. |
 | `src-tauri/src/profile_input_learning.rs:593` | Source wake and expiry | Wake for learning changes or the exact end of the 30-second operation. |

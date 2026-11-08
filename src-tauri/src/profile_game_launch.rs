@@ -318,28 +318,27 @@ impl GamesRuntime {
         wake: &osg_streams::NativeWake,
         still_current: impl FnMut(&RunOwner, u64) -> Result<(), String>,
     ) -> Result<StartedGame, LaunchFailure> {
-        let mut observed = wake.observed();
-        self.wait_profile_launch_core(spawned, still_current, STARTUP_TIMEOUT, |remaining| {
-            let wait = if self.inner.activation.worker_live() {
-                remaining
-            } else {
-                remaining.min(Duration::from_millis(100))
-            };
-            wake.wait(observed, wait);
-            observed = wake.observed();
-        })
+        self.wait_profile_launch_until(spawned, wake, still_current, STARTUP_TIMEOUT)
     }
 
-    #[cfg(test)]
-    fn wait_profile_launch_with(
+    fn wait_profile_launch_until(
         &self,
         spawned: SpawnedLaunch,
+        wake: &osg_streams::NativeWake,
         still_current: impl FnMut(&RunOwner, u64) -> Result<(), String>,
         timeout: Duration,
-        mut pause: impl FnMut(Duration),
     ) -> Result<StartedGame, LaunchFailure> {
-        self.wait_profile_launch_core(spawned, still_current, timeout, |remaining| {
-            pause(remaining.min(Duration::from_millis(100)));
+        let mut observed = wake.observed();
+        self.wait_profile_launch_core(spawned, still_current, timeout, |deadline| {
+            // A park can return without a producer or control notification.
+            while wake.observed() == observed {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                wake.wait(observed, remaining);
+            }
+            observed = wake.observed();
         })
     }
 
@@ -348,8 +347,9 @@ impl GamesRuntime {
         spawned: SpawnedLaunch,
         mut still_current: impl FnMut(&RunOwner, u64) -> Result<(), String>,
         timeout: Duration,
-        mut pause: impl FnMut(Duration),
+        mut pause: impl FnMut(Instant),
     ) -> Result<StartedGame, LaunchFailure> {
+        let deadline = spawned.spawned_at + timeout;
         let result = (|| loop {
             if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) {
                 return Err(
@@ -357,7 +357,7 @@ impl GamesRuntime {
                 );
             }
             still_current(&spawned.owner, spawned.admission_epoch)?;
-            if spawned.spawned_at.elapsed() >= timeout {
+            if Instant::now() >= deadline {
                 return Err(
                     "The game did not appear before the startup deadline; no launch was replayed."
                         .into(),
@@ -376,8 +376,7 @@ impl GamesRuntime {
                 None => None,
             };
             still_current(&spawned.owner, spawned.admission_epoch)?;
-            let elapsed = spawned.spawned_at.elapsed();
-            if elapsed >= timeout {
+            if Instant::now() >= deadline {
                 return Err(
                     "The game did not appear before the startup deadline; no launch was replayed."
                         .into(),
@@ -386,7 +385,7 @@ impl GamesRuntime {
             if let Some(process) = process {
                 return Ok(process);
             }
-            pause(timeout.saturating_sub(elapsed));
+            pause(deadline);
         })();
         result
             .map(|process| StartedGame {

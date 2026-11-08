@@ -67,7 +67,6 @@ pub fn initialize_persistence(additional_roots:&[std::path::PathBuf])->Result<os
     persistence::development::seed(&database)?;
     Ok(database)
 }
-mod hid_names;
 mod system_inventory;
 mod local_gateway;
 mod optional_dependencies;

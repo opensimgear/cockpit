@@ -407,7 +407,7 @@ fn deadline_and_lost_or_changed_process_never_replay_launch() {
     let (runtime, platform, candidate, _directory) = fixture();
     platform.appears.store(false, Ordering::Release);
     let error = runtime
-        .wait_profile_launch_with(
+        .wait_profile_launch_core(
             spawn(&runtime, &candidate),
             |_, _| Ok(()),
             Duration::ZERO,
@@ -423,13 +423,39 @@ fn deadline_and_lost_or_changed_process_never_replay_launch() {
     runtime.shutdown();
 }
 #[test]
+fn startup_without_notifications_checks_once_and_then_expires() {
+    let (runtime, platform, candidate, _directory) = fixture();
+    platform.appears.store(false, Ordering::Release);
+    let spawned = spawn(&runtime, &candidate);
+    let wake = osg_streams::NativeWake::default();
+    wake.bind_thread(std::thread::current()).unwrap();
+    std::thread::current().unpark();
+    let mut checks = 0;
+    let error = runtime
+        .wait_profile_launch_until(
+            spawned,
+            &wake,
+            |_, _| {
+                checks += 1;
+                Ok(())
+            },
+            Duration::from_millis(350),
+        )
+        .unwrap_err();
+    assert!(error.message.contains("deadline"));
+    // One exact read with admission checks on either side, then a final expiry check.
+    assert_eq!(checks, 3);
+    assert_eq!(platform.spawns.load(Ordering::Acquire), 1);
+    runtime.shutdown();
+}
+#[test]
 fn wait_is_off_admission_and_requires_a_live_valid_native_process() {
     let (runtime, platform, candidate, _directory) = fixture();
     let spawned = spawn(&runtime, &candidate);
     platform.alive.store(false, Ordering::Release);
     let mut paused = false;
     let started = runtime
-        .wait_profile_launch_with(
+        .wait_profile_launch_core(
             spawned,
             |_, _| Ok(()),
             Duration::from_secs(1),
