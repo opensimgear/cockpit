@@ -49,6 +49,33 @@ impl GamesRuntime {
             return Ok(None);
         }
         self.inner.refresh_game_contexts(true);
+        self.prepare_observed_profile_game_context(id, None)
+    }
+
+    pub(crate) fn prepare_returning_profile_game_context(
+        &self,
+        id: &str,
+    ) -> Result<Option<PreparedGame>, String> {
+        if !self.inner.platform.shares_background_processes() {
+            return self.prepare_profile_game_context(id);
+        }
+        let registered = self.registered_profile_game(id)?;
+        if crate::game_discovery::integration_key(&registered).is_none() {
+            return Ok(None);
+        }
+        let Some((_, _, Ok(Some(process)))) = self.inner.profile_background_process(&registered) else {
+            return Ok(None);
+        };
+        // The background context projection owns discovery and setup. A
+        // returning reader must agree with both of its committed results.
+        self.prepare_observed_profile_game_context(id, Some(&process))
+    }
+
+    fn prepare_observed_profile_game_context(
+        &self,
+        id: &str,
+        returning: Option<&crate::game_discovery::ProcessIdentity>,
+    ) -> Result<Option<PreparedGame>, String> {
         let Some(proof) = self
             .inner
             .contexts
@@ -58,6 +85,9 @@ impl GamesRuntime {
         else {
             return Ok(None);
         };
+        if returning.is_some_and(|process| *process != proof.process) {
+            return Ok(None);
+        }
         let game = self
             .inner
             .settings
@@ -101,6 +131,11 @@ impl GamesRuntime {
             return Err(
                 "The game provider settings changed during preparation; prepare it again.".into(),
             );
+        }
+        if returning.is_some() && !matches!(self.inner.profile_background_process(&game),
+            Some((_, _, Ok(Some(process)))) if process == proof.process)
+        {
+            return Ok(None);
         }
         self.validate_game_preparation(&proof)?;
         Ok(Some(PreparedGame {

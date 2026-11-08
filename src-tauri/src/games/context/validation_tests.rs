@@ -147,6 +147,45 @@ fn shared_profile_process_does_not_rescan_or_extend_fallback_evidence() {
 }
 
 #[test]
+fn automatic_preparation_waits_for_shared_process_and_context_to_agree() {
+    use crate::game_discovery::{BackgroundProcesses, PROCESS_DISCOVERY_PERIOD};
+    use crate::games::activation_runtime::BackgroundScan;
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    let id = "x-plane-12";
+    let prepared = runtime.prepare_profile_game_context(id).unwrap().unwrap();
+    runtime.stop_test_context_observer();
+    let game = runtime.registered_profile_game(id).unwrap();
+    let inner = &runtime.inner;
+    let epoch = (inner.changes.context_wake.observed(), inner.changes.context_process_wake.observed());
+    let publish = |started, row| {
+        *inner.background_processes.lock().unwrap() = Some(BackgroundScan::new(
+            epoch, started, false, BackgroundProcesses::fixture(&game, row),
+        ));
+    };
+    platform.shared_processes.store(true, Ordering::Release);
+    let before = platform.reads.load(Ordering::SeqCst);
+    assert!(runtime.prepare_returning_profile_game_context(id).unwrap().is_none());
+    for row in [Ok(None), Err(ProcessLookupError::Ambiguous("competing processes".into())),
+        Err(ProcessLookupError::Unavailable("scan failed".into())),
+        Ok(Some(ProcessIdentity { epoch: prepared.proof.process.epoch ^ 1, ..prepared.proof.process.clone() }))]
+    {
+        publish(Instant::now(), row);
+        assert!(runtime.prepare_returning_profile_game_context(id).unwrap().is_none());
+    }
+    publish(Instant::now() - PROCESS_DISCOVERY_PERIOD * 2, Ok(Some(prepared.proof.process.clone())));
+    assert!(runtime.prepare_returning_profile_game_context(id).unwrap().is_none());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before);
+
+    publish(Instant::now(), Ok(Some(prepared.proof.process.clone())));
+    let returning = runtime.prepare_returning_profile_game_context(id).unwrap().unwrap();
+    assert_eq!(returning.proof, prepared.proof);
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before + 2,
+        "Only the strict identity lookup and liveness check may touch the platform");
+    runtime.shutdown();
+}
+
+#[test]
 fn observation_rechecks_setup_preparation_owner_and_installation_before_publishing() {
     for change in ["setup", "preparation", "owner", "executable", "processExecutables", "installPath", "selectedInstallationId"] {
         let scratch = Scratch::new();

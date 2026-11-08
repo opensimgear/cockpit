@@ -510,7 +510,7 @@ impl NativeProfileHost {
                 // have no command authority and are dropped after Stop.
                 std::thread::spawn(move||{
                     let result=(||->Result<Option<NativeGameResume>,String>{
-                        let Some(proof)=games.prepare_profile_game_context(&id)? else{return Ok(None);};
+                        let Some(proof)=games.prepare_returning_profile_game_context(&id)? else{return Ok(None);};
                         // Delivery tokens are withdrawn with the old reader. Prepare routes
                         // from metadata until the replacement publishes a verified baseline.
                         let (mut snapshot, preparations) = resources

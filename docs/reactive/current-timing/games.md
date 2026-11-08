@@ -12,7 +12,7 @@ This page classifies the 86 current scan entries in game, DCS-BIOS, DCS ownship,
 | `src-tauri/src/dcs_physics/source.rs:263` | Freshness deadline | Ownship source parks until the exact packet-derived freshness expiry or a new datagram; expiry withdraws stale evidence. |
 | `src-tauri/src/dcs_physics/source.rs:279` | Socket readiness | Ownship source awaits local UDP data, cancellation, or its exact freshness deadline. No idle receive polling remains. |
 | `src-tauri/src/game_activation_runtime.rs:189` | Approved process discovery fallback | The process owner waits for library, preference and process events. With eligible games and no usable event coverage, one scan per second supplies automatic activation and integration context. A failed inventory can also schedule recovery. Live event coverage otherwise parks the owner. |
-| `src-tauri/src/game_context_runtime.rs:243` | Context maintenance | Game context waits on library, process and committed setup changes or its next process or reader admission deadline. Windows consumes the activation owner's shared inventory. |
+| `src-tauri/src/game_context_runtime.rs:278` | Context maintenance | Game context waits on library, process and committed setup changes or its next process or reader admission deadline. Windows consumes the activation owner's shared inventory. |
 | `src-tauri/src/game_metadata_api.rs:171` | Test publication barrier | Metadata API test pauses a commit for up to five seconds to check concurrent publication. No production wait. |
 | `src-tauri/src/game_read_models/details.rs:113` | Readiness condition | A detail lease waits for its exact source readiness or retirement/close notification; no periodic check. |
 | `src-tauri/src/game_read_models/runtime.rs:50` | Bootstrap condition | Read-model caller waits for bootstrap completion, error or close notification; no timer. |
@@ -61,3 +61,5 @@ The [active Windows telemetry validator](../../verification/2026-11-08-shared-ac
 also uses the shared process inventory. Its short proof refresh still
 checks context and exact liveness. It cannot restart discovery or extend
 the scan's original uniqueness window.
+Automatic Windows reacquisition also waits for shared discovery and the
+committed integration context before it performs strict admission.

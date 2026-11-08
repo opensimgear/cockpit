@@ -229,7 +229,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       if (!emitPhysics) return;
       if (dropNextOwnship) { sequence++; emitPhysics = false; dropNextOwnship = false; }
       if (!['baseline', 'frozen', 'respawn-wait'].includes(mode)) modelTime += 0.05;
-      const packet = {schemaVersion: 1, source: 'osg-dcs-ownship', session: 'native-fixture-mission', sequence: sequence++ >>> 0,
+      const packet = {schemaVersion: 1, source: 'osg-dcs-ownship', session: `native-fixture-mission-${child.pid}`, sequence: sequence++ >>> 0,
         modelTime, aircraft: mode === 'aircraft-mismatch' ? 'FA-18C_hornet' : aircraft, planeId, allowed: mode !== 'denied', paused: mode === 'paused', activePause: mode === 'active-pause', stopped: mode === 'stopped', values: nativeValues};
       const bytes = Buffer.from(JSON.stringify(packet));
       const submittedMs = ownshipPending() ? Number(process.hrtime.bigint()) / 1e6 : undefined;
@@ -421,6 +421,13 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     checks.push(nativeCommands ? 'A fresh BIOS baseline allows the command profile to reapply without replay.' : 'A new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, packet gaps, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics while BIOS remains live. Process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
+    if (process.env.OSG_DCS_PROCESS_RESTART === '1') {
+      await sleep(2200);
+      await absent('flight.airspeed.true'); await absent(biosId);
+      child = spawn(executable, [], {cwd: dirname(executable), windowsHide: true, stdio: 'ignore'});
+      evidence.phases.processRestart = {pid:child.pid,samples:await live()};
+      assert.deepEqual((await status()).profileSession.owner, evidence.phases.afterProcessExit.owner);
+    }
     assert.deepEqual(budgetMisses, [], 'Software timing budgets');
   } catch (error) {
     evidence.failure = String(error); evidence.failureInspection = await samples().catch(() => null);

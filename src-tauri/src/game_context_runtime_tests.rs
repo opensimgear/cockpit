@@ -203,6 +203,7 @@ impl Scratch {
 }
 struct FakePlatform {
     context_supported: bool,
+    shared_processes: AtomicBool,
     process: Mutex<Option<ProcessIdentity>>,
     failed: AtomicBool,
     reads: std::sync::atomic::AtomicUsize,
@@ -212,6 +213,7 @@ impl FakePlatform {
     fn new() -> Self {
         Self {
             context_supported: true,
+            shared_processes: AtomicBool::new(false),
             process: Mutex::new(Some(ProcessIdentity {
                 pid: 42,
                 path: "/fixture/X-Plane.exe".into(),
@@ -224,6 +226,7 @@ impl FakePlatform {
     }
 }
 impl Platform for FakePlatform {
+    fn shares_background_processes(&self) -> bool { self.shared_processes.load(Ordering::Acquire) }
     fn integration_setup_supported(&self) -> bool {
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.context_supported
