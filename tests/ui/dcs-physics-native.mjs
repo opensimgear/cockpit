@@ -10,7 +10,7 @@ import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
 import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
-import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
+import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders, ownshipSubmission, verifyOwnshipTransitions} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
 import {verifyActiveDcsCatalogue, verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
@@ -105,7 +105,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   }
   let initialGames, initialProfiles, before, installationBefore, fixtureInstallation, profile, child, producer, timer, fixtureSetup = false;
   let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true, biosMode = 'full';
-  let nextOwnshipSubmission;
+  const {submit:submitOwnshipUpdate, pending:ownshipPending, sent:ownshipSent} = ownshipSubmission();
+  let dropNextOwnship = false;
   const aircraft = 'A-10C_2', biosId = 'common:CommonData:ALT_MSL_FT:0';
   const nativeValues = {'flight.airspeed.true': 210.25, 'flight.engine.left.speedPercent': 74.5,
     'flight.acceleration.x': 3, 'flight.acceleration.y': 4, 'flight.acceleration.z': 0,
@@ -225,13 +226,14 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
         producer.send(Buffer.concat([Buffer.from([85, 85, 85, 85]), ...fields, block(65534, tick)]), 5010, '239.255.50.10');
       }
       if (!emitPhysics) return;
+      if (dropNextOwnship) { sequence++; emitPhysics = false; dropNextOwnship = false; }
       if (!['baseline', 'frozen', 'respawn-wait'].includes(mode)) modelTime += 0.05;
       const packet = {schemaVersion: 1, source: 'osg-dcs-ownship', session: 'native-fixture-mission', sequence: sequence++ >>> 0,
-        modelTime, aircraft, planeId, allowed: mode !== 'denied', paused: mode === 'paused', activePause: mode === 'active-pause', stopped: mode === 'stopped', values: nativeValues};
+        modelTime, aircraft: mode === 'aircraft-mismatch' ? 'FA-18C_hornet' : aircraft, planeId, allowed: mode !== 'denied', paused: mode === 'paused', activePause: mode === 'active-pause', stopped: mode === 'stopped', values: nativeValues};
       const bytes = Buffer.from(JSON.stringify(packet));
-      const submittedMs = nextOwnshipSubmission ? Number(process.hrtime.bigint()) / 1e6 : undefined;
+      const submittedMs = ownshipPending() ? Number(process.hrtime.bigint()) / 1e6 : undefined;
       producer.send(bytes, 7781, '127.0.0.1');
-      nextOwnshipSubmission?.({packetSequence: packet.sequence, submittedMs});
+      ownshipSent({packetSequence: packet.sequence, submittedMs});
     }, 40);
     await until(async () => (await game()).currentVehicle?.id === aircraft, 'Verified fixture BIOS identity was not discovered');
     evidence.baseline = await absent('flight.airspeed.true');
@@ -317,6 +319,9 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       mode = phase; evidence.phases[phase] = await withdrawn(phase);
       mode = 'live'; await live(); await checkpoint(`${phase} withdrawal and rearm verified`);
     }
+    evidence.phases.ownshipTransitions = await verifyOwnshipTransitions({inspect, withdrawn, live, status,
+      drop:() => { dropNextOwnship = true; }, resume:() => { emitPhysics = true; }, setMode:value => { mode = value; }});
+    await checkpoint('ownship packet gap and aircraft mismatch withdraw only their branch');
     emitPhysics = false; evidence.phases.stale = await withdrawn('stale ownship');
     emitPhysics = true; await live(); await checkpoint('stale ownship withdraws physics while BIOS gauges remain live');
     biosMode = 'counter-only';
@@ -325,19 +330,6 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       nativeValues['flight.ownship.inAir'] = airborne;
       selected['flight.ownship.inAir'] = airborne;
     };
-    const submitOwnshipUpdate = update => new Promise((resolve,reject) => {
-      assert.equal(nextOwnshipSubmission, undefined);
-      update();
-      const timeout=setTimeout(() => {
-        nextOwnshipSubmission=undefined;
-        reject(Error('The DCS fixture did not send the changed ownship value'));
-      },1000);
-      nextOwnshipSubmission = submission => {
-        clearTimeout(timeout);
-        nextOwnshipSubmission=undefined;
-        resolve(submission);
-      };
-    });
     if (seconds) {
       await checkpoint('Starting the combined desktop soak');
       evidence.phases.soak = await combined.soak({owner,directory,status,live,setAirborne});
@@ -426,7 +418,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     checks.push('Independent inspection and selected native/canonical profile values preserve zero/false and units; unbound wind and BIOS aircraft gauge remain inspectable.');
     checks.push('Counter-only BIOS renewals preserve retained values. BIOS expiry withdraws its identity output without withdrawing fresh ownship.');
     checks.push(nativeCommands ? 'A fresh BIOS baseline allows the command profile to reapply without replay.' : 'A new read-only run can start from ownship alone and BIOS recovers independently.');
-    checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
+    checks.push('Pause, active pause, export denial, packet gaps, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics while BIOS remains live. Process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
     assert.deepEqual(budgetMisses, [], 'Software timing budgets');
   } catch (error) {

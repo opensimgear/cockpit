@@ -2,6 +2,52 @@ import assert from 'node:assert/strict';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
+export function ownshipSubmission() {
+  let pending;
+  return {
+    pending:() => !!pending,
+    sent:submission => pending?.(submission),
+    submit:update => new Promise((resolve, reject) => {
+      assert.equal(pending, undefined);
+      update();
+      const timeout = setTimeout(() => {
+        pending = undefined;
+        reject(Error('The DCS fixture did not send the changed ownship value'));
+      }, 1000);
+      pending = submission => {
+        clearTimeout(timeout);
+        pending = undefined;
+        resolve(submission);
+      };
+    }),
+  };
+}
+
+export async function verifyOwnshipTransitions({inspect, withdrawn, live, status, drop, resume, setMode}) {
+  const owner = (await status()).profileSession.owner;
+  const waitForQuality = (quality, timeout) => until(() => inspect('flight.airspeed.true'), report =>
+    report?.context.physicsStatus === quality
+      && report.channels.some(row => row.id === 'flight.airspeed.true' && row.value === null), timeout);
+
+  drop();
+  const waiting = await waitForQuality('waiting', 850);
+  const gapWithdrawal = await withdrawn('ownship packet gap');
+  resume();
+  const gapRecovery = await live();
+  assert.deepEqual((await status()).profileSession.owner, owner);
+
+  setMode('aircraft-mismatch');
+  const mismatch = await waitForQuality('waiting-aircraft');
+  const mismatchWithdrawal = await withdrawn('ownship aircraft mismatch');
+  setMode('live');
+  const mismatchRecovery = await live();
+  assert.deepEqual((await status()).profileSession.owner, owner);
+  return {
+    packetGap:{quality:waiting.context.physicsStatus, withdrawn:gapWithdrawal, recovered:gapRecovery},
+    aircraftMismatch:{quality:mismatch.context.physicsStatus, withdrawn:mismatchWithdrawal, recovered:mismatchRecovery},
+  };
+}
+
 export function openDcsTelemetryReaders(cdp, browser) {
   return cdp.evaluate(`(async () => {
     const {SharedObservations} = await import('/src/lib/streams/shared.ts');
