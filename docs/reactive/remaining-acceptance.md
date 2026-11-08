@@ -41,6 +41,10 @@ The [Companions roster](../verification/2026-11-08-companion-roster-visibility.m
 retires its passive status demand while hidden and discards delayed replies.
 Both clients reopened on the committed listener state and offered pairing.
 
+The [Companion panel editor](../verification/2026-11-08-panel-assignment-reopen.md)
+reconciles committed assignments on both clients and retains local checkbox
+edits across reveal. Save merges those edits into a fresh host snapshot.
+
 The [controller detail visibility card](../verification/2026-11-08-controller-visibility-reader-lifetime.md)
 retires both of its readers on document hide or card exit. Native and
 browser-dev reopened on the preference committed while hidden. The

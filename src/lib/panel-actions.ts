@@ -1,16 +1,38 @@
 import { companionPanelReason } from './companion-screen.ts';
 import { sendPublication, stableCompanionId, type CompanionSend, type CompanionHostState, type CompanionPublication } from './companions.ts';
 
-/** Mutable panel identities use immutable transport snapshots internally. */
-export async function synchronizePanel(panel: CompanionPublication, previousHashes: string[], send: CompanionSend, selected?: string[]): Promise<CompanionHostState> {
+function panelInstances(state: CompanionHostState, panelId: string, knownHashes: readonly string[]) {
+  const hashes = new Set(knownHashes);
+  for (const publication of state.host?.publications ?? []) {
+    if (publication.uiId === panelId && typeof publication.publicationHash === 'string') hashes.add(publication.publicationHash);
+  }
+  return (state.host?.instances ?? []).filter(instance =>
+    typeof instance.publicationHash === 'string' && hashes.has(instance.publicationHash));
+}
 
-  let state = await send('companion_status');
-  const hashes = new Set([panel.publicationHash,...previousHashes]);
-  for(const p of state.host?.publications ?? []) if(p.uiId===panel.document.ui.id && typeof p.publicationHash==='string') hashes.add(p.publicationHash);
+function applyAssignmentEdits(ids: unknown[], edits?: ReadonlyMap<string, boolean>) {
+  const targets = new Set(ids.map(stableCompanionId));
+  for (const [id, assigned] of edits ?? []) {
+    if (assigned) targets.add(stableCompanionId(id));
+    else targets.delete(stableCompanionId(id));
+  }
+  return [...targets];
+}
+
+export function panelAssignmentTargets(state: CompanionHostState, panelId: string, knownHashes: readonly string[], edits: ReadonlyMap<string, boolean>) {
+  return applyAssignmentEdits(panelInstances(state, panelId, knownHashes).map(instance => instance.companionId), edits);
+}
+
+/** Mutable panel identities use immutable transport snapshots internally. */
+export async function synchronizePanel(panel: CompanionPublication, previousHashes: string[], send: CompanionSend, selected?: string[] | ReadonlyMap<string, boolean>): Promise<CompanionHostState> {
+
+  const state = await send('companion_status');
   const instances = state.host?.instances ?? [];
   const profileOwnedCompanions=new Set(instances.filter(instance=>instance.profileOwned===true).map(instance=>instance.companionId));
-  const owned = instances.filter(i => typeof i.publicationHash==='string' && hashes.has(i.publicationHash));
-  const desired = selected === undefined ? [...new Set(owned.map(i => stableCompanionId(i.companionId)))] : [...new Set(selected.map(stableCompanionId))];
+  const owned = panelInstances(state, panel.document.ui.id, [panel.publicationHash, ...previousHashes]);
+  const desired = Array.isArray(selected)
+    ? applyAssignmentEdits(selected)
+    : applyAssignmentEdits(owned.map(instance => instance.companionId), selected);
   for(const companionId of desired) {
     if(selected!==undefined && !(state.host?.clients ?? []).some(c => c.companionId===companionId)) throw new Error('The selected companion is no longer paired.');
     if(!owned.some(i => i.companionId===companionId) && instances.filter(i => i.companionId===companionId).length>1) throw new Error('This companion has multiple controller assignments. Disconnect its extra assignments before assigning a panel.');

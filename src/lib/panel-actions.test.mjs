@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument,publishDocument } from '../../packages/companion-designer/src/index.ts';
-import { synchronizePanel,removePanelAssignments } from './panel-actions.ts';
+import { panelAssignmentTargets,synchronizePanel,removePanelAssignments } from './panel-actions.ts';
 async function fixture(){const first=await publishDocument(newDocument('Panel'),[]);const doc=structuredClone(first.document);doc.ui.title='Updated panel';return {first,next:await publishDocument(doc,[])};}
 function host(instances=[],publications=[]){
  const calls=[],state={host:{snapshotToken:'native-snapshot:4',instances:structuredClone(instances),publications,clients:['a','b','c'].map(companionId=>({companionId}))}};
@@ -19,6 +19,19 @@ test('omitted selection tells native to preserve current panel membership and pr
  assert.deepEqual(h.calls.find(c=>c.command==='companion_publish_commit').payload.selection,{expectedHostToken:'native-snapshot:4'});
  assert.ok(!h.calls.some(c=>c.command==='companion_assign'||c.command==='companion_unassign'));
  const empty=host();await synchronizePanel(next,[],empty.send,[]);assert.deepEqual(empty.calls.find(c=>c.command==='companion_publish_commit').payload.selection.companionIds,[]);
+});
+test('explicit edits merge with current host assignments, including another revision of the same panel',async()=>{
+ const {first,next}=await fixture();
+ const previousHash='older-panel';
+ const h=host([
+  {instanceId:'old',companionId:'a',publicationHash:first.publicationHash},
+  {instanceId:'background',companionId:'b',publicationHash:previousHash},
+ ],[{uiId:next.document.ui.id,publicationHash:previousHash}]);
+ const edits=new Map([['a',false],['c',true]]);
+ assert.deepEqual(panelAssignmentTargets(h.state,next.document.ui.id,[first.publicationHash],edits),['b','c']);
+ await synchronizePanel(next,[first.publicationHash],h.send,edits);
+ assert.deepEqual(h.calls.find(c=>c.command==='companion_publish_commit').payload.selection,
+  {expectedHostToken:'native-snapshot:4',companionIds:['b','c']});
 });
 test('a missing native acknowledgement or failed profile transition is surfaced without follow-up assignment writes',async()=>{
  const {next}=await fixture();

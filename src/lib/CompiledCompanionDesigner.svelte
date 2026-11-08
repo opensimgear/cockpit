@@ -13,7 +13,7 @@
   import CompiledPanel from '../../packages/companion-ui/src/CompiledPanel.svelte';
   import { gatewayRequest } from './gateway';
   import { companionObservations } from './companion-observations';
-  import { synchronizePanel, removePanelAssignments } from './panel-actions';
+  import { panelAssignmentTargets, synchronizePanel, removePanelAssignments } from './panel-actions';
   import { restoreCompanionPanels } from './companion-startup';
   import { notify } from './notifications';
   import { panelDestinationWarnings } from './companion-panel-resolution';
@@ -29,7 +29,8 @@
   let draft = $state.raw<CompiledDraft>(), past = $state.raw<CompiledDraft[]>([]), future = $state.raw<CompiledDraft[]>([]), selected = $state(''), pageId = $state('');
   let panelBase = $state.raw<CompiledDraft>(), widgetBase = $state.raw<WidgetSource>();
   let dirty = $state(false), busy = $state(false), saving = $state(false), progress = $state(''), compiled = $state.raw<CompiledPanelPublication>(), trying = $state(false);
-  let motion = $state(true), audio = $state(true), selectedCompanions = $state<string[]>([]), output = $state.raw<Record<string, boolean | number>>({});
+  let motion = $state(true), audio = $state(true), output = $state.raw<Record<string, boolean | number>>({});
+  let assignmentEdits = $state.raw<ReadonlyMap<string, boolean>>(new Map());
   let details = $state(untrack(() => !!initialCompanionId)), host = $state.raw<CompanionHostState>({});
   let widgetEditor = $state.raw<WidgetSource>(), editingInstance = $state('');
   const same = (a: unknown, b: unknown) => a === b || canonicalWidget(a ?? null) === canonicalWidget(b ?? null);
@@ -41,7 +42,7 @@
   let widgetDesigner=$state<GenericWidgetDesigner>();
   let connections = $state<CompanionConnections>(), player = $state<CompiledPanel>(), stage = $state<HTMLDivElement>();
   let widgetImport = $state<HTMLInputElement>(), panelImport = $state<HTMLInputElement>();
-  let disposed = false, epoch = 0, reading = false, refreshQueued = false;
+  let disposed = false, epoch = 0, hostRequest = 0, appliedHostRequest = 0;
   let build = $state<AbortController>();
   const store = new CompiledWorkspaceStore();
   function saveWorkspace(next: CompiledWorkspace) {
@@ -55,6 +56,9 @@
   const widget = $derived(draft?.widgets.find(widget => widget.id === selected));
   const source = $derived(widget ? workspace.sources.find(source => source.id === widget.sourceId) : undefined);
   const resources = $derived(compiled ? compiledPanelResources(compiled.document) : undefined);
+  const selectedCompanions = $derived(draft
+    ? panelAssignmentTargets(host, draft.id, (workspace.publications[draft.id] ?? []).map(panel => panel.publicationHash), assignmentEdits)
+    : []);
   const resolutionWarnings = $derived(panelDestinationWarnings(page,selectedCompanions,host));
   function sourceFor(item: CompiledDraft['widgets'][number]) { return workspace.sources.find(source => source.id === item.sourceId); }
   function invalidate() { epoch++; build?.abort(); build = undefined; busy = saving; compiled = undefined; trying = false; output = {}; progress = ''; player?.reset(); }
@@ -78,26 +82,36 @@
     else { draft = undefined; dirty = false; invalidate(); if (target.kind === 'companion') { details = true; connections?.showCompanion(target.id); } else { details = false; connections?.showMain(false); } }
   }
   let libraryLoad = Promise.resolve();
-  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) { const result = (await gatewayRequest({ command, companion })).companions; if (!result) throw new Error('This operation requires the native Cockpit.'); host = { ...host, ...result }; return result; }
-  async function refresh() {
-    if (disposed || !active || !panelVisible) return;
-    if (reading) { refreshQueued = true; return; }
-    reading = true;
-    refreshQueued = false;
-    try { await send('companion_status'); } catch { /* Offline source editing remains available. */ }
-    finally {
-      reading = false;
-      if (refreshQueued) void refresh();
+  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}, current = () => true) {
+    const version = ++hostRequest;
+    const result = (await gatewayRequest({ command, companion })).companions;
+    if (!result) throw new Error('This operation requires the native Cockpit.');
+    if (!disposed && version >= appliedHostRequest && current()) {
+      appliedHostRequest = version;
+      host = { ...host, ...result };
     }
+    return result;
   }
   $effect(() => {
-    if (!active || !panelVisible) return;
+    if (!active || !shown || !panelVisible) return;
+    let stopped = false, reading = false, pending = false;
+    const current = () => !stopped && active && panelVisible && !document.hidden;
+    const refresh = async () => {
+      if (!current()) return;
+      if (reading) { pending = true; return; }
+      reading = true;
+      do {
+        pending = false;
+        try { await send('companion_status', {}, current); } catch { /* Offline source editing remains available. */ }
+      } while (pending && current());
+      reading = false;
+    };
     const observations = companionObservations();
     const stops = ['companion.presence', 'companion.listener'].map(topic =>
       observations.subscribe(topic, state => {
         if (state.status === 'ready') untrack(() => { void refresh(); });
       }));
-    return () => stops.forEach(stop => stop());
+    return () => { stopped = true; stops.forEach(stop => stop()); };
   });
   onMount(() => {
     const visibility = () => { shown = !document.hidden; };
@@ -143,23 +157,12 @@
   function openPanel(id: string, record = true) {
     if (!ready || !leave()) return;
     const saved = workspace.drafts.find(draft => draft.id === id); if (!saved) { error = 'This panel is no longer available.'; return; }
-    const visibleState = !draft ? connections?.getHostState() : undefined;
     invalidate(); panelBase = saved; draft = structuredClone(saved); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = false;
     compiled = workspace.publications[id]?.at(-1);
-    const hashes = new Set((workspace.publications[id] ?? []).map(p => p.publicationHash));
-    const assignments = (state: CompanionHostState) => (state.host?.instances ?? [])
-      .filter(instance => hashes.has(String(instance.publicationHash))).map(instance => String(instance.companionId));
-    if (visibleState?.host) host = visibleState;
-    selectedCompanions = assignments(host);
-    if (!host.host) {
-      const opened = epoch;
-      void refresh().then(() => {
-        if (!disposed && epoch === opened && !dirty) selectedCompanions = assignments(host);
-      });
-    }
+    assignmentEdits = new Map();
     details = false; error = ''; message = ''; if (record) onNavigate?.({ kind: 'panel', id });
   }
-  function createPanel() { if (!leave()) return; invalidate(); panelBase = undefined; draft = newCompiledDraft(); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = true; selectedCompanions = []; onNavigate?.({ kind: 'panel', id: draft.id }); }
+  function createPanel() { if (!leave()) return; invalidate(); panelBase = undefined; draft = newCompiledDraft(); past = []; future = []; pageId = draft.pages[0].id; selected = ''; dirty = true; assignmentEdits = new Map(); onNavigate?.({ kind: 'panel', id: draft.id }); }
   function add(item: WidgetSource) {
     if (!draft || !page) return;
     const width = Math.min(item.size.width, page.width), height = Math.min(item.size.height, page.height);
@@ -216,7 +219,8 @@
       const drafts = [...workspace.drafts.filter(d => d.id !== captured.id), captured], previous = workspace.publications[captured.id] ?? [];
       workspace = await saveWorkspace({ ...workspace, drafts, publications: { ...workspace.publications, [captured.id]: [publication] } });
       panelBase = captured;
-      await synchronizePanel(publication, previous.map(p => p.publicationHash), send, selectedCompanions);
+      await synchronizePanel(publication, previous.map(p => p.publicationHash), send, assignmentEdits.size ? assignmentEdits : undefined);
+      assignmentEdits = new Map();
       dirty = false; message = 'Saved and assigned to the selected browser companions.';
     } catch (e) { error = String(e); } finally { busy = saving = false; }
   }
@@ -269,7 +273,7 @@
         <label>Background<input aria-label="Panel background" type="color" value={page.background??'#0d1820'} onchange={e=>change(d=>d.pages.find(p=>p.id===page!.id)!.background=e.currentTarget.value)}/></label>
         <h3>Widgets</h3>{#each sources as item}<button class="secondary-button palette" onclick={() => add(item)} disabled={trying || busy}><Icon name="plus" size={14}/>{item.title}</button>{/each}<button class="secondary-button" onclick={() => editWidget()}><Icon name="pencil" size={14}/>New</button>
         <h3>Target</h3><label class="check"><input type="checkbox" checked={motion} onchange={e => { motion = e.currentTarget.checked; invalidate(); }}/>Animations</label><label class="check"><input type="checkbox" checked={audio} onchange={e => { audio = e.currentTarget.checked; invalidate(); }}/>Audio</label><small>Static visuals and live feedback remain available with media disabled.</small>
-        <h3>Assignments</h3>{#each host.host?.clients ?? [] as client}<label class="check"><input type="checkbox" value={String(client.companionId)} disabled={client.kind !== 'browser'} checked={selectedCompanions.includes(String(client.companionId))} onchange={e => { selectedCompanions = e.currentTarget.checked ? [...selectedCompanions, String(client.companionId)] : selectedCompanions.filter(id => id !== client.companionId); dirty = true; }}/>{String(client.name ?? client.companionId)}{client.kind !== 'browser' ? ' · unsupported target' : ''}</label>{:else}<small>Pair a browser companion to assign this panel.</small>{/each}
+        <h3>Assignments</h3>{#each host.host?.clients ?? [] as client}<label class="check"><input type="checkbox" value={String(client.companionId)} disabled={saving || client.kind !== 'browser'} checked={selectedCompanions.includes(String(client.companionId))} onchange={e => { assignmentEdits = new Map(assignmentEdits).set(String(client.companionId), e.currentTarget.checked); dirty = true; }}/>{String(client.name ?? client.companionId)}{client.kind !== 'browser' ? ' · unsupported target' : ''}</label>{:else}<small>Pair a browser companion to assign this panel.</small>{/each}
       </aside>
       <main><div class="stage-heading"><strong>{trying ? 'Compiled Try' : 'Source preview'}</strong><span>{page.width} × {page.height}</span></div><div class="stage" bind:this={stage} style:background={page.background??'#0d1820'} style:aspect-ratio={`${page.width}/${page.height}`}>
         {#if trying && compiled}<CompiledPanel bind:this={player} publication={compiled} pageId={page.id} onoutput={value => output = { ...output, [value.controlId]: value.value }} onerror={value => error = value}/>

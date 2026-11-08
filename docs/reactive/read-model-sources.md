@@ -183,6 +183,11 @@ desktop build. The fixed Windows WebView and Edge browser-dev both preserved
 locally edited titles, surfaced each conflict and showed the saved title on
 reopen. The browser writer ran in a separate tab.
 
+The panel editor also follows committed native assignments while visible.
+Local checkbox edits overlay the host snapshot and merge with the latest
+assignment set at Save. The [native and browser-dev fixture](../verification/2026-11-08-panel-assignment-reopen.md)
+verifies a visible commit, a hidden commit, the saved selection and reopen.
+
 Both transports rejected a stale writer after a second store committed.
 Browser-dev checks and advances the IndexedDB revision in the same transaction
 as the workspace write. A rejected write emits no commit notification. The
