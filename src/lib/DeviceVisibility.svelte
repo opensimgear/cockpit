@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { SharedObservations } from './streams/shared';
+  import { visibleObservation } from './visible-observation';
   import type { HostController } from './controllers';
   import type { HidHideSelfAccess, VisibilityIntent, VisibilityStatus } from './visibility';
   const startupAccessLabels: Record<HidHideSelfAccess['status'], string> = {
@@ -22,21 +23,24 @@
   let refreshing = false;
   let refreshPending = false;
   let requestSequence = 0;
+  let visibilityEpoch = 0;
   let visibilityBaselineReady = false;
   let inventoryBaselineReady = false;
   function intentExecutable(intent: VisibilityIntent) {
     return intent.mode === 'hide-from-process' ? intent.executable : '';
   }
-  async function request(value: GatewayRequest, updateIntent = false) {
+  async function request(value: GatewayRequest, updateIntent = false, passiveEpoch?: number) {
     const sequence = ++requestSequence;
+    const current = () => !disposed && sequence === requestSequence &&
+      (passiveEpoch === undefined || (!document.hidden && passiveEpoch === visibilityEpoch));
     let result: VisibilityStatus | undefined;
     try {
       result = (await gatewayRequest({ ...value, sourceId: source.id })).controllers?.visibility;
     } catch (reason) {
-      if (!disposed && sequence === requestSequence) throw reason;
+      if (current()) throw reason;
       return;
     }
-    if (disposed || sequence !== requestSequence) return;
+    if (!current()) return;
     if (!result) throw new Error('Restart the native service to use device visibility settings.');
     const previous = status?.intent;
     status = result;
@@ -53,37 +57,45 @@
     finally { busy = false; if (refreshPending) void refresh(); }
   }
   async function refresh() {
-    if (!refreshPending || !visibilityBaselineReady || !inventoryBaselineReady || disposed || document.hidden || busy || refreshing) return;
+    if (refreshing) return;
     refreshing = true;
     try {
-      while (refreshPending && !busy && !disposed && !document.hidden) {
+      while (refreshPending && visibilityBaselineReady && inventoryBaselineReady && !busy && !disposed && !document.hidden) {
         refreshPending = false;
-        try { await request({ command: 'controller_visibility_status' }); }
+        try { await request({ command: 'controller_visibility_status' }, false, visibilityEpoch); }
         catch (e) { if (!disposed) error = e instanceof Error ? e.message : String(e); }
       }
     } finally { refreshing = false; }
   }
   onMount(() => {
     const observations = new SharedObservations();
-    observations.subscribe('controllers.visibility', state => {
+    const retire = () => {
+      visibilityEpoch++;
+      visibilityBaselineReady = false;
+      inventoryBaselineReady = false;
+      refreshPending = false;
+    };
+    const visibility = visibleObservation(observations, 'controllers.visibility', state => {
       if (state.status === 'ready' || state.status === 'lost' || state.status === 'error') {
         visibilityBaselineReady = true;
         refreshPending = true;
         void refresh();
       }
-    });
-    observations.subscribe('system.inventory', state => {
+    }, retire);
+    const inventory = visibleObservation(observations, 'system.inventory', state => {
       if (state.status === 'ready' || state.status === 'error' || state.status === 'lost') {
         inventoryBaselineReady = true;
         refreshPending = true;
         void refresh();
       }
-    });
-    document.addEventListener('visibilitychange', refresh);
+    }, retire);
+    visibility.setVisible(true);
+    inventory.setVisible(true);
     return () => {
       disposed = true;
+      visibility.close();
+      inventory.close();
       observations.close();
-      document.removeEventListener('visibilitychange', refresh);
     };
   });
 </script>

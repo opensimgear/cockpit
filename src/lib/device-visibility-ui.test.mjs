@@ -1,7 +1,64 @@
 import assert from'node:assert/strict';import test from'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import*as server from'svelte/internal/server';import*as svelte from'svelte';
 const file=new URL('./DeviceVisibility.svelte',import.meta.url),source=await readFile(file,'utf8'),physical={id:'exact-physical-source',online:true,baselineReady:true},plain=v=>JSON.parse(JSON.stringify(v));
 const status=platform=>({platform,modes:[{mode:'visible',label:'Visible',supported:true,qualified:true,reason:'Local preference only.'},{mode:'hide-from-process',label:'Hide from a process',supported:true,qualified:true,reason:'Profile-controlled hiding.'}],enabled:true,qualified:true,reason:'Native inspection evidence.',intent:{mode:'hide-from-process',executable:'C:\\Games\\Game.exe'},selected:['exact-physical-source','other-physical'],selectedCount:2,global:{inspected:true,active:true,inverse:false,hiddenCount:2,applicationCount:1,applications:['C:\\Tools\\Tool.exe']},effective:{hidden:true,configured:true,inverse:false,scope:'global'},job:null,recovery:{required:true,id:'native-recovery-session'}});
-function harness(seed,{send}={}){const exports={},requests=[],document={hidden:false,addEventListener(){},removeEventListener(){}};let mount,closed=false;const listeners=new Map();const injected=source.replace('</script>','status=seed;mode=seed.intent.mode;executable=seed.intent.mode==="hide-from-process"?seed.intent.executable:"";capture({action,refresh,setDraft(value){mode=value.mode;executable=intentExecutable(value);},get draft(){return {mode,executable};},get status(){return status;},get error(){return error;}});</script>'),{js}=compile(injected,{filename:file.pathname,generate:'server'});let handlers;vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,seed,document,capture(v){handlers=v;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return {...svelte,onMount:fn=>mount=fn};if(name==='./streams/shared')return{SharedObservations:class{subscribe(topic,fn){listeners.set(topic,fn);return()=>{};}close(){closed=true;}}};if(name.endsWith('.svelte'))return{default:()=>{}};if(name==='./gateway')return{gatewayRequest:async request=>{requests.push(plain(request));return send?send(request):{controllers:{visibility:seed}};}};throw Error(name);}});const html=render(exports.default,{props:{source:physical}}).body;return{html,handlers,requests,document,mount,notify:(topic,state)=>listeners.get(topic)(state),get closed(){return closed;}};}
+const transpile = source => ts.transpileModule(source, {
+  compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
+}).outputText;
+const observationHelper = transpile(await readFile(new URL('./visible-observation.ts', import.meta.url), 'utf8'));
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+function harness(seed, {send, hidden = false} = {}) {
+  const exports = {}, observationExports = {}, requests = [], listeners = new Map();
+  const document = new EventTarget();
+  document.hidden = hidden;
+  vm.runInNewContext(observationHelper, {exports: observationExports, document});
+  let mount, handlers, closed = false;
+  const injected = source.replace('</script>', `
+    status = seed;
+    mode = seed.intent.mode;
+    executable = intentExecutable(seed.intent);
+    capture({action, refresh,
+      setDraft(value) { mode = value.mode; executable = intentExecutable(value); },
+      get draft() { return {mode, executable}; },
+      get status() { return status; },
+      get error() { return error; },
+    });
+  </script>`);
+  const {js} = compile(injected, {filename: file.pathname, generate: 'server'});
+  vm.runInNewContext(transpile(js.code), {
+    exports, seed, document,
+    capture(value) { handlers = value; },
+    require(name) {
+      if (name === 'svelte/internal/server') return server;
+      if (name === 'svelte') return {...svelte, onMount: fn => mount = fn};
+      if (name === './visible-observation') return observationExports;
+      if (name === './streams/shared') return {SharedObservations: class {
+        subscribe(topic, listener) {
+          assert.ok(!listeners.has(topic));
+          listeners.set(topic, listener);
+          return () => listeners.delete(topic);
+        }
+        close() { closed = true; listeners.clear(); }
+      }};
+      if (name.endsWith('.svelte')) return {default: () => {}};
+      if (name === './gateway') return {gatewayRequest: async request => {
+        requests.push(plain(request));
+        return send ? send(request) : {controllers: {visibility: seed}};
+      }};
+      throw Error(name);
+    },
+  });
+  const html = render(exports.default, {props: {source: physical}}).body;
+  return {
+    html, handlers, requests, listeners, mount,
+    notify: (topic, state) => listeners.get(topic)(state),
+    setHidden(value) {
+      document.hidden = value;
+      document.dispatchEvent(new Event('visibilitychange'));
+    },
+    get closed() { return closed; },
+  };
+}
 test('visibility subscribes, coalesces changes during a read, and cleans up',async()=>{
  const native=status('windows');let release;
  const first=new Promise(resolve=>release=resolve);
@@ -13,10 +70,63 @@ test('visibility subscribes, coalesces changes during a read, and cleans up',asy
  assert.equal(reads,1);
  release();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(reads,2);
- h.document.hidden=true;h.notify('system.inventory',{status:'ready'});assert.equal(reads,2);
- h.document.hidden=false;await h.handlers.refresh();assert.equal(reads,3);
+ h.setHidden(true);assert.equal(h.listeners.size,0);assert.equal(reads,2);
+ h.setHidden(false);assert.equal(h.listeners.size,2);
+ h.notify('system.inventory',{status:'ready'});assert.equal(reads,2);
+ h.notify('controllers.visibility',{status:'ready'});assert.equal(reads,3);
  await h.handlers.refresh();assert.equal(reads,3,'Visibility changes without pending work do not read');
  cleanup();assert.equal(h.closed,true);
+});
+test('a passive response cannot cross hide and reveal, even when a fresh baseline arrives first', async () => {
+  const native = status('windows');
+  const stale = {...native, reason: 'Retired visibility response'};
+  const current = {...native, reason: 'Fresh visibility response'};
+  let releaseStale, releaseCurrent;
+  const staleReply = new Promise(resolve => { releaseStale = resolve; });
+  const currentReply = new Promise(resolve => { releaseCurrent = resolve; });
+  const h = harness(native, {hidden: true, send: () => h.requests.length === 1 ? staleReply : currentReply});
+  const cleanup = h.mount();
+  assert.equal(h.listeners.size, 0, 'Opening hidden has no observation demand');
+  h.setHidden(false);
+  h.notify('controllers.visibility', {status: 'ready'});
+  h.notify('system.inventory', {status: 'ready'});
+  assert.equal(h.requests.length, 1);
+  h.setHidden(true);
+  h.setHidden(false);
+  h.notify('controllers.visibility', {status: 'ready'});
+  releaseStale({controllers: {visibility: stale}});
+  await flush();
+  assert.equal(h.handlers.status.reason, native.reason);
+  assert.equal(h.requests.length, 1, 'The replacement read waits for both new baselines');
+  h.notify('system.inventory', {status: 'ready'});
+  assert.equal(h.requests.length, 2);
+  releaseCurrent({controllers: {visibility: current}});
+  await flush();
+  assert.equal(h.handlers.status.reason, current.reason);
+  cleanup();
+  h.setHidden(true);
+  h.setHidden(false);
+  assert.equal(h.listeners.size, 0);
+});
+test('an acknowledged user save survives document hide while its old passive error is ignored', async () => {
+  const native = status('windows');
+  let rejectRead, finishSave;
+  const read = new Promise((_, reject) => { rejectRead = reject; });
+  const save = new Promise(resolve => { finishSave = resolve; });
+  const h = harness(native, {send: request => request.command === 'controller_visibility_save' ? save : read});
+  const cleanup = h.mount();
+  h.notify('controllers.visibility', {status: 'ready'});
+  h.notify('system.inventory', {status: 'ready'});
+  const intent = {mode: 'visible'};
+  const saving = h.handlers.action({command: 'controller_visibility_save', intent});
+  h.setHidden(true);
+  finishSave({controllers: {visibility: {...native, intent}}});
+  await saving;
+  rejectRead(new Error('Retired status read'));
+  await flush();
+  assert.equal(h.handlers.error, '');
+  assert.deepEqual(plain(h.handlers.draft), {...intent, executable: ''});
+  cleanup();
 });
 test('external visibility snapshots follow clean fields and preserve an unsaved draft',async()=>{
  const native=status('windows');let reply={...native,intent:{mode:'visible'}};

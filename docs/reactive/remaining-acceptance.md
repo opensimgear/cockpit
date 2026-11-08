@@ -37,6 +37,11 @@ retire the listener reader when hidden. Both transports verified a fresh
 baseline and one status read on reveal after a listener commit in a private
 Cockpit session.
 
+The [controller detail visibility card](../verification/2026-11-08-controller-visibility-reader-lifetime.md)
+retires both of its readers on document hide or card exit. Native and
+browser-dev reopened on the preference committed while hidden. The
+surrounding Devices inventory reader retained its own lifetime.
+
 The companion and integration port sections share the same tile, filter and
 pager. The tile owns spacing, typography and status styles. Companion authoring
 controls retain concise labels, icons and accessible remove actions. The
