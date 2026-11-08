@@ -1093,17 +1093,16 @@ impl Gateway {
     }
     fn sleep(&self, duration: Duration) -> Result<(), String> {
         let deadline = Instant::now() + duration;
-        while Instant::now() < deadline {
+        loop {
             if self.cancel.load(Ordering::Acquire) {
                 return Err(CLOSED.into());
             }
-            thread::sleep(
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(self.timing.poll),
-            );
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            thread::park_timeout(remaining);
         }
-        Ok(())
     }
     fn apply(&mut self) -> Result<(), String> {
         if self.automatic() {
@@ -1394,10 +1393,10 @@ impl Gateway {
                 })
                 && Instant::now() < deadline
             {
-                thread::sleep(
+                self.sleep(
                     Duration::from_millis(50)
                         .min(deadline.saturating_duration_since(Instant::now())),
-                );
+                )?;
                 self.exchange("snapshot", self.timing.command)?;
                 let refreshed = action_route(&self.state, id)
                     .ok_or("The device went offline during action discovery.")?;
@@ -2513,6 +2512,7 @@ impl Stm32Service {
         self.closed.store(true, Ordering::Release);
         let _ = self.sender.try_send(Message::Shutdown);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            worker.thread().unpark();
             let _ = worker.join();
         }
     }
@@ -3341,6 +3341,23 @@ mod tests {
         let (gateway, context) = harness();
         context.lock().unwrap().state = automatic_state();
         (gateway, context)
+    }
+
+    #[test]
+    fn recovery_wait_uses_deadline_and_shutdown_signal_wakes_it() {
+        let (gateway, _) = harness();
+        let cancel = gateway.cancel.clone();
+        let waiting = thread::current();
+        let shutdown = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            cancel.store(true, Ordering::Release);
+            waiting.unpark();
+        });
+
+        let started = Instant::now();
+        assert_eq!(gateway.sleep(Duration::from_secs(2)).unwrap_err(), CLOSED);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        shutdown.join().unwrap();
     }
 
     #[test]

@@ -512,15 +512,17 @@ impl Worker {
     }
     fn wait(&self, duration: Duration) -> Result<(), String> {
         let end = Instant::now() + duration;
-        while Instant::now() < end {
+        loop {
+            let observed = self.wake.observed();
             if self.cancel.load(Ordering::Acquire) {
                 return Err(CLOSED.into());
             }
-            thread::sleep(
-                Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
-            );
+            let remaining = end.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            self.wake.wait(observed, remaining);
         }
-        Ok(())
     }
     fn reconcile(
         &mut self,
