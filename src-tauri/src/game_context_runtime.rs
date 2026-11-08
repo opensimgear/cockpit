@@ -8,6 +8,8 @@ pub(super) mod process_cache;
 mod capture_workers;
 #[path = "games/context/vehicle_openers.rs"]
 mod vehicle_openers;
+#[path = "games/context/projection.rs"]
+mod projection;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -199,6 +201,8 @@ impl GamesRuntime {
             let polling_closed = Arc::new(AtomicBool::new(false));
             let polling = capture_workers::start(inner.clone(), polling_closed.clone());
             let openers = vehicle_openers::start(inner.clone(), polling_closed.clone(), &open_wakes);
+            let projections = Arc::new(projection::Workers::default());
+            let qualification = projections.start(&inner);
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
             let worker_wake = &inner.changes.context_worker_wake;
@@ -220,10 +224,10 @@ impl GamesRuntime {
                 dcs_watch.refresh(&inner);
                 vehicle_catalogues.refresh(&inner);
                 let setup = if last_library == Some(library) { SetupRefresh::Cached } else { SetupRefresh::Library };
-                let setup_current = inner.refresh_game_contexts_with_inventory(setup, |games| {
+                let setup_current = inner.collect_game_contexts(setup, |games| {
                     inner.read_context_inventory(&mut process_cache, epoch, games,
                         |games| inner.read_context_processes(epoch, games))
-                });
+                }, Some((&projections, epoch)));
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 if setup_current { last_library = Some(library); }
                 if inner.closed.load(Ordering::Acquire) { break; }
@@ -238,7 +242,8 @@ impl GamesRuntime {
             polling_closed.store(true, Ordering::Release);
             capture_wakes.notify_all();
             open_wakes.notify_all();
-            for worker in polling.into_iter().chain(openers) {
+            projections.stop();
+            for worker in polling.into_iter().chain(openers).chain(qualification) {
                 let _ = worker.join();
             }
             inner.update_vehicles(|vehicles| vehicles.stop_openers());
@@ -353,132 +358,6 @@ impl Inner {
         self.refresh_game_contexts_with_inventory(setup, |games| self.platform.integration_processes(games));
     }
 
-    fn refresh_game_contexts_with_inventory(
-        &self,
-        setup: SetupRefresh,
-        inventory: impl FnOnce(&[&Value]) -> Vec<crate::game_discovery::ProcessLookup>,
-    ) -> bool {
-        let epoch = match self
-            .contexts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .begin_observation()
-        {
-            Ok(epoch) => epoch,
-            Err(_) => return false,
-        };
-        let installation_metadata = self.guard_installation_metadata();
-        let mut games = self
-            .settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .catalogue
-            .iter()
-            .filter(|game| crate::game_discovery::integration_key(game).is_some())
-            .cloned()
-            .collect::<Vec<_>>();
-        let bound_ids = games
-            .iter()
-            .filter_map(|game| game["id"].as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
-        self.contexts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain_bindings(&bound_ids);
-        match setup {
-            SetupRefresh::Cached => {}
-            SetupRefresh::Explicit => self.setup.refresh(&games),
-            SetupRefresh::Library => {
-                // A newer observation cannot publish an unchecked library
-                // baseline while explicit preparation owns setup admission.
-                if !self.setup.refresh_background(&games) { return false; }
-            }
-        }
-        self.setup.decorate_source(&mut games);
-        let admission: Vec<_> = games.iter().map(|game| {
-            let supported = self.platform.integration_setup_supported()
-                && game["processMonitoringSupported"]
-                    .as_bool()
-                    .unwrap_or(game["launchSupported"] == true);
-            let eligible: Result<bool, String> = (|| {
-                installation_metadata.as_ref().map_err(Clone::clone)?;
-                if !supported || game["installed"] != true {
-                    return Ok(false);
-                }
-                self.platform.validate(
-                    game["id"].as_str().ok_or("Choose a game identity.")?,
-                    game["executable"]
-                        .as_str()
-                        .ok_or("Choose a game executable before process verification.")?,
-                )?;
-                Ok(true)
-            })();
-            (supported, eligible)
-        }).collect();
-        let selected: Vec<_> = games.iter().zip(&admission)
-            .filter_map(|(game, (_, eligible))| matches!(eligible, Ok(true)).then_some(game)).collect();
-        let mut processes = inventory(&selected).into_iter();
-        for (game, (supported, eligible)) in games.iter().zip(admission) {
-            use crate::game_discovery::ProcessLookupError;
-            let eligible_for_retention = matches!(eligible, Ok(true));
-            let process = eligible.map_err(ProcessLookupError::Unavailable).and_then(|eligible| {
-                if !eligible { return Ok(None); }
-                let process = processes.next().ok_or_else(||
-                    ProcessLookupError::Unavailable("Game process inventory was incomplete.".into()))??;
-                match process {
-                    Some(process) if self.platform.alive(&process).map_err(ProcessLookupError::Unavailable)? => Ok(Some(process)),
-                    _ => Ok(None),
-                }
-            });
-            let Some(id) = game["id"].as_str() else { continue; };
-            let Some(integration) = crate::game_discovery::integration_key(game) else { continue; };
-            let revision = self.setup.provider_setup_revision(integration);
-            let lookup_unavailable = eligible_for_retention && matches!(process, Err(ProcessLookupError::Unavailable(_)));
-            let error = process.as_ref().err().map(ToString::to_string);
-            let connection = self
-                .setup
-                .provider_connection_snapshot(integration)
-                .ok()
-                .map(|(connection, _, _)| connection);
-            if let Some(connection) = connection {
-                let work = self.update_vehicles(|vehicles| {
-                    vehicles.begin_inventory_observation(game, &connection, process.clone(), &revision,
-                        supported && game["integrationSetup"]["state"] == "ready", epoch)
-                        .and_then(|work| vehicles.defer_open(work))
-                });
-                if let Some(work) = work {
-                    vehicle_openers::finish_inline(self, integration, work);
-                }
-            }
-            let vehicle_id = self.runtime_vehicle_id(id);
-            let catalogue = self
-                .setup
-                .integration_catalogue_metadata_for_vehicle(integration, vehicle_id.as_deref());
-            let setup_matches = game["integrationSetup"]["providerSetupRevision"].as_str()
-                == Some(revision.as_str());
-            let observation = Observation {
-                installation: preparation_installation(game),
-                process: process.unwrap_or(None),
-                supported,
-                setup_ready: setup_matches
-                    && game["integrationSetup"]["state"] == "ready"
-                    && (!integration.starts_with("assetto-corsa")
-                        || game["integrationSetup"]["verified"] == true),
-                provider_setup_revision: revision.clone(),
-                catalogue_revision: catalogue
-                    .ok()
-                    .and_then(|value| value["catalogueRevision"].as_str().map(str::to_owned)),
-                vehicle_id,
-                error,
-            };
-            let _ = self
-                .contexts
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .observe(id, epoch, observation, lookup_unavailable);
-        }
-        true
-    }
 }
 
 #[cfg(test)]

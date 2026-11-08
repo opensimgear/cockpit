@@ -119,8 +119,8 @@ now handles native reads and freshness deadlines independently per integration.
 A blocked reader can no longer delay another integration's capture.
 [Passive reader startup](../verification/2026-11-08-vehicle-reader-startup.md)
 runs native open and initial watch registration on separate workers by
-integration. Process inventory, setup qualification, and simulator acceptance
-remain under #192 and #199.
+integration. Setup watch registration and the shared baseline refresh remain
+under #192. Simulator acceptance remains in #199.
 
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
 matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)
@@ -217,8 +217,12 @@ Executable SHA-256 was
 
 [Watched process inventory retries](../verification/2026-11-08-context-inventory-scope.md)
 preserve definitive rows and retry only unavailable rows within the exact
-scope. A superseded read is discarded before projection. Shared per-game
-process qualification and actual simulator acceptance remain open.
+scope. A superseded read is discarded before projection.
+[Background context qualification](../verification/2026-11-08-context-projection.md)
+runs executable checks, process liveness and catalogue lookup independently
+by integration. One blocked check cannot stop another integration from
+publishing. Setup watch registration and the shared setup baseline still
+need separate qualification.
 
 ### Queued DCS commands during an unavailable lookup
 
