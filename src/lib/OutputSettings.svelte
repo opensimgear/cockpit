@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
-  import OptionalDependencies from './OptionalDependencies.svelte';
+  import OptionalDependencies, { driverSetupActive } from './OptionalDependencies.svelte';
   import Icon from './Icon.svelte';
   import { gatewayRequest } from './gateway';
   import {guardUiSettings} from './ui-settings-guard';
@@ -185,7 +185,7 @@
         <ul class="virtual-slots" aria-label="Configured virtual controllers">{#each virtualSlots as slot (slot.id)}<li><strong>{slot.name}</strong><span>{slot.status}{slot.owner ? ` · ${slot.owner}` : ''}</span></li>{/each}</ul>
       {:else if inventory && vjoyDriver?.installed !== false}<p class="status-note">No configured vJoy controllers detected. Configure a controller layout in the vJoy app.</p>{/if}
     </div>
-    {#if nativeApp && drivers?.supported && vjoyDriver?.installed === false}<div class="card-footer"><OptionalDependencies only="vjoy" disabled={!!busy} oncomplete={refresh} /></div>
+    {#if nativeApp && drivers?.supported && (vjoyDriver?.installed === false || driverSetupActive('vjoy'))}<div class="card-footer"><OptionalDependencies only="vjoy" disabled={!!busy} /></div>
     {:else if nativeApp}<div class="card-footer"><span>Open the vJoy configuration app. Windows may ask for administrator approval.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_vjoy')}><Icon name="settings" size={14} />Manage</button></div>{/if}
   </section>
   <section class="panel output-card" aria-label="Device hiding">
@@ -201,7 +201,7 @@
       {#if hidHideDriver?.error}<p class="status-note">{hidHideDriver.error}</p>{/if}
       {#if hidingSetupIssue}<p class="status-note">{hidingSetupIssue}</p>{/if}
     </div>
-    {#if nativeApp && drivers?.supported && hidHideDriver?.installed === false}<div class="card-footer"><OptionalDependencies only="hidhide" disabled={!!busy} oncomplete={refresh} /></div>
+    {#if nativeApp && drivers?.supported && (hidHideDriver?.installed === false || driverSetupActive('hidhide'))}<div class="card-footer"><OptionalDependencies only="hidhide" disabled={!!busy} /></div>
     {:else if nativeApp}<div class="card-footer"><span>Inspect driver setup and existing device rules.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_hidhide')}><Icon name="settings" size={14} />Manage</button></div>{/if}
   </section>
   <section class="panel output-card" aria-label="Keyboard and mouse">

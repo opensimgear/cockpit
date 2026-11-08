@@ -81,6 +81,10 @@ test('External driver file changes update Devices settings and its reopened snap
     await click('.sidebar-bottom button', 'Settings');
     await click('#settings-tab-outputs');
     await Promise.all([absent('Virtual controllers'), absent('Device hiding')]);
+    if (browserUrl) {
+      assert.equal(await page.evaluate(`document.querySelectorAll('${settings} .dependency-setup').length`), 0,
+        'The browser observes driver state without offering native setup');
+    }
     await delay(700);
     let before = reads.length;
     await writeFile(unrelated, 'other driver file');

@@ -37,7 +37,10 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
     require(name) {
       if (name === 'svelte/internal/server') return server;
       if (name === 'svelte') return svelte;
-      if (name === './OptionalDependencies.svelte') return { default: (_payload, props) => { setups.push(props.only); } };
+      if (name === './OptionalDependencies.svelte') return {
+        default: (_payload, props) => { setups.push(props.only); },
+        driverSetupActive: () => false,
+      };
       if (name.endsWith('.svelte')) return { default: () => {} };
       if (name === '@tauri-apps/api/core') return { isTauri: () => nativeApp, invoke: async command => { invocations.push(command); } };
       if (modules.has(name)) return modules.get(name);

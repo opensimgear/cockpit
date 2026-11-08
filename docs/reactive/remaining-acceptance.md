@@ -55,6 +55,11 @@ releases input demand and cancels its queued presentation frame while hidden.
 Native and browser-dev reopen on a fresh input baseline and preserve the
 controller detail draft. Real VKB preview cadence remains in #199.
 
+[Native driver setup](../verification/2026-11-07-optional-driver-observation.md#driver-setup-across-settings-navigation)
+retains the pending operation across Settings navigation, including when a driver
+file appears before the installer returns. Completion reaches global notifications.
+Native and browser-dev show the latest observed driver metadata on reopen.
+
 The companion and integration port sections share the same tile, filter and
 pager. The tile owns spacing, typography and status styles. Companion authoring
 controls retain concise labels, icons and accessible remove actions. The
