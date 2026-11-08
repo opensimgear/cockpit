@@ -50,28 +50,29 @@ test(`${transport} Cockpit stays idle without periodic gateway reads`, { timeout
       }
     });
     const startup = await page.evaluate(async () => {
-      const { observeGamesState, observeGameJobs } = await import('/src/lib/game-read-models/shared.ts');
-      let games, jobs, timer;
+      const { observeGamesState, observeGameDiscovery, observeGameJobs } = await import('/src/lib/game-read-models/shared.ts');
+      let games, discovery, jobs, timer;
       const stops = [];
       try {
         return await new Promise((resolve, reject) => {
           timer = setTimeout(() => reject(Error(`Browser startup did not settle: ${JSON.stringify({
-            games: games?.status, discovery: games?.value?.discovery?.status,
+            games: games?.status, discovery: discovery?.status, scan: discovery?.value?.status,
             jobs: jobs?.value?.jobs.map(({ key, phase, terminal }) => ({ key, phase, terminal })),
           })}`)), 110_000);
           const check = () => {
-            const failure = [games, jobs].find(state => state?.status === 'error' && !state.resolvingPage);
+            const failure = [games, discovery, jobs].find(state => state?.status === 'error' && !state.resolvingPage);
             if (failure) { reject(Error(failure.error)); return; }
-            if (games?.status !== 'ready' || jobs?.status !== 'ready') return;
-            const discovery = games.value.discovery;
+            if (games?.status !== 'ready' || discovery?.status !== 'ready' || jobs?.status !== 'ready') return;
+            const scan = discovery.value;
             // Ready awaits review. The scan has finished even though its job
             // stays open until the user applies the results.
-            if (discovery?.status !== 'scanning' && jobs.value.jobs.every(job => job.terminal
-              || (job.key === 'discovery' && job.phase === 'ready' && job.run === discovery?.scanId))) {
-              resolve({ discovery: discovery?.status, jobs: jobs.value.jobs.length });
+            if (scan.status !== 'scanning' && jobs.value.jobs.every(job => job.terminal
+              || (job.key === 'discovery' && job.phase === 'ready' && job.run === scan.scanId))) {
+              resolve({ discovery: scan.status, jobs: jobs.value.jobs.length });
             }
           };
           stops.push(observeGamesState(state => { games = state; check(); }));
+          stops.push(observeGameDiscovery(state => { discovery = state; check(); }));
           stops.push(observeGameJobs(state => { jobs = state; check(); }));
         });
       } finally {
@@ -125,8 +126,11 @@ async function traceView(page, view) {
     ? page.locator('.sidebar-bottom').getByRole('button', { name: view, exact: true })
     : navigation.getByRole('button', { name: new RegExp(`^${view}(?:\\s|$)`) });
   await target.click();
-  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByText(view, { exact: true }).waitFor();
+  const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' }).getByText(view, { exact: true });
+  await breadcrumb.waitFor();
+  const visible = async () => await breadcrumb.isVisible() && await page.evaluate(() => !document.hidden);
   await page.waitForTimeout(2500);
+  assert.ok(await visible(), `The ${view} view is hidden before the trace.`);
 
   const cdp = await page.context().newCDPSession(page);
   try {
@@ -135,6 +139,7 @@ async function traceView(page, view) {
       cdp.on('Network.requestWillBeSent', listener);
       return () => cdp.off('Network.requestWillBeSent', listener);
     });
+    assert.ok(await visible(), `The ${view} view changed or became hidden during the trace.`);
   } finally {
     await cdp.detach();
   }
