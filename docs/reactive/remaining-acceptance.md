@@ -89,8 +89,10 @@ matched every authored value on native and browser-dev. [Watched catalogue reuse
 removed the request-time rebuild for unchanged catalogues. Both clients
 showed edited and restored descriptors, and the slowest inspection request
 fell below 23 ms in the comparison runs. Browser-dev still recorded one
-123 ms sample from UDP to readable state. The other integrations and
-simulator timing remain open.
+123 ms sample from UDP to readable state. The [expanded trace](../verification/2026-11-07-dcs-telemetry-backpressure.md#native-publication-spacing-with-stale-bios)
+located gaps before native publication. Stale BIOS projection now reuses
+prepared channel IDs while ownship continues. Exact source validation on
+the capture path and the other integrations remain open.
 
 The adapter evidence item is checked. Each supported adapter has automated
 coverage and running Cockpit evidence. The dated runs below used authored

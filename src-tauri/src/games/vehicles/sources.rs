@@ -1,4 +1,10 @@
 use super::*;
+use std::collections::BTreeSet;
+
+pub(super) fn bios_channel_ids(catalogue: &Value) -> BTreeSet<String> {
+    crate::game_telemetry_inspection::channels(catalogue).into_iter()
+        .filter_map(|channel| channel["id"].as_str().map(str::to_owned)).collect()
+}
 pub(super) fn dcs_aliases(connection: &Value) -> Result<Value, String> {
     let path = Path::new(
         connection["cataloguePath"]
@@ -80,7 +86,7 @@ pub(super) enum Reader {
         connection: Value,
         module: String,
         resolved_aircraft: Option<String>,
-        catalogue: Value,
+        bios_channels: BTreeSet<String>,
         physics: Option<crate::dcs_physics::Source>,
         physics_retry: Instant,
         physics_error: Option<String>,
@@ -158,7 +164,7 @@ impl Reader {
                     connection: connection.clone(),
                     module: module.clone(),
                     resolved_aircraft: None,
-                    catalogue,
+                    bios_channels: bios_channel_ids(&catalogue),
                     physics,
                     physics_error,
                     capture_dirty: false,
@@ -252,7 +258,7 @@ impl Reader {
                 connection,
                 module,
                 resolved_aircraft,
-                catalogue,
+                bios_channels,
                 physics,
                 physics_retry,
                 physics_error,
@@ -277,7 +283,7 @@ impl Reader {
                         *source = dcs_bios::decoded::Source::open(&dcs_bios::Network::parse(connection)?, next.0.decode_spec()?)?;
                         *decoder = next.0;
                         *guard = next.1;
-                        *catalogue = next.2;
+                        *bios_channels = bios_channel_ids(&next.2);
                         *module = current;
                         *capture_dirty = true;
                         let mut capture = Capture::export("dcs", &snapshot);
@@ -308,8 +314,7 @@ impl Reader {
                 let ownship = physics.as_ref().map(crate::dcs_physics::Source::snapshot);
                 if let Some(snapshot) = &ownship { *physics_error = snapshot.error.clone(); }
                 if !snapshot.fresh {
-                    capture.stale_ids.extend(crate::game_telemetry_inspection::channels(catalogue)
-                        .into_iter().filter_map(|channel| channel["id"].as_str().map(str::to_owned)));
+                    capture.stale_ids.clone_from(bios_channels);
                 }
                 let current = dcs_aircraft(&snapshot, ownship.as_ref(), Instant::now())
                     .0.map(str::to_owned);

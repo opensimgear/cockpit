@@ -29,7 +29,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
         connection: query,
         module: "A-10C".into(),
         resolved_aircraft: None,
-        catalogue: ports,
+        bios_channels: bios_channel_ids(&ports),
         physics: None,
         physics_error: None,
         physics_retry: Instant::now() + Duration::from_secs(60),

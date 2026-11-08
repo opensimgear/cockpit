@@ -48,13 +48,13 @@ export function openDcsTelemetryReaders(cdp, browser) {
     trace.fastReader.subscribe('games.telemetry', state => {
       if (state.status !== 'ready') return;
       trace.fast++;
-      trace.captureTiming?.();
+      trace.captureTiming?.(state.frame);
     });
   })()`);
 }
 
 const timingChannel = 'flight.wind.world.z';
-const sampleCount = 24;
+const sampleCount = 48;
 
 async function clockBracket(cdp) {
   let best;
@@ -81,15 +81,22 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
       const trace = window.__dcsSlowReader, channel = ${JSON.stringify(timingChannel)};
       const observationId = trace.fastReader.subscriptionId('games.telemetry');
       if (!observationId || !trace.release) throw Error('Both telemetry readers must be ready');
+      let notice, previousNotice;
       const controller = new GameTelemetryController(new GameTelemetryClient(async request => {
         const requestedMs = performance.now();
+        const notification = notice, previousNotification = previousNotice;
         const {gameTelemetry} = await gatewayRequest(request);
-        trace.lastRead = {requestedMs, replyMs:performance.now()};
+        trace.lastRead = {requestedMs, replyMs:performance.now(), notification, previousNotification};
         return gameTelemetry;
       }));
       controller.configure({gameId:'dcs',search:channel,offset:0,limit:8,observationId});
       controller.setActive(true);
-      trace.captureTiming = () => { if (trace.expectedValue !== undefined) controller.invalidate(); };
+      trace.captureTiming = frame => {
+        previousNotice = notice;
+        const {clockId, generation, revision, capturedUs} = frame;
+        notice = {clockId, generation, revision, capturedUs, receivedMs:performance.now()};
+        if (trace.expectedValue !== undefined) controller.invalidate();
+      };
       trace.stopTiming = () => {
         delete trace.captureTiming;
         delete trace.expectedValue;
@@ -100,7 +107,8 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
         if (state.error) { trace.error = state.error; return; }
         const row = state.report?.games[0]?.channels.find(row => row.id === channel);
         if (!state.stale && row?.status === 'known' && row.value === trace.expectedValue) {
-          trace.timedSample = {value:row.value, ...trace.lastRead, receivedMs:performance.now(), fast:trace.fast};
+          trace.timedSample = {value:row.value, sourceAgeMs:row.ageMs, ...trace.lastRead,
+            receivedMs:performance.now(), fast:trace.fast};
           delete trace.expectedValue;
         }
       });
@@ -122,6 +130,7 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
       }, Boolean, 1500);
       assert.equal(received.value, value);
       assert.ok(received.fast > fastBefore, 'A fast notification must advance the timed read');
+      assert.ok(received.notification.receivedMs <= received.requestedMs);
       if (samples.length) assert.ok(submission.packetSequence > samples.at(-1).packetSequence);
       samples.push({...submission, ...received, fastBefore});
     }
@@ -135,11 +144,13 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
     assert.ok(samples.every(sample => sample.requestedMs <= sample.replyMs && sample.replyMs <= sample.receivedMs));
     const inspectionMs = summarizeMilliseconds(samples.map(sample => sample.replyMs - sample.requestedMs));
     const projectionMs = summarizeMilliseconds(samples.map(sample => sample.receivedMs - sample.replyMs));
+    const notificationToRequestMs = summarizeMilliseconds(samples.map(sample =>
+      sample.requestedMs - sample.notification.receivedMs));
     const first = samples[0], last = samples.at(-1);
     const offeredPacketHz = (last.packetSequence - first.packetSequence) * 1000 / (last.submittedMs - first.submittedMs);
     const budgetMisses = upperMs.p95 <= 100 ? [] :
       [`Observation-driven telemetry read p95 exceeded 100 ms: ${upperMs.p95.toFixed(2)} ms`];
-    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs,
+    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs, notificationToRequestMs,
       alignmentWidthMs:high - low, samples, budgetMisses};
   } finally {
     nativeValues[timingChannel] = original;

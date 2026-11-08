@@ -134,3 +134,56 @@ and `.research/dcs-physics-native/1794131681429/evidence.json`.
 The native and browser-dev binary hashes are
 `AB2570F8A65839D47D2CD51E009F7D557504ADB1C7A614858E773BD9036822BB`
 and `55355AB70D3B102049289C338432E151475E0AF5B5F6D0717C119EE9A0FA520C`.
+
+## Native publication spacing with stale BIOS
+
+The follow-up uses 48 distinct ownship markers and records the two most recent
+fast notifications at the start of each matching read. The notification
+records include their native publication timestamps and the client's receipt
+timestamps. Differences between consecutive revisions on the same clock can
+be compared without assigning a notification to a particular UDP packet.
+
+On the previous browser-dev binary, consecutive native publications were
+130.41 and 132.79 ms apart in two slow samples. Their client arrivals were
+130.60 and 132.80 ms apart. The client began inspection within 0.10 ms of
+the last notification in every sample. These gaps existed before delivery
+to the browser. The trace does not isolate the native operation between
+publications.
+
+While BIOS is stale, the passive DCS reader now reuses the channel IDs
+prepared for its aircraft catalogue. It prepares a new set when the aircraft
+module changes. Previously every ownship update rebuilt and sorted the full
+JSON channel descriptors to recover the same IDs. The resulting stale BIOS
+channels and independently fresh ownship values keep the same semantics.
+
+| Fixture | Authored packet rate | UDP to readable value p50 / p95 / p99 | Inspection request max |
+| --- | ---: | ---: | ---: |
+| Previous browser-dev | 21.54 Hz | 22.92 / 63.09 / 108.70 ms | 22.70 ms |
+| Current native WebView | 21.44 Hz | 22.45 / 43.50 / 121.89 ms | 23.90 ms |
+| Current browser-dev | 21.44 Hz | 18.32 / 43.79 / 72.05 ms | 21.90 ms |
+
+Both current clients received all 48 values with one receipt held, showed the
+edited and restored catalogue descriptor, and completed cleanup. The largest
+browser-dev sample still followed a 147.67 ms interval between consecutive
+native publications and a 147.80 ms interval between the corresponding
+arrivals. Native also recorded a 143.75 ms publication interval. The
+repeated browser gaps on the previous build occurred roughly 2.2 seconds
+apart. The passive catalogue guard still performs a full content check
+inline when its two-second interval elapses. The trace establishes the
+publication gap and does not time that check separately. A future change
+must preserve exact selected-file validation and avoid rebinding the
+reader for unrelated aircraft catalogue edits.
+
+Raw records are `.research/dcs-physics-native/1794132061341/evidence.json`,
+`.research/dcs-physics-native/1794132316519/evidence.json` and
+`.research/dcs-physics-native/1794132371556/evidence.json`.
+The current native and browser-dev binaries had SHA-256 hashes
+`D6E8CC38E179409157E90235108A8D73B8EE5288FF2FD1374A538E1C101D13A7`
+and `1F48C2E525B47490B49A11E04DE289F850C9266DC64B6FDF13A86F35B677038A`.
+
+The serial Windows suite passed 2,462 tests with 18 default ignores. Both
+pinned archive checks passed separately. Production line coverage for the
+changed vehicle source module was 88.89% and LLVM function coverage was
+93.02%. The initial parallel run hit an X-Plane lease count assertion and
+the second parallel run hit a process freshness assertion. Both checks
+passed in isolation and in the serial suite.
