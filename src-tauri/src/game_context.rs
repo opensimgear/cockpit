@@ -104,6 +104,7 @@ impl Broker {
         if let Some(changes) = &self.changes {
             changes.mark(crate::game_read_models::signals::Domain::Runtime);
             changes.mark_resources();
+            changes.mark_game_reacquisition();
         }
     }
     /// Reserve before observing settings, catalogue or processes. Slow native

@@ -76,6 +76,9 @@ impl BackgroundProcesses {
             .filter(|(selection, _)| *selection == process_selection(game))
             .map(|(_, row)| row.clone())
     }
+    pub(crate) fn same_integrations(&self, other: &Self) -> bool {
+        self.integration == other.integration
+    }
     #[cfg(test)]
     pub(crate) fn fixture(game: &Value, row: ProcessLookup) -> Self {
         Self { activation: BTreeMap::new(), integration: BTreeMap::from([

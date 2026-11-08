@@ -31,6 +31,27 @@ fn observe(broker: &mut Broker, id: &str, observation: Observation) -> Result<()
 }
 
 #[test]
+fn committed_preparation_changes_wake_reacquisition() {
+    let mut broker = Broker::default();
+    let signal = std::sync::Arc::new(crate::game_read_models::signals::Signal::default());
+    let routing = std::sync::Arc::new(osg_streams::NativeWake::default());
+    signal.watch_vehicle_routing(&routing);
+    broker.watch_changes(signal.clone());
+    let mut waiting = observed();
+    waiting.setup_ready = false;
+    observe(&mut broker, "dcs", waiting.clone()).unwrap();
+    let waiting_revision = signal.game_reacquisition_revision();
+    let waiting_wake = routing.observed();
+    observe(&mut broker, "dcs", waiting).unwrap();
+    assert_eq!(signal.game_reacquisition_revision(), waiting_revision);
+    assert_eq!(routing.observed(), waiting_wake);
+    observe(&mut broker, "dcs", observed()).unwrap();
+    assert!(broker.preparation("dcs").unwrap().is_some());
+    assert_ne!(signal.game_reacquisition_revision(), waiting_revision);
+    assert_ne!(routing.observed(), waiting_wake);
+}
+
+#[test]
 fn unavailable_inventory_retains_an_exact_binding_and_does_not_mint_a_new_owner() {
     let mut broker = Broker::default();
     let active = owner(Some("dcs"));

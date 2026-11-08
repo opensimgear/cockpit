@@ -24,6 +24,8 @@ mod activation_heartbeat;
 mod activation_phases;
 #[path = "profile_session/game_publication.rs"]
 mod game_publication;
+#[path = "profile_session/game_resume_schedule.rs"]
+mod game_resume_schedule;
 #[cfg(test)]
 #[path = "profile_session/script_scope_tests.rs"]
 mod script_scope_tests;
@@ -100,7 +102,7 @@ struct NativeRun {
     game: crate::profile_session_games::GameSources,
     game_preparation: Option<crate::games::PreparedGame>,
     child_game_owner: Option<crate::game_context::ProfileOwner>,
-    game_retry: Option<u64>,
+    game_retry: game_resume_schedule::Schedule,
     game_resume: Option<std::sync::mpsc::Receiver<Result<Option<NativeGameResume>,String>>>,
     game_publication: game_publication::Publication,
     game_predecessor: Option<(String, Option<String>)>,
@@ -484,19 +486,28 @@ impl NativeProfileHost {
                             }
                             state.game = replacement.game;
                             state.game_preparation = Some(replacement.proof);
+                            state.game_retry = game_resume_schedule::Schedule::default();
+                        } else {
+                            state.game_retry.failed(now_us);
                         }
                     },
                     Ok(None)=>{},
-                    Err(error)=>resume_diagnostics.push(format!("Game integration is waiting: {error}")),
+                    Err(error)=>{
+                        state.game_retry.failed(now_us);
+                        resume_diagnostics.push(format!("Game integration is waiting: {error}"));
+                    },
                 },
                 Err(std::sync::mpsc::TryRecvError::Empty)=>state.game_resume=Some(receiver),
-                Err(std::sync::mpsc::TryRecvError::Disconnected)=>resume_diagnostics.push("The game preparation worker ended; waiting to retry.".into()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{
+                    state.game_retry.failed(now_us);
+                    resume_diagnostics.push("The game preparation worker ended; waiting to retry.".into());
+                },
             }
         }
-        if state.game.needs_context() && state.game_resume.is_none() && state.game_retry.is_none_or(|next|now_us>=next) {
-            state.game_retry=Some(now_us.saturating_add(500_000));
-            let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_ref()).or(state.owner.game_id.as_ref()).cloned();
-            if let Some(id)=id {
+        if state.game.needs_context() && state.game_resume.is_none() {
+            let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_ref()).or(state.owner.game_id.as_ref());
+            if let Some(id)=id.filter(|_| state.game_retry.begin(games.game_reacquisition_revision(), now_us)) {
+                let id = id.clone();
                 let (sender,receiver)=std::sync::mpsc::channel();
                 let resume_clock = clock.clone();
                 let resume_native_clock = native_clock;
@@ -973,7 +984,7 @@ impl Host for NativeProfileHost {
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             debug_inputs: crate::profile_debug_controller::DebugInputs::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
-            child_game_owner: None, game_retry: None, game_resume: None, game_publication: game_publication::Publication::with_wake(self.native_wake.as_ref()), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
+            child_game_owner: None, game_retry: Default::default(), game_resume: None, game_publication: game_publication::Publication::with_wake(self.native_wake.as_ref()), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_rebind, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
@@ -1253,6 +1264,7 @@ impl Host for NativeProfileHost {
         let state = self.prepared.get(&key(&run.owner))?;
         let pending = [state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()),
             state.desktop.as_ref().and_then(|desktop| desktop.next_deadline_us()),
+            (state.game.needs_context() && state.game_resume.is_none()).then(|| state.game_retry.deadline()).flatten().map(Counter),
             state.companions.next_deadline_us().map(Counter),
             state.companions.needs_delivery_retry().then(|| state.companion_rebind.next_deadline_us()).flatten().map(Counter)]
             .into_iter().flatten().min_by_key(|deadline| deadline.0);

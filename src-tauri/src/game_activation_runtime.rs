@@ -15,6 +15,16 @@ impl BackgroundScan {
     pub(super) fn new(epoch: (u64, u64), started: Instant, event_owned: bool, rows: BackgroundProcesses) -> Self {
         Self { epoch, started, event_owned, rows }
     }
+
+    fn fits_profile_proof(&self) -> bool {
+        self.event_owned || self.started.elapsed() + ACTIVE_PROCESS_PROOF_AGE < PROCESS_DISCOVERY_PERIOD * 2
+    }
+
+    fn changes_reacquisition(&self, previous: &Self) -> bool {
+        self.epoch != previous.epoch || self.event_owned != previous.event_owned
+            || !self.rows.same_integrations(&previous.rows)
+            || !previous.fits_profile_proof() && self.fits_profile_proof()
+    }
 }
 
 impl Inner {
@@ -50,7 +60,7 @@ impl Inner {
         }
         // A new short liveness proof must fit inside the original uniqueness
         // window. Reading a cached scan cannot move either end of that window.
-        if !event_owned && scan.started.elapsed() + ACTIVE_PROCESS_PROOF_AGE >= PROCESS_DISCOVERY_PERIOD * 2 {
+        if !scan.fits_profile_proof() {
             return None;
         }
         let row = scan.rows.integration_row(game)?;
@@ -59,6 +69,11 @@ impl Inner {
 }
 
 impl GamesRuntime {
+    pub(crate) fn game_reacquisition_revision(&self) -> Option<u64> {
+        self.inner.platform.shares_background_processes()
+            .then(|| self.inner.changes.game_reacquisition_revision())
+    }
+
     pub(crate) fn process_event_preference_changed(&self) {
         self.inner.changes.activation_wake.notify();
     }
@@ -178,10 +193,14 @@ impl GamesRuntime {
                     let retry_inventory = background.as_ref().is_some_and(BackgroundProcesses::needs_retry);
                     inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity, background.as_ref());
                     if let Some(rows) = background {
-                        *inner.background_processes.lock().unwrap_or_else(|p| p.into_inner()) =
-                            Some(BackgroundScan::new(epoch, started, event_owned, rows));
+                        let next = BackgroundScan::new(epoch, started, event_owned, rows);
+                        let mut published = inner.background_processes.lock().unwrap_or_else(|p| p.into_inner());
+                        let changed = published.as_ref().is_none_or(|previous| next.changes_reacquisition(previous));
+                        *published = Some(next);
+                        drop(published);
                         inner.changes.context_update_wake.notify();
-                        inner.changes.wake_routing();
+                        if changed { inner.changes.mark_game_reacquisition(); }
+                        else { inner.changes.wake_routing(); }
                     }
                     if !inner.closed.load(Ordering::Acquire) {
                         let retry = (!event_owned || retry_inventory).then_some(PROCESS_DISCOVERY_PERIOD)

@@ -49,6 +49,7 @@ pub(crate) struct Signal {
     resource_wake: Mutex<Weak<NativeWake>>,
     automatic_wake: Mutex<Weak<NativeWake>>,
     routing_wake: Mutex<Weak<NativeWake>>,
+    game_reacquisition: NativeWake,
     activity_wake: Mutex<Weak<NativeWake>>,
     launch_wake: Mutex<Weak<NativeWake>>,
     profile_admission_wake: Mutex<Weak<NativeWake>>,
@@ -77,6 +78,7 @@ impl Default for Signal {
             resource_wake: Mutex::default(),
             automatic_wake: Mutex::default(),
             routing_wake: Mutex::default(),
+            game_reacquisition: NativeWake::default(),
             activity_wake: Mutex::default(),
             launch_wake: Mutex::default(),
             profile_admission_wake: Mutex::default(),
@@ -191,6 +193,13 @@ impl Signal {
         if let Some(wake) = self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
+    }
+    pub(crate) fn mark_game_reacquisition(&self) {
+        self.game_reacquisition.notify();
+        self.wake_routing();
+    }
+    pub(crate) fn game_reacquisition_revision(&self) -> u64 {
+        self.game_reacquisition.observed()
     }
     pub(crate) fn watch_resources(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.resource_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);

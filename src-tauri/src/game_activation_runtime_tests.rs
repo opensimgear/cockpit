@@ -1,5 +1,29 @@
 use super::*;
 use std::collections::BTreeMap;
+
+#[test]
+fn readiness_ignores_equivalent_scans_and_notifies_after_expiry() {
+    use crate::game_discovery::ProcessIdentity;
+    let game = json!({"id":"dcs"});
+    let absent = || BackgroundProcesses::fixture(&game, Ok(None));
+    let ready = || BackgroundProcesses::fixture(&game, Ok(Some(ProcessIdentity {
+        pid: 42, path: "/fixture/DCS.exe".into(), epoch: 1,
+    })));
+    let fresh = Instant::now();
+    let epoch = (1, 1);
+    let previous = BackgroundScan::new(epoch, fresh, false, absent());
+    let equivalent = BackgroundScan::new(epoch, fresh, false, absent());
+    assert!(!equivalent.changes_reacquisition(&previous));
+    let available = BackgroundScan::new(epoch, fresh, false, ready());
+    assert!(available.changes_reacquisition(&previous));
+    let expired = BackgroundScan::new(epoch, fresh - PROCESS_DISCOVERY_PERIOD * 2, false, ready());
+    assert!(available.changes_reacquisition(&expired));
+    let event_owned = BackgroundScan::new(epoch, fresh, true, ready());
+    assert!(event_owned.changes_reacquisition(&available));
+    let next_scope = BackgroundScan::new((1, 2), fresh, false, ready());
+    assert!(next_scope.changes_reacquisition(&available));
+}
+
 struct Unsupported;
 impl Platform for Unsupported {
     fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
