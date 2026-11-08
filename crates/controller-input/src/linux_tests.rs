@@ -191,7 +191,7 @@ fn recovery_queries_kernel_and_never_invents_neutral() {
     input.device.reads = (0..16).map(|_| Ok(vec![(3, 0, 1)])).collect();
     assert!(matches!(
         &input.baseline().unwrap()[0],
-        Event::PendingBaseline
+        Event::RetryBaseline
     ));
     input.device.fail = true;
     assert!(input.baseline().is_err());

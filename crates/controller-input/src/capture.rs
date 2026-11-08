@@ -1,4 +1,7 @@
-//! Shared, bounded polling lifecycle for the opt-in platform qualification probes.
+//! Bounded capture lifecycle for the opt-in platform qualification probes.
+#[cfg(target_os = "linux")]
+#[path = "capture_linux.rs"]
+pub(crate) mod linux;
 use crate::registry::{Definition, Registry};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,8 +19,12 @@ pub enum Event {
     Values(u8, Values),
     Gap(String),
     PendingBaseline,
+    #[cfg(target_os = "linux")]
+    RetryBaseline,
 }
 pub trait Input {
+    #[cfg(target_os = "linux")]
+    fn descriptor(&self) -> Option<std::os::fd::RawFd> { None }
     fn suppress(&mut self, _enabled: bool) -> Result<(), String> {
         Err("Input suppression is unsupported by this capture adapter.".into())
     }
@@ -35,7 +42,17 @@ struct Connected {
     identity_path: String,
     source_id: String,
     needs_baseline: bool,
+    // A blocked baseline waits for this device's next report.
+    #[cfg(target_os = "linux")]
+    baseline_due: bool,
     suppression_owned: bool,
+}
+impl Connected {
+    fn require_baseline(&mut self) {
+        self.needs_baseline = true;
+        #[cfg(target_os = "linux")]
+        { self.baseline_due = true; }
+    }
 }
 pub struct Capture<P> {
     platform: P,
@@ -93,6 +110,8 @@ impl<P: Platform> Capture<P> {
                         identity_path,
                         source_id,
                         needs_baseline: true,
+                        #[cfg(target_os = "linux")]
+                        baseline_due: true,
                         suppression_owned: false,
                     },
                 );
@@ -108,9 +127,15 @@ impl<P: Platform> Capture<P> {
         r.set_backend_state("qualification-probe", diagnostics.join(" "));
         Ok(())
     }
+    #[cfg(any(target_os = "macos", test))]
     pub fn tick(&mut self) {
+        self.tick_selected(|_| true);
+    }
+    fn tick_selected(&mut self, should_read: impl Fn(&Connected) -> bool) -> bool {
         self.commands();
+        let mut needs_recovery = false;
         self.devices.retain(|_, device| {
+            if !should_read(device) { return true; }
             let id = {
                 self.shared
                     .lock()
@@ -120,15 +145,18 @@ impl<P: Platform> Capture<P> {
             let Some(id) = id else { return false };
             if id != device.source_id {
                 device.source_id = id.clone();
-                device.needs_baseline = true;
+                device.require_baseline();
             }
-            let result = if device.needs_baseline {
+            #[cfg(target_os = "linux")]
+            { device.baseline_due = false; }
+            let was_baseline = device.needs_baseline;
+            let result = if was_baseline {
                 device.input.baseline()
             } else {
                 device.input.poll()
             };
             let mut r = self.shared.lock().unwrap_or_else(|p| p.into_inner());
-            match result {
+            let keep = match result {
                 Err(error) => {
                     r.fault(&id, &error);
                     r.disconnect(&id);
@@ -139,7 +167,7 @@ impl<P: Platform> Capture<P> {
                         &id,
                         "Native input queue exceeded its bound; a fresh baseline is required.",
                     );
-                    device.needs_baseline = true;
+                    device.require_baseline();
                     true
                 }
                 Ok(events) => {
@@ -150,15 +178,21 @@ impl<P: Platform> Capture<P> {
                                 device.needs_baseline = true;
                                 break;
                             }
+                            #[cfg(target_os = "linux")]
+                            Event::RetryBaseline => {
+                                device.require_baseline();
+                                needs_recovery = true;
+                                break;
+                            }
                             Event::Gap(reason) => {
                                 r.fault(&id, &reason);
-                                device.needs_baseline = true;
+                                device.require_baseline();
                                 break;
                             }
                             Event::Values(report, values) => {
                                 if let Err(error) = r.delta(&id, report, &values) {
                                     r.fault(&id, &error);
-                                    device.needs_baseline = true;
+                                    device.require_baseline();
                                     break;
                                 }
                             }
@@ -166,9 +200,12 @@ impl<P: Platform> Capture<P> {
                     }
                     true
                 }
-            }
+            };
+            needs_recovery |= keep && !was_baseline && device.needs_baseline;
+            keep
         });
         self.supervise();
+        needs_recovery
     }
     fn commands(&mut self) {
         use crate::visibility::suppression::Command;
@@ -214,7 +251,7 @@ impl<P: Platform> Capture<P> {
             // Record intent before a call that may partly succeed. Failure still releases this handle.
             device.suppression_owned = true;
             device.input.suppress(true)?;
-            device.needs_baseline = true;
+            device.require_baseline();
             self.shared.lock().unwrap_or_else(|p| p.into_inner()).fault(
                 &source.id,
                 "Input suppression changed; fresh kernel baseline required.",
@@ -267,7 +304,7 @@ impl<P: Platform> Capture<P> {
                 return true;
             }
             device.suppression_owned = false;
-            device.needs_baseline = true;
+            device.require_baseline();
             let result = device.input.suppress(false);
             let mut r = self.shared.lock().unwrap_or_else(|p| p.into_inner());
             r.fault(
@@ -306,6 +343,7 @@ impl<P> Drop for Capture<P> {
             .disconnect_all();
     }
 }
+#[cfg(any(target_os = "macos", test))]
 pub fn run_controlled<P: Platform>(
     platform: P,
     shared: Shared,

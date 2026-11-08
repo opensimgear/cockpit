@@ -186,6 +186,33 @@ fn lifecycle_preserves_held_buttons_and_changes_generation_on_gap() {
         false
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selected_reports_do_not_drain_a_quiet_peer_and_baseline_retries_are_explicit() {
+    let (mut capture, state, registry, _) = setup();
+    state.lock().unwrap().paths.push("b".into());
+    capture.scan().unwrap();
+    capture.tick();
+    let mut fixture = state.lock().unwrap();
+    fixture.events.push_back(Ok(vec![Event::Gap("overflow".into())]));
+    fixture.events.push_back(Ok(vec![Event::Values(0, BTreeMap::from([(1, 1)]))]));
+    fixture.baseline.push_back(Ok(vec![Event::RetryBaseline]));
+    fixture.baseline.push_back(Ok(vec![Event::PendingBaseline]));
+    drop(fixture);
+
+    assert!(capture.tick_selected(|device| device.identity_path == "a"));
+    assert!(capture.tick_selected(|device| device.baseline_due));
+    assert!(!capture.tick_selected(|device| device.baseline_due));
+    assert_eq!(state.lock().unwrap().events.len(), 1);
+    assert!(!capture.tick_selected(|device| device.baseline_due || device.identity_path == "b"));
+    let registry = registry.lock().unwrap();
+    let a = registry.inspect(&registry.id_for_path("a").unwrap(), 0).unwrap();
+    let b = registry.inspect(&registry.id_for_path("b").unwrap(), 0).unwrap();
+    assert_eq!(a["source"]["baselineReady"], false);
+    assert_eq!(b["source"]["baselineReady"], true);
+    assert_eq!(b["controls"][1]["value"]["normalized"], 1);
+}
 #[test]
 fn failure_isolated_retry_and_overflow() {
     let (mut c, state, r, _) = setup();

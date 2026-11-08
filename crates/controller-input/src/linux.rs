@@ -4,7 +4,7 @@ use crate::{
     registry::{Control, Definition, Identity, Kind},
 };
 use evdev::{raw_stream::RawDevice, EventType, KeyCode};
-use std::{collections::BTreeMap, fs::OpenOptions, os::unix::fs::OpenOptionsExt};
+use std::{collections::BTreeMap, fs::OpenOptions, os::{fd::{AsRawFd, RawFd}, unix::fs::OpenOptionsExt}};
 #[derive(Clone, Default)]
 struct Metadata {
     node: String,
@@ -331,12 +331,14 @@ struct LinuxInput<D: Kernel> {
     suppressed: bool,
 }
 trait Kernel {
+    fn descriptor(&self) -> Option<RawFd> { None }
     fn suppress(&mut self, enabled: bool) -> Result<(), String>;
     fn read(&mut self) -> Result<Vec<(u16, u16, i32)>, String>;
     fn snapshot(&self, keys: &[u16], axes: &[Axis], controls: &[Control])
         -> Result<Frames, String>;
 }
 impl Kernel for RawDevice {
+    fn descriptor(&self) -> Option<RawFd> { Some(self.as_raw_fd()) }
     fn suppress(&mut self, enabled: bool) -> Result<(), String> {
         const QUALIFIED: bool = false;
         if enabled && !QUALIFIED {
@@ -402,6 +404,7 @@ impl<D: Kernel> Drop for LinuxInput<D> {
     }
 }
 impl<D: Kernel> Input for LinuxInput<D> {
+    fn descriptor(&self) -> Option<RawFd> { self.device.descriptor() }
     fn suppress(&mut self, enabled: bool) -> Result<(), String> {
         if !enabled && !self.suppressed {
             return Ok(());
@@ -432,7 +435,7 @@ impl<D: Kernel> Input for LinuxInput<D> {
             }
         }
         if !quiet {
-            return Ok(vec![Event::PendingBaseline]);
+            return Ok(vec![Event::RetryBaseline]);
         }
         let frames = self
             .device

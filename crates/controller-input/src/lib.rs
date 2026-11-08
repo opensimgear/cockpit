@@ -12,6 +12,10 @@ pub mod stream;
 pub mod visibility;
 #[cfg(windows)]
 mod windows;
+#[cfg(target_os = "linux")]
+use capture::linux::Wake as CaptureWake;
+#[cfg(windows)]
+use windows::Wake as CaptureWake;
 use registry::{Registry, SavedSource};
 use serde_json::Value;
 use std::{
@@ -31,8 +35,8 @@ pub struct ControllerService {
     clock: stream::Clock,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    #[cfg(windows)]
-    capture_wake: Option<Arc<windows::Wake>>,
+    #[cfg(any(windows, target_os = "linux"))]
+    capture_wake: Option<Arc<CaptureWake>>,
     store: Option<osg_persistence::Repository<Vec<SavedSource>>>,
     persistence: Mutex<()>,
     storage_valid: bool,
@@ -101,9 +105,9 @@ impl ControllerService {
         let suppression = visibility::suppression::Control::default();
         let enabled = native
             && (cfg!(windows) || (probe && cfg!(any(target_os = "linux", target_os = "macos"))));
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let capture_wake = if enabled {
-            match windows::Wake::new() {
+            match CaptureWake::new() {
                 Ok(wake) => Some(Arc::new(wake)),
                 Err(error) => {
                     let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -126,13 +130,13 @@ impl ControllerService {
         }
         registry.lock().unwrap_or_else(|p| p.into_inner())
             .set_inventory_self_access(visibility.self_access_status().clone());
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let enabled = enabled && capture_wake.is_some();
         let worker = if enabled {
             let shared = registry.clone();
             let stopped = stop.clone();
             let suppression = suppression.clone();
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             let wake = capture_wake
                 .as_ref()
                 .expect("enabled capture has wake event")
@@ -145,7 +149,7 @@ impl ControllerService {
                             shared.clone(),
                             stopped,
                             suppression,
-                            #[cfg(windows)]
+                            #[cfg(any(windows, target_os = "linux"))]
                             wake,
                         )
                     })
@@ -182,7 +186,7 @@ impl ControllerService {
             stop,
             visibility,
             worker: Mutex::new(worker),
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             capture_wake,
             store: storage.ok().flatten(),
             persistence: Mutex::new(()),
@@ -378,7 +382,7 @@ impl ControllerService {
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if let Some(wake) = &self.capture_wake {
             if let Err(error) = wake.signal() {
                 self.registry
@@ -417,7 +421,7 @@ fn native_run(
     shared: Arc<Mutex<Registry>>,
     stop: Arc<AtomicBool>,
     suppression: visibility::suppression::Control,
-    #[cfg(windows)] wake: Arc<windows::Wake>,
+    #[cfg(any(windows, target_os = "linux"))] wake: Arc<CaptureWake>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -426,7 +430,7 @@ fn native_run(
     }
     #[cfg(target_os = "linux")]
     {
-        capture::run_controlled(linux::Linux::new(), shared, stop, suppression)
+        capture::linux::run(shared, stop, suppression, wake)
     }
     #[cfg(target_os = "macos")]
     {

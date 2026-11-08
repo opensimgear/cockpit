@@ -14,10 +14,16 @@ struct State {
     phase: String,
     reason: String,
     activation: std::sync::Weak<osg_streams::NativeWake>,
+    #[cfg(target_os = "linux")]
+    capture: std::sync::Weak<crate::capture::linux::Wake>,
 }
 #[derive(Clone, Default)]
 pub struct Control(Arc<Mutex<State>>, Arc<Condvar>);
 impl Control {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn watch_capture(&self, wake: &Arc<crate::capture::linux::Wake>) {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).capture = Arc::downgrade(wake);
+    }
     pub(super) fn watch_activation(&self, wake: &Arc<osg_streams::NativeWake>) {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).activation = Arc::downgrade(wake);
     }
@@ -35,6 +41,8 @@ impl Control {
             id: id.clone(),
             sources,
         });
+        #[cfg(target_os = "linux")]
+        if let Some(wake) = s.capture.upgrade() { let _ = wake.signal(); }
         Ok(id)
     }
     pub fn stop(&self, id: Option<&str>) -> Result<(), String> {
@@ -45,6 +53,8 @@ impl Control {
         if busy(&s.phase) {
             s.pending = Some(Command::Stop);
             s.phase = "restoring".into();
+            #[cfg(target_os = "linux")]
+            if let Some(wake) = s.capture.upgrade() { let _ = wake.signal(); }
         }
         Ok(())
     }
