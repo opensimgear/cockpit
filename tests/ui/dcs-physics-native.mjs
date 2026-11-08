@@ -14,6 +14,7 @@ import {soakSeconds} from './dcs-feature-soak.mjs';
 import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
 import {openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
+import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
@@ -76,6 +77,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
   const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates, seconds}) : null;
+  const desktop = !browserUrl && process.env.OSG_DCS_DESKTOP_WAKES === '1' ? dcsDesktopWakes(request, until) : null;
   if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
@@ -302,11 +304,13 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     for (const row of chosen) { const id = row.descriptor.id.slice(8), node = nodeId(id); document.processingNodes.push(identity(node, row.descriptor.contract)); document.bindings.push({id: `route-${node}`, from: {nodeId: 'telemetry', portId: id}, to: {nodeId: node, portId: 'in'}}); }
     const assignments = [{resourceId: 'telemetry', sourceId: resource.id, ports: chosen.map(row => ({profilePortId: row.descriptor.id.slice(8), observedPortId: row.descriptor.id, expectedContractHash: row.contractHash}))}];
     await combined?.prepare(document, assignments, aircraft);
+    await desktop?.prepare(document);
     const saved = (await request({command: 'profile_editor_save', document, assignments, expectedRevision: document.revision})).profiles.document; profile.revision = saved.revision;
     await combined?.bind(profile);
     evidence.captured = {resource, ports: chosen, profile};
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     evidence.phases.live = await live(); await checkpoint('selected physics and BIOS reach identity processing');
+    if (desktop) { evidence.phases.desktopWakes = await desktop.verify(); await live(); }
     for (const phase of ['paused', 'active-pause', 'denied', 'frozen']) {
       mode = phase; evidence.phases[phase] = await withdrawn(phase);
       mode = 'live'; await live(); await checkpoint(`${phase} withdrawal and rearm verified`);
@@ -427,6 +431,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   } finally {
     clearInterval(timer); if (producer) producer.close();
     await cleanup('Stop profile', () => request({command: 'profile_stop'}));
+    if (desktop) await cleanup('Restore desktop preferences and verify release', () => desktop.close());
     if (cleanupErrors.length) await cleanup('Recover failed Stop', async () => {
       const current = (await status()).profileSession;
       evidence.cleanupProfileSession = current;

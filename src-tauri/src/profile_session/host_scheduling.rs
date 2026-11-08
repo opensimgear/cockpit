@@ -29,8 +29,10 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
         && state.game.provider_identity().is_some_and(|(provider, _)| Some(provider) == game)
         && state.game_preparation.as_ref().is_some_and(|prepared| Some(prepared.proof.game_id.as_str()) == game)
         && !state.game_publication.deferred
-        && state.desktop.is_none() && state.document.desktop_outputs.is_empty()
-        && state.source_document.desktop_outputs.is_empty();
+        // Selected-game desktop scopes also depend on the separate activation
+        // observer. A fixed desktop scope can use its own native watch.
+        && !NativeProfileHost::context_desktop(&state.document)
+        && !NativeProfileHost::context_desktop(&state.source_document);
     // DCS command completion and failure wake the same host as telemetry.
     let watched_dcs = watched_game && state.game_preparation.as_ref()
         .is_some_and(|prepared| prepared.integration_key == "dcs");
