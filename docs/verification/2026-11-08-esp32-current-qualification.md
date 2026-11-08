@@ -61,3 +61,25 @@ release while re-enabling the interrupt and failures to mask and restore it.
 
 The board builds and software tests leave physical interrupt timing open.
 #199 covers rapid taps, release during rendering, and USB and Wi-Fi recovery.
+
+## Waveshare touch interrupt and held-report deadline
+
+The candidate based on `9a1253b7` requires GPIO interrupts for both boards.
+Waveshare reads on GT911 INT, an early-report or fault retry, or the next
+actual health or held-report deadline. Sunton keeps its board-specific
+held-coordinate checks. The pinned ESP-IDF toolchain built both images.
+
+| Board | Application bytes | Application SHA-256 |
+| --- | ---: | --- |
+| Sunton ESP32-3248S035R | 1,652,656 | `e4aae8a77398f140cda233e8eda4e81402efa7c593a24e91833833e7883b42fa` |
+| Waveshare ESP32-S3 Touch LCD 7 | 1,666,960 | `ddbdc1813883d323f86ee48e184a88ac5b6521546f110357f3fa584280ffe0b9` |
+
+All 13 firmware host suites passed, including the LVGL sanitizer smoke.
+Both board drivers reached 100% line coverage. The Waveshare fixture covered
+one follow-up after an early interrupt, an unchanged deadline after a
+no-ready read, invalidation at 200 ms, and recovery of a ready release when
+the interrupt was missed. The Waveshare driver reached 86.32% branch and
+100% function coverage.
+
+Physical tests in #199 still need to measure a stationary hold, report
+cadence, release and stale-input cancellation on the actual GT911 panel.

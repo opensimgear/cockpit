@@ -83,6 +83,11 @@ static bool touch(void *context,bool *down,int *x,int *y){
     }
     xSemaphoreGive(b->mutex);return ok;
 }
+static unsigned touch_wait_ms(void *context,bool valid,bool down,bool notified){
+    (void)context;
+    // PENIRQ stays low even when pressure is too weak to accept a contact.
+    return !valid||down||notified||gpio_get_level(PENIRQ)==0?OSG_TOUCH_RECHECK_MS:OSG_TOUCH_HEALTH_MS;
+}
 static bool init_lcd(sunton *b){
     if(!command(b,0x01,NULL,0))return false;
     vTaskDelay(pdMS_TO_TICKS(150));
@@ -117,6 +122,6 @@ bool osg_board_init(osg_board *out){
     for(int y=0;y<HEIGHT;y++)if(!write_pixels(b,0,y,WIDTH,1,black))return false;
     gpio_set_level(27,1);
     *out=(osg_board){.width=WIDTH,.height=HEIGHT,.context=b,.write=write_pixels,.touch=touch,
-        .touch_irq_gpio=PENIRQ,.touch_penirq=true};
+        .touch_irq_gpio=PENIRQ,.touch_wait_ms=touch_wait_ms};
     ESP_LOGI("companion","Sunton ESP32-3248S035R: ST7796 480x320 landscape, XPT2046 shared SPI; verify calibration");return true;
 }

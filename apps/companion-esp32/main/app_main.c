@@ -41,24 +41,18 @@ static bool start_touch_interrupt(int pin){
 }
 static void touch_task(void *context){
     osg_board *board=context;
-    const bool interrupt=start_touch_interrupt(board->touch_irq_gpio);
-    if(board->touch_penirq&&!interrupt){
-        ESP_LOGE("companion","PENIRQ unavailable; touch input disabled");
+    if(!board->touch_wait_ms||!start_touch_interrupt(board->touch_irq_gpio)){
+        ESP_LOGE("companion","Touch interrupt unavailable; touch input disabled");
         osg_network_touch(false,false,0,0);
         vTaskDelete(NULL);
         return;
     }
-    if(board->touch_irq_gpio&&!interrupt)ESP_LOGW("companion","Touch interrupt unavailable; using timed reads");
     bool notified=false;
     for(;;){
         bool down=false;int x=0,y=0;
         const bool valid=board->touch(board->context,&down,&x,&y);
         osg_network_touch(valid,down,x,y);
-        // GT911 may raise INT before its report is ready. Keep one prompt
-        // follow-up, and retain the existing held-contact and failure checks.
-        // The quiet health read still renews the independent 600 ms lease.
-        const bool pen_active=board->touch_penirq&&gpio_get_level(board->touch_irq_gpio)==0;
-        const unsigned delay=interrupt&&valid&&!down&&!notified&&!pen_active?200:20;
+        const unsigned delay=board->touch_wait_ms(board->context,valid,down,notified);
         notified=ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(delay))!=0;
     }
 }

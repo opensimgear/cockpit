@@ -14,11 +14,11 @@
 | `apps/browser-companion/src/socket-transport.ts:65` | Operation deadline | Fail the pending request and close the socket after a four-second reply timeout. |
 | `apps/browser-companion/src/transport.ts:32` | Declaration | Own the optional worker startup fallback handle. |
 | `apps/browser-companion/src/transport.ts:63` | Startup deadline | Switch to the direct transport once if the worker fails its startup handshake. |
-| `apps/companion-esp32/boards/sunton-3248s035r/board.c:88,98` | Hardware startup | Display power-on command settling delays in the board initialization sequence. |
-| `apps/companion-esp32/boards/waveshare-lcd7/board.c:161,163,165,167` | Hardware startup | Display and touch pin/reset settling during board initialization. |
-| `apps/companion-esp32/main/app_main.c:62` | Acquisition boundary | Both boards wake on GPIO interrupts. A 20 ms deadline covers held contacts, early reports and transient faults, plus Waveshare interrupt registration failure. Quiet healthy IRQ mode renews the safety lease at 200 ms. Sunton disables touch if PENIRQ registration fails. |
-| `apps/companion-esp32/main/app_main.c:130` | Source wake | Display waits indefinitely for a committed notification when no drawing deadline is due. |
-| `apps/companion-esp32/main/app_main.c:133` | Display deadline | The same display notification also wakes early during an exact feedback expiry or failed-render retry wait. |
+| `apps/companion-esp32/boards/sunton-3248s035r/board.c:93,103` | Hardware startup | Display power-on command settling delays in the board initialization sequence. |
+| `apps/companion-esp32/boards/waveshare-lcd7/board.c:177,179,181,183` | Hardware startup | Display and touch pin/reset settling during board initialization. |
+| `apps/companion-esp32/main/app_main.c:56` | Acquisition boundary | Both boards require GPIO interrupts for touch. Waveshare waits for INT, an early-report or fault retry, or the remaining 200 ms held-report deadline. Sunton samples held coordinates at 20 ms. Both use 200 ms quiet lease checks. |
+| `apps/companion-esp32/main/app_main.c:124` | Source wake | Display waits indefinitely for a committed notification when no drawing deadline is due. |
+| `apps/companion-esp32/main/app_main.c:127` | Display deadline | The same display notification also wakes early during an exact feedback expiry or failed-render retry wait. |
 | `apps/companion-esp32/network/client.c:938` | Network deadline | The network owner waits for UART and producer notifications or the next state-dependent link, lease or retry deadline. |
 | `apps/companion-esp32/network/serial_wire.c:98` | I/O readiness | Wait for console input readiness or the direct request's original deadline. |
 | `apps/companion-esp32/network/serial.c:17` | I/O readiness | The UART event queue blocks until the driver signals receive readiness. |

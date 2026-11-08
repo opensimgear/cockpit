@@ -1,6 +1,7 @@
 #ifndef OSG_BOARD_H
 #define OSG_BOARD_H
 #include "raster.h"
+enum { OSG_TOUCH_RECHECK_MS = 20, OSG_TOUCH_HEALTH_MS = 200 };
 typedef struct {
     uint16_t width, height;
     void *context;
@@ -10,10 +11,9 @@ typedef struct {
     bool (*touch)(void *, bool *down, int *x, int *y);
     /* Optional bounded presentation fence after all writes, outside the state mutex. */
     bool (*present)(void *);
-    /* Optional touch interrupt input. Zero leaves the existing timed reader. */
+    /* Touch-capable boards supply an interrupt pin and the next read deadline. */
     int touch_irq_gpio;
-    /* Active-low PENIRQ is required and stays low for an unqualified contact. */
-    bool touch_penirq;
+    unsigned (*touch_wait_ms)(void *, bool valid, bool down, bool notified);
 } osg_board;
 bool osg_board_init(osg_board *);
 #endif

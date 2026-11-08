@@ -98,11 +98,17 @@ static void empty(void){assert(!bus_count&&!devices&&!panels&&!semaphores);}
 static osg_board ready(void){
     cleanup(&hardware);empty();operation=fail_at=outputs_count=pending=waits=fail_wait=0;check_no_reuse=wrong_product=wrong_geometry=false;
     psram_bytes=8*1024*1024;osg_board b;assert(osg_board_init(&b));assert(b.width==800&&b.height==480&&b.touch&&b.present&&b.write);
-    assert(b.touch_irq_gpio==4);
+    assert(b.touch_irq_gpio==4&&b.touch_wait_ms);
     assert(outputs_count==4&&outputs_seen[0]==0x30&&outputs_seen[1]==0x38&&outputs_seen[2]==0x3a&&outputs_seen[3]==0x3e);return b;
 }
 static bool touch(osg_board *b){bool down;int x,y;return b->touch(b->context,&down,&x,&y);}
 static void report(uint8_t count,int x,int y,uint8_t id){status=0x80|count;memset(point,0,8);point[0]=id;point[1]=(uint8_t)x;point[2]=(uint8_t)(x>>8);point[3]=(uint8_t)y;point[4]=(uint8_t)(y>>8);}
+static unsigned next_touch_wait(osg_board *b, bool notified, bool expected_valid, bool expected_down){
+    bool down;int x,y;
+    const bool valid=b->touch(b->context,&down,&x,&y);
+    assert(valid==expected_valid&&down==expected_down);
+    return b->touch_wait_ms(b->context,valid,down,notified);
+}
 int main(void){
     osg_board b=ready();unsigned init_steps=operation;osg_board other;assert(!osg_board_init(&other)&&!other.write);
     cleanup(&hardware);empty();
@@ -146,16 +152,31 @@ int main(void){
         fail_wait=0;assert(!checked_present(&b)&&!b.write(b.context,0,0,1,1,pixels));
         assert(!memcmp(frames,before_present,sizeof(frames)));
     }
-    b=ready();status=0;assert(!touch(&b)); /* Startup needs an observed release. */
-    report(0,0,0,0);assert(touch(&b)&&!hardware.down);status=0;clock_ms+=10000;assert(touch(&b));
+    b=ready();status=0;assert(next_touch_wait(&b,false,false,false)==200); /* No baseline. */
+    assert(next_touch_wait(&b,true,false,false)==20); /* Early interrupt. */
+    assert(next_touch_wait(&b,false,false,false)==200); /* One follow-up only. */
+    report(0,0,0,0);assert(next_touch_wait(&b,true,true,false)==200);
+    status=0;clock_ms+=10000;assert(touch(&b));
     report(1,799,479,2);bool down=false;int x=0,y=0;assert(b.touch(b.context,&down,&x,&y)&&down&&x==799&&y==479);
-    status=0;clock_ms+=199;assert(touch(&b)&&hardware.down);clock_ms++;assert(!touch(&b));
+    assert(b.touch_wait_ms(b.context,true,true,true)==200);
+    status=0;clock_ms+=60;assert(next_touch_wait(&b,false,true,true)==140);
+    assert(next_touch_wait(&b,true,true,true)==20); /* Early IRQ during a hold. */
+    clock_ms+=20;assert(next_touch_wait(&b,false,true,true)==120); /* No age renewal. */
+    clock_ms+=119;assert(next_touch_wait(&b,true,true,true)==1);
+    clock_ms++;
+    assert(b.touch_wait_ms(b.context,true,true,false)==0);
+    assert(next_touch_wait(&b,false,false,false)==200); /* Held report expired. */
+    report(1,799,479,2);assert(next_touch_wait(&b,true,true,true)==200);
+    report(0,0,0,0);assert(next_touch_wait(&b,true,true,false)==200); /* Release on IRQ. */
+    report(1,799,479,2);assert(next_touch_wait(&b,true,true,true)==200);
+    clock_ms+=200;report(0,0,0,0);
+    assert(next_touch_wait(&b,false,true,false)==200); /* Deadline recovers a missed release IRQ. */
     report(1,0,0,1);assert(touch(&b));report(1,0,0,2);assert(!touch(&b)); /* Finger substitution. */
     report(0,0,0,0);assert(touch(&b));report(2,0,0,0);assert(!touch(&b));
     report(1,800,0,0);assert(!touch(&b));report(1,0,480,0);assert(!touch(&b));
     status=0x90;assert(!touch(&b)); /* Touch-key/invalid status. */
     report(1,20,30,0);assert(touch(&b));clock_ms--;status=0;assert(!touch(&b));
-    for(unsigned offset=1;offset<=3;offset++){report(1,10,10,0);fail_at=operation+offset;assert(!touch(&b));fail_at=0;}
+    for(unsigned offset=1;offset<=3;offset++){report(1,10,10,0);fail_at=operation+offset;assert(next_touch_wait(&b,false,false,false)==20);fail_at=0;}
     report(0,0,0,0);assert(touch(&b));
     cleanup(&hardware);empty();assert(!touch(&b)&&!present(&hardware)&&!write_pixels(&hardware,0,0,1,1,pixels));
     puts("Waveshare init, geometry, touch freshness, multitouch, disjoint frame coherence, fences, timeout no-reuse and failure cleanup passed");

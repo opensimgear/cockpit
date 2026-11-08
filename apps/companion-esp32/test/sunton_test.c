@@ -39,7 +39,10 @@ int spi_device_polling_transmit(spi_device_handle_t device,spi_transaction_t *t)
 }
 int main(void){
  osg_board board;assert(osg_board_init(&board));assert(devices==2&&board.width==480&&board.height==320&&board.present==NULL);
- assert(board.touch_irq_gpio==36&&board.touch_penirq);
+ assert(board.touch_irq_gpio==36&&board.touch_wait_ms);
+ assert(board.touch_wait_ms(board.context,true,false,false)==200);
+ assert(board.touch_wait_ms(board.context,true,false,true)==20);
+ assert(board.touch_wait_ms(board.context,true,true,false)==20);
  irq_enabled=true; // The touch task has attached the GPIO handler.
  const uint16_t rgb[]={0xf800,0x07e0,0x001f};
  assert(board.write(board.context,0,0,3,1,rgb));
@@ -66,6 +69,7 @@ int main(void){
  raw_x=3900;raw_y=3900;assert(board.touch(board.context,&down,&x,&y)&&down&&x==0&&y==319);
  raw_x=0;assert(!board.touch(board.context,&down,&x,&y)&&!down);
  raw_x=2050;z1=0;z2=4095;assert(board.touch(board.context,&down,&x,&y)&&!down);
+ assert(board.touch_wait_ms(board.context,true,false,false)==20); /* PENIRQ is still low. */
  z1=1000;z2=2000;fail_spi=true;assert(!board.touch(board.context,&down,&x,&y)&&!down&&irq_enabled);
  fail_spi=false;fail_lock=true;assert(!board.touch(board.context,&down,&x,&y));assert(!board.write(board.context,0,0,1,1,rgb));
  fail_lock=false;fail_spi=true;assert(!board.write(board.context,0,0,1,1,rgb));fail_spi=false;assert(!board.write(board.context,0,0,1,1,rgb));

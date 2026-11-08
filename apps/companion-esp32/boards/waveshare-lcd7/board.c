@@ -35,7 +35,7 @@ typedef struct {
     SemaphoreHandle_t vsync;
     uint16_t *fb[2];
     unsigned back;
-    bool initialized, display_failed, touch_known, down;
+    bool initialized, display_failed, touch_known, down, awaiting_report;
     uint8_t contact;
     int x, y;
     uint64_t report_ms;
@@ -54,14 +54,20 @@ static bool clear_touch(lcd7 *b) {
     return i2c_master_transmit(b->touch, clear, sizeof(clear), I2C_TIMEOUT_MS) == ESP_OK;
 }
 static bool touch_failure(lcd7 *b) { b->touch_known = false; b->down = false; return false; }
+static unsigned hold_remaining(const lcd7 *b, uint64_t now) {
+    if (now < b->report_ms || now - b->report_ms >= TOUCH_HOLD_MS) return 0;
+    return TOUCH_HOLD_MS - (unsigned)(now - b->report_ms);
+}
 static bool poll_touch(void *context, bool *down, int *x, int *y) {
     lcd7 *b = context;
     *down = false; *x = *y = 0;
+    b->awaiting_report = false;
     if (!b->initialized) return false;
     uint8_t status;
     if (!read_touch(b, 0x814e, &status, 1)) return touch_failure(b);
     const uint64_t now = (uint64_t)(esp_timer_get_time() / 1000);
-    if (status & 0x80) {
+    b->awaiting_report = !(status & 0x80);
+    if (!b->awaiting_report) {
         uint8_t point[8] = {0};
         const unsigned count = status & 15;
         bool valid = !(status & 0x70) && count <= 1;
@@ -79,9 +85,19 @@ static bool poll_touch(void *context, bool *down, int *x, int *y) {
     }
     /* No-ready means no new report, not "released". A cached held point can
      * survive short gaps, but successful I2C reads cannot extend it forever. */
-    if (!b->touch_known || (b->down && (now < b->report_ms || now - b->report_ms >= TOUCH_HOLD_MS)))
+    if (!b->touch_known || (b->down && !hold_remaining(b, now)))
         return touch_failure(b);
     *down = b->down; *x = b->x; *y = b->y; return true;
+}
+static unsigned touch_wait_ms(void *context, bool valid, bool down, bool notified) {
+    lcd7 *b = context;
+    // An early INT can precede the ready bit. An I2C or report fault can
+    // recover on a short retry. Quiet missing baselines wait for INT or health.
+    const unsigned wait = (b->awaiting_report ? notified : !valid)
+        ? OSG_TOUCH_RECHECK_MS : OSG_TOUCH_HEALTH_MS;
+    if (!down) return wait;
+    const unsigned remaining = hold_remaining(b, (uint64_t)(esp_timer_get_time() / 1000));
+    return remaining < wait ? remaining : wait;
 }
 static bool write_pixels(void *context, int x, int y, int w, int h, const uint16_t *pixels) {
     lcd7 *b = context;
@@ -196,7 +212,8 @@ bool osg_board_init(osg_board *out) {
         !expander(b->outputs, OUTPUTS_LIGHT_ON)) goto failed;
     b->initialized = true;
     *out = (osg_board){.width = WIDTH, .height = HEIGHT, .context = b,
-        .write = write_pixels, .touch = poll_touch, .present = present, .touch_irq_gpio = TOUCH_IRQ_GPIO};
+        .write = write_pixels, .touch = poll_touch, .present = present, .touch_irq_gpio = TOUCH_IRQ_GPIO,
+        .touch_wait_ms = touch_wait_ms};
     ESP_LOGI("lcd7", "Waveshare ESP32-S3-Touch-LCD-7 V1.2: RGB565 800x480, GT911, two PSRAM frames");
     return true;
 failed:
