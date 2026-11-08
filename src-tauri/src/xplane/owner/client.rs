@@ -99,8 +99,9 @@ impl Source {
             count: owner.shared.active_leases.clone(),
         });
         let reader = owner
-            .update(&lease, ids, true)?
-            .ok_or("X-Plane initial subscription missing.")?;
+            .update(&lease, ids, true)
+            .and_then(|reader| reader.ok_or_else(|| "X-Plane initial subscription missing.".into()))
+            .inspect_err(|_| lease.deactivate())?;
         Ok(Self {
             owner,
             lease,
