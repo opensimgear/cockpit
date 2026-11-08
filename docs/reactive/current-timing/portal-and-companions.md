@@ -38,8 +38,8 @@
 | `src/lib/activity/ActivityPanel.svelte:28` | User debounce | Apply the search text 250 ms after the last edit. |
 | `src/lib/companion-settings.ts:61` | Declaration | Handle for the next companion settings autosave. |
 | `src/lib/companion-settings.ts:87` | User debounce | Flush an edited settings draft at the selected save deadline. |
-| `src/lib/CompanionConnections.svelte:208` | Presentation | Display the countdown against a pairing offer's existing expiry. Native owns approval and expiry. |
-| `src/lib/CompanionConnections.svelte:231` | Command recovery | Wait once after a finished USB flash for the board to re-enumerate before requesting connection. |
+| `src/lib/CompanionConnections.svelte:214` | Presentation | Display the countdown against a pairing offer's existing expiry. Native owns approval and expiry. |
+| `src/lib/CompanionConnections.svelte:237` | Command recovery | Wait once after a finished USB flash for the board to re-enumerate before requesting connection. |
 | `src/lib/CompiledCompanionDesigner.svelte:228` | Resource cleanup | Revoke the export blob URL after its download click. |
 | `src/lib/controller-observations.ts:15` | Declaration | Testable interface for a display-frame callback. |
 | `src/lib/controller-observations.ts:225` | Presentation | Draw the latest continuous sample once when the capture makes the visible preview dirty. Hiding cancels pending presentation and releases the preview reader. |

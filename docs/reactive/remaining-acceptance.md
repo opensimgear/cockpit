@@ -37,6 +37,10 @@ retire the listener reader when hidden. Both transports verified a fresh
 baseline and one status read on reveal after a listener commit in a private
 Cockpit session.
 
+The [Companions roster](../verification/2026-11-08-companion-roster-visibility.md)
+retires its passive status demand while hidden and discards delayed replies.
+Both clients reopened on the committed listener state and offered pairing.
+
 The [controller detail visibility card](../verification/2026-11-08-controller-visibility-reader-lifetime.md)
 retires both of its readers on document hide or card exit. Native and
 browser-dev reopened on the preference committed while hidden. The

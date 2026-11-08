@@ -42,7 +42,7 @@
   let pairing = $state<CompanionHostState['pairing']>();
   let secondsLeft = $state(0), expires = 0;
   let baseline = new Set<string>();
-  let reading = false, refreshQueued = false;
+  let reading = false, refreshQueued = false, statusEpoch = 0;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
   let finishingFlash=$state(false);
   let flashStatus = $state.raw<CompanionHostState['usb']>();
@@ -82,11 +82,14 @@
   const deviceKind = (row: Record<string, unknown>) => text(row,'kind') || 'desktop';
   const icon = (type: string) => type === 'esp32' ? 'usb' : type === 'mobile' ? 'mobile' : 'monitor';
   let requestVersion = 0, appliedVersion = 0;
-  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) {
+  const currentStatus = (epoch: number) => !disposed && active && !document.hidden && epoch === statusEpoch;
+  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}, passiveEpoch?: number) {
     const version = ++requestVersion;
     const result = (await gatewayRequest({ command, companion })).companions;
     if (!result) throw new Error('Companion pairing requires the native Cockpit app.');
-    if (!disposed && version >= appliedVersion) { appliedVersion=version; hostStatus = { ...hostStatus, ...result }; }
+    if (!disposed && version >= appliedVersion && (passiveEpoch === undefined || currentStatus(passiveEpoch))) {
+      appliedVersion=version; hostStatus = { ...hostStatus, ...result };
+    }
     return result;
   }
   const settingsAutosave = createCompanionSettingsAutosave(send, state => {
@@ -106,13 +109,14 @@
     try { await work(); } catch (error) { notify(String(error),'error'); } finally { busy=false; }
   }
   async function refresh() {
-    if (!active || disposed) return;
+    const epoch = statusEpoch;
+    if (!currentStatus(epoch)) return;
     if (reading || settingsSaving) { refreshQueued = true; return; }
     refreshQueued = false;
     reading = true;
     try {
-      await send('companion_status');
-      if (disposed) return;
+      await send('companion_status', {}, epoch);
+      if (!currentStatus(epoch)) return;
       if (pendingCompanionId && hostState.host?.clients) {
         const client = clients.find(client => text(client, 'companionId') === pendingCompanionId);
         pendingCompanionId = '';
@@ -122,7 +126,7 @@
       if (pairingOpen && newPairingConnected(kind,baseline,hostState)) {
         pairingOpen=false; pairing=undefined; kind=''; notify('Companion paired and saved.');
       }
-    } catch (error) { if (!disposed) notify(String(error),'error'); }
+    } catch (error) { if (currentStatus(epoch)) notify(String(error),'error'); }
     finally {
       reading = false;
       if (refreshQueued && !settingsSaving) void refresh();
@@ -131,11 +135,13 @@
   $effect(() => {
     if (!active || !mounted) return;
     const observations = companionObservations();
-    const stops = ['companion.presence', 'companion.listener'].map(topic => observations.subscribe(topic, state => {
+    const retire = () => { statusEpoch++; refreshQueued = false; };
+    const readers = ['companion.presence', 'companion.listener'].map(topic => visibleObservation(observations, topic, state => {
       if (state.status === 'ready') untrack(() => { void refresh(); });
       if (state.status === 'error' && state.error) notify(state.error, 'error');
-    }));
-    return () => stops.forEach(stop => stop());
+    }, retire));
+    readers.forEach(reader => reader.setVisible(true));
+    return () => readers.forEach(reader => reader.close());
   });
   $effect(() => {
     if (!active || !mounted) return;
