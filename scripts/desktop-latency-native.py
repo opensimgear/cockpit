@@ -199,7 +199,8 @@ def key_edges(report, scan):
 def pointer_load_proof(report, status, observation_start, operation_baseline):
     operation_baseline = int(operation_baseline)
     moves = [event for event in report.get("observations", [])[observation_start:]
-        if event.get("injectedMarker") is True and event["message"] == 512]
+        if event.get("injectedMarker") is True and event["message"] == 512
+        and event["foregroundWindow"] == report["focusAfter"] and event["captureWindow"] == "0"]
     receipts = {action: [] for action in ("pointer-a", "pointer-b")}
     for outcome in status["runtime"].get("outcomes", []):
         delivery, ack = outcome["delivery"], outcome["acknowledgement"]
@@ -262,7 +263,8 @@ def settle_keys(service, receiver_path, results, receiver_prefix=None, pointer_b
             if pointer is None:
                 return None
         return dict(receiver=report, desktop=native.compact_desktop(status), keyCounts=key_counts, pointerLoad=pointer)
-    return mapping.wait_for(ready, "All accepted changed keys did not settle into exact native receiver edges and ownership", seconds=8)
+    message = "Accepted keys, exact ownership and required pointer receipts did not settle" if pointer_baseline is not None else "Accepted keys and exact ownership did not settle"
+    return mapping.wait_for(ready, message, seconds=8)
 
 
 def warmup_keys(service, receiver_path, peers):
@@ -367,8 +369,7 @@ def main():
             receiver_path, identity = Path(target["file"]), target["identity"]
             receiver_paths.append(receiver_path)
             phase["receiverIdentity"] = identity
-            phase["positioning"] = ownership.position_receiver(service, receiver_path, identity)
-            mapping.wait_for(lambda: native.desktop_status(service).get("recentApplication") == identity,
+            phase["initialForeground"] = mapping.wait_for(lambda: identity if native.desktop_status(service).get("recentApplication") == identity else None,
                 "Native foreground observer did not capture the exact receiver process")
             saved, captured, compilation = capture_profile_scope(service, saved, assignments, identity)
             phase["exactCapturedApplication"] = captured
@@ -383,7 +384,7 @@ def main():
             apply_attempted = True
             owner = mapping.apply(service, saved)
             phase["owner"] = owner
-            phase["afterApplyPositioning"] = ownership.position_receiver(service, receiver_path, identity)
+            phase["afterApplyPositioning"] = ownership.position_receiver(service, receiver_path, identity, pointer_target=True)
             journal_scope = native.desktop_status(service)["runtime"]["backend"]["journalScope"]
             assert journal_scope == dict(kind="application", identity=identity), journal_scope
             phase["exactAppliedApplicationScope"] = journal_scope
@@ -396,6 +397,9 @@ def main():
             phase["warmupEndMarker"] = marker(service, 6 + index * 2)
             phase["nativeSources"] = coherent_sources(service, configurations, peers)
             phase["uiBefore"] = control(service, "latency_ui_load", enabled=index == 1, profileName=saved["name"])
+            phase["pointerTargetBeforeWorkload"] = native.receiver(receiver_path).get("pointerTarget")
+            target = phase["pointerTargetBeforeWorkload"]
+            assert target and target["exactReceiver"] and target["foregroundCapture"] == "0", target
             phase["startMarker"] = marker(service, 1 + index * 2)
             gate, abort = threading.Barrier(3), threading.Event()
             results, errors = [None, None], []

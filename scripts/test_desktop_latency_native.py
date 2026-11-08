@@ -15,6 +15,19 @@ spec.loader.exec_module(workload)
 
 
 class NativeWorkloadContractTests(unittest.TestCase):
+    def test_pointer_proof_requires_marked_message_in_exact_foreground_without_capture(self):
+        outcomes = [{"delivery": {"operationId": str(index), "actionId": action, "intent": {"kind": "pointer"}},
+            "acknowledgement": {"ok": True, "uncertain": False, "skipped": False, "attempted": 1, "confirmed": 1}}
+            for index, action in enumerate(("pointer-a", "pointer-b"), 1)]
+        status = {"runtime": {"outcomes": outcomes}}
+        move = {"message": 512, "injectedMarker": True, "foregroundWindow": "10", "captureWindow": "0"}
+        report = {"focusAfter": "10", "observations": [move]}
+        self.assertEqual(workload.pointer_load_proof(report, status, 0, 0)["receiverMarkedMouseMoves"], 1)
+        for field, value in (("injectedMarker", False), ("foregroundWindow", "20"), ("captureWindow", "10")):
+            with self.subTest(field=field):
+                report["observations"] = [{**move, field: value}]
+                self.assertIsNone(workload.pointer_load_proof(report, status, 0, 0))
+
     def test_neutral_owner_check_distinguishes_renewal_from_an_inflight_input(self):
         owners = [{"actionId": action, "controls": []}
             for action in ("key-a", "key-b", "pointer-a", "pointer-b")]

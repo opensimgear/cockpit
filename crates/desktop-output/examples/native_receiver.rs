@@ -188,13 +188,15 @@ mod experiment {
         let focus_target = args.first().map(String::as_str) == Some("--osg-desktop-focus-target");
         let keyboard_receiver_only =
             args.first().map(String::as_str) == Some("--keyboard-receiver-only");
-        let receiver_only = args.first().map(String::as_str) == Some("--receiver-only");
+        let pointer_receiver_only = args.first().map(String::as_str) == Some("--pointer-receiver-only");
+        let receiver_only = pointer_receiver_only || args.first().map(String::as_str) == Some("--receiver-only");
         if args.len() != 2
             || !matches!(
                 args[0].as_str(),
                 "--accept-native-input"
                     | "--accept-worker-input"
                     | "--receiver-only"
+                    | "--pointer-receiver-only"
                     | "--keyboard-receiver-only"
                     | "--osg-desktop-focus-target"
             )
@@ -240,7 +242,7 @@ mod experiment {
                 SetForegroundWindow(window);
             } else {
                 receiver_focus::foreground(window);
-                receiver_cursor::center_cursor(window)?;
+                if !pointer_receiver_only { receiver_cursor::center_cursor(window)?; }
             }
             window
         };
@@ -261,6 +263,7 @@ mod experiment {
             let stop = output.with_extension("stop");
             let deadline = Instant::now() + Duration::from_secs(300);
             let mut focus_requests = 0u32;
+            let mut pointer_position_error = None;
             let mut mouse_state_sequence = 0u64;
             let mut last_focus = FocusChange {
                 method: "startup-fallback",
@@ -280,23 +283,17 @@ mod experiment {
                     }
                     let request =
                         std::fs::read_to_string(&focus).map_err(|error| error.to_string())?;
-                    if request != "focus" && request != "focus-and-center" {
+                    if !matches!(request.as_str(), "focus" | "focus-and-center" | "focus-and-position-pointer") {
                         return Err("Unknown receive-only focus request.".into());
                     }
-                    if keyboard_receiver_only && request == "focus-and-center" {
+                    if keyboard_receiver_only && request != "focus" {
                         return Err(
                             "Keyboard-only receiver does not accept focus-and-center requests."
                                 .into(),
                         );
                     }
                     unsafe {
-                        last_focus = receiver_focus::receiver_foreground(window)?;
-                        // Moving the pointer during a held-button focus switch
-                        // changes OS mouse routing. Center only when the caller
-                        // explicitly requests it after verifying no native holds.
-                        if request == "focus-and-center" {
-                            receiver_cursor::center_cursor(window)?;
-                        }
+                        (last_focus, pointer_position_error) = receiver_cursor::position_after_focus(window, &request)?;
                     }
                     focus_requests += 1;
                     std::fs::remove_file(&focus).map_err(|error| error.to_string())?;
@@ -311,6 +308,8 @@ mod experiment {
                     "focusCaptureBefore":last_focus.capture_before.to_string(),"focusCaptureAfter":last_focus.capture_after.to_string(),
                     "foregroundWindow":unsafe {(GetForegroundWindow() as usize).to_string()},
                     "captureWindow":unsafe {(GetCapture() as usize).to_string()},
+                    "pointerTarget":if receiver_only { Some(unsafe {receiver_cursor::pointer_target(window)}) } else { None },
+                    "pointerPositionError":pointer_position_error,
                     "mouseButtonState":unsafe {receiver_cursor::mouse_button_state(window, &scope, mouse_state_sequence)},
                     "clientCursor":unsafe {receiver_cursor::client_cursor(window)?}});
                 std::fs::write(

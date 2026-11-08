@@ -53,7 +53,7 @@ async function stopped(page, applied) {
 async function launchReceiver(file) {
  for (const path of [file, file.replace(/\.json$/, '.focus'), file.replace(/\.json$/, '.stop')]) await rm(path, {force: true});
  const child = spawn(process.env.OSG_DESKTOP_RECEIVER ?? resolve('crates/desktop-output/target/debug/examples/native_receiver.exe'),
-  ['--receiver-only', file], {cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
+  ['--pointer-receiver-only', file], {cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
  let errors = '';
  child.stderr.on('data', chunk => { errors += chunk; });
  let ready;

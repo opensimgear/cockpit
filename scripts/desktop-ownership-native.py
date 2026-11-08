@@ -190,7 +190,7 @@ def producer_pins(owner, sources, instances):
         stable={})
 
 
-def position_receiver(service, path, identity):
+def position_receiver(service, path, identity, *, pointer_target=False):
     """Obtain a fresh receiver ACK and prove native focus before any mouse hold."""
     def unheld(status):
         if status.get("runtime") is None:
@@ -206,7 +206,7 @@ def position_receiver(service, path, identity):
     previous_requests = prior.get("focusRequests", 0)
     marker = path.with_suffix(".focus")
     temporary = path.with_suffix(".focus-request.tmp")
-    temporary.write_text("focus-and-center")
+    temporary.write_text("focus-and-position-pointer" if pointer_target else "focus-and-center")
     temporary.replace(marker)
 
     def positioned():
@@ -219,12 +219,16 @@ def position_receiver(service, path, identity):
         recent = status.get("recentApplication") or {}
         cursor = report.get("clientCursor") or {}
         acknowledged = report.get("focusRequests", 0) > previous_requests
+        target = report.get("pointerTarget") or {}
+        if pointer_target and acknowledged and report.get("pointerPositionError"):
+            raise AssertionError(f"{report['pointerPositionError']} Observed pointer target: {target}")
+        pointer_ready = not pointer_target or (target.get("exactReceiver") is True and target.get("foregroundCapture") == "0")
         exact_foreground = (recent.get("pid") == identity["pid"] and recent.get("created") == identity["created"]
             and os.path.normcase(recent.get("executable", "")) == os.path.normcase(identity["executable"]))
-        if acknowledged and cursor.get("inside") is True and exact_foreground:
+        if acknowledged and cursor.get("inside") is True and exact_foreground and pointer_ready:
             return dict(previousFocusRequests=previous_requests, focusRequests=report["focusRequests"],
                 clientCursor=cursor, recentApplication=recent, focusMethod=report.get("focusMethod"),
-                focusBefore=report.get("focusBefore"), focusAfter=report.get("focusAfter"))
+                focusBefore=report.get("focusBefore"), focusAfter=report.get("focusAfter"), pointerTarget=target or None)
         return None
     return mapping.wait_for(positioned, "Fresh receiver focus-and-center ACK, inside cursor and exact native foreground identity were not established", seconds=8)
 
