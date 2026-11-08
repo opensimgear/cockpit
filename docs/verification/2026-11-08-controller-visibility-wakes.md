@@ -124,6 +124,47 @@ and must surface notification loss. Windows' directory APIs distinguish
 changes within a watched directory from changes to that directory itself.
 [Windows directory change notifications](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstchangenotificationw)
 
+### Volume root and drive aliases
+
+An ordinary Windows account opened a recursive notification at the C: volume
+root. The ancestor rename succeeded with the watch open. The watcher reported
+both names for the ancestor and executable renames and reported a directory
+junction removal and recreation. During a ten-second quiet window it delivered
+113 volume records with no errors. This run used the Windows filesystem watcher
+with name, attribute and security notifications. The record count is specific
+to this machine and window.
+
+A second probe created an unused drive alias to a private fixture directory.
+A positive-control file creation proved the volume watcher was active.
+Retargeting the same alias to another directory changed the executable's
+handle-resolved NT path from `first\fixture.exe` to `second\fixture.exe`.
+The watcher reported zero fixture events and zero errors during the two-second
+observation. Windows allows suppressing the drive mapping broadcast, which the
+probe did. The fixture removed its mapping and temporary directories.
+[DefineDosDeviceW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-definedosdevicew)
+
+A volume-root watcher can observe ordinary filesystem changes without the
+descendant handle's rename interference. It cannot serve as complete continuity
+proof for executable paths that pass through remappable drive aliases. The
+current active-session audit remains the fallback pending an explicit decision
+in #189. The probes made no HidHide driver writes.
+
+The controller fixture uses the real Windows executable resolver with a
+private executable path and a fixture driver. After the worker reaches
+Active, renaming the executable's ancestor succeeds without a device
+inventory change. The audit detects the missing path, restores the exact
+original policy and leaves a clean journal. All 174 Windows controller
+tests and 38 configured coverage checks passed. The visibility worker
+reached 92.92% production line coverage.
+
+The running native Cockpit passed the passive controller catalogue and
+delayed-preview checks. Its installed HidHide driver again reported a
+65,654-byte application list and Cockpit reported `changed: false`.
+The test used the dev executable from
+[prepared output verification](2026-11-08-prepared-output-heartbeat.md).
+Local probe and test results are under
+`.research/reactive/hidhide-volume-watch/`.
+
 ## Driver readback limit
 
 HidHide 1.5.230 sizes its list response using the byte length of each

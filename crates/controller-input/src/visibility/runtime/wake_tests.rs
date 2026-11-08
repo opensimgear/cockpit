@@ -188,3 +188,51 @@ fn exact_instance_lookup_runs_on_inventory_changes_and_withdraws_replacement() {
     assert!(!state.lock().unwrap().active);
     assert!(journal::inspect(&path).unwrap().unwrap().clean);
 }
+
+#[cfg(windows)]
+#[test]
+fn moved_native_capture_path_restores_policy_without_an_inventory_change() {
+    struct NativePathProbe(Box<dyn Adapter>);
+    impl Backend for NativePathProbe {
+        fn read(&mut self) -> Result<State, String> { self.0.read() }
+        fn change(&mut self, expected: &State, desired: &State) -> Result<(), String> {
+            self.0.change(expected, desired)
+        }
+    }
+    impl Adapter for NativePathProbe {
+        fn executable(&mut self, path: &str) -> Result<String, String> {
+            crate::visibility::windows::executable(path)
+        }
+        fn instance(&mut self, interface: &str) -> Result<String, String> {
+            self.0.instance(interface)
+        }
+    }
+
+    let ReadyCapture { registry, mut task, factory, capture, state, fresh_read, resume_read } = ReadyCapture::new();
+    let temp = crate::test_directory();
+    let parent = temp.path().join("capture");
+    let bin = parent.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let image = bin.join("fixture.exe");
+    std::fs::write(&image, b"not executed").unwrap();
+    let path = temp.path().join("visibility.json");
+    let original = state.lock().unwrap().clone();
+    let Task::Apply { ids, capture: executable, .. } = &mut task else { unreachable!() };
+    *executable = image.to_str().unwrap().to_owned();
+    let id = ids[0].clone();
+    let factory: Factory = Arc::new(move || Ok(Box::new(NativePathProbe(factory()?))));
+    let mut worker = Worker::default();
+    let status = worker.start(task, path.clone(), factory, capture).unwrap();
+    fresh_read.recv_timeout(Duration::from_secs(4)).unwrap();
+    registry.lock().unwrap().report(&id, 1, &BTreeMap::from([(0, 0), (1, 0)])).unwrap();
+    resume_read.send(()).unwrap();
+    assert!(worker.completion().wait(&status.job_id, false, Duration::from_secs(1)).unwrap());
+    assert_eq!(worker.snapshot().unwrap().phase, "active");
+    assert!(state.lock().unwrap().active);
+
+    std::fs::rename(&parent, temp.path().join("renamed")).unwrap();
+    assert!(worker.completion().wait(&status.job_id, true, Duration::from_secs(2)).unwrap());
+    assert!(worker.snapshot().unwrap().message.contains("existing absolute executable path"));
+    assert_eq!(*state.lock().unwrap(), original);
+    assert!(journal::inspect(&path).unwrap().unwrap().clean);
+}
