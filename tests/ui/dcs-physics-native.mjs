@@ -1,5 +1,3 @@
-// Desktop and browser-dev acceptance with authored simulator process and telemetry.
-// OSG_DCS_COMBINED_VJOY_PROBE adds a browser panel and a temporary vJoy slot.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {access, cp, mkdir, readFile, rm, rmdir, unlink, writeFile} from 'node:fs/promises';
@@ -12,7 +10,7 @@ import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
 import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
-import {openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
+import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
 import {verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
@@ -327,9 +325,9 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       nativeValues['flight.ownship.inAir'] = airborne;
       selected['flight.ownship.inAir'] = airborne;
     };
-    const submitOwnship = airborne => new Promise((resolve,reject) => {
+    const submitOwnshipUpdate = update => new Promise((resolve,reject) => {
       assert.equal(nextOwnshipSubmission, undefined);
-      setAirborne(airborne);
+      update();
       const timeout=setTimeout(() => {
         nextOwnshipSubmission=undefined;
         reject(Error('The DCS fixture did not send the changed ownship value'));
@@ -350,7 +348,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
-      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship);
+      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner,
+        airborne => submitOwnshipUpdate(() => setAirborne(airborne)));
       const before = (await readers()).fast;
       const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
         setAirborne,
@@ -384,6 +383,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       assert.equal(afterExpiry.error, null);
       assert.ok(afterExpiry.fast > stalled.fast, 'Fast notifications must continue through BIOS expiry');
       evidence.phases.biosExpiryUnderBackpressure = {missing, ownship, fastNotifications: afterExpiry.fast - stalled.fast};
+      evidence.phases.telemetryTiming = await measureDcsTelemetryBackpressure(cdp, nativeValues, submitOwnshipUpdate);
       await cdp.evaluate('window.__dcsSlowReader.release()');
       await until(async () => (await readers()).slow > 1, 'Slow reader did not resume after acknowledgement');
       evidence.phases.slowReader = {fastNotifications: stalled.fast - before, withheldDeliveries: stalled.slow, ownerPreserved: true};
@@ -399,9 +399,9 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     const stopNs = process.hrtime.bigint();
     if (combined) Object.assign(evidence.phases.combined, await combined.stop(stopNs));
     else await request({command: 'profile_stop'});
-    const budgetMisses = combined ? combinedTimingMisses(
+    const budgetMisses = [...evidence.phases.telemetryTiming.budgetMisses, ...(combined ? combinedTimingMisses(
       evidence.phases.panelPresentation, browserUrl || nativeRates ? evidence.phases.combined : null,
-    ) : [];
+    ) : [])];
     evidence.budgetMisses = budgetMisses;
     if (nativeCommands) biosMode = 'full';
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
@@ -428,7 +428,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     checks.push(nativeCommands ? 'A fresh BIOS baseline allows the command profile to reapply without replay.' : 'A new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
-    assert.deepEqual(budgetMisses, [], 'Combined software timing budgets');
+    assert.deepEqual(budgetMisses, [], 'Software timing budgets');
   } catch (error) {
     evidence.failure = String(error); evidence.failureInspection = await samples().catch(() => null);
     evidence.failureBios = await inspect(biosId).catch(() => null); evidence.failurePhysics = await inspect('flight.airspeed.true').catch(() => null);
