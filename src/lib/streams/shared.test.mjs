@@ -64,10 +64,16 @@ test('gaps withdraw values and only a fresh baseline restores readiness', () => 
   send({ kind: 'change', continuity: 'continuous', revision: '2', sequence: '9007199254740995' }, '2');
   assert.equal(states.at(-1).status, 'lost');
   assert.equal(states.at(-1).frame, undefined);
+  const joining = [];
+  const stopJoining = client.subscribe('preferences', state => joining.push(state));
+  assert.equal(joining.at(-1).status, 'lost');
+  assert.equal(opens.length, 1, 'Nonterminal protocol loss still shares the original stream');
   send({ kind: 'change', continuity: 'continuous', revision: '3', sequence: '9007199254740994' }, '3');
   assert.equal(states.at(-1).status, 'lost');
   send({ revision: '3', sequence: '9007199254740995' }, '4');
   assert.equal(states.at(-1).status, 'ready');
+  assert.equal(joining.at(-1).status, 'ready');
+  stopJoining();
   send({ kind: 'loss', continuity: 'lost', revision: '3', capturedUs: '0', clockId: 'none', payload: undefined, reason: 'overflow' }, '5');
   assert.equal(states.at(-1).status, 'lost');
   assert.equal(states.at(-1).frame.capturedUs, '0');
@@ -97,6 +103,62 @@ test('epoch replacement rejects old callbacks and accepts new service session', 
   assert.equal(seen.at(-1).status, 'error');
   assert.equal(opens[1].signal.aborted, true);
   client.close();
+});
+
+test('new demand reopens a terminal topic and moves retained readers to the fresh baseline', async () => {
+  const { client, opens } = setup();
+  const retained = [], reopened = [], late = [];
+  const off = client.subscribe('preferences', state => retained.push(state));
+  let rejectAcknowledgment;
+  opens[0].observer.frame(delivery(), () => new Promise((_, reject) => { rejectAcknowledgment = reject; }));
+  opens[0].observer.error('transport closed');
+  assert.equal(opens[0].signal.aborted, true);
+  assert.equal(client.subscriptionId('preferences'), undefined);
+  assert.deepEqual(retained.at(-1), { status: 'error', error: 'transport closed' });
+  assert.equal(opens.length, 1, 'A terminal error cannot start a retry loop');
+
+  const offReopened = client.subscribe('preferences', state => reopened.push(state));
+  const offLate = client.subscribeReadonly('preferences', state => late.push(state));
+  assert.equal(opens.length, 2, 'New readers share one replacement attempt');
+  for (const states of [retained, reopened, late]) assert.deepEqual(states.at(-1), { status: 'connecting' });
+  const fresh = delivery({ session: 'fresh', generation: '0', revision: '0', payload: { theme: 'light' } });
+  let acked = 0;
+  opens[1].observer.frame({ ...fresh, subscriptionId: 'fresh-token' }, async () => { acked++; });
+  assert.equal(client.subscriptionId('preferences'), 'fresh-token');
+  for (const states of [retained, reopened, late]) assert.deepEqual(states.at(-1), { status: 'ready', frame: fresh.frame });
+  assert.equal(acked, 1);
+
+  opens[0].observer.error('old transport closed again');
+  opens[0].observer.frame(delivery(), async () => { acked++; });
+  rejectAcknowledgment(Error('old ACK failed'));
+  await turn();
+  assert.equal(acked, 1);
+  assert.equal(retained.at(-1).frame.session, 'fresh');
+  assert.equal(opens[1].signal.aborted, false);
+
+  off(); offReopened();
+  assert.equal(opens[1].signal.aborted, false, 'One remaining reader keeps the replacement open');
+  offLate();
+  assert.equal(opens[1].signal.aborted, true);
+  assert.equal(client.subscriptionId('preferences'), undefined);
+});
+
+test('a listener may re-register during terminal error delivery without reopening twice', () => {
+  const { client, opens } = setup();
+  const received = [];
+  let stopRetry;
+  const stopInitial = client.subscribe('preferences', state => {
+    if (state.status === 'error') {
+      stopRetry = client.subscribe('preferences', current => received.push(current.status));
+    }
+  });
+  opens[0].observer.error('first attempt failed');
+  assert.equal(opens.length, 2);
+  assert.equal(opens[0].signal.aborted, true);
+  opens[1].observer.frame(delivery(), async () => {});
+  assert.deepEqual(received, ['connecting', 'ready']);
+  stopInitial(); stopRetry();
+  assert.equal(opens[1].signal.aborted, true);
 });
 
 test('invalid entire envelopes never partially update cache, duplicate delivery ignored', () => {

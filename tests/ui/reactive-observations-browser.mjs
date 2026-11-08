@@ -52,7 +52,7 @@ test('browser-dev real service publishes committed values across two consumers a
 });
 
 const disconnectMarker=process.env.OSG_REACTIVE_DISCONNECT_MARKER;
-test('browser-dev reports a real gateway disconnect and opens one fresh connection',{
+test('browser-dev restores retained listeners through one fresh connection after gateway exit',{
   skip:!disconnectMarker,timeout:60000,
 },async()=>{
   let connections=0;
@@ -60,24 +60,26 @@ test('browser-dev reports a real gateway disconnect and opens one fresh connecti
     if(String(url)===`${origin}/api/observe/`)connections++;
     return fetchLocal(url,args);
   }});
-  const old=new SharedObservations(transport),fresh=new SharedObservations(transport);
+  const observations=new SharedObservations(transport);
   const before=[],after=[];
   try{
-    const dispose=old.subscribe('preferences.theme',value=>before.push(value));
+    const dispose=observations.subscribe('preferences.theme',value=>before.push(value));
     const initial=await until(()=>Promise.resolve(before.at(-1)),value=>value?.status==='ready');
     await writeFile(disconnectMarker,initial.frame.session);
     await until(()=>Promise.resolve(before.at(-1)),value=>value?.status==='error');
-    dispose();
-    const oldDeliveries=before.length;
-    fresh.subscribe('preferences.theme',value=>after.push(value));
+    assert.equal(connections,1,'A terminal connection failure does not start retries');
+    const stopNew=observations.subscribe('preferences.theme',value=>after.push(value));
     const reopened=await until(()=>Promise.resolve(after.at(-1)),value=>value?.status==='ready');
     assert.equal(reopened.frame.kind,'snapshot');
     assert.notEqual(reopened.frame.session,initial.frame.session);
     assert.equal(connections,2);
-    assert.equal(before.length,oldDeliveries);
+    assert.deepEqual(before.at(-1),reopened,'The listener retained through the disconnect receives the same fresh baseline');
     assert.equal(after.filter(value=>value.status==='ready').length,1);
+    dispose();
+    assert.ok(observations.subscriptionId('preferences.theme'),'The new listener still owns the replacement');
+    stopNew();
+    assert.equal(observations.subscriptionId('preferences.theme'),undefined);
   }finally{
-    old.close();
-    fresh.close();
+    observations.close();
   }
 });

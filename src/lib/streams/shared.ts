@@ -26,7 +26,6 @@ interface Entry {
   delivery?: bigint;
   baseline?: WireFrame;
   boundary?: WireFrame;
-  started?: boolean;
 }
 
 /** Exact-topic sharing. Loss withdraws data until a fresh baseline is delivered. */
@@ -54,44 +53,46 @@ export class SharedObservations {
 
   private register(topic: string, registration: ObservationListener): () => void {
     if (this.closed) throw new Error('Observations are disposed');
-    let entry = this.entries.get(topic);
-    if (!entry) {
-      entry = { controller: new AbortController(), listeners: new Set(), state: { status: 'connecting' } };
-      this.entries.set(topic, entry);
-    }
+    const previous = this.entries.get(topic);
+    const opening = !previous || previous.state.status === 'error';
+    const entry: Entry = opening
+      ? { controller: new AbortController(), listeners: new Set(previous?.listeners), state: { status: 'connecting' } }
+      : previous;
+    if (opening) this.entries.set(topic, entry);
     entry.listeners.add(registration);
-    this.notify(registration, entry.state);
-    const current = entry;
-    if (!entry.started && this.active(topic, entry)) {
-      entry.started = true;
-      try {
-        this.transport.open(topic, {
-          frame: (raw, acknowledge) => {
-            if (!this.active(topic, current)) return;
-            let envelope: DeliveryEnvelope;
-            try { envelope = parseDelivery(raw, topic); }
-            catch (error) { this.fail(topic, current, errorMessage(error)); return; }
-            try { this.accept(current, envelope); }
-            catch (error) { this.fail(topic, current, errorMessage(error)); return; }
-            if (this.active(topic, current)) {
-              // All cache/listener work is synchronous and precedes acknowledgment.
-              void acknowledge().catch((error) => this.fail(topic, current, errorMessage(error)));
-            }
-          },
-          error: (message) => this.fail(topic, current, message),
-        }, entry.controller.signal);
-      } catch (error) { this.fail(topic, entry, errorMessage(error)); }
+    if (opening && previous) {
+      // Preserve demand while replacing all transport and continuity evidence.
+      previous.listeners.clear();
+      previous.controller.abort();
+      this.publish(entry, entry.state);
+    } else {
+      this.notify(registration, entry.state);
     }
-    let subscribed = true;
+    if (opening && this.active(topic, entry)) this.open(topic, entry);
     return () => {
-      if (!subscribed) return;
-      subscribed = false;
-      current.listeners.delete(registration);
-      if (current.listeners.size === 0 && this.entries.get(topic) === current) {
+      const current = this.entries.get(topic);
+      if (current?.listeners.delete(registration) && current.listeners.size === 0) {
         this.entries.delete(topic);
         current.controller.abort();
       }
     };
+  }
+
+  private open(topic: string, entry: Entry): void {
+    try {
+      this.transport.open(topic, {
+        frame: (raw, acknowledge) => {
+          if (!this.active(topic, entry)) return;
+          try { this.accept(entry, parseDelivery(raw, topic)); }
+          catch (error) { this.fail(topic, entry, errorMessage(error)); return; }
+          if (this.active(topic, entry)) {
+            // All cache/listener work is synchronous and precedes acknowledgment.
+            void acknowledge().catch((error) => this.fail(topic, entry, errorMessage(error)));
+          }
+        },
+        error: (message) => this.fail(topic, entry, message),
+      }, entry.controller.signal);
+    } catch (error) { this.fail(topic, entry, errorMessage(error)); }
   }
 
   subscriptionId(topic: string): string | undefined {
@@ -111,7 +112,7 @@ export class SharedObservations {
   dispose(): void { this.close(); }
 
   private active(topic: string, entry: Entry): boolean {
-    return this.entries.get(topic) === entry && !entry.controller.signal.aborted;
+    return this.entries.get(topic) === entry && !entry.controller.signal.aborted && entry.state.status !== 'error';
   }
 
   private notify(listener: ObservationListener, state: ObservationState): void {

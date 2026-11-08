@@ -49,9 +49,13 @@ cancellation advances that window too, so aborted opens cannot accumulate foreve
 Frontend `SharedObservations` shares exact-topic subscriptions, replays the current
 value, isolates listener payloads and releases the last subscriber. It validates
 source/session/generation/revision/sequence continuity and exposes loss explicitly.
-Recovery uses a new baseline, not a timer that re-queries old state. The default
-browser transport is shared across clients within one browser context. Independent
-receipt requests do not block the multiplexed reader loop.
+Protocol loss can recover on the same subscription with a new baseline.
+After a terminal transport error, new reader demand opens one replacement
+subscription for all listeners still attached to the topic. It discards the
+old token, continuity state and cached payload. Late frames and receipts
+remain fenced to the retired attempt. The default browser transport is
+shared across clients within one browser context. Independent receipt
+requests do not block the multiplexed reader loop.
 
 The first real producer publishes committed values for `preferences.theme`,
 `preferences.devices-mode`, `preferences.canvas-navigation`,
