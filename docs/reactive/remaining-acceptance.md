@@ -43,6 +43,11 @@ verifies that both transports show the selected profile after background
 activation, retain the correct owner after game exit, follow a second automatic
 selection, and reopen on the stopped state after an independent Stop.
 
+[Gateway replacement while views are closed](read-model-sources.md)
+passed in the native Linux desktop and browser-dev. Overview and Devices
+reopened on the replacement, and visible removal cleared both displays.
+Native Windows USB arrival and withdrawal remain in #199.
+
 [Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
 retire their readers while the document is hidden. Devices reopens on
 current desktop, driver, inventory and visibility baselines on native and
