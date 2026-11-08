@@ -8,16 +8,20 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/companion-esp32"
 OUT = ROOT / ".research/esp32-serial"
 OUT.mkdir(parents=True, exist_ok=True)
-for prefix in ("serial-test", "sunton-serial-test", "usb-test"):
+for prefix in ("serial-test", "sunton-serial-test"):
     for counter in OUT.glob(prefix + "-*.gcda"):
         counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
          "-g", "-fsanitize=address,undefined", "--coverage"]
 flags += ["-I" + str(APP / folder) for folder in ("test/serial_include", "test/include", "network", "core", "third_party/cjson")]
 sources = [str(APP / "network/serial.c"), str(APP / "test/serial_test.c")]
-for uart, baud, binary in ((1, 921600, "serial-test"), (1, 115200, "sunton-serial-test"), (0, 921600, "usb-test")):
-    subprocess.run([*flags, "-DCONFIG_ESP_CONSOLE_UART=" + str(uart), "-DCONFIG_OSG_SERIAL_BAUD=" + str(baud), *sources, "-o", str(OUT / binary)], check=True)
+for baud, binary in ((921600, "serial-test"), (115200, "sunton-serial-test")):
+    subprocess.run([*flags, "-DCONFIG_OSG_SERIAL_BAUD=" + str(baud), *sources, "-o", str(OUT / binary)], check=True)
     subprocess.run([str(OUT / binary)], check=True)
+unsupported = subprocess.run([*flags, "-DCONFIG_ESP_CONSOLE_UART=0", "-fsyntax-only", sources[0]],
+                             capture_output=True, text=True)
+if unsupported.returncode == 0 or "requires a UART console with receive notifications" not in unsupported.stderr:
+    raise SystemExit("Non-UART console did not fail at the acquisition requirement")
 subprocess.run(["gcov", "-j", "-b", "-c", "serial-test-serial.gcno"], check=True, cwd=OUT)
 data = json.loads(gzip.decompress((OUT / "serial-test-serial.gcov.json.gz").read_bytes()))
 file = next(f for f in data["files"] if f["file"].endswith("/network/serial.c"))

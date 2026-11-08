@@ -4,6 +4,9 @@ This directory owns the portable C renderer and ESP-IDF firmware entry point. It
 
 The shared partition layout requires at least 4 MB of flash. Headless builds default to 4 MB; board profiles supply their board-specific flash settings.
 
+Firmware builds require a UART console with receive notifications. Both board
+profiles select it for USB provisioning and the direct USB link.
+
 ## Generic screen interface
 
 The runtime depends only on rectangle and clipped text callbacks in core/companion.h. The included raster adapter turns them into synchronous RGB565 pixel spans with a 256-pixel (512-byte) scratch buffer. No full-screen framebuffer, heap allocation or PSRAM is required by this core. A driver can convert spans for RGB888, monochrome or a different byte order, or replace the drawing callbacks with an existing graphics library.

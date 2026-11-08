@@ -886,34 +886,28 @@ static void update_screen(void){
     xSemaphoreGive(ui.mutex);
 }
 static unsigned network_wait(void){
-    if(osg_serial_has_wake()){
-        if(state==OFF||state==FAULT)return portMAX_DELAY;
-        if(state==OPEN){
-            xSemaphoreTake(ui.mutex,portMAX_DELAY);
-            opening_draw_wait=opening_draw_borrow();
-            const bool busy=opening_draw_wait!=NULL;
-            xSemaphoreGive(ui.mutex);
-            if(busy)return portMAX_DELAY;
-        }
-        if(state==PAIR_BEGIN||state==PAIR_WAIT||state==AUTH||state==WAIT_ASSIGNMENT||state==OPEN||
-            state==PREPARING||state==PANEL_ERROR||state==LIVE){
-            const uint64_t now=millis();
-            uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
-            if((state==LIVE||(state==WAIT_ASSIGNMENT&&primary_connection[0]))&&!connection.direct&&connection.ws&&
-                !osg_wifi_feedback_running()&&next_feedback_connect<deadline)deadline=next_feedback_connect;
-            if(state==LIVE){
-                xSemaphoreTake(ui.mutex,portMAX_DELAY);
-                const uint64_t safety=osg_input_deadline(&input,millis());
-                if(safety<deadline)deadline=safety;
-                if(remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&next_input_request<deadline)deadline=next_input_request;
-                xSemaphoreGive(ui.mutex);
-            }
-            if(now>=deadline)return 0;
-            const unsigned ticks=pdMS_TO_TICKS(deadline-now);
-            return ticks?ticks:1;
-        }
+    if(state==OFF||state==FAULT)return portMAX_DELAY;
+    if(state==OPEN){
+        xSemaphoreTake(ui.mutex,portMAX_DELAY);
+        opening_draw_wait=opening_draw_borrow();
+        const bool busy=opening_draw_wait!=NULL;
+        xSemaphoreGive(ui.mutex);
+        if(busy)return portMAX_DELAY;
     }
-    return pdMS_TO_TICKS(10);
+    const uint64_t now=millis();
+    uint64_t deadline=state==PAIR_WAIT?pair_deadline:next_request;
+    if((state==LIVE||(state==WAIT_ASSIGNMENT&&primary_connection[0]))&&!connection.direct&&connection.ws&&
+        !osg_wifi_feedback_running()&&next_feedback_connect<deadline)deadline=next_feedback_connect;
+    if(state==LIVE){
+        xSemaphoreTake(ui.mutex,portMAX_DELAY);
+        const uint64_t safety=osg_input_deadline(&input,millis());
+        if(safety<deadline)deadline=safety;
+        if(remote_armed&&input.mode==OSG_INPUT_ARMED&&input.count&&next_input_request<deadline)deadline=next_input_request;
+        xSemaphoreGive(ui.mutex);
+    }
+    if(now>=deadline)return 0;
+    const unsigned ticks=pdMS_TO_TICKS(deadline-now);
+    return ticks?ticks:1;
 }
 static void network_task(void *arg){
     (void)arg;osg_json_init();

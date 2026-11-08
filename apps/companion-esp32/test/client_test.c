@@ -422,7 +422,6 @@ int main(int argc,char **argv){
     assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true,wake_display});
     assert(state==OFF&&network_wait()==portMAX_DELAY);
-    serial_wake=false;assert(network_wait()==pdMS_TO_TICKS(10));serial_wake=true;
     serial_feedback_tests();
     pairing_notification_tests();
     setup();advance();assert(state==PAIR_WAIT&&network_wait()==pdMS_TO_TICKS(pair_deadline-fake_ms));

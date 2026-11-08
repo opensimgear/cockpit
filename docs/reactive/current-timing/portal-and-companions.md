@@ -19,9 +19,9 @@
 | `apps/companion-esp32/main/app_main.c:55` | Acquisition boundary | Touch IRQ can wake the task early. Held contact, early/fault cases and Sunton use 20 ms checks. Quiet healthy IRQ mode uses a 200 ms lease health read. Physical qualification and residual sampling disposition remain open. |
 | `apps/companion-esp32/main/app_main.c:123` | Source wake | Display waits indefinitely for a committed notification when no drawing deadline is due. |
 | `apps/companion-esp32/main/app_main.c:126` | Display deadline | The same display notification also wakes early during an exact feedback expiry or failed-render retry wait. |
-| `apps/companion-esp32/network/client.c:944` | Network maintenance | The network owner waits for commands or the next state-dependent link, lease or retry deadline. Console paths without UART readiness still rely on network maintenance. |
+| `apps/companion-esp32/network/client.c:938` | Network deadline | The network owner waits for UART and producer notifications or the next state-dependent link, lease or retry deadline. |
 | `apps/companion-esp32/network/serial_wire.c:98` | I/O readiness | Wait for console input readiness or the direct request's original deadline. |
-| `apps/companion-esp32/network/serial.c:15` | I/O readiness | The UART event queue blocks until the driver signals receive readiness. |
+| `apps/companion-esp32/network/serial.c:17` | I/O readiness | The UART event queue blocks until the driver signals receive readiness. |
 | `apps/companion/src-tauri/src/status_events.rs:32,35,37,40` | Fixture | Bound committed-status notification and quiet-period assertions. |
 | `apps/companion/src-tauri/src/status_events.rs:68` | Source wake | Native companion status owner blocks until a committed update or stop. |
 | `apps/companion/src/lib/lease-heartbeat.ts:10` | Declaration | Handle for one native companion lease deadline. |

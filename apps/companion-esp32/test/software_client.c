@@ -57,7 +57,6 @@ void osg_serial_receive_feedback(const osg_socket *socket,cJSON *record){(void)s
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
 bool osg_serial_pending(void){return false;}
-bool osg_serial_has_wake(void){return false;}
 bool osg_wifi_clock(void){return true;}
 bool osg_wifi_start(const osg_settings *value){(void)value;return true;}
 void osg_wifi_stop(void){}

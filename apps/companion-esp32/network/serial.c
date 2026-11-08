@@ -1,7 +1,9 @@
 #include "serial.h"
 #include "settings.h"
 #include "sdkconfig.h"
-#if CONFIG_ESP_CONSOLE_UART
+#if !CONFIG_ESP_CONSOLE_UART
+#error "ESP32 companion firmware requires a UART console with receive notifications"
+#endif
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
 #include "freertos/queue.h"
@@ -19,12 +21,10 @@ static void serial_events(void *owner) {
     }
     vTaskDelete(NULL);
 }
-#endif
 #ifndef CONFIG_OSG_SERIAL_BAUD
 #define CONFIG_OSG_SERIAL_BAUD 921600
 #endif
 bool osg_serial_start(void) {
-#if CONFIG_ESP_CONSOLE_UART
     /* The network task can block on TLS/ACKs. Keep a complete bounded serial
      * record in an interrupt-driven ring instead of the small hardware FIFO. */
     const int port = CONFIG_ESP_CONSOLE_UART_NUM;
@@ -39,20 +39,8 @@ bool osg_serial_start(void) {
         return false;
     }
     uart_vfs_dev_use_driver(port);
-#endif
     return true;
 }
 bool osg_serial_pending(void) {
-#if CONFIG_ESP_CONSOLE_UART
     return atomic_exchange(&receive_pending, 0) != 0;
-#else
-    return true;
-#endif
-}
-bool osg_serial_has_wake(void) {
-#if CONFIG_ESP_CONSOLE_UART
-    return true;
-#else
-    return false;
-#endif
 }

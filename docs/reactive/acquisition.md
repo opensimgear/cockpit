@@ -259,7 +259,7 @@ worker and explicit launch and setup checks are separate.
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
 | ESP32 companion touch | Waveshare GT911 INT on GPIO4 wakes the touch task. One 20 ms follow-up covers an early interrupt. Held contact, faults and interrupt-registration failure retain the 20 ms cadence. A quiet 200 ms read renews the existing touch safety lease. Sunton checks PENIRQ every 20 ms. A released pen bypasses the display bus lock and uses no SPI transactions. | Qualify IRQ delivery, release and fault timing on Waveshare. Verify release during rendering on Sunton. Its PENIRQ uses GPIO36 and firmware keeps the ESP-IDF default Wi-Fi power saving. Espressif advises against GPIO36 interrupts under this condition. Disposition the touch acquisition tradeoff before acceptance. [GPIO documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/peripherals/gpio.html) and [Wi-Fi defaults](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/network/esp_wifi.html). |
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
-| ESP32 USB console | On the supported UART console boards, the driver event queue wakes provisioning and retains one unread notification. Direct requests wait for UART readiness with their original deadline. The network task owns both reads and shares one bounded decoder. A status watch publishes the first and changed projections from that same task, including during direct requests. | Qualify command cancellation, reconnect and physical USB on both boards. The status watch uses the existing network task wake and maintenance deadlines. Non-UART console builds still use the maintenance wake and have no board qualification. |
+| ESP32 USB console | The firmware requires a UART console. Its driver event queue wakes provisioning and retains one unread notification. Direct requests wait for UART readiness with their original deadline. The network task owns both reads and shares one bounded decoder. A status watch publishes the first and changed projections from that same task, including during direct requests. | Qualify command cancellation, reconnect and physical USB on both boards. The status watch uses the existing network task wake and explicit link and input deadlines. |
 
 The game context worker uses one retained notification counter for library,
 process, filesystem and setup wakes. Library and process counters still
@@ -312,17 +312,15 @@ readiness, faults, and UART or Wi-Fi events. The wait also covers the earliest
 heartbeat, feedback reconnect, pending batch and input safety expiry. The
 10 ms batch spacing still applies when edges are queued. Pairing startup and
 authentication wait until their request deadline. Opening waits for the exact
-renderer borrow to be released when the inactive scene bank is busy. Non-UART
-console acquisition retains the 10 ms maintenance wake.
+renderer borrow to be released when the inactive scene bank is busy.
 
 The Wi-Fi feedback worker parks while its one raw frame is held by the network
 task. Consumption or cancellation releases that handoff. The separate socket
 readiness wait still has a 500 ms cancellation bound.
 
-The pinned USB Serial/JTAG VFS supports read readiness once its buffered
-driver is installed. A non-UART console bridge would need to install that
-driver and coordinate readiness with the existing direct-request reader.
-This remains unqualified. See the [USB Serial/JTAG VFS source](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_usb_serial_jtag/src/usb_serial_jtag_vfs.c).
+The build rejects a console without UART receive notifications. Both supported
+board profiles select the UART console. A failed driver startup stops the
+network task before it opens a session.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
 Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt
