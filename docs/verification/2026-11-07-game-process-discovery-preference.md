@@ -34,6 +34,29 @@ required for automatic activation under fallback. The observed numbers
 describe game discovery, separate from input routing and presentation.
 The Windows account's event access remains unqualified under #199.
 
+## Running Cockpit with the switch enabled and access denied
+
+The native WMI registration probe returned `0x80041003` under the current
+Windows account. The live fixture then enabled **Use Windows process events**
+in each client's General Settings and confirmed the saved value stayed on
+throughout the process checks. Both clients ignored the same-name executable
+at the wrong path, showed all 20 expected transitions in the header and
+shared read model, and made zero repeat game state or game page queries.
+
+| Transport | Authored start to header | Authored exit to header |
+| --- | ---: | ---: |
+| Native WebView | 1.77–1.93 s | 0.74–0.86 s |
+| Browser-dev | 1.77–1.97 s | 0.72–0.85 s |
+
+Both clients used private databases. The native executable SHA-256 was
+`65828f09e640edcc5ad3aed68481bafc27783323db29ed76d5d47a9c393a7812`.
+The browser-dev gateway SHA-256 was
+`cd73a4ce68c7ba402b60ae3513072a4216f5f09fb38cfbee1b02b1f54edd808b`.
+The focused activation observer test and nine process-event software tests
+passed. Granted Windows access and live watcher lifetime remain in #199.
+
+## Related authored DCS verification
+
 The native authored DCS fixture passed with the same executable. It verified
 shared discovery of the fixture process, ambiguous-process withdrawal and
 recovery, DCS-BIOS and ownship delivery into a profile, and final process-exit

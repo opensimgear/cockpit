@@ -1,5 +1,9 @@
 # Windows game process boundary verification
 
+These measurements cover the earlier 500 ms fallback. The [approved Settings
+opt-in and one-second fallback](2026-11-07-game-process-discovery-preference.md)
+supersede that configuration.
+
 The Windows catalogue watcher subscribes to process-start and process-stop
 events for registered executable names. These notifications wake an exact
 inventory lookup. A name alone cannot establish the selected game identity.

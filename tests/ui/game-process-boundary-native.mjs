@@ -14,7 +14,9 @@ const browserUrl = process.env.OSG_GAME_PROCESS_BOUNDARY_BROWSER_URL;
 const transport = browserUrl ? 'browser-dev' : 'native';
 const gatewayPath = browserUrl ? '/api/gateway/' : '/gateway_request';
 const enabled = process.platform === 'win32' && (browserUrl || process.env.OSG_GAME_PROCESS_BOUNDARY_NATIVE === '1');
-const qualifyPreference = process.env.OSG_GAME_PROCESS_PREFERENCE_ACCEPTANCE === '1';
+const preferenceAcceptance = process.env.OSG_GAME_PROCESS_PREFERENCE_ACCEPTANCE;
+const qualifyPreference = preferenceAcceptance === '1' || preferenceAcceptance === 'enabled';
+const useProcessEvents = preferenceAcceptance === 'enabled';
 const execute = promisify(execFile);
 const binding = '__osgProcessBoundaryReport';
 
@@ -84,7 +86,7 @@ test(`${transport} Windows game process boundaries reach the Active game header 
       assert.equal((await processPreference()).value,false,'Use an isolated Cockpit with the default preference');
       await navigate('Settings');
       const selector = JSON.stringify('[role="switch"][aria-label="Use Windows process events"]');
-      for (const enabled of [true,false]) {
+      for (const enabled of useProcessEvents ? [true] : [true,false]) {
         await until(() => page.evaluate(`(() => {
           const control = document.querySelector(${selector});
           if (!control || control.disabled) return false;
@@ -176,7 +178,8 @@ test(`${transport} Windows game process boundaries reach the Active game header 
     assert.deepEqual(transitions.stream.map(item=>item.running),transitions.header.map(item=>item.running));
     assert.equal(transitions.stream.length,21,'Expected only the authored process and catalogue boundaries');
     assert.deepEqual(reads,[],'Process transitions must arrive without repeated game state or page queries');
-    const evidence = {transport,wrongPathIgnored:true,preferenceToggle:qualifyPreference,reads,times,replacementBoundary,headerTransitions:20,streamTransitions:20};
+    const evidence = {transport,wrongPathIgnored:true,preferenceToggle:qualifyPreference,
+      processEventsPreferred:(await processPreference()).value,reads,times,replacementBoundary,headerTransitions:20,streamTransitions:20};
     await writeFile(resolve(root,'evidence.json'), JSON.stringify(evidence,null,2) + '\n');
     console.log(JSON.stringify(evidence));
   } finally {
