@@ -107,6 +107,18 @@ read for a clean editor. A second rename updates both libraries while the
 dirty editor retains its draft and performs no document read or save.
 The fixture also checks that the former profile refresh commands stay quiet.
 
+Profile Save takes runtime state from the retained `profiles.runtime`
+stream. A trace of the previous editor captured one redundant
+`profile_status` request per save. The running native WebView and Edge
+browser-dev created and saved a profile with a debug controller, observed
+a background rename while open, and reopened on a second committed rename.
+Each applied the output-free profile, saved an axis-range change, and
+observed the new applied revision and owner generation through the runtime
+stream. Each made two editor saves and zero profile library, runtime status,
+or automatic status refresh requests. The fixture used private databases.
+Browser-dev activation exceeded the original 15-second fixture wait and
+passed with a 30-second bound. Controller latency remains in #199.
+
 The controller inventory fixture verifies an exact-source metadata rename and
 restore through the native and browser-dev transports. Two inventory readers
 see the same commit while the selected input reader remains ready. A closed

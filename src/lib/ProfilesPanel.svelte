@@ -183,7 +183,17 @@
   }
   function back() { requestNavigation(()=>onNavigate?.(null)); }
   function keepEditing() { navigationGuard.keepEditing();leaveDialog=false;const cancelNavigation=navigationCancelled;navigationCancelled=undefined;cancelNavigation?.(); }
-  async function save(backAfter=false) { finishName();notice='';if(backAfter){await navigationGuard.save();leaveDialog=navigationGuard.awaitingChoice;}else await store.save();workspace=store.state;await runtime.refresh(); }
+  async function save(backAfter = false) {
+    finishName();
+    notice = '';
+    if (backAfter) {
+      await navigationGuard.save();
+      leaveDialog = navigationGuard.awaitingChoice;
+    } else {
+      await store.save();
+    }
+    workspace = store.state;
+  }
   function cancel() { const pending=navigationGuard.awaitingChoice;if(!navigationGuard.discard())return;workspace=store.state;notice='';leaveDialog=false;if(!pending)onNavigate?.(null); }
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank([]));else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
