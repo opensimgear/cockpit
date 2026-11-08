@@ -68,7 +68,9 @@ export class GatewayWorkspace {
 
   get entries(): GatewayEntry[] {
     return [...this.gateways.values()].sort((a, b) => a.id.localeCompare(b.id)).map(entry => copy({
-      id: entry.id, port: entry.port, state: entry.state, error: entry.error,
+      id: entry.id, port: entry.port,
+      state: !entry.present && entry.state ? { ...entry.state, connected: false, running: false } : entry.state,
+      error: entry.error,
       busy: entry.busy, present: entry.present, stale: entry.stale, loading: entry.loading, autoConnectPaused: entry.autoConnectPaused,
     }));
   }

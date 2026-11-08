@@ -34,6 +34,18 @@ This matrix starts at the native producer boundary. It covers the fixed MCP obse
 
 The dedicated native activation window consumes `profiles.activation-window`, a window-scoped, UI-only projection of the activation progress owner. The main native portal also observes `settings.mcp`. The MCP server publishes a local-only invalidation when its status changes. Credential metadata is fetched through the local settings command, and the observation payload carries no issued tokens. The MCP settings and credential tools remain separate from this portal stream. Game artwork uses its own asset demand and immutable page lifecycle.
 
+The [workspace transition fixture](../../tests/ui/workspace-simulation-browser.mjs)
+runs the browser-dev portal with the Linux gateway service and the production
+C gateway simulator in a private namespace. It observes a gateway arriving in
+Devices, a replacement while Overview and Devices are closed, and removal
+after reopen. The shell count and Devices tiles follow the native workspace
+snapshot with zero frontend discovery, connection or status requests. A new
+browser shell opens on the already connected replacement. The portal display
+withdraws connectivity when discovery confirms absence, even while the
+adapter's cached state still reports connected. The Windows native
+fixture separately verifies the shared idle baseline. Physical gateway
+arrival and removal remain in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
 The `windows` persistence key applies to next-start geometry. Saving that key
 through MCP has no current-session portal consumer. General Settings uses the
 shared `tray` and `progress` preference revisions for saved values. It reads

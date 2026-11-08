@@ -71,6 +71,21 @@ test('identity survives aliases, and returned views cannot mutate retained nativ
   assert.equal(f.entry(first).state.modules[0].online, true);
 });
 
+test('confirmed absence withdraws displayed connectivity before the adapter clears its cached state', () => {
+  const f = fixture();
+  const connected = row(first, { state: { ...row().state, connected: true, running: true } });
+  f.ready([connected]);
+  assert.equal(f.entry(first).state.connected, true);
+  f.ready([{ ...connected, present: false }], { revision: '2' });
+  assert.equal(f.entry(first).state.connected, false);
+  assert.equal(f.entry(first).state.running, false);
+  assert.equal(f.entry(first).state.modules.length, 1);
+  assert.equal(connected.state.connected, true);
+  assert.deepEqual(f.calls, []);
+  f.workspace.dispose();
+  assert.equal(f.stops, 1);
+});
+
 test('source loss retains stale data, labels errors and blocks every request until fresh observation', async () => {
   const f = fixture(); f.ready();
   f.emit({ status: 'lost', error: 'Stream disconnected' });
