@@ -11,13 +11,23 @@ type XplaneWatch = NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::Nat
 #[derive(Default)]
 pub(super) struct SourceWakes {
     signal: Option<Arc<NativeWake>>,
+    pub(super) process_exit: Option<crate::xplane::process_events::ExitWatch>,
     bios: Option<BiosWatch>,
     physics: Option<PhysicsWatch>,
     xplane: Option<XplaneWatch>,
     assetto: Option<crate::acr_windows::Watch>,
 }
 impl SourceWakes {
+    pub(super) fn process_exited(&self) -> bool {
+        self.process_exit.as_ref().is_some_and(crate::xplane::process_events::ExitWatch::exited)
+    }
+
     pub(super) fn clear(&mut self) {
+        self.process_exit = None;
+        self.clear_captures();
+    }
+
+    fn clear_captures(&mut self) {
         self.bios = None;
         self.physics = None;
         self.xplane = None;
@@ -36,7 +46,8 @@ impl GameSources {
             _ => false,
         };
         if !same {
-            self.notifications.clear();
+            self.notifications.clear_captures();
+            if let Some(exit) = &self.notifications.process_exit { exit.watch(signal.as_ref()); }
             let wake = signal.as_ref().map(Arc::downgrade);
             self.validation.set_wake(wake.clone());
             self.catalogue_validation.set_wake(wake.clone());

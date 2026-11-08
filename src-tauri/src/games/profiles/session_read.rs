@@ -47,6 +47,12 @@ impl GameSources {
             }
             None => {}
         }
+        self.notifications.process_exit = games.watch_profile_process_exit(&game.proof);
+        if let Some(exit) = &self.notifications.process_exit {
+            // A pre-acquisition validator cannot hold this reader's evidence.
+            self.validation.cancel();
+            exit.watch(self.notification_wake().as_ref());
+        }
         self.lost = false;
         let _ = self.refresh_source_wakes(games);
         Ok(())
@@ -121,6 +127,9 @@ impl GameSources {
         result
     }
     fn poll_native(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64, baseline: bool) -> GamePoll {
+        if self.notifications.process_exited() {
+            return self.lose(clock(), "The prepared game process exited.".into());
+        }
         let wake_error = self.refresh_source_wakes(games).err();
         if baseline {
             let began = Instant::now();
@@ -130,9 +139,10 @@ impl GameSources {
             if !self.validation.started() {
                 let game = self.game.as_ref().unwrap();
                 let wake = self.notification_wake().as_ref().map(std::sync::Arc::downgrade);
+                let exit = self.notifications.process_exit.as_ref().map(crate::xplane::process_events::ExitWatch::evidence);
                 self.validation.start(
                     wake,
-                    games.profile_validation_task(game.proof.clone(), self.context.clone()),
+                    games.profile_validation_task(game.proof.clone(), self.context.clone(), exit),
                 );
             }
             self.start_catalogue_validation();
@@ -164,6 +174,9 @@ impl GameSources {
                             physics.as_ref().filter(|physics| game.proof.vehicle_id.as_ref().is_none_or(|expected| physics.aircraft.as_ref() == Some(expected))),
                         ));
                     }
+                }
+                if self.notifications.process_exited() {
+                    return self.lose(now_us, "The prepared game process exited.".into());
                 }
                 self.frames(snapshot, now_us)
             }

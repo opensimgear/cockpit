@@ -11,6 +11,26 @@ fn wake_test_games(folder: &Path) -> GamesRuntime {
     )
 }
 
+#[cfg(windows)]
+#[test]
+fn changing_the_profile_wake_keeps_exact_exit_evidence_until_stop() {
+    use crate::xplane::process_events::{ExitStatus, ExitWatch};
+
+    let (mut source, _, _folder) = baseline_reader();
+    let process = ExitWatch::current_process_fixture();
+    let watch = ExitWatch::open(&process).unwrap();
+    let evidence = watch.evidence();
+    source.notifications.process_exit = Some(watch);
+
+    source.set_wake(Some(Arc::new(osg_streams::NativeWake::default())));
+    source.set_wake(None);
+    source.set_wake(Some(Arc::new(osg_streams::NativeWake::default())));
+    assert!(matches!(evidence.status(&process), ExitStatus::Watching));
+
+    source.stop();
+    assert!(matches!(evidence.status(&process), ExitStatus::Unavailable));
+}
+
 #[test]
 fn assetto_service_needs_live_watch_and_validation_and_reverts_on_close() {
     let (mut source, _, _folder) = baseline_reader();

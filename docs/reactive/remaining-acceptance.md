@@ -113,6 +113,10 @@ applicable check, test and build targets.
 
 ## R3 adapter evidence
 
+[Active Windows readers watch the exact process](../verification/2026-11-08-active-game-process-exit.md).
+Confirmed exit wakes telemetry withdrawal. A current unique process inventory
+row can reuse that liveness proof, while strict command checks remain separate.
+
 [Active telemetry proof continuity](../verification/2026-11-08-active-telemetry-proof-continuity.md)
 withdraws game branches when a successful process or catalogue capture starts
 after the previous proof expires. Recovery retains the exact reader and takes

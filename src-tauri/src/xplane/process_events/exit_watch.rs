@@ -1,25 +1,43 @@
 //! Interruptible exit watch for an already selected exact game process.
 use crate::game_discovery::ProcessIdentity;
 use osg_streams::NativeWake;
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, Weak};
+use std::sync::{atomic::{AtomicU8, Ordering}, Arc, Mutex, Weak};
 
 pub(crate) struct ExitWatch {
     state: Arc<State>,
     #[cfg(windows)]
     stop: Arc<super::native::Handle>,
-    #[cfg(windows)]
-    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 struct State {
-    current: AtomicBool,
+    process: ProcessIdentity,
+    status: AtomicU8,
     wake: Mutex<Weak<NativeWake>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ExitStatus { Watching, Exited, Unavailable }
+
+impl State {
+    fn status(&self) -> ExitStatus {
+        match self.status.load(Ordering::Acquire) {
+            value if value == ExitStatus::Watching as u8 => ExitStatus::Watching,
+            value if value == ExitStatus::Exited as u8 => ExitStatus::Exited,
+            _ => ExitStatus::Unavailable,
+        }
+    }
 }
 
 pub(crate) struct ExitEvidence(Weak<State>);
 impl ExitEvidence {
     pub(crate) fn current(&self) -> bool {
-        self.0.upgrade().is_some_and(|state| state.current.load(Ordering::Acquire))
+        self.0.upgrade().is_some_and(|state| state.status() == ExitStatus::Watching)
+    }
+
+    pub(crate) fn status(&self, expected: &ProcessIdentity) -> ExitStatus {
+        self.0.upgrade().filter(|state| &state.process == expected)
+            .map_or(ExitStatus::Unavailable, |state| state.status())
     }
 }
 
@@ -35,17 +53,24 @@ impl ExitWatch {
             use super::native::{wait_events, Handle};
             let process = Handle::process(expected)?;
             let stop = Arc::new(Handle::event()?);
-            let state = Arc::new(State { current: AtomicBool::new(true), wake: Mutex::default() });
+            let state = Arc::new(State { process: expected.clone(),
+                status: AtomicU8::new(ExitStatus::Watching as u8), wake: Mutex::default() });
             let worker_state = state.clone();
             let worker_stop = stop.clone();
-            let worker = std::thread::Builder::new().name("game-process-exit".into()).spawn(move || {
-                let _ = wait_events(&worker_stop, &process);
-                worker_state.current.store(false, Ordering::Release);
-                if let Some(wake) = worker_state.wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
-                    wake.notify();
+            std::thread::Builder::new().name("game-process-exit".into()).spawn(move || {
+                let status = if matches!(wait_events(&worker_stop, &process), Ok(true)) {
+                    ExitStatus::Exited
+                } else {
+                    ExitStatus::Unavailable
+                };
+                let wake = worker_state.wake.lock().unwrap_or_else(|p| p.into_inner());
+                if worker_state.status.compare_exchange(ExitStatus::Watching as u8, status as u8,
+                    Ordering::AcqRel, Ordering::Acquire).is_ok()
+                {
+                    if let Some(wake) = wake.upgrade() { wake.notify(); }
                 }
             }).map_err(|error| error.to_string())?;
-            Ok(Self { state, stop, worker: Some(worker) })
+            Ok(Self { state, stop })
         }
         #[cfg(not(windows))]
         {
@@ -54,13 +79,18 @@ impl ExitWatch {
         }
     }
 
-    pub(crate) fn current(&self) -> bool { self.state.current.load(Ordering::Acquire) }
+    #[cfg(all(windows, test))]
+    fn current(&self) -> bool { self.state.status() == ExitStatus::Watching }
+
+    pub(crate) fn exited(&self) -> bool { self.state.status() == ExitStatus::Exited }
 
     pub(crate) fn evidence(&self) -> ExitEvidence { ExitEvidence(Arc::downgrade(&self.state)) }
 
-    pub(crate) fn watch(&self, wake: &Arc<NativeWake>) {
-        *self.state.wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
-        if !self.current() { wake.notify(); }
+    pub(crate) fn watch(&self, wake: Option<&Arc<NativeWake>>) {
+        *self.state.wake.lock().unwrap_or_else(|p| p.into_inner()) = wake.map_or_else(Weak::new, Arc::downgrade);
+        if self.state.status() != ExitStatus::Watching {
+            if let Some(wake) = wake { wake.notify(); }
+        }
     }
 }
 
@@ -97,7 +127,7 @@ mod tests {
 
         let watch = ExitWatch::open(&identity).unwrap();
         let wake = Arc::new(NativeWake::default());
-        watch.watch(&wake);
+        watch.watch(Some(&wake));
         let observed = wake.observed();
         assert!(watch.current());
         child.0.kill().unwrap();
@@ -107,10 +137,10 @@ mod tests {
             assert!(Instant::now() < deadline, "Exact process exit did not wake its observer");
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(!watch.current());
+        assert!(watch.exited());
         let late = Arc::new(NativeWake::default());
         let observed = late.observed();
-        watch.watch(&late);
+        watch.watch(Some(&late));
         assert_ne!(late.observed(), observed);
     }
 
@@ -124,7 +154,10 @@ mod tests {
 #[cfg(windows)]
 impl Drop for ExitWatch {
     fn drop(&mut self) {
+        self.watch(None);
+        self.state.status.store(ExitStatus::Unavailable as u8, Ordering::Release);
+        // The waiter owns both handles until it consumes the stop event.
+        // Retirement never joins an OS waiter from the routing path.
         self.stop.signal();
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
     }
 }

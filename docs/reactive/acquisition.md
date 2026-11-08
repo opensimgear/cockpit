@@ -488,15 +488,18 @@ remaining acquisition gates in the table above are still open.
 The active telemetry proof worker can reuse the context owner's successful
 process inventory while the native notification scope is live and both the
 game-library and process revisions match. The row must match the exact game
-and executable selection. Validation still checks the selected process's
-identity and liveness before publishing a proof. A changed revision or lost
-watch takes the existing discovery path. Command dispatch continues to
-perform strict discovery and liveness checks independently. The existing
-proof refresh and expiry deadlines still apply.
+and executable selection. A Windows reader retains the exact process exit
+watch established at acquisition. A live watch supplies liveness for that
+unique inventory row without a new process-handle query. Confirmed exit wakes
+the profile and withdraws game telemetry. A changed inventory revision, lost
+event scope or unavailable wait preserves the existing validation path.
+Command dispatch continues to perform strict discovery and liveness checks
+independently. Context, setup and owner checks keep their deadlines.
+[Current verification](../verification/2026-11-08-active-game-process-exit.md)
 
-The native regression uses an injected live notification scope. It confirms
-that telemetry reuses the snapshot, command validation still queries native
-inventory, and retiring the watch restores discovery for telemetry. All
+The earlier native regression used an injected live notification scope. It
+confirmed that telemetry reuses the snapshot, command validation still queries
+native inventory, and retiring the scope restores discovery for telemetry. All
 2,380 native tests passed with 18 default ignores. Production line coverage
 was 95.28% for the games runtime, 91.55% for game context including validation,
 and 100% for the process cache. The rebuilt Cockpit separately passed the

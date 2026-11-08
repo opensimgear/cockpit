@@ -127,14 +127,19 @@ impl GamesRuntime {
             }
         }
     }
-    /// Capture identity for strict validation away from the live health path.
+    pub(crate) fn watch_profile_process_exit(&self, proof: &GamePreparation) -> Option<ExitWatch> {
+        self.inner.platform.process_monitoring_supported()
+            .then(|| ExitWatch::open(&proof.process).ok()).flatten()
+    }
+
+    /// Capture telemetry proof away from the live health path.
     pub(crate) fn profile_validation_task(
-        &self, proof: GamePreparation, context: Option<ContextToken>,
+        &self, proof: GamePreparation, context: Option<ContextToken>, exit: Option<ExitEvidence>,
     ) -> impl FnMut() -> Result<Option<Instant>, String> + Send + 'static {
         let inner = self.inner.clone();
         move || {
             let observed = observe_preparation_inner(&inner, &proof, |game, expected| {
-                inner.observe_profile_process(game, expected)
+                inner.observe_profile_process(game, expected, exit.as_ref())
             })?;
             if let Some(token) = &context {
                 if !token.matches_preparation(&proof) {

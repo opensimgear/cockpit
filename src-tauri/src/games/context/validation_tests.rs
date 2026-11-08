@@ -9,7 +9,7 @@ fn process_evidence_is_timestamped_before_native_work() {
     *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || {
         entered.send(Instant::now()).unwrap();
     })));
-    let captured = runtime.profile_validation_task(prepared.proof, None)().unwrap().unwrap();
+    let captured = runtime.profile_validation_task(prepared.proof, None, None)().unwrap().unwrap();
     assert!(captured <= observed.recv().unwrap());
     runtime.shutdown();
 }
@@ -33,7 +33,7 @@ fn active_telemetry_reuses_only_live_inventory_and_commands_still_check_exactly(
 
     let (strict, called) = std::sync::mpsc::channel();
     *platform.observation_hook.lock().unwrap() = Some((std::thread::current().id(), Box::new(move || strict.send(()).unwrap())));
-    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()));
+    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()), None);
     validate().unwrap();
     assert!(called.try_recv().is_err(), "Active telemetry should use the exact watched inventory row");
     runtime.validate_admitted_game_context(&token, &prepared.proof).unwrap();
@@ -44,6 +44,54 @@ fn active_telemetry_reuses_only_live_inventory_and_commands_still_check_exactly(
     continuity.retire();
     validate().unwrap();
     called.try_recv().expect("A retired watch cannot authorize cached lookup");
+    runtime.shutdown();
+}
+
+#[cfg(windows)]
+#[test]
+fn exact_exit_watch_reuses_liveness_only_with_a_current_unique_inventory_row() {
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    runtime.stop_test_context_observer();
+    let inner = &runtime.inner;
+    let game = runtime.registered_profile_game("x-plane-12").unwrap();
+    let process = ExitWatch::current_process_fixture();
+    let watch = ExitWatch::open(&process).unwrap();
+    let evidence = watch.evidence();
+    *platform.process.lock().unwrap() = Some(process.clone());
+    let continuity = Arc::new(crate::game_activation::ProcessContinuity::default());
+    assert!(continuity.begin());
+    inner.changes.set_context_process_scope(inner.changes.context_wake.observed(), Some(continuity.clone()));
+    let epoch = inner.current_process_epoch().unwrap();
+    let publish = |row| {
+        let mut cache = process_cache::Cache::default();
+        cache.read_using(&[&game], Some(epoch), |_| vec![row]);
+        *inner.context_process_inventory.lock().unwrap() = cache.snapshot();
+    };
+    publish(Ok(Some(process.clone())));
+
+    let before = platform.reads.load(Ordering::SeqCst);
+    assert!(inner.observe_profile_process(&game, &process, Some(&evidence)).unwrap());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before);
+
+    let other = ProcessIdentity { epoch: process.epoch ^ 1, ..process.clone() };
+    publish(Ok(Some(other.clone())));
+    assert!(!inner.observe_profile_process(&game, &other, Some(&evidence)).unwrap());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before + 1);
+
+    publish(Err(ProcessLookupError::Ambiguous("Competing processes".into())));
+    assert!(matches!(inner.observe_profile_process(&game, &process, Some(&evidence)),
+        Err(ProcessLookupError::Ambiguous(_))));
+
+    publish(Ok(Some(process.clone())));
+    drop(watch);
+    assert!(inner.observe_profile_process(&game, &process, Some(&evidence)).unwrap());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before + 2);
+
+    let replacement = ExitWatch::open(&process).unwrap();
+    continuity.retire();
+    assert!(inner.observe_profile_process(&game, &process, Some(&replacement.evidence())).unwrap());
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before + 4);
     runtime.shutdown();
 }
 
@@ -77,7 +125,7 @@ fn observation_rechecks_setup_preparation_owner_and_installation_before_publishi
                 }
             }
         })));
-        let error = runtime.profile_validation_task(prepared.proof, Some(token))().unwrap_err();
+        let error = runtime.profile_validation_task(prepared.proof, Some(token), None)().unwrap_err();
         assert!(!error.is_empty(), "{change} changed during observation");
         runtime.shutdown();
     }
@@ -99,7 +147,7 @@ fn library_presentation_updates_do_not_revoke_process_evidence() {
         game["defaultBackground"] = json!({"url":"https://example.test/default.png"});
         game["installations"] = json!([{"id":"unselected-installation","name":"New metadata"}]);
     })));
-    assert!(runtime.profile_validation_task(prepared.proof, Some(token))().unwrap().is_some());
+    assert!(runtime.profile_validation_task(prepared.proof, Some(token), None)().unwrap().is_some());
     runtime.shutdown();
 }
 
@@ -110,7 +158,7 @@ fn unavailable_lookup_withholds_proof_and_commands_then_recovers_the_same_contex
     let prepared = runtime.prepare_profile_game_context("x-plane-12").unwrap().unwrap();
     runtime.set_profile_context_owner(Some(owner(Some("x-plane-12")))).unwrap();
     let token = runtime.admit_prepared_game_context(&prepared.proof).unwrap();
-    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()));
+    let mut validate = runtime.profile_validation_task(prepared.proof.clone(), Some(token.clone()), None);
     assert!(validate().unwrap().is_some());
 
     platform.failed.store(true, Ordering::Release);

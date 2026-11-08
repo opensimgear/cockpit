@@ -10,7 +10,7 @@ mod bridge;
 mod native;
 #[path = "process_events/exit_watch.rs"]
 mod exit_watch;
-pub(crate) use exit_watch::{ExitEvidence, ExitWatch};
+pub(crate) use exit_watch::{ExitEvidence, ExitStatus, ExitWatch};
 #[cfg(windows)]
 #[path = "process_events/sink.rs"]
 mod sink;

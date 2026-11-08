@@ -209,7 +209,7 @@ impl Reader {
                 .map(|watch| Some(CaptureWatch::Xplane { _watch: watch, monitor: source.process_monitor() })),
             Self::Dcs { source, physics, process_exit, guard, .. } => {
                 let bios = source.watch(wake.clone())?;
-                if let Some(process_exit) = process_exit { process_exit.watch(&wake); }
+                if let Some(process_exit) = process_exit { process_exit.watch(Some(&wake)); }
                 if let Some(physics) = physics { physics.watch_vehicle_commits(&wake); }
                 guard.subscribe(&wake);
                 Ok(Some(CaptureWatch::Dcs {

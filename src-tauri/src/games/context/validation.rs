@@ -1,4 +1,5 @@
 use crate::game_discovery::{ProcessIdentity, ProcessLookup, ProcessLookupError};
+use crate::xplane::process_events::{ExitEvidence, ExitStatus, ExitWatch};
 
 enum ProcessEvidence {
     Verified(Instant),
@@ -52,15 +53,21 @@ impl Inner {
         self.process_current(process, expected)
     }
 
-    fn observe_profile_process(&self, game: &Value, expected: &ProcessIdentity) -> Result<bool, ProcessLookupError> {
+    fn observe_profile_process(&self, game: &Value, expected: &ProcessIdentity,
+        exit: Option<&ExitEvidence>,
+    ) -> Result<bool, ProcessLookupError> {
         if let Some(epoch) = self.current_process_epoch() {
             let snapshot = self.context_process_inventory.lock().unwrap_or_else(|p| p.into_inner()).clone();
             if let Some(process) = snapshot.as_ref().and_then(|snapshot| snapshot.process(game, epoch))
                 .filter(|process| !matches!(process, Err(ProcessLookupError::Unavailable(_))))
             {
-                // Even inside a live inventory epoch, the exact process must
-                // still be alive. Commands use independent strict discovery.
-                let live = self.process_current(process, expected);
+                // The inventory proves uniqueness. A wait on the retained
+                // exact process proves liveness without reopening the PID.
+                let live = match exit.map(|exit| exit.status(expected)) {
+                    Some(ExitStatus::Watching) if matches!(&process, Ok(Some(identity)) if identity == expected) => Ok(true),
+                    Some(ExitStatus::Exited) => Ok(false),
+                    _ => self.process_current(process, expected),
+                };
                 if self.current_process_epoch() == Some(epoch) { return live; }
             }
         }
