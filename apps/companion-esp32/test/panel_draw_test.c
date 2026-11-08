@@ -1,5 +1,6 @@
 #include "panel_draw.h"
 #include "panel_source.h"
+#include "render_profile_limits.h"
 #include <assert.h>
 #include <math.h>
 #include <openssl/sha.h>
@@ -78,15 +79,23 @@ static void mixed_order(void) {
     extra_panel.metadata=NULL;strcpy(runtime.screen_message,"Panel budget exceeded: previous panel retained disarmed");full();assert(pixels[479*800+799]==0x3146);runtime.screen_message[0]=0;
 }
 static void catalog(const cJSON *fixture,const char *directory) {
+    assert(osg_json_configure(OSG_RENDER_RICH_JSON_BYTES,OSG_RENDER_RICH_REPLY_BYTES,OSG_RENDER_RICH_JSON_NODES));
     const cJSON *cases=cJSON_GetObjectItemCaseSensitive(fixture,"cases");
     const int admitted[]={0,1,6};
     for(size_t selected=0;selected<sizeof(admitted)/sizeof(*admitted);selected++) {
         const int n=admitted[selected];
         const cJSON *publication=cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(cases,n),"publication");
-        unsigned char *memory=malloc(192*1024);assert(memory);osg_widget_arena arena={.data=memory,.capacity=192*1024,.max_layers=128,.max_components=32};
+        unsigned char *memory=malloc(OSG_RENDER_RICH_SCENE_BYTES);assert(memory);
+        osg_widget_arena arena={.data=memory,.capacity=OSG_RENDER_RICH_SCENE_BYTES,
+            .max_layers=OSG_RENDER_RICH_TOTAL_LAYERS,.max_components=OSG_RENDER_RICH_COMPONENTS};
         osg_scene *scene=NULL;osg_panel_source_diagnostic diagnostic;
-        const osg_panel_source_limits limits={.document_bytes=65536,.bitmap_references=32,.width=800,.height=480};
-        assert(osg_panel_source_compile(publication,osg_string(publication,"publicationHash"),(osg_crypto){.sha256=sha},&limits,&arena,&scene,&diagnostic));
+        const osg_panel_source_limits limits={.document_bytes=OSG_RENDER_RICH_DOCUMENT_BYTES,
+            .bitmap_references=OSG_RENDER_RICH_IMAGE_REFERENCES,.width=800,.height=480};
+        const bool compiled=osg_panel_source_compile(publication,osg_string(publication,"publicationHash"),
+            (osg_crypto){.sha256=sha},&limits,&arena,&scene,&diagnostic);
+        if(!compiled)fprintf(stderr,"catalog case %d: source field=%s required=%zu available=%zu\n",
+            n,diagnostic.field,diagnostic.required,diagnostic.available);
+        assert(compiled);
         /* Neither renderer initialization nor source admission creates authority. */
         memset(&runtime,0,sizeof(runtime));runtime.panel=&scene->panel;runtime.display=display();runtime.active=-1;
         assert(osg_panel_draw_check(&draw,&runtime,100,true));full();assert(!runtime.armed&&!runtime.connected);
@@ -192,8 +201,13 @@ int main(int argc,char **argv) {
     assert(!osg_panel_draw_init(NULL,board,buffer,sizeof(buffer)));assert(osg_panel_draw_init(&draw,board,buffer,sizeof(buffer)));
     assert(!osg_panel_draw_check(NULL,NULL,0,true));assert(!osg_panel_draw_check(&draw,NULL,0,true));
     assert(!osg_panel_draw_render(NULL,NULL,(osg_damage){.full=true},0));
-    cJSON *fixture=load(argv[1]);catalog(fixture,argv[2]);cJSON_Delete(fixture);mixed_order();preflight();
-    if(argc==4){fixture=load(argv[3]);compatibility(fixture);cJSON_Delete(fixture);}
+    cJSON *fixture=load(argv[1]);osg_json_init();catalog(fixture,argv[2]);
+    assert(osg_json_allocated()==0);cJSON_InitHooks(NULL);cJSON_Delete(fixture);
+    mixed_order();preflight();
+    if(argc==4){
+        fixture=load(argv[3]);osg_json_init();compatibility(fixture);
+        assert(osg_json_allocated()==0);cJSON_InitHooks(NULL);cJSON_Delete(fixture);
+    }
     lv_mem_monitor_t memory;lv_mem_monitor(&memory);assert(memory.free_size&&memory.free_biggest_size);
     printf("LVGL pool=%u bytes; peak-used=%u; free=%u; biggest-free=%u; strips<=%u rows\n",(unsigned)LV_MEM_SIZE,(unsigned)memory.max_used,(unsigned)memory.free_size,(unsigned)memory.free_biggest_size,OSG_WIDGET_DRAW_ROWS);
     osg_panel_draw_destroy(NULL);osg_panel_draw_destroy(&draw);osg_panel_draw_destroy(&draw);
