@@ -380,9 +380,10 @@ clicking. Logs are `matrix-native.log` and `matrix-browser.log` under
 
 The R5 producer audit covered the fixed native/MCP catalogue, admitted dynamic
 topics, portal-only observation scopes, and direct native or gateway status
-reads. The live delivery gate still needs coverage of other external device
-and filesystem changes, nested consumer teardown, and browser parity for
-native-only settings. Windows process acquisition retains the documented
-access-denied fallback. The browser and native companion apps and firmware
+reads. [Running delivery checks](../verification/2026-11-08-r5-read-model-delivery.md)
+verified discovery, process, setup and artwork filesystem notifications,
+settings commits and Activity reads on native Windows and Edge browser-dev.
+Windows process consent and watcher lifetime remain in #199. Native macOS
+auto-start delivery, physical devices, and integrated companion and firmware
 lifecycles need separate qualification. The [timing dispositions](native-timing-dispositions.md)
 and [remaining acceptance](remaining-acceptance.md) track those boundaries.

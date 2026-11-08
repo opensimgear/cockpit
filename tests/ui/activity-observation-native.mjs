@@ -73,6 +73,7 @@ test(transport + ' Activity reads committed changes and stays idle between them'
     return opens.at(-1);
   }
   try {
+    if (!browserUrl) await until(() => page.evaluate(`typeof window.__TAURI_INTERNALS__?.invoke === 'function'`));
     // Startup discovery commits real background Activity events. An idle
     // assertion is meaningful only once that producer has finished.
     await until(() => callGateway({command:'game_get_state'}),
@@ -99,8 +100,8 @@ test(transport + ' Activity reads committed changes and stays idle between them'
     const name = `Activity observation ${randomUUID()}`;
     profile = (await callGateway({ command: 'profile_create', name })).profiles.document;
     await until(() => page.evaluate(`${section}?.innerText.includes(${JSON.stringify(name)})`));
-    const observedReads = await reads();
-    assert.ok(observedReads.length > 0 && observedReads.every(Boolean), 'The committed event must trigger a passive query');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.deepEqual(await reads(), [true], 'One visible profile commit triggers one committed-only read');
     const renamed = `Activity while hidden ${randomUUID()}`;
     for (let cycle=0; cycle<3; cycle++) {
       await navigate('Overview');
