@@ -224,6 +224,7 @@ impl GamesRuntime {
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             let mut dcs_watch = context_dcs_watch::DcsWatch::default();
+            let mut vehicle_catalogues = context_vehicle_catalogues::Catalogues::default();
             while !inner.closed.load(Ordering::Acquire) {
                 let observed = worker_wake.observed();
                 let started = Instant::now();
@@ -233,6 +234,7 @@ impl GamesRuntime {
                 let sdk_changed = sdk_watches.refresh(&inner);
                 assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
+                vehicle_catalogues.refresh(&inner);
                 let scope = inner.changes.context_process_live(library).then_some(epoch);
                 let setup = if last_library == Some(library) { SetupRefresh::Cached } else { SetupRefresh::Library };
                 let setup_current = inner.refresh_game_contexts_with_inventory(setup, |games| {
@@ -247,7 +249,7 @@ impl GamesRuntime {
                 if inner.closed.load(Ordering::Acquire) { break; }
                 if observed == worker_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
-                    let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at()]
+                    let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at(), vehicle_catalogues.retry_at()]
                         .into_iter().flatten().min().map(|at| at.saturating_duration_since(Instant::now()));
                     let maintenance = context_sdk_watch::maintenance_delay(&inner, live, started);
                     worker_wake.wait_scheduled(observed, maintenance.into_iter().chain(watch_retry).min());

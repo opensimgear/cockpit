@@ -170,6 +170,7 @@ fn callback_reports_loss_and_ignores_access() {
         children: None,
         paths: BTreeSet::from([comparison_path(&target)]),
         directories: BTreeSet::new(),
+        tree: None,
     };
     let (send, receive) = mpsc::channel();
     let callback: Changed = Arc::new(move |change| {
@@ -346,5 +347,68 @@ fn file_child_filter_wakes_for_in_place_writes() {
     fs::write(root.join("notes.txt"), "unrelated").unwrap();
     quiet(&receive);
     fs::write(module, r#"{"module":"changed"}"#).unwrap();
+    changed(&receive);
+}
+
+fn aircraft_tree_filter(kind: EventKind, path: &Path) -> bool {
+    let aircraft_file = path.extension().and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("acf"));
+    let directory_change = matches!(kind,
+        EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)));
+    aircraft_file || directory_change
+}
+
+#[test]
+fn tree_watch_recovers_when_missing_aircraft_root_and_nested_directories_appear() {
+    let directory = crate::test_directory();
+    let root = directory.path().join("Aircraft");
+    let paths = std::slice::from_ref(&root);
+    let (send, receive) = mpsc::channel();
+    let mut watch = Watch::new(Arc::new(move |change| {
+        let _ = send.send(change);
+    })).unwrap();
+    watch.replace_tree(paths, &root, aircraft_tree_filter).unwrap();
+
+    fs::create_dir(&root).unwrap();
+    changed(&receive);
+    watch.replace_tree(paths, &root, aircraft_tree_filter).unwrap();
+    settled(&receive);
+
+    let nested = root.join("Community");
+    fs::create_dir(&nested).unwrap();
+    changed(&receive);
+    watch.replace_tree(paths, &root, aircraft_tree_filter).unwrap();
+    settled(&receive);
+
+    let aircraft = nested.join("Example.acf");
+    fs::write(&aircraft, "first").unwrap();
+    changed(&receive);
+}
+
+#[test]
+fn tree_watch_observes_nested_directory_rename_and_ignores_unrelated_writes() {
+    let directory = crate::test_directory();
+    let root = directory.path().join("Aircraft");
+    let old = root.join("Community");
+    let renamed = root.join("Community-renamed");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("readme.txt"), "baseline").unwrap();
+    let paths = std::slice::from_ref(&root);
+    let (send, receive) = mpsc::channel();
+    let mut watch = Watch::new(Arc::new(move |change| {
+        let _ = send.send(change);
+    })).unwrap();
+    watch.replace_tree(paths, &root, aircraft_tree_filter).unwrap();
+
+    fs::write(old.join("readme.txt"), "unrelated").unwrap();
+    fs::write(directory.path().join("outside.acf"), "unrelated sibling").unwrap();
+    quiet(&receive);
+
+    fs::rename(&old, &renamed).unwrap();
+    changed(&receive);
+    watch.replace_tree(paths, &root, aircraft_tree_filter).unwrap();
+    settled(&receive);
+
+    fs::write(renamed.join("Example.acf"), "new aircraft").unwrap();
     changed(&receive);
 }

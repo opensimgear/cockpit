@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import {rename, unlink, writeFile} from 'node:fs/promises';
+import {readFile, rename, unlink, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 
-export async function verifyDcsSetupWatchRecovery(game, until, userFolder) {
+export async function verifyDcsSetupWatchRecovery(game, until, userFolder, biosTarget) {
+  if (process.env.OSG_DCS_VEHICLE_CATALOGUE_WAKE === '1') await verifyDcsAliasCatalogue(game, until, biosTarget);
   if (process.env.OSG_DCS_SETUP_WATCH_RECOVERY !== '1') return;
   const before = (await game()).integrationSetup;
   assert.equal(before.state, 'ready');
@@ -55,4 +56,27 @@ export async function verifyLiveDcsSetupWithdrawal({game, until, script, child, 
   await passive(biosId, 1000);
   console.log(JSON.stringify({liveDcsSetupScopeWithdrawnAndRecovered: true}));
   return {withdrawn: true, recovered: true, unchangedRevision: true};
+}
+
+async function verifyDcsAliasCatalogue(game, until, biosTarget) {
+  const file = resolve(biosTarget, 'doc/json/AircraftAliases.json');
+  const before = await readFile(file);
+  const aliases = JSON.parse(before);
+  const id = 'OSG-Authored-Catalogue-Aircraft';
+  assert.ok(!Object.hasOwn(aliases, id));
+  const contains = async () => {
+    const state = await game();
+    assert.equal(state.currentVehicle, null, 'Installed aliases must not publish a live aircraft');
+    return state.vehicleSupport.vehicles.some(row => row.id === id);
+  };
+  assert.equal(await contains(), false);
+  aliases[id] = ['A-10C'];
+  try {
+    await writeFile(file, JSON.stringify(aliases));
+    await until(contains, 'The DCS alias creation did not reach the closed game vehicle list');
+  } finally {
+    await writeFile(file, before);
+  }
+  await until(async () => !(await contains()), 'The removed DCS alias remained in the closed game vehicle list');
+  console.log(JSON.stringify({closedDcsAliasCatalogueCreationAndRemoval: true}));
 }

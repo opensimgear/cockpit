@@ -7,18 +7,18 @@ fn catalogue_metadata_changes_notify_but_repeated_inventory_and_reader_errors_do
     let changes = Arc::new(crate::game_read_models::signals::Signal::default());
     tracker.watch_changes(changes.clone());
     let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
+    let source = CatalogueSource::Dcs(directory.path().to_path_buf());
+    let baseline = Ok(vec![json!({"id":"aircraft","name":"original"})]);
+    tracker.publish_catalogue(source.clone(), baseline.clone());
     let mut first = tracker.begin_observation(&game, &json!({}), None, "setup", false, 1).unwrap();
-    first.catalogue = Some(vec![json!({"id":"aircraft","name":"original"})]);
     first.reader = Some(Err("Source closed".into()));
     tracker.apply_observation(first);
     let original = changes.wake.observed();
     let mut repeated = tracker.begin_observation(&game, &json!({}), None, "setup", false, 2).unwrap();
-    repeated.catalogue = Some(vec![json!({"id":"aircraft","name":"original"})]);
+    tracker.publish_catalogue(source.clone(), baseline);
     repeated.reader = Some(Err("Source closed".into()));
     tracker.apply_observation(repeated);
     assert_eq!(changes.wake.observed(), original);
-    let mut renamed = tracker.begin_observation(&game, &json!({}), None, "setup", false, 3).unwrap();
-    renamed.catalogue = Some(vec![json!({"id":"aircraft","name":"renamed"})]);
-    tracker.apply_observation(renamed);
+    tracker.publish_catalogue(source, Ok(vec![json!({"id":"aircraft","name":"renamed"})]));
     assert_ne!(changes.wake.observed(), original);
 }

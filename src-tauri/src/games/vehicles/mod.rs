@@ -12,6 +12,8 @@ use std::{
 };
 
 mod inspection;
+mod catalogues;
+pub(crate) use catalogues::CatalogueSource;
 
 const MAX_VEHICLES: usize = 1024;
 const MAX_SAVED: u64 = 512 * 1024;
@@ -25,7 +27,7 @@ pub(crate) fn vehicle_id(game: &str, value: &str) -> Option<String> {
     {
         return None;
     }
-    Some(if game.starts_with("x-plane-") {
+    Some(if game == "x-plane" || game.starts_with("x-plane-") {
         value.replace('\\', "/")
     } else {
         value.to_owned()
@@ -33,7 +35,7 @@ pub(crate) fn vehicle_id(game: &str, value: &str) -> Option<String> {
 }
 fn vehicle(game: &str, value: &str) -> Option<Value> {
     let id = vehicle_id(game, value)?;
-    let name = if game.starts_with("x-plane-") {
+    let name = if game == "x-plane" || game.starts_with("x-plane-") {
         Path::new(&id).file_stem()?.to_str()?.replace('_', " ")
     } else {
         id.clone()
@@ -90,8 +92,6 @@ struct Entry {
     current: Option<Value>,
     telemetry: Option<Arc<Capture>>,
     inspection: inspection::Demand,
-    catalogued: Instant,
-    vehicles: Vec<Value>,
     error: Option<String>,
     retry: Instant,
     observed: Instant,
@@ -153,6 +153,7 @@ pub(crate) struct Tracker {
     origin: Instant,
     seen: BTreeMap<String, BTreeMap<String, Value>>,
     entries: BTreeMap<String, Entry>,
+    catalogues: BTreeMap<CatalogueSource, Result<Vec<Value>, String>>,
     retired: Vec<Reader>,
     changes: Option<Arc<crate::game_read_models::signals::Signal>>,
     published_deadline: Option<Instant>,
@@ -334,6 +335,7 @@ impl Tracker {
             origin: Instant::now(),
             seen,
             entries: BTreeMap::new(),
+            catalogues: BTreeMap::new(),
             retired: vec![],
             changes: None,
             published_deadline: None,

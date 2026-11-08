@@ -87,6 +87,8 @@ mod context_sdk_watch;
 mod context_assetto_watch;
 #[path = "games/context_dcs_watch.rs"]
 mod context_dcs_watch;
+#[path = "games/context_vehicle_catalogues.rs"]
+mod context_vehicle_catalogues;
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
 #[path = "game_dcs_catalogues.rs"]

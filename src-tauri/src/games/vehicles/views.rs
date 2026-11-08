@@ -130,9 +130,16 @@ impl Tracker {
         if let Some(seen) = self.seen.get(&id) {
             for (id, value) in seen { values.insert(id.as_str(), value); }
         }
-        if let Some(entry) = self.entries.get(&id) {
-            for value in &entry.vehicles { values.insert(value["id"].as_str().unwrap(), value); }
+        let dcs_path = game["integrationSetup"]["connection"]["cataloguePath"].as_str().map(Path::new);
+        let catalogue = CatalogueSource::for_game(game, dcs_path)
+            .and_then(|source| self.catalogues.get(&source));
+        if let Some(Ok(catalogue)) = catalogue {
+            for value in catalogue { values.insert(value["id"].as_str().unwrap(), value); }
         }
+        let message = match catalogue {
+            Some(Err(error)) => error.as_str(),
+            _ => message,
+        };
         game["vehicleSupport"] = json!({"supported":supported,"kind":if integration.starts_with("assetto-corsa"){"car"}else{"aircraft"},"message":message});
         if summary { game["vehicleSupport"]["vehicleCount"] = json!(values.len()); }
         else { game["vehicleSupport"]["vehicles"] = json!(values.values().collect::<Vec<_>>()); }

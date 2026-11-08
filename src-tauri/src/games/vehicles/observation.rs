@@ -6,9 +6,7 @@ pub(crate) struct VehicleObservation {
     generation: u64,
     signature: String,
     integration: String,
-    game: Value,
     connection: Value,
-    catalogue: Option<Vec<Value>>,
     process: Option<ProcessIdentity>,
     inspection: Vec<String>,
     reader: Option<Result<Reader, String>>,
@@ -25,13 +23,6 @@ impl VehicleObservation {
         mut self,
         open: impl FnOnce(&str, &Value, &ProcessIdentity) -> Result<Reader, String>,
     ) -> Self {
-        if self.catalogue.is_some() {
-            self.catalogue = Some(match self.integration.as_str() {
-                "dcs" => dcs_catalogue(&self.connection).unwrap_or_default(),
-                "x-plane-11" | "x-plane-12" => xplane_catalogue(&self.game),
-                _ => vec![],
-            });
-        }
         if let Some(process) = &self.process {
             if self.integration.starts_with("x-plane-") {
                 self.connection["providerSetupRevision"] = json!(self.setup_revision);
@@ -140,8 +131,6 @@ impl Tracker {
             current: None,
             telemetry: None,
             inspection: inspection::Demand::default(),
-            catalogued: now - Duration::from_secs(31),
-            vehicles: vec![],
             error: None,
             retry: now,
             observed: now,
@@ -180,7 +169,6 @@ impl Tracker {
             entry.enabled = enabled;
             entry.signature = signature;
             entry.retry = now;
-            entry.catalogued = now - Duration::from_secs(31);
         }
         entry.observed = now;
         let process = (enabled
@@ -199,9 +187,7 @@ impl Tracker {
             generation: entry.generation,
             signature: entry.signature.clone(),
             integration: integration.into(),
-            game: game.clone(),
             connection: connection.clone(),
-            catalogue: (entry.catalogued.elapsed() >= Duration::from_secs(30)).then_some(vec![]),
             process,
             inspection: entry.inspection.selection(now).to_vec(),
             reader: None,
@@ -246,22 +232,12 @@ impl Tracker {
             return;
         }
         if observation.verified.is_none() || entry.observed.elapsed() > Duration::from_secs(2) {
-            // Slow catalogue work cannot revoke an admitted reader or make
-            // its process proof current. Only an unadmitted opener must retry.
+            // Late process work cannot revoke an admitted reader or make its
+            // proof current. Only an unadmitted opener must retry.
             if owns_opening { entry.retry = Instant::now() + Duration::from_secs(2); }
             self.retired.extend(observation.reader.and_then(Result::ok));
             self.publish_visible(&observation.id);
             return;
-        }
-        if let Some(catalogue) = observation
-            .catalogue
-            .filter(|_| entry.observation_epoch == observation.epoch)
-        {
-            if entry.vehicles != catalogue {
-                entry.vehicles = catalogue;
-                entry.inventory_revision = entry.inventory_revision.wrapping_add(1);
-            }
-            entry.catalogued = Instant::now();
         }
         if let Some(reader) = observation.reader {
             let admitted = reader.and_then(|reader| {

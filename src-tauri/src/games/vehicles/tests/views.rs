@@ -190,10 +190,11 @@ fn decoration_reports_binding_errors_and_merges_catalogue_with_retained_vehicles
     tracker.seen.insert("dcs".into(), BTreeMap::from([
         ("FA-18C_hornet".into(), json!({"id":"FA-18C_hornet","name":"Saved Hornet"})),
     ]));
-    let entry = tracker.entries.get_mut("dcs").unwrap();
-    entry.vehicles = vec![json!({"id":"FA-18C_hornet","name":"Installed Hornet"})];
-    entry.error = Some("DCS-BIOS catalogue unavailable".into());
+    tracker.entries.get_mut("dcs").unwrap().error = Some("DCS-BIOS catalogue unavailable".into());
+    tracker.publish_catalogue(CatalogueSource::Dcs(scratch.path().to_path_buf()),
+        Ok(vec![json!({"id":"FA-18C_hornet","name":"Installed Hornet"})]));
     let mut game = game;
+    game["integrationSetup"] = json!({"connection":{"cataloguePath":scratch.path()}});
     tracker.decorate(&mut game);
     assert_eq!(game["vehicleSupport"]["message"], "Aircraft come from the installed DCS-BIOS catalogue. Current aircraft requires fresh DCS-BIOS exports.");
     assert_eq!(game["vehicleSupport"]["vehicles"], json!([

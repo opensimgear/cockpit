@@ -15,6 +15,7 @@ const MAX_DIRECTORIES: usize = 64;
 const REGISTRATION_ATTEMPTS: usize = 3;
 const MAX_ERROR_BYTES: usize = 1024;
 pub(in crate::games) type ChildFilter = fn(EventKind, &std::ffi::OsStr) -> bool;
+pub(in crate::games) type TreeFilter = fn(EventKind, &Path) -> bool;
 type Changed = Arc<dyn Fn(Result<(), String>) + Send + Sync>;
 
 #[derive(Debug, Default)]
@@ -22,6 +23,7 @@ struct TargetFilter {
     paths: BTreeSet<PathBuf>,
     directories: BTreeSet<PathBuf>,
     children: Option<(PathBuf, ChildFilter)>,
+    tree: Option<(PathBuf, TreeFilter)>,
 }
 
 pub(in crate::games) struct Watch {
@@ -47,6 +49,19 @@ impl Watch {
     pub(in crate::games) fn replace_with_children(
         &mut self, paths: &[PathBuf], children: Option<(&Path, ChildFilter)>,
     ) -> Result<(), String> {
+        self.replace_filtered(paths, children, None)
+    }
+
+    pub(in crate::games) fn replace_tree(
+        &mut self, paths: &[PathBuf], root: &Path, filter: TreeFilter,
+    ) -> Result<(), String> {
+        self.replace_filtered(paths, None, Some((root, filter)))
+    }
+
+    fn replace_filtered(
+        &mut self, paths: &[PathBuf], children: Option<(&Path, ChildFilter)>,
+        tree: Option<(&Path, TreeFilter)>,
+    ) -> Result<(), String> {
         let (mut targets, mut directories) = configuration(paths)?;
         let children = if let Some((root, filter)) = children {
             let root = comparison_path(root);
@@ -55,12 +70,22 @@ impl Watch {
             }
             Some((root, filter))
         } else { None };
+        let tree = tree.map(|(root, filter)| (comparison_path(root), filter));
+        if tree.as_ref().is_some_and(|(root, _)| !targets.paths.contains(root)) {
+            return Err("The recursive watch root must be an exact source target.".into());
+        }
         for _ in 0..REGISTRATION_ATTEMPTS {
             let watched_directories = targets.directories.clone();
             targets.children = children.clone();
+            targets.tree = tree.clone();
             let mut replacement = native_watcher(targets, self.changed.clone())?;
-            for directory in directories.values() {
-                replacement.watch(directory, RecursiveMode::NonRecursive).map_err(|error| {
+            for (key, directory) in &directories {
+                let mode = if tree.as_ref().is_some_and(|(root, _)| root == key) {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                replacement.watch(directory, mode).map_err(|error| {
                     bounded(format!("Cannot watch artwork source {}: {error}", directory.display()))
                 })?;
             }
@@ -133,6 +158,9 @@ fn dispatch(event: notify::Result<Event>, targets: &TargetFilter, changed: &Chan
             || targets.children.as_ref().is_some_and(|(root, filter)| {
                 path.parent() == Some(root.as_path())
                     && path.file_name().is_some_and(|name| filter(event.kind, name))
+            })
+            || targets.tree.as_ref().is_some_and(|(root, filter)| {
+                path.starts_with(root) && filter(event.kind, &path)
             })
     }) {
         changed(Ok(()));

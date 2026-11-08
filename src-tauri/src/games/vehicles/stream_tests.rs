@@ -8,11 +8,13 @@ fn game() -> Value {
 fn summary_counts_unique_ids_without_exporting_inventory_and_keeps_current_status() {
     let root = crate::test_directory();
     let mut tracker = Tracker::new(root.path().join("vehicles.json"));
-    tracker.set_test_vehicle("assetto-corsa", Some("car"));
-    tracker.seen.insert("assetto-corsa".into(), BTreeMap::from([("car".into(), json!({"id":"car","name":"saved"}))]));
-    tracker.entries.get_mut("assetto-corsa").unwrap().vehicles = vec![json!({"id":"car","name":"installed"}), json!({"id":"second","name":"second"})];
-    // Use the same captured installation as the fixture injector.
-    let mut summary = json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":crate::game_discovery::integration_provider("assetto-corsa")});
+    tracker.set_test_vehicle("dcs", Some("aircraft"));
+    tracker.seen.insert("dcs".into(), BTreeMap::from([("aircraft".into(), json!({"id":"aircraft","name":"saved"}))]));
+    tracker.publish_catalogue(CatalogueSource::Dcs(root.path().to_path_buf()), Ok(vec![
+        json!({"id":"aircraft","name":"installed"}), json!({"id":"second","name":"second"}),
+    ]));
+    let mut summary = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios",
+        "integrationSetup":{"connection":{"cataloguePath":root.path()}}});
     let mut detail = summary.clone();
     tracker.decorate_summary(&mut summary); tracker.decorate(&mut detail);
     assert_eq!(summary["vehicleSupport"]["vehicleCount"], 2);

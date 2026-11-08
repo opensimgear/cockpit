@@ -3,6 +3,52 @@ use super::*;
 use crate::game_discovery::ProcessIdentity;
 use std::collections::BTreeMap;
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[test]
+fn installed_aircraft_catalogue_recovers_a_failed_watch_and_retires_old_scope() {
+    let scratch = Scratch::new();
+    let (runtime, _, _) = runtime(&scratch);
+    runtime.stop_test_context_observer();
+    let directory = crate::test_directory();
+    let installation = directory.path().join("install");
+    let aircraft = installation.join("Aircraft/Nested/C172.acf");
+    let game = json!({"id":"x-plane-12","integrationKey":"x-plane-12",
+        "integrationCompatible":true,"provider":"x-plane","installPath":installation});
+    let set_games = |games| runtime.inner.settings.lock().unwrap().catalogue = games;
+    set_games(vec![game.clone()]);
+    let mut catalogues = context_vehicle_catalogues::Catalogues::default();
+    let support = || {
+        let mut game = game.clone();
+        runtime.inner.vehicles.lock().unwrap().decorate(&mut game);
+        game["vehicleSupport"].clone()
+    };
+
+    std::fs::write(&installation, "Blocks watching the aircraft root").unwrap();
+    catalogues.refresh(&runtime.inner);
+    assert!(support()["message"].as_str().unwrap().contains("notifications are unavailable"));
+    let retry = catalogues.retry_at().unwrap();
+    std::fs::remove_file(&installation).unwrap();
+    std::fs::create_dir_all(aircraft.parent().unwrap()).unwrap();
+    std::fs::write(&aircraft, "Fixture").unwrap();
+    thread::sleep(retry.saturating_duration_since(Instant::now()));
+    let limit = Instant::now() + Duration::from_secs(3);
+    loop {
+        catalogues.refresh(&runtime.inner);
+        if support()["vehicles"] == json!([{"id":"Aircraft/Nested/C172.acf","name":"C172"}]) {
+            break;
+        }
+        assert!(Instant::now() < limit, "A repaired watch must publish the new baseline");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(catalogues.retry_at().is_none());
+
+    set_games(vec![]);
+    catalogues.refresh(&runtime.inner);
+    assert_eq!(support()["vehicles"], json!([]));
+    assert!(catalogues.retry_at().is_none());
+    runtime.shutdown();
+}
+
 #[test]
 fn context_inventory_reuses_only_successful_results_in_the_live_scope() {
     let platform = FakePlatform::new();

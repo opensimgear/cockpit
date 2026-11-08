@@ -213,7 +213,7 @@ fn failed_post_read_requalification_or_expiry_cannot_publish_a_reader() {
 }
 
 #[test]
-fn slow_catalogue_keeps_admitted_reader_until_confirmed_process_loss() {
+fn slow_process_work_keeps_admitted_reader_until_confirmed_process_loss() {
     use std::sync::atomic::AtomicBool;
 
     for detached in [false, true] {
@@ -249,8 +249,7 @@ fn slow_catalogue_keeps_admitted_reader_until_confirmed_process_loss() {
             let candidates = tracker.capture_candidates();
             tracker.begin_polls(candidates).pop().unwrap()
         });
-        let mut slow = work(&mut tracker, 2).verify(&[game()], "setup", |_| Ok(true));
-        slow.catalogue = Some(vec![json!({"id":"late-aircraft"})]);
+        let slow = work(&mut tracker, 2).verify(&[game()], "setup", |_| Ok(true));
         tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
         let observed = tracker.entries[id].observed;
         tracker.apply_observation(slow);
@@ -261,7 +260,6 @@ fn slow_catalogue_keeps_admitted_reader_until_confirmed_process_loss() {
         assert!(entry.capture_watch.is_some());
         assert_eq!(entry.polling, detached);
         assert_eq!(entry.reader.is_none(), detached);
-        assert!(entry.vehicles.is_empty());
         assert_eq!(tracker.current(id), Some(current));
         assert!(Arc::ptr_eq(&capture, &tracker.telemetry(&game()).unwrap()));
 

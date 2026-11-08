@@ -13,6 +13,7 @@ pub(super) struct SdkWatches([SourceWatch; 2]);
 pub(super) struct SourceWatch {
     paths: Vec<PathBuf>,
     child_root: Option<PathBuf>,
+    tree_root: Option<PathBuf>,
     watch: Option<prepared_sources::watch::Watch>,
     dirty: Arc<AtomicBool>,
     retry_at: Option<Instant>,
@@ -46,6 +47,8 @@ impl SdkWatches {
 impl SourceWatch {
     pub(super) fn active(&self) -> bool { self.watch.is_some() }
 
+    pub(super) fn change_pending(&self) -> bool { self.dirty.load(Ordering::Acquire) }
+
     pub(super) fn retry_at(&self) -> Option<Instant> { self.retry_at }
 
     pub(super) fn refresh(&mut self, paths: Vec<PathBuf>, wake: &Arc<NativeWake>) -> bool {
@@ -57,14 +60,32 @@ impl SourceWatch {
         children: Option<(&Path, prepared_sources::watch::ChildFilter)>,
         wake: &Arc<NativeWake>,
     ) -> bool {
+        self.refresh_filtered(paths, children, None, wake)
+    }
+
+    pub(super) fn refresh_tree(
+        &mut self, paths: Vec<PathBuf>, root: &Path, filter: prepared_sources::watch::TreeFilter,
+        wake: &Arc<NativeWake>,
+    ) -> bool {
+        self.refresh_filtered(paths, None, Some((root, filter)), wake)
+    }
+
+    fn refresh_filtered(
+        &mut self, paths: Vec<PathBuf>,
+        children: Option<(&Path, prepared_sources::watch::ChildFilter)>,
+        tree: Option<(&Path, prepared_sources::watch::TreeFilter)>,
+        wake: &Arc<NativeWake>,
+    ) -> bool {
         let child_root = children.map(|(root, _)| root.to_path_buf());
+        let tree_root = tree.map(|(root, _)| root.to_path_buf());
         let invalidated = self.dirty.swap(false, Ordering::AcqRel)
-            || self.paths != paths || self.child_root != child_root;
+            || self.paths != paths || self.child_root != child_root || self.tree_root != tree_root;
         if !invalidated && !self.retry_at.is_some_and(|at| at <= Instant::now()) {
             return false;
         }
         self.paths = paths;
         self.child_root = child_root;
+        self.tree_root = tree_root;
         if self.paths.is_empty() {
             self.watch = None;
             self.retry_at = None;
@@ -78,8 +99,12 @@ impl SourceWatch {
                 wake.notify();
             })).ok();
         }
-        let registered = self.watch.as_mut().is_some_and(|watch|
-            watch.replace_with_children(&self.paths, children).is_ok());
+        let registered = self.watch.as_mut().is_some_and(|watch| {
+            match tree {
+                Some((root, filter)) => watch.replace_tree(&self.paths, root, filter),
+                None => watch.replace_with_children(&self.paths, children),
+            }.is_ok()
+        });
         if !registered {
             self.watch = None;
         }

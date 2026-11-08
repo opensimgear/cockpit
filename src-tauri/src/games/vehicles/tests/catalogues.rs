@@ -143,8 +143,11 @@ fn identity_uses_exact_game_ids_and_normalizes_xplane_paths() {
 fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-    let mut dcs = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
-    tracker.observe(&dcs, &connection(5010), None, "setup", false, 1);
+    let mut dcs = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios",
+        "integrationSetup":{"connection":connection(5010)}});
+    let source = CatalogueSource::Dcs(fixtures());
+    let rows = source.read();
+    tracker.publish_catalogue(source, rows);
     tracker.decorate(&mut dcs);
     assert_eq!(dcs["currentVehicle"], Value::Null);
     assert_eq!(dcs["vehicleSupport"]["supported"], true);
@@ -165,7 +168,9 @@ fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
     )
     .unwrap();
     let mut xp = json!({"id":"x-plane-12","integrationCompatible":true,"integrationKey":"x-plane-12","provider":"x-plane","installPath":scratch.path()});
-    tracker.observe(&xp, &json!({}), None, "setup", false, 2);
+    let source = CatalogueSource::Xplane(scratch.path().to_path_buf());
+    let rows = source.read();
+    tracker.publish_catalogue(source, rows);
     tracker.decorate(&mut xp);
     assert_eq!(
         xp["vehicleSupport"]["vehicles"],
@@ -210,7 +215,7 @@ fn dcs_no_aircraft_aliases_are_valid_but_never_listed_or_promoted_to_fresh_aircr
     drop(reserve);
     let mut connection = connection(port);
     connection["cataloguePath"] = json!(scratch.path());
-    let vehicles = dcs_catalogue(&connection).unwrap();
+    let vehicles = dcs_catalogue(scratch.path()).unwrap();
     assert!(vehicles.iter().any(|vehicle| vehicle["id"] == "A-10C_2"));
     assert!(vehicles
         .iter()
@@ -268,8 +273,11 @@ fn introspection_and_profile_share_unicast_exports_without_stealing_frames() {
 fn generic_title_aliases_use_bound_vehicle_dialects_and_keep_independent_title_maps() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-    let mut dcs = json!({"id":"my-flight-sim","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
-    tracker.observe(&dcs, &connection(5010), None, "setup", false, 1);
+    let mut dcs = json!({"id":"my-flight-sim","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios",
+        "integrationSetup":{"connection":connection(5010)}});
+    let source = CatalogueSource::Dcs(fixtures());
+    let rows = source.read();
+    tracker.publish_catalogue(source, rows);
     tracker.decorate(&mut dcs);
     assert_eq!(dcs["vehicleSupport"]["supported"], true);
     assert!(dcs["vehicleSupport"]["vehicles"]
@@ -285,7 +293,9 @@ fn generic_title_aliases_use_bound_vehicle_dialects_and_keep_independent_title_m
     )
     .unwrap();
     let mut xp = json!({"id":"another-flight-sim","integrationCompatible":true,"integrationKey":"x-plane-11","provider":"x-plane","installPath":scratch.path()});
-    tracker.observe(&xp, &json!({}), None, "setup", false, 2);
+    let source = CatalogueSource::Xplane(scratch.path().to_path_buf());
+    let rows = source.read();
+    tracker.publish_catalogue(source, rows);
     tracker.decorate(&mut xp);
     assert_eq!(
         xp["vehicleSupport"]["vehicles"],

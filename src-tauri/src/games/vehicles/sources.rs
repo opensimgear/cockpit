@@ -5,6 +5,9 @@ pub(super) fn dcs_aliases(connection: &Value) -> Result<Value, String> {
             .as_str()
             .ok_or("Set up DCS-BIOS to discover aircraft.")?,
     );
+    dcs_aliases_at(path)
+}
+fn dcs_aliases_at(path: &Path) -> Result<Value, String> {
     let aliases = dcs_bios::read_json(&path.join("AircraftAliases.json"), dcs_bios::MAX_DOCUMENT)?;
     let object = aliases
         .as_object()
@@ -20,29 +23,28 @@ pub(super) fn dcs_aliases(connection: &Value) -> Result<Value, String> {
     }
     Ok(aliases)
 }
-pub(super) fn dcs_catalogue(connection: &Value) -> Result<Vec<Value>, String> {
-    Ok(dcs_aliases(connection)?
+pub(super) fn dcs_catalogue(path: &Path) -> Result<Vec<Value>, String> {
+    Ok(dcs_aliases_at(path)?
         .as_object()
         .unwrap()
         .keys()
         .filter_map(|id| vehicle("dcs", id))
         .collect())
 }
-pub(super) fn xplane_catalogue(game: &Value) -> Vec<Value> {
-    let Some(root) = game["installPath"].as_str().map(Path::new) else {
-        return vec![];
-    };
+pub(super) fn xplane_catalogue(root: &Path) -> Result<Vec<Value>, String> {
     let mut result = vec![];
     let mut pending = vec![(root.join("Aircraft"), 0)];
     let mut visited = 0;
     while let Some((directory, depth)) = pending.pop() {
-        let Ok(entries) = fs::read_dir(directory) else {
-            continue;
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if depth > 0 || error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("Cannot read X-Plane aircraft at {}: {error}", directory.display())),
         };
         for entry in entries.flatten() {
             visited += 1;
             if visited > 20_000 || result.len() >= MAX_VEHICLES {
-                return result;
+                return Ok(result);
             }
             let Ok(kind) = entry.file_type() else {
                 continue;
@@ -59,17 +61,14 @@ pub(super) fn xplane_catalogue(game: &Value) -> Vec<Value> {
                     .is_some_and(|e| e.eq_ignore_ascii_case("acf"))
             {
                 if let Ok(relative) = entry.path().strip_prefix(root) {
-                    if let Some(value) = vehicle(
-                        crate::game_discovery::integration_key(game).unwrap_or(""),
-                        &relative.to_string_lossy(),
-                    ) {
+                    if let Some(value) = vehicle("x-plane", &relative.to_string_lossy()) {
                         result.push(value);
                     }
                 }
             }
         }
     }
-    result
+    Ok(result)
 }
 
 pub(super) enum Reader {

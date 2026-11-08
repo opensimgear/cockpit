@@ -211,7 +211,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     const recoveredSetup = (await game()).integrationSetup;
     assert.equal(recoveredSetup.state, 'ready');
     assert.equal(recoveredSetup.recoveryNeeded, false);
-    evidence.phases.setupWatchRecovery = await verifyDcsSetupWatchRecovery(game, until, userFolder);
+    evidence.phases.setupWatchRecovery = await verifyDcsSetupWatchRecovery(game, until, userFolder, biosTarget);
     const json = async file => JSON.parse(await readFile(resolve(biosTarget, 'doc/json', file), 'utf8'));
     const commonOutput = control(await json('CommonData.json'), 'ALT_MSL_FT').outputs[0];
     const aircraftOutput = control(await json('A-10C.json'), 'AAP_CDUPWR').outputs.find(row => row.type === 'integer');
