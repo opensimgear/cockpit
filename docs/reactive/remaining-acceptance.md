@@ -109,6 +109,11 @@ owner or rejects a competing configuration.
 locks each variant independently and still shares the reader within that
 variant. End-to-end simulator qualification remains open.
 
+[X-Plane inspection demand](../verification/2026-11-08-xplane-inspection-demand.md)
+is validated under the shared tracker lock. The capture worker applies the
+native channel selection outside that lock, including while the source is
+quiet. Adapter projection and startup still need cross-provider isolation.
+
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
 matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)
 removed the request-time rebuild for unchanged catalogues. Both clients

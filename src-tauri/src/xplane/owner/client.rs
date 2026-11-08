@@ -146,6 +146,13 @@ impl Source {
         self.inspection = inspection;
         Ok(())
     }
+    pub(crate) fn validate_inspection_channels(&self, ids: &[String]) -> Result<(), String> {
+        if ids.len() > 512 {
+            return Err("Inspect at most 512 X-Plane components per page.".into());
+        }
+        Self::selected_ids(&self.owner.catalogue, &self.outputs, ids).map(|_| ())
+    }
+
     pub(crate) fn inspection_matches(&self, sorted_ids: &[String]) -> bool {
         self.inspection == sorted_ids
     }

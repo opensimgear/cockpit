@@ -96,16 +96,15 @@ impl Tracker {
         };
         let lease = observation.as_ref().and_then(std::sync::Weak::upgrade);
         if let (Some(lease), Some(wake)) = (&lease, &self.capture_wake) { lease.watch(wake); }
-        let mut deferred = false;
+        let mut changed = false;
         entry.inspection.update(client, channels, Instant::now(), observation, |selected| {
-            if let Some(reader) = &mut entry.reader {
-                reader.inspect(&entry.integration, selected)?;
-            } else {
-                deferred = true;
+            if let Some(reader) = &entry.reader {
+                reader.validate_inspection(&entry.integration, selected)?;
             }
+            changed = true;
             Ok(())
         })?;
-        if deferred { entry.inspection.pending(true); }
+        if changed { entry.inspection.pending(true); }
         if let Some(wake) = &self.capture_wake { wake.notify(); }
         Ok(())
     }

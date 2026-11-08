@@ -255,6 +255,12 @@ impl Reader {
         }
         Ok(())
     }
+    pub(super) fn validate_inspection(&self, game: &str, ids: &[String]) -> Result<(), String> {
+        if let Self::Xplane(source) = self {
+            source.validate_inspection_channels(&crate::game_channels::native_ids(game, ids))?;
+        }
+        Ok(())
+    }
     pub(super) fn poll_telemetry(
         &mut self,
         now_ms: u64,

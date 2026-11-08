@@ -99,8 +99,18 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert!(tracker.begin_polls(maintenance).is_empty(), "Quiet X-Plane readers need no maintenance projection");
     assert!(tracker.entries["x-plane-12"].observed >= observed);
     let receipt = Arc::new(crate::observations::TelemetryLease::default());
-    tracker.inspect("x-plane-11", "quiet-inspector", vec!["engine_1_rpm".into()], Some(Arc::downgrade(&receipt))).unwrap();
-    let _ = tracker.capture_candidates();
+    let channels = vec!["engine_1_rpm".into()];
+    let ids = crate::game_channels::native_ids("x-plane-11", &channels);
+    tracker.inspect("x-plane-11", "quiet-inspector", channels, Some(Arc::downgrade(&receipt))).unwrap();
+    assert!(matches!(&tracker.entries["x-plane-11"].reader, Some(Reader::Xplane(source))
+        if source.inspection_matches(&[])));
+    let accepted = tracker.capture_candidates().into_iter()
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| Some(true)).without_renewal())
+        .collect();
+    let pending = tracker.begin_polls(accepted).pop().expect("inspection demand must wake capture");
+    tracker.apply_poll(pending.read());
+    assert!(matches!(&tracker.entries["x-plane-11"].reader, Some(Reader::Xplane(source))
+        if source.inspection_matches(&ids)));
     let before_close = wake.observed();
     drop(receipt);
     assert_ne!(wake.observed(), before_close);
