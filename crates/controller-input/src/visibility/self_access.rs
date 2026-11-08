@@ -34,6 +34,7 @@ pub(super) fn desired(before: &State, image: &str) -> Result<State, String> {
         after.applications.push(image.into());
     }
     after.validate()?;
+    after.validate_readback_limit()?;
     Ok(after)
 }
 

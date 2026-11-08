@@ -101,3 +101,47 @@ Cockpit passed both passive controller checks and reported the exact
 HidHide refusal through the native visibility status with
 `changed: false`. Executable SHA-256
 `1844ebf356b0c61b018b276dda450d744089703543353ea5ece5b839653d23be`.
+
+## Executable directory watch experiment
+
+A one-shot Windows directory notification set watched the ordinary
+executable path's ancestor directories. The native fixture observed a file
+change after a quiet audit period, but an ordinary rename of the selected
+executable's ancestor failed with Windows error 5 while the notification
+handles were open.
+
+A separate read-only-handle probe isolated the behavior. A directory
+opened with `FILE_SHARE_DELETE` still prevented an ordinary rename of its
+ancestor when the handle targeted the nested `bin` directory. The rename
+succeeded when the only open handle targeted the renamed directory itself
+or its parent. This happened without a pending notification read.
+
+The prototype was retired. A descendant handle can change whether the
+operation being monitored succeeds. The released worker keeps its
+250 ms exact executable-path audit. An alternative needs to cover
+ancestor and alias changes without holding descendant directory handles,
+and must surface notification loss. Windows' directory APIs distinguish
+changes within a watched directory from changes to that directory itself.
+[Windows directory change notifications](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstchangenotificationw)
+
+## Driver readback limit
+
+HidHide 1.5.230 sizes its list response using the byte length of each
+UTF-16 string as a character count. The earlier policy validation only
+counted the bytes Cockpit would write. That could admit a write whose
+subsequent driver readback exceeded Cockpit's limit. Validation now uses
+the pinned driver's reported size before admitting a policy mutation.
+[Pinned HidHide list sizing](https://github.com/nefarius/HidHide/blob/v1.5.230.0/HidHide/src/Config.c#L675-L700)
+
+The regression starts with a 65,506-byte reported application list. Adding
+the capture executable would make the policy unreadable by Cockpit.
+Startup self-access reports the size error before it opens a recovery or
+mutation path. The fixture records zero writes and the original policy.
+An older journal persisted before its first write remains readable and
+restorable. Applying that plan as a new session fails before mutation.
+
+All 173 controller tests and 38 production coverage checks passed.
+The rebuilt Cockpit passed the two passive controller checks and reported
+the installed driver's oversized-list refusal with `changed: false`.
+Executable SHA-256
+`38cc6d5a33b5677317c26f5f1452dc4877ceed28e881df0cd5000cd035a667bc`.

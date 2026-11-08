@@ -152,6 +152,7 @@ pub fn apply(
 ) -> Result<Record, String> {
     capture()?;
     plan.validate()?;
+    plan.after.validate_readback_limit()?;
     if backend.read()? != plan.before {
         return Err("HidHide changed after preflight.".into());
     }

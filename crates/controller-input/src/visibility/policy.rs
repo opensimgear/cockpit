@@ -81,6 +81,19 @@ impl State {
         }
         Ok(())
     }
+    pub(super) fn validate_readback_limit(&self) -> Result<(), String> {
+        for values in [&self.applications, &self.hidden] {
+            // HidHide 1.5.230 counts UNICODE_STRING.Length in bytes as
+            // characters when sizing its reply, then adds the WCHAR terminators.
+            let readback_bytes = 2 + values.iter()
+                .map(|value| value.encode_utf16().count() * 4 + 2)
+                .sum::<usize>();
+            if readback_bytes > LIMIT {
+                return Err(format!("HidHide policy would exceed the supported {LIMIT}-byte driver readback limit."));
+            }
+        }
+        Ok(())
+    }
     pub fn capture_allowed(&self, capture: &str) -> bool {
         !self.active
             || if self.inverse {

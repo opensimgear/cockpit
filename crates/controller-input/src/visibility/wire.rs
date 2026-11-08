@@ -119,6 +119,7 @@ impl<T: Io> Backend for Driver<T> {
     fn change(&mut self, expected: &State, desired: &State) -> Result<(), String> {
         expected.validate()?;
         desired.validate()?;
+        desired.validate_readback_limit()?;
         let mut changes = vec![];
         if expected.applications != desired.applications {
             changes.push((2049, encode(&desired.applications)));

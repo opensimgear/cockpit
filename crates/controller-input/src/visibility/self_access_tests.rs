@@ -91,6 +91,40 @@ fn pending_recovery_and_invalid_policy_block_before_any_write() {
     assert_eq!(reconcile(&mut driver, IMAGE.into(), || panic!()).status, "error");
     assert_eq!(driver.writes, 0);
 }
+
+#[test]
+fn self_access_never_writes_a_policy_that_exceeds_the_driver_readback_limit() {
+    let mut before = state(false);
+    before.hidden.clear();
+    before.applications = (0..16).map(|index| {
+        let prefix = format!(r"\Device\Volume1\{index:02}");
+        let suffix = ".exe";
+        format!("{prefix}{}{suffix}", "x".repeat(1023 - prefix.len() - suffix.len()))
+    }).collect();
+    before.validate_readback_limit().unwrap();
+    let mut driver = Fixture::new(before.clone());
+    let result = reconcile(&mut driver, IMAGE.into(), || panic!("No mutation was admitted"));
+    assert_eq!(result.status, "error");
+    assert_eq!(result.changed, Some(false));
+    assert!(result.message.contains("driver readback limit"));
+    assert_eq!(driver.writes, 0);
+    assert_eq!(driver.state, before);
+
+    let plan = policy::Plan::build(before, vec![policy::Selection {
+        instance: r"HID\SELECTED\1".into(),
+        policy: policy::Policy::HideAll,
+    }], IMAGE.into()).unwrap();
+    let directory = crate::test_directory();
+    let mut store = super::super::journal::Store::open(directory.path().join("visibility.json")).unwrap();
+    // An older build could have persisted this plan before the first write.
+    let record = store.begin(plan.clone()).unwrap();
+    let recovered = super::super::journal::restore(&mut driver, &mut store, &record.id).unwrap();
+    assert!(recovered.clean);
+    let error = super::super::journal::apply(&mut driver, &mut store, plan, || Ok(())).unwrap_err();
+    assert!(error.contains("driver readback limit"));
+    assert_eq!(driver.writes, 0);
+    assert!(store.read().unwrap().unwrap().clean);
+}
 #[test]
 fn failed_reads_writes_and_readback_never_claim_ready_or_known_unchanged() {
     for phase in 0..4 {
