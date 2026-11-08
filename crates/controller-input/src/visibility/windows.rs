@@ -11,6 +11,8 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{SystemInformation::GetSystemDirectoryW, IO::DeviceIoControl},
 };
+mod policy_watch;
+pub use policy_watch::PolicyWatch;
 pub const QUALIFIED: bool = super::capabilities::WINDOWS_NATIVE_OUTPUTS;
 const HASH: &str = "e3bb8b6a4e4ff90290b34e710edbef88cf71cec6ba0cadcb8e1685d5dd65ddb2";
 fn wide(s: &str) -> Vec<u16> {
@@ -184,6 +186,9 @@ impl super::runtime::Adapter for Driver<Kernel> {
     }
     fn instance(&mut self, interface: &str) -> Result<String, String> {
         instance(interface)
+    }
+    fn watch_policy(&mut self, wake: std::sync::Arc<osg_streams::NativeWake>) -> Option<PolicyWatch> {
+        PolicyWatch::hidhide(wake).ok()
     }
 }
 /// Existing local executable, resolved by an OS handle (not string substitution).

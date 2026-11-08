@@ -24,6 +24,8 @@ use handoff::inspect_handoff;
 pub trait Adapter: Backend + Send {
     fn executable(&mut self, path: &str) -> Result<String, String>;
     fn instance(&mut self, interface: &str) -> Result<String, String>;
+    #[cfg(windows)]
+    fn watch_policy(&mut self, _: Arc<NativeWake>) -> Option<super::windows::PolicyWatch> { None }
 }
 pub type Factory = Arc<dyn Fn() -> Result<Box<dyn Adapter>, String> + Send + Sync>;
 pub type Observe = Arc<dyn Fn(&[String]) -> Result<Vec<Source>, String> + Send + Sync>;
@@ -376,6 +378,13 @@ fn run(
                     policy,
                 });
             }
+            let policy_wake = Arc::new(NativeWake::child(wake.clone()));
+            #[cfg(windows)]
+            let policy_watch = adapter.watch_policy(policy_wake.clone());
+            #[cfg(windows)]
+            let policy_live = || policy_watch.as_ref().is_some_and(|watch| watch.is_live());
+            #[cfg(not(windows))]
+            let policy_live = || false;
             let plan = Plan::build(adapter.read()?, selections, image)?;
             if expected_plan
                 .as_ref()
@@ -412,13 +421,8 @@ fn run(
             })?;
             drop(report_watch);
             let expected_policy = session.record.plan.after.clone();
-            let expected_instances = session
-                .record
-                .plan
-                .selections
-                .iter()
-                .map(|s| s.instance.clone())
-                .collect::<Vec<_>>();
+            let expected_instances: Vec<_> = session.record.plan.selections.iter()
+                .map(|selection| selection.instance.clone()).collect();
             let verify_instances = |adapter: &mut Box<dyn Adapter>| {
                 for (source, instance) in initial.iter().zip(&expected_instances) {
                     if adapter.instance(&source.interface)? != *instance {
@@ -430,11 +434,28 @@ fn run(
             let mut checked_inventory = inventory.observed();
             session.check(capture_source.sources(&ids))?;
             session.verify(&verify_instances)?;
+            let verify_policy = |adapter: &mut Box<dyn Adapter>| {
+                if adapter.read()? != expected_policy {
+                    return Err("External visibility policy changed during this session.".into());
+                }
+                Ok(())
+            };
+            let mut checked_policy = policy_wake.observed();
+            session.verify(&verify_policy)?;
+            let verify_executables = |adapter: &mut Box<dyn Adapter>| {
+                for (path, image) in &paths {
+                    if adapter.executable(path)? != *image {
+                        return Err("A visibility executable moved; stop and select its new path.".into());
+                    }
+                }
+                Ok(())
+            };
+            session.verify(&verify_executables)?;
             if cancel.load(Ordering::Acquire) {
                 return session.stop();
             }
             active(session.record.id.clone());
-            let mut next_verification = Instant::now();
+            let mut next_verification = Instant::now() + DRIVER_AUDIT;
             while !cancel.load(Ordering::Acquire) {
                 let observed = wake.observed();
                 let inventory_epoch = inventory.observed();
@@ -452,23 +473,14 @@ fn run(
                     let result = live_read(request.deadline, &cancel).and(result);
                     let _ = request.reply.try_send(result);
                 }
-                if Instant::now() >= next_verification {
-                    session.verify(|adapter| {
-                        for (path, image) in &paths {
-                            if adapter.executable(path)? != *image {
-                                return Err(
-                                    "A visibility executable moved; stop and select its new path."
-                                        .into(),
-                                );
-                            }
-                        }
-                        if adapter.read()? != expected_policy {
-                            return Err(
-                                "External visibility policy changed during this session.".into()
-                            );
-                        }
-                        Ok(())
-                    })?;
+                let audit_due = Instant::now() >= next_verification;
+                let policy_epoch = policy_wake.observed();
+                if policy_epoch != checked_policy || (audit_due && !policy_live()) {
+                    session.verify(&verify_policy)?;
+                    checked_policy = policy_epoch;
+                }
+                if audit_due {
+                    session.verify(&verify_executables)?;
                     next_verification = Instant::now() + DRIVER_AUDIT;
                 }
                 wake.wait(observed, next_verification.saturating_duration_since(Instant::now()));

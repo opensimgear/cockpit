@@ -73,6 +73,7 @@ def main():
         sources.append(root / 'crates/controller-input/src/visibility/launch_linux.rs')
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/visibility/windows.rs')
+        sources.append(root / 'crates/controller-input/src/visibility/windows/policy_watch.rs')
     summary = {}
     for source in sources:
         result, annotated = measure_module(source, lambda path: run([

@@ -24,8 +24,12 @@ pub(crate) fn exchange(
     }
     let length = if matches!(function, 2048 | 2050) {
         let size = raw(function, None, &mut [])?;
+        if size > LIMIT {
+            let list = if function == 2048 { "application" } else { "device" };
+            return Err(format!("HidHide {list} list reports {size} bytes, above the supported {LIMIT}-byte read limit."));
+        }
         // An empty driver collection is a single terminating WCHAR.
-        if size < 2 || size > LIMIT || size % 2 != 0 {
+        if size < 2 || size % 2 != 0 {
             return Err("Invalid HidHide list size.".into());
         }
         size

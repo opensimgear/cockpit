@@ -2,6 +2,10 @@ use super::*;
 use crate::registry::Registry;
 use std::collections::BTreeMap;
 
+#[cfg(windows)]
+#[path = "policy_tests.rs"]
+mod policy;
+
 struct ReadyCapture {
     registry: Arc<Mutex<Registry>>,
     task: Task,

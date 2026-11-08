@@ -32,7 +32,18 @@ fn absent_unsupported_and_installed_dependency_inspection_never_mutates() {
         .unwrap();
     assert!(artifact(&path).is_err());
     if let Ok(mut driver) = installed() {
-        driver.read().unwrap().validate().unwrap();
+        let oversized = [(2048, "application"), (2050, "device")]
+            .into_iter()
+            .find_map(|(function, list)| {
+                let size = driver.0.raw(function, None, &mut []).unwrap();
+                (size > policy::LIMIT).then_some((list, size))
+            });
+        if let Some((list, size)) = oversized {
+            let error = driver.read().unwrap_err();
+            assert!(error.contains(&format!("HidHide {list} list reports {size} bytes")));
+        } else {
+            driver.read().unwrap().validate().unwrap();
+        }
         // Never send a mutation to an installed driver in acceptance builds.
         if !QUALIFIED {
             assert!(driver

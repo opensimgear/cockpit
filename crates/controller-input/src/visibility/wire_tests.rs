@@ -51,9 +51,13 @@ fn native_exchange_rejects_invalid_frames_and_inconsistent_counts() {
         "Oversized request"
     ))
     .is_err());
-    for size in [0, 1, 3, LIMIT + 2] {
+    for size in [0, 1, 3] {
         assert!(exchange(2050, None, |_, _, _| Ok(size)).is_err());
     }
+    assert_eq!(
+        exchange(2048, None, |_, _, _| Ok(LIMIT + 118)).unwrap_err(),
+        "HidHide application list reports 65654 bytes, above the supported 65536-byte read limit."
+    );
     assert!(
         exchange(2050, None, |_, _, output| Ok(if output.is_empty() {
             2

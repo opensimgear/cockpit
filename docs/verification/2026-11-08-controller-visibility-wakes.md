@@ -62,3 +62,42 @@ The follow-up native dev build passed the two-reader controller catalogue
 test and the delayed-preview test again. The held preview resumed at
 sequence 39 after capture advanced from 29, with zero errors. Its executable
 SHA-256 was `263df3892d91700537e6a3ba3ef47620c4fcf6ddbd4262ce2f925dbb43cfdba7`.
+
+## Registry notifications
+
+The Windows account could subscribe to the HidHide service subtree even
+though direct notification and value-read access to its Parameters key was
+denied. The visibility worker now registers there before reading the policy.
+The notification owner rearms before waking the worker, which reads the
+policy through the exclusive driver handle. A missing or failed watch keeps
+the existing 250 ms readback, and watch loss wakes an immediate read before
+returning to that cadence. Executable path auditing still uses the 250 ms
+deadline. [Windows registry notification contract](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regnotifychangekeyvalue)
+
+The registry signal covers ordinary key and value changes. Windows excludes
+`RegRestoreKey` from this notification API. Driver readback before mutation,
+handoff and restoration still compares the authoritative policy. The
+existing directory watcher also needs a separate executable-path design
+because Windows can report an overflow with zero bytes. [Windows directory notification contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw)
+
+The Windows controller fixture exercised two real subtree notifications
+through a temporary current-user registry key. During a quiet executable
+audit it observed zero policy reads. Deleting the subtree triggered an
+immediate read and restored the existing readback cadence. Stop restored
+the fixture driver's policy and left a clean journal.
+
+The first unrestricted native run also reached the installed HidHide driver.
+It reported a 65,654-byte application list and rejected bounded reads at
+that size and above. The device list returned its normal two-byte empty
+response. Cockpit now reports the exact oversized application-list error
+while preserving the driver's existing policy. The full suite rerun passed
+172 tests, including the installed driver's bounded refusal. Physical
+HidHide apply and restore require a readable driver policy and remain in
+#199.
+
+All 38 controller coverage checks passed. The registry watch reached
+90.91% production line coverage and the worker reached 92.92%. The rebuilt
+Cockpit passed both passive controller checks and reported the exact
+HidHide refusal through the native visibility status with
+`changed: false`. Executable SHA-256
+`1844ebf356b0c61b018b276dda450d744089703543353ea5ece5b839653d23be`.
