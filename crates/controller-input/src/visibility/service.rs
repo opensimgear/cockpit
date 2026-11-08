@@ -2,7 +2,7 @@
 use super::{
     journal,
     policy::State,
-    runtime::{Factory, Observe, Task, Worker},
+    runtime::{Capture, Factory, Observe, Task, Worker},
     settings::{Intent, Settings},
 };
 use crate::registry::Registry;
@@ -381,7 +381,7 @@ impl Service {
                             .clone()
                             .ok_or("Local recovery storage is unavailable.")?,
                         self.factory.clone(),
-                        self.observer(),
+                        Capture::registry(self.registry.clone()),
                     )?;
                 }
             }
@@ -464,7 +464,7 @@ impl Service {
                             .clone()
                             .ok_or("Durable recovery storage is required.")?,
                         self.factory.clone(),
-                        self.observer(),
+                        Capture::registry(self.registry.clone()),
                     )?;
             }
             _ => return Err("Unknown visibility command.".into()),

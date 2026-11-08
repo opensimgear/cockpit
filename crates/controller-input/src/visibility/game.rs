@@ -396,7 +396,7 @@ impl Service {
                             },
                             path,
                             self.factory.clone(),
-                            self.observer(),
+                            Capture::registry(self.registry.clone()),
                         )?
                         .job_id
                 } else {
@@ -457,7 +457,7 @@ impl Service {
                             Task::Recover { id: record.id },
                             path.clone(),
                             self.factory.clone(),
-                            self.observer(),
+                            Capture::registry(self.registry.clone()),
                         )?;
                         *owned = Some(Owner {
                             owner: owner.into(),

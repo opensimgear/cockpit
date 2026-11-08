@@ -5,6 +5,7 @@ use super::{
     session::{self, Session, Source},
     settings::{Intent, Preferences},
 };
+use osg_streams::NativeWake;
 use serde::Serialize;
 use std::{
     path::PathBuf,
@@ -16,6 +17,10 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+mod capture;
+mod handoff;
+pub(crate) use capture::Capture;
+use handoff::inspect_handoff;
 pub trait Adapter: Backend + Send {
     fn executable(&mut self, path: &str) -> Result<String, String>;
     fn instance(&mut self, interface: &str) -> Result<String, String>;
@@ -23,6 +28,8 @@ pub trait Adapter: Backend + Send {
 pub type Factory = Arc<dyn Fn() -> Result<Box<dyn Adapter>, String> + Send + Sync>;
 pub type Observe = Arc<dyn Fn(&[String]) -> Result<Vec<Source>, String> + Send + Sync>;
 const READ_BUDGET: Duration = Duration::from_secs(2);
+const FRESH_BUDGET: Duration = Duration::from_secs(2);
+const DRIVER_AUDIT: Duration = Duration::from_millis(250);
 pub(super) struct HandoffInput {
     pub job: String,
     pub record: Record,
@@ -111,6 +118,7 @@ pub struct Worker {
     pub status: Arc<Mutex<Option<Status>>>,
     completed: Arc<Condvar>,
     cancel: Arc<AtomicBool>,
+    wake: Arc<NativeWake>,
     thread: Option<JoinHandle<()>>,
     reads: Option<SyncSender<ReadRequest>>,
     pub(super) changed: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -123,6 +131,7 @@ impl Default for Worker {
             status: Arc::new(Mutex::new(None)),
             completed: Arc::default(),
             cancel: Arc::new(AtomicBool::new(false)),
+            wake: Arc::default(),
             thread: None,
             reads: None,
             changed: None,
@@ -168,6 +177,7 @@ impl Worker {
                 reply,
             })
             .map_err(|_| "The native visibility preparation queue is busy or closed.")?;
+        self.wake.notify();
         Ok(ReadTicket {
             receive,
             deadline,
@@ -188,12 +198,12 @@ impl Worker {
             .unwrap_or_else(|p| p.into_inner())
             .clone()
     }
-    pub fn start(
+    pub(crate) fn start(
         &mut self,
         task: Task,
         path: PathBuf,
         factory: Factory,
-        observe: Observe,
+        capture_source: Capture,
     ) -> Result<Status, String> {
         if self.active() {
             return Err(
@@ -206,6 +216,7 @@ impl Worker {
                 .map_err(|_| "Visibility worker exited unexpectedly.")?;
         }
         self.cancel = Arc::new(AtomicBool::new(false));
+        self.wake = Arc::default();
         let status = Status {
             job_id: uuid::Uuid::new_v4().to_string(),
             active: true,
@@ -217,6 +228,7 @@ impl Worker {
         let shared = self.status.clone();
         let completed = self.completed.clone();
         let cancel = self.cancel.clone();
+        let wake = self.wake.clone();
         let (sender, reads) = mpsc::sync_channel(1);
         let job = status.job_id.clone();
         let changed = self.changed.clone();
@@ -228,7 +240,7 @@ impl Worker {
             if let Some(changed) = &changed { changed(); }
         };
         let spawned=std::thread::Builder::new().name("device-visibility".into()).spawn(move||{
-            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||run(task,path,factory,observe,cancel,|id|{
+            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||run(task,path,factory,capture_source,cancel,wake,|id|{
                 if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.phase="active".into();status.message="Persistent visibility session active; restore before changing device assignments.".into();status.session_id=Some(id);}
                 completed.notify_all();
                 notify();
@@ -266,6 +278,7 @@ impl Worker {
             }
         }
         self.cancel.store(true, Ordering::Release);
+        self.wake.notify();
         Ok(())
     }
     pub fn shutdown(&mut self) {
@@ -302,8 +315,9 @@ fn run(
     task: Task,
     path: PathBuf,
     factory: Factory,
-    observe: Observe,
+    capture_source: Capture,
     cancel: Arc<AtomicBool>,
+    wake: Arc<NativeWake>,
     active: impl FnOnce(String),
     reads: Receiver<ReadRequest>,
     job: String,
@@ -316,6 +330,7 @@ fn run(
         }
     };
     check()?;
+    wake.bind_thread(std::thread::current()).map_err(|_| "Visibility wake is already bound.")?;
     let mut adapter = factory()?;
     let mut store = Store::open(path)?;
     match task {
@@ -335,7 +350,9 @@ fn run(
                 return Err("Enable optional device hiding before Apply.".into());
             }
             let sources = expected;
-            session::validate_sources(&sources, &observe(&ids)?, false)?;
+            let inventory = Arc::new(NativeWake::child(wake.clone()));
+            let report_watch = (capture_source.watch)(&ids, &wake, &inventory)?;
+            session::validate_sources(&sources, &capture_source.sources(&ids)?, false)?;
             let image = adapter.executable(&capture)?;
             let mut selections = vec![];
             let mut paths = vec![(capture, image.clone())];
@@ -371,28 +388,29 @@ fn run(
             check()?;
             let initial = sources.clone();
             let mut last = sources.clone();
-            let cancelled = cancel.clone();
             let mut session = Session::start(adapter, store, plan, sources, |fresh| {
-                let deadline = Instant::now() + Duration::from_secs(2);
+                let deadline = Instant::now() + FRESH_BUDGET;
                 loop {
-                    if cancelled.load(Ordering::Acquire) {
-                        return Err("Visibility operation cancelled.".into());
-                    }
-                    let current = observe(&ids)?;
+                    let observed = wake.observed();
+                    check()?;
+                    let current = capture_source.sources(&ids)?;
                     session::validate_sources(&initial, &current, false)?;
                     if !fresh {
                         last = current.clone();
                         return Ok(current);
                     }
-                    if session::validate_sources(&last, &current, true).is_ok() {
-                        return Ok(current);
-                    }
-                    if Instant::now() >= deadline {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
                         return Err("No fresh capture report after hiding; restore and move the selected controls before retrying.".into());
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+                    if session::validate_sources(&last, &current, true).is_ok() {
+                        check()?;
+                        return Ok(current);
+                    }
+                    wake.wait(observed, remaining);
                 }
             })?;
+            drop(report_watch);
             let expected_policy = session.record.plan.after.clone();
             let expected_instances = session
                 .record
@@ -401,19 +419,30 @@ fn run(
                 .iter()
                 .map(|s| s.instance.clone())
                 .collect::<Vec<_>>();
+            let mut checked_inventory = inventory.observed();
+            session.check(capture_source.sources(&ids))?;
+            if cancel.load(Ordering::Acquire) {
+                return session.stop();
+            }
             active(session.record.id.clone());
-            let mut last_verification = Instant::now() - Duration::from_secs(1);
+            let mut next_verification = Instant::now();
             while !cancel.load(Ordering::Acquire) {
-                session.check(observe(&ids))?;
+                let observed = wake.observed();
+                let inventory_epoch = inventory.observed();
+                if checked_inventory != inventory_epoch {
+                    session.check(capture_source.sources(&ids))?;
+                    checked_inventory = inventory_epoch;
+                }
                 if let Ok(request) = reads.try_recv() {
-                    let result =
-                        inspect_handoff(&mut session, &request, &job, &cancel, &observe, &paths);
+                    let result = inspect_handoff(
+                        &mut session, &request, &job, &cancel, &capture_source.observe, &paths,
+                    );
                     // Stop can race the last backend read. The receiver also
                     // checks this same per-start cancellation flag after recv.
                     let result = live_read(request.deadline, &cancel).and(result);
                     let _ = request.reply.try_send(result);
                 }
-                if last_verification.elapsed() >= Duration::from_millis(250) {
+                if Instant::now() >= next_verification {
                     session.verify(|adapter| {
                         for (path, image) in &paths {
                             if adapter.executable(path)? != *image {
@@ -435,117 +464,13 @@ fn run(
                         }
                         Ok(())
                     })?;
-                    last_verification = Instant::now();
+                    next_verification = Instant::now() + DRIVER_AUDIT;
                 }
-                std::thread::sleep(Duration::from_millis(20));
+                wake.wait(observed, next_verification.saturating_duration_since(Instant::now()));
             }
             session.stop()
         }
     }
-}
-fn inspect_handoff(
-    session: &mut Session<Box<dyn Adapter>>,
-    request: &ReadRequest,
-    job: &str,
-    cancel: &AtomicBool,
-    observe: &Observe,
-    paths: &[(String, String)],
-) -> Result<(State, Plan), String> {
-    let check = || -> Result<(), String> {
-        live_read(request.deadline, cancel)?;
-        if request.abandoned.load(Ordering::Acquire) || request.input.job != job {
-            return Err(
-                "The native visibility preparation ticket no longer owns this worker.".into(),
-            );
-        }
-        Ok(())
-    };
-    check()?;
-    let input = &request.input;
-    input.preferences.validate()?;
-    if !input.preferences.enabled {
-        return Err("Enable optional visibility before preparation.".into());
-    }
-    let ids = input
-        .sources
-        .iter()
-        .map(|s| s.id.clone())
-        .collect::<Vec<_>>();
-    let outgoing = session.sources.clone();
-    let outgoing_ids = outgoing.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
-    session.inspect(|adapter, record| {
-        check()?;
-        if serde_json::to_vec(record).map_err(|e| e.to_string())?
-            != serde_json::to_vec(&input.record).map_err(|e| e.to_string())?
-        {
-            return Err(
-                "The outgoing native visibility journal no longer matches the requested session."
-                    .into(),
-            );
-        }
-        let steps = record.validate()?;
-        if record.clean
-            || record.restoring
-            || record.pending.is_some()
-            || record.position + 1 != steps.len()
-        {
-            return Err(
-                "Only a fully applied native visibility session can prepare handoff.".into(),
-            );
-        }
-        session::validate_sources(&input.sources, &observe(&ids)?, false)?;
-        session::validate_sources(&outgoing, &observe(&outgoing_ids)?, false)?;
-        let actual = adapter.read()?;
-        check()?;
-        if actual != record.plan.after {
-            return Err("The outgoing native driver policy changed; preserve it.".into());
-        }
-        let image = adapter.executable(&input.capture)?;
-        check()?;
-        // The live session's own executable and instances remain immutable.
-        if image != record.plan.capture {
-            return Err("The capture executable changed during native handoff.".into());
-        }
-        for (path, image) in paths {
-            if adapter.executable(path)? != *image {
-                return Err("An outgoing visibility executable changed.".into());
-            }
-            check()?;
-        }
-        if outgoing.len() != record.plan.selections.len() {
-            return Err("The outgoing native selections changed.".into());
-        }
-        for (source, selection) in outgoing.iter().zip(&record.plan.selections) {
-            let instance = adapter.instance(&source.interface)?;
-            check()?;
-            if instance != selection.instance {
-                return Err("An outgoing hidden controller instance changed.".into());
-            }
-        }
-        let mut selections = Vec::new();
-        for source in &input.sources {
-            let policy = match input.preferences.devices.get(&source.id) {
-                Some(Intent::HideAll) => super::policy::Policy::HideAll,
-                Some(Intent::HideFromProcess { executable }) => {
-                    let image = adapter.executable(executable)?;
-                    check()?;
-                    super::policy::Policy::HideFromProcess { executable: image }
-                }
-                _ => return Err("Unsupported captured policy in native visibility handoff.".into()),
-            };
-            let instance = adapter.instance(&source.interface)?;
-            check()?;
-            selections.push(Selection { instance, policy });
-        }
-        let policy = Plan::build(record.plan.before.clone(), selections, image)?;
-        session::validate_sources(&input.sources, &observe(&ids)?, false)?;
-        session::validate_sources(&outgoing, &observe(&outgoing_ids)?, false)?;
-        if adapter.read()? != actual {
-            return Err("The native driver policy changed during handoff preparation.".into());
-        }
-        check()?;
-        Ok((actual, policy))
-    })
 }
 #[cfg(test)]
 #[path = "runtime_tests.rs"]

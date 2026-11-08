@@ -68,6 +68,7 @@ def main():
         sources.append(root / 'crates/controller-input/src/macos.rs')
     sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'self_access', 'session', 'runtime', 'service', 'game', 'handoff'])
     sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['launch', 'launch_plan'])
+    sources.extend(root / f'crates/controller-input/src/visibility/runtime/{name}.rs' for name in ['capture', 'handoff'])
     if sys.platform.startswith('linux'):
         sources.append(root / 'crates/controller-input/src/visibility/launch_linux.rs')
     if os.name == 'nt':

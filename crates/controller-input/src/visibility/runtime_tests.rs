@@ -70,6 +70,18 @@ fn fixture() -> (Task, Factory, Observe, Arc<Mutex<State>>, Arc<AtomicBool>) {
     });
     (task, factory, observe, state, broken)
 }
+fn fixture_capture(observe: Observe) -> Capture {
+    Capture {
+        observe,
+        watch: Arc::new(|ids, _, _| {
+            crate::stream::Journal::default().watch(ids, Arc::new(|| {}))
+        }),
+    }
+}
+
+#[path = "runtime/wake_tests.rs"]
+mod wakes;
+
 fn wait(worker: &Worker, predicate: impl Fn(&Status) -> bool) -> Status {
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
@@ -112,7 +124,7 @@ fn retained_read_tickets_reject_wrong_job_session_cancellation_and_expired_queue
     let mut worker = Worker::default();
     assert!(worker.handoff_status().is_err());
     let status = worker
-        .start(task.clone(), path.clone(), factory, observe)
+        .start(task.clone(), path.clone(), factory, fixture_capture(observe))
         .unwrap();
     wait(&worker, |s| s.phase == "active");
     let record = journal::inspect(&path).unwrap().unwrap();
@@ -121,11 +133,12 @@ fn retained_read_tickets_reject_wrong_job_session_cancellation_and_expired_queue
     wrong = handoff_input(&task, &status.job_id, record.clone());
     wrong.record.id = uuid::Uuid::new_v4().to_string();
     assert!(worker.prepare_handoff(wrong).is_err());
-    let read = worker
+    let before = worker.wake.observed();
+    let ticket = worker
         .prepare_handoff(handoff_input(&task, &status.job_id, record.clone()))
-        .unwrap()
-        .wait()
         .unwrap();
+    assert!(worker.wake.observed() > before);
+    let read = ticket.wait().unwrap();
     read.validate_live().unwrap();
     assert_eq!(read.actual, *state.lock().unwrap());
     let mut wrong = handoff_input(&task, &status.job_id, record.clone());
@@ -340,7 +353,7 @@ fn game_preflight_plan_is_rechecked_in_the_mutating_worker() {
     let temp = crate::test_directory();
     let mut worker = Worker::default();
     worker
-        .start(task, temp.path().join("session.json"), factory, observe)
+        .start(task, temp.path().join("session.json"), factory, fixture_capture(observe))
         .unwrap();
     let status = wait(&worker, |status| !status.active);
     assert!(status.message.contains("changed after game preflight"));
@@ -354,11 +367,11 @@ fn independent_worker_requires_fresh_reports_and_stops_without_ui_polling() {
     let path = temp.path().join("v.json");
     let mut worker = Worker::default();
     let status = worker
-        .start(task.clone(), path.clone(), factory.clone(), observe.clone())
+        .start(task.clone(), path.clone(), factory.clone(), fixture_capture(observe.clone()))
         .unwrap();
     wait(&worker, |s| s.phase == "active");
     assert!(state.lock().unwrap().active);
-    assert!(worker.start(task, path.clone(), factory, observe).is_err());
+    assert!(worker.start(task, path.clone(), factory, fixture_capture(observe)).is_err());
     assert!(worker.stop(Some("stale")).is_err());
     let completion = worker.completion();
     assert!(completion.wait("stale", true, Duration::ZERO).is_err());
@@ -377,7 +390,7 @@ fn relocated_executable_shutdown_and_missing_dependencies_are_explicit() {
     let path = temp.path().join("v.json");
     let mut worker = Worker::default();
     worker
-        .start(task.clone(), path.clone(), factory.clone(), observe.clone())
+        .start(task.clone(), path.clone(), factory.clone(), fixture_capture(observe.clone()))
         .unwrap();
     wait(&worker, |s| s.phase == "active");
     broken.store(true, Ordering::Release);
@@ -385,7 +398,7 @@ fn relocated_executable_shutdown_and_missing_dependencies_are_explicit() {
     assert!(!state.lock().unwrap().active);
     broken.store(false, Ordering::Release);
     worker
-        .start(task.clone(), path.clone(), factory.clone(), observe.clone())
+        .start(task.clone(), path.clone(), factory.clone(), fixture_capture(observe.clone()))
         .unwrap();
     wait(&worker, |s| s.phase == "active");
     worker.shutdown();
@@ -396,12 +409,12 @@ fn relocated_executable_shutdown_and_missing_dependencies_are_explicit() {
             task,
             path.clone(),
             Arc::new(|| Err("HidHide absent".into())),
-            observe.clone(),
+            fixture_capture(observe.clone()),
         )
         .unwrap();
     assert!(wait(&worker, |s| !s.active).message.contains("absent"));
     worker
-        .start(Task::Recover { id: "stale".into() }, path, factory, observe)
+        .start(Task::Recover { id: "stale".into() }, path, factory, fixture_capture(observe))
         .unwrap();
     assert!(wait(&worker, |s| !s.active).message.contains("Stale"));
 }
@@ -414,8 +427,9 @@ fn cancellation_before_preflight_disabled_intent_and_worker_panic_do_not_hide() 
         task.clone(),
         path.clone(),
         factory.clone(),
-        observe.clone(),
+        fixture_capture(observe.clone()),
         Arc::new(AtomicBool::new(true)),
+        Arc::default(),
         |_| panic!("not active"),
         mpsc::sync_channel(1).1,
         "unstarted".into()
@@ -429,8 +443,9 @@ fn cancellation_before_preflight_disabled_intent_and_worker_panic_do_not_hide() 
         disabled,
         path.clone(),
         factory,
-        observe.clone(),
+        fixture_capture(observe.clone()),
         Arc::new(AtomicBool::new(false)),
+        Arc::default(),
         |_| panic!("not active"),
         mpsc::sync_channel(1).1,
         "unstarted".into()
@@ -439,7 +454,7 @@ fn cancellation_before_preflight_disabled_intent_and_worker_panic_do_not_hide() 
     assert!(!state.lock().unwrap().active);
     let mut worker = Worker::default();
     worker
-        .start(task, path, Arc::new(|| panic!("fixture panic")), observe)
+        .start(task, path, Arc::new(|| panic!("fixture panic")), fixture_capture(observe))
         .unwrap();
     assert!(wait(&worker, |s| !s.active).message.contains("failed"));
 }

@@ -15,11 +15,13 @@ pub(super) struct Inventory {
     self_access: Arc<SelfAccess>,
     closed: bool,
     resource_wake: Weak<NativeWake>,
+    visibility_wake: Weak<NativeWake>,
 }
 impl Default for Inventory {
     fn default() -> Self {
         Self { actor: None, epoch: 0, latest: None,
-            self_access: Arc::new(crate::visibility::self_access::Status::default().into()), closed: false, resource_wake: Weak::new() }
+            self_access: Arc::new(crate::visibility::self_access::Status::default().into()), closed: false,
+            resource_wake: Weak::new(), visibility_wake: Weak::new() }
     }
 }
 // Speculative metadata edits never publish through a registry clone.
@@ -27,6 +29,11 @@ impl Clone for Inventory {
     fn clone(&self) -> Self { Self { self_access: self.self_access.clone(), ..Self::default() } }
 }
 impl Inventory {
+    fn notify_metadata(&self) {
+        if let Some(wake) = self.resource_wake.upgrade() { wake.notify(); }
+        if let Some(wake) = self.visibility_wake.upgrade() { wake.notify(); }
+    }
+
     fn next_epoch(&mut self) -> Result<u64, String> {
         self.epoch = self.epoch.checked_add(1).ok_or("Controller inventory epoch exhausted.")?;
         Ok(self.epoch)
@@ -48,6 +55,17 @@ impl InventoryShutdown {
     pub fn shutdown(mut self) { if let Some(actor) = self.0.take() { actor.shutdown(); } }
 }
 impl Registry {
+    pub(crate) fn watch_visibility_inventory(&mut self, wake: &Arc<NativeWake>) -> Result<(), String> {
+        let inventory = &mut self.inventory_observation;
+        if inventory.closed { return Err("Controller inventory worker stopped.".into()); }
+        let observer = Arc::downgrade(wake);
+        if inventory.visibility_wake.strong_count() > 0 && !inventory.visibility_wake.ptr_eq(&observer) {
+            return Err("Controller visibility already has a native inventory observer.".into());
+        }
+        inventory.visibility_wake = observer;
+        Ok(())
+    }
+
     pub(crate) fn watch_resource_inventory(&mut self, wake: &Arc<NativeWake>) -> Result<(), String> {
         let inventory = &mut self.inventory_observation;
         if inventory.closed { return Err("Controller inventory worker stopped.".into()); }
@@ -79,11 +97,11 @@ impl Registry {
     }
     pub fn take_inventory_shutdown(&mut self) -> InventoryShutdown {
         self.inventory_observation.closed = true;
-        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
+        self.inventory_observation.notify_metadata();
         InventoryShutdown(self.inventory_observation.actor.take())
     }
     pub(super) fn inventory_changed(&mut self) {
-        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
+        self.inventory_observation.notify_metadata();
         let Some(shared) = self.inventory_observation.actor.as_ref().map(|actor| actor.shared.clone()) else { return; };
         let view = match View::capture(self) {
             Ok(view) => Arc::new(view),
@@ -100,7 +118,7 @@ impl Registry {
     /// A first complete report copies only its own fixed metadata row. The
     /// worker merges it with cached inventory after releasing capture ownership.
     pub(super) fn inventory_readiness(&mut self, id: &str) {
-        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
+        self.inventory_observation.notify_metadata();
         let Some(shared) = self.inventory_observation.actor.as_ref().map(|actor| actor.shared.clone()) else { return; };
         let Some(source) = self.sources.get(id) else { return; };
         let row = Summary::capture(source);
