@@ -118,10 +118,15 @@ test('custom games expose matching profiles, metadata and background editing wit
 test('executable fields show installation-relative paths and save relative edits as full paths',async()=>{
   let handlers;const calls=[],id='custom-11111111-1111-4111-8111-111111111111';
   const g={id,name:'Fixture game',provider:null,installed:true,launchSupported:false,installPath:'C:/Old',executable:'C:/Games/Fixture/bin/Game.exe',selectedInstallationId:'copy',installations:[{id:'copy',installPath:'C:/Games/Fixture',source:'disk',available:true,executableCandidates:[]}]};
-  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,commitExecutable,setExecutable(value){executablePath=value;}});</script>'),receive:value=>handlers=value});
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,commitExecutable,editExecutable});</script>'),receive:value=>handlers=value});
   const html=render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async command=>{calls.push(command);return state({...g,executable:command.executable});}}}).body;
   const input=html.match(/<input[^>]*aria-label="Game executable"[^>]*>/)?.[0];assert.ok(input);assert.ok(input.includes('value="bin\\Game.exe"'));
-  handlers.initializeGame(g);handlers.setExecutable('bin/Alternate.exe');await handlers.commitExecutable(g);
+  handlers.initializeGame(g);await handlers.commitExecutable({...g,executable:'C:/Games/Fixture/bin/Background.exe'});
+  assert.deepEqual(calls,[]);
+  handlers.editExecutable('bin/Alternate.exe');
+  await handlers.commitExecutable({...g,selectedInstallationId:'other-copy'});
+  assert.deepEqual(calls,[]);
+  await handlers.commitExecutable(g);
   assert.deepEqual(plain(calls),[{command:'game_save',gameId:id,installationId:'copy',executable:'C:\\Games\\Fixture\\bin\\Alternate.exe'}]);
 });
 

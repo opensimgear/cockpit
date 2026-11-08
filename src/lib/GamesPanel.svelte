@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {untrack} from 'svelte';
   import {gameImage,gameImageSource} from './game-read-models/image';
   import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
@@ -34,6 +35,7 @@
   let initializedGameId=$state<GameId|''>('');
   let initializedInstallationId=$state<string|undefined>();
   let pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
+  let executableEdited=$state(false);
   let providerBusy=$state(false),removeDialog=$state(false);
   let refreshing=$state(false),artworkRefresh=$state(0);
   let addDialog=$state(false);
@@ -73,6 +75,11 @@
   $effect(()=>{if(discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
   $effect(()=>{if(selected&&detailReady&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
   $effect(()=>{if(selected&&selected.id===initializedGameId&&selected.name!==nameBase){if(nameDraft===nameBase)nameDraft=selected.name;nameBase=selected.name;}});
+  $effect(()=>{
+    if(!detailReady||!selected||selected.id!==initializedGameId||selected.selectedInstallationId!==initializedInstallationId)return;
+    const path=selected.executable??selected.manualPath??'';
+    if(!untrack(()=>executableEdited))executablePath=path;
+  });
   async function send(command:GameRequest):Promise<GamesState|false>{
     if(!streamReady||selectedGameId&&!detailReady)return false;
     if(['game_discovery_start','game_discovery_apply'].includes(command.command)&&!discoveryFresh)return false;
@@ -88,14 +95,22 @@
     if(result.error)throw new Error(result.error);
     return result;
   }
-  function initializeGame(game:Game){initializedGameId=game.id;initializedInstallationId=game.selectedInstallationId;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??game.manualPath??'';nameDraft=game.name;nameBase=game.name;notice='';}
+  function resetExecutable(game:Game){executablePath=game.executable??game.manualPath??'';executableEdited=false;}
+  function editExecutable(path:string){executablePath=path;executableEdited=true;}
+  function initializeGame(game:Game){initializedGameId=game.id;initializedInstallationId=game.selectedInstallationId;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);resetExecutable(game);nameDraft=game.name;nameBase=game.name;notice='';}
   async function saveName(game:Game){
     if(locked)return;const name=nameDraft.trim();
     if(name===game.name){nameDraft=name;return;}const invalid=gameMetadataError(name,'');if(invalid){notice=invalid;return;}
     try{const result=await send({command:'game_save',gameId:game.id,name});if(result&&!result.error&&selected?.id===game.id){const saved=result.catalogue.find(item=>item.id===game.id);nameDraft=saved?.name??name;nameBase=nameDraft;}}
     catch(error){notice=error instanceof Error?error.message:String(error);}
   }
-  async function commitExecutable(game:Game){if(locked)return;const root=game.installations?.find(installation=>installation.id===game.selectedInstallationId)?.installPath??game.installPath;const path=resolveGameExecutablePath(executablePath.trim(),root);if(gameDisplayPath(path)!==gameDisplayPath(game.executable??game.manualPath))await saveExecutable(game,path||null);}
+  async function commitExecutable(game:Game){
+    if(locked||!executableEdited||game.id!==initializedGameId||game.selectedInstallationId!==initializedInstallationId)return;
+    const root=game.installations?.find(installation=>installation.id===game.selectedInstallationId)?.installPath??game.installPath;
+    const path=resolveGameExecutablePath(executablePath.trim(),root);
+    if(gameDisplayPath(path)===gameDisplayPath(game.executable??game.manualPath)){resetExecutable(game);return;}
+    await saveExecutable(game,path||null);
+  }
   function chooseGame(game:Game){selectedGameId=game.id;onNavigate?.(game.id);}
   function gameAdded(result:GamesState){addDialog=false;filters=emptyGameListFilters();const game=result.catalogue.find(game=>game.id===result.addedGameId);if(game)chooseGame(game);}
   function tagsSaved(result:GamesState){tagsDialog=false;}
@@ -104,7 +119,17 @@
   function showDialog(node:HTMLDialogElement){node.showModal();return()=>node.close();}
   function allGames(){selectedGameId='';notice='';onNavigate?.('');}
   async function saveExecutable(game:Game,path:string|null){
-    try{const result=await send(gameInstallationRequest(game,path));if(result&&!result.error&&selected?.id===game.id){const saved=result.catalogue.find(item=>item.id===game.id);executablePath=saved?.executable??saved?.manualPath??path??'';}}
+    const detailAtStart=detailModel.value;
+    try{
+      const result=await send(gameInstallationRequest(game,path));
+      if(!result||result.error||selected?.id!==game.id||selected.selectedInstallationId!==game.selectedInstallationId)return;
+      const saved=result.catalogue.find(item=>item.id===game.id);
+      if((detailReady&&detailModel.value!==detailAtStart)||(saved&&saved.selectedInstallationId!==game.selectedInstallationId)){
+        resetExecutable(selected);return;
+      }
+      executablePath=saved?.executable??saved?.manualPath??path??'';
+      executableEdited=false;
+    }
     catch(error){notice=error instanceof Error?error.message:String(error);}
   }
   async function browseExecutable(){
@@ -157,7 +182,7 @@
           {#if selected.installations?.length}
             <div class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><span class="installation-choice"><GameInstallationSelect installations={selected.installations} value={selected.selectedInstallationId??''} disabled={locked} onselect={installationId=>void send({command:'game_installation_select',gameId:selected.id,installationId})}/>{#if selectedInstallation?.source}<span class="installation-source-badge" data-platform={selectedInstallation.source} title={gameLibraryClientName(selectedInstallation.source)} aria-label={`Installation source: ${gameLibraryClientName(selectedInstallation.source)}`}><span class="platform-icon" aria-hidden="true"><Icon name={selectedInstallation.source==='local'?'disk':selectedInstallation.source} size={23}/></span></span>{/if}</span></div>
           {/if}
-          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder="Choose an executable…"/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button></div></div>
+          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>editExecutable(event.currentTarget.value)} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){resetExecutable(selected);notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder="Choose an executable…"/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button></div></div>
           {#if !selected.installed&&selected.manualPath}<p class="field-help">The saved executable could not be found. Choose its new location.</p>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         <div class="tag-panel"><div class="tag-picker"><GameTagInput {tags} values={selected.tagIds??[]} disabled={locked} label="Game tags" placeholder="Add tags…" onchange={values=>saveTags(selected,values)}/></div><button class="secondary-button" aria-label="Manage tags" disabled={locked} onclick={()=>tagsDialog=true}><Icon name="settings" size={14}/>Manage</button></div>

@@ -55,6 +55,12 @@ releases input demand and cancels its queued presentation frame while hidden.
 Native and browser-dev reopen on a fresh input baseline and preserve the
 controller detail draft. Real VKB preview cadence remains in #199.
 
+The Games executable field follows committed changes for the selected
+installation and preserves a local edit until commit or Escape. The running
+native and browser-dev fixtures observed a visible replacement, retained a
+draft across a second external change, restored the current path on Escape,
+and reopened on a third change. Clean blur sent no mutation.
+
 [Native driver setup](../verification/2026-11-07-optional-driver-observation.md#driver-setup-across-settings-navigation)
 retains the pending operation across Settings navigation, including when a driver
 file appears before the installer returns. Completion reaches global notifications.
