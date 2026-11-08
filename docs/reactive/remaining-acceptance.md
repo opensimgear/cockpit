@@ -32,6 +32,11 @@ current desktop, driver, inventory and visibility baselines on native and
 browser-dev. Native Backups follows the current catalogue on reopen and
 recovers a queued restore after the observation broker has stopped.
 
+[Companion listener settings](../verification/2026-11-08-companion-listener-visibility.md)
+retire the listener reader when hidden. Both transports verified a fresh
+baseline and one status read on reveal after a listener commit in a private
+Cockpit session.
+
 The companion and integration port sections share the same tile, filter and
 pager. The tile owns spacing, typography and status styles. Companion authoring
 controls retain concise labels, icons and accessible remove actions. The

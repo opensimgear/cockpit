@@ -7,6 +7,7 @@ import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 import {checkActivitySettings} from './reactive-navigation/activity-settings.mjs';
 import {checkDeviceSettingsVisibility} from './reactive-navigation/device-settings.mjs';
 import {checkBackupSettings, checkQueuedBackupReopen} from './reactive-navigation/backup-settings.mjs';
+import {checkCompanionListenerVisibility} from './reactive-navigation/companion-listener.mjs';
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
 const browserOpenId = ({ connectionId, requestId }) => JSON.stringify([connectionId, requestId]);
@@ -34,6 +35,7 @@ test(`${transport} main view navigation retires observation readers without dupl
   const retired = new Set();
   const abortedOpens = new Map();
   let companionReads = 0;
+  let listenerOnlyReads = 0;
   let systemInventoryReads = 0;
   let visibilityReads = 0;
   let storageReads = 0;
@@ -57,10 +59,12 @@ test(`${transport} main view navigation retires observation readers without dupl
       const path = new URL(params.request.url).pathname;
       if (path === '/gateway_request' || path === '/api/gateway/') {
         const body = JSON.parse(params.request.postData);
-        if ((body.request ?? body).command === 'companion_status') companionReads++;
-        if ((body.request ?? body).command === 'system_inventory') systemInventoryReads++;
-        if ((body.request ?? body).command === 'controller_visibility_status') visibilityReads++;
-        if ((body.request ?? body).command === 'storage_status') storageReads++;
+        const request = body.request ?? body;
+        if (request.command === 'companion_status') companionReads++;
+        if (request.command === 'companion_inventory' && request.companion?.listenerOnly === true) listenerOnlyReads++;
+        if (request.command === 'system_inventory') systemInventoryReads++;
+        if (request.command === 'controller_visibility_status') visibilityReads++;
+        if (request.command === 'storage_status') storageReads++;
       }
       const operation = endpoints.get(path);
       if (!operation) return;
@@ -346,6 +350,8 @@ test(`${transport} main view navigation retires observation readers without dupl
       await until(() => pending.size === 0 && !desktopReader());
       console.log(JSON.stringify({transport, desktopSettingsBackgroundAndReopen: 'passed'}));
     }
+    await checkCompanionListenerVisibility({page,request,clickTab,pending,active,baselines,
+      listenerOnlyReads:()=>listenerOnlyReads});
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [tab, topics] of [['Devices', deviceTopics], ['Companions', ['companion.listener']],
         ['AI integration', browserUrl ? [] : ['settings.mcp']]]) {

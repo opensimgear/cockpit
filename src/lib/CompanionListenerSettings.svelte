@@ -6,6 +6,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { gatewayRequest } from './gateway';
   import { SharedObservations } from './streams/shared';
+  import { visibleObservation } from './visible-observation';
   import type { CompanionHostState } from './companions';
   let { active = true }: { active?: boolean } = $props();
   let hostState = $state<CompanionHostState>({});
@@ -15,6 +16,7 @@
   let busy = $state(false);
   let error = $state('');
   let loaded = $state(false);
+  let current = $state(false);
   let readError = $state('');
   let observationError = $state('');
   let reading = false;
@@ -28,7 +30,7 @@
     catch(e){notify(String(e),'error');}
   }
   function invalidate() {
-    if (disposed || !active) return;
+    if (disposed || !active || document.hidden) return;
     if (busy || reading) { refreshQueued = true; return; }
     refreshQueued = false;
     void refresh();
@@ -38,9 +40,10 @@
     const version=requestVersion;
     try {
       const result=(await gatewayRequest({ command: 'companion_inventory', companion: { listenerOnly: true } })).companions ?? {};
-      if(disposed || !active || version!==requestVersion || busy)return;
+      if (disposed || !active || document.hidden || version !== requestVersion || busy) return;
       if (!result.listener) throw new Error('Companion listener settings are unavailable.');
       hostState=result;
+      current = true;
       readError='';
       if(!loaded){
         const config=result.listener.config;
@@ -48,11 +51,16 @@
         if (!address) address = hostState.interfaces?.find(ip => ip !== '127.0.0.1' && !ip.includes(':')) ?? '127.0.0.1';
         loaded=true;
       }
-    } catch (e) { if (!disposed && active && version === requestVersion) readError = String(e); }
+    } catch (e) {
+      if (!disposed && active && !document.hidden && version === requestVersion) {
+        current = false;
+        readError = String(e);
+      }
+    }
     finally { reading = false; if (refreshQueued) invalidate(); }
   }
   async function toggle(enabled: boolean) {
-    if (!loaded || busy || enabled && (!address || portError)) return;
+    if (!current || busy || enabled && (!address || portError)) return;
     requestVersion++;busy = true; error = '';
     try {
       const expectedSettingsRevision=hostState.listener?.settingsRevision;
@@ -70,14 +78,27 @@
   $effect(() => {
     if (!active) return;
     const observations = new SharedObservations();
-    observations.subscribe('companion.listener', state => {
-      observationError = state.error ?? '';
-      if (state.status === 'ready') untrack(invalidate);
-    });
-    window.addEventListener('focus', invalidate);
-    return () => {
+    let ready = false;
+    const retire = () => {
+      ready = false;
       requestVersion++;
-      window.removeEventListener('focus', invalidate);
+      current = false;
+      refreshQueued = false;
+    };
+    const reader = visibleObservation(observations, 'companion.listener', state => {
+      observationError = state.error ?? '';
+      ready = state.status === 'ready';
+      if (ready) untrack(invalidate);
+      else if (state.status === 'lost' || state.status === 'error') retire();
+    }, retire);
+    // The listener topic tracks listener state. A visible focus also refreshes
+    // the selectable local interface addresses.
+    const focus = () => { if (ready && !reading) invalidate(); };
+    window.addEventListener('focus', focus);
+    reader.setVisible(true);
+    return () => {
+      window.removeEventListener('focus', focus);
+      reader.close();
       observations.close();
     };
   });
@@ -87,18 +108,18 @@
   <div class="panel-heading listener-heading"><h2>Companion listener</h2><div class="listener-state"><span class="quiet-tag" role="status">{busy ? 'Saving…' : !loaded ? 'Loading…' : hostState.listener?.enabled ? 'Listening' : enabled ? 'Waiting to start' : 'Disabled'}</span>{#if hostState.listener?.enabled && hostState.listener.endpoint}<code class="listener-endpoint" title="Listener endpoint">{hostState.listener.endpoint}</code>{/if}</div></div>
   <div class="preference-row">
     <div><strong>Enable companion listener</strong><p>Allow paired Wi-Fi and network companions to connect. Direct USB companions work with this disabled.</p></div>
-    <button class="toggle" class:on={enabled} role="switch" aria-label="Enable companion listener" aria-checked={enabled} disabled={busy || !loaded || !enabled && (!address || !!portError)} onclick={() => toggle(!enabled)}><span></span></button>
+    <button class="toggle" class:on={enabled} role="switch" aria-label="Enable companion listener" aria-checked={enabled} disabled={busy || !current || !enabled && (!address || !!portError)} onclick={() => toggle(!enabled)}><span></span></button>
   </div>
   <div class="preference-row connection-row">
     <div class="connection-copy"><strong>Network connection</strong><p id="listener-connection-help">{enabled ? 'Turn off the listener to change its address, port, or LAN discovery.' : 'Choose the address companions can reach. Network settings are saved when you enable the listener.'}</p></div>
     <div class="connection-fields">
-      <label><span class="field-label">LAN address</span><select aria-describedby="listener-connection-help" bind:value={address} disabled={busy || !loaded || enabled}>{#each [...new Set([address, ...(hostState.interfaces ?? [])])].filter(Boolean) as ip}<option value={ip}>{ip}</option>{/each}</select></label>
-      <label><span class="field-label">Port</span><input class="text-input" type="number" min="1024" max="65535" step="1" bind:value={port} aria-invalid={!!portError} aria-describedby={portError ? 'listener-port-error' : 'listener-connection-help'} disabled={busy || !loaded || enabled} />{#if portError}<p class="field-error" id="listener-port-error" role="alert">{portError}</p>{/if}</label>
+      <label><span class="field-label">LAN address</span><select aria-describedby="listener-connection-help" bind:value={address} disabled={busy || !current || enabled}>{#each [...new Set([address, ...(hostState.interfaces ?? [])])].filter(Boolean) as ip}<option value={ip}>{ip}</option>{/each}</select></label>
+      <label><span class="field-label">Port</span><input class="text-input" type="number" min="1024" max="65535" step="1" bind:value={port} aria-invalid={!!portError} aria-describedby={portError ? 'listener-port-error' : 'listener-connection-help'} disabled={busy || !current || enabled} />{#if portError}<p class="field-error" id="listener-port-error" role="alert">{portError}</p>{/if}</label>
     </div>
   </div>
   <div class="preference-row">
     <div><strong>LAN discovery</strong><p>Advertise Cockpit on your local network so companions can find it automatically.</p>{#if hostState.listener?.enabled && hostState.listener.discovery}<p class="listener-detail">Discovery: {String(hostState.listener.discovery)}</p>{/if}</div>
-    <button class="toggle" class:on={discovery} role="switch" aria-label="LAN discovery" aria-checked={discovery} aria-describedby="listener-connection-help" disabled={busy || !loaded || enabled} onclick={() => { discovery = !discovery; }}><span></span></button>
+    <button class="toggle" class:on={discovery} role="switch" aria-label="LAN discovery" aria-checked={discovery} aria-describedby="listener-connection-help" disabled={busy || !current || enabled} onclick={() => { discovery = !discovery; }}><span></span></button>
   </div>
   <div class="preference-row browser-trust">
     <div class="trust-copy">
@@ -118,7 +139,7 @@
       <p>Keep the LAN address and port stable for saved browser apps.</p>
       {#if hostState.listener?.caSpkiSha256}<div class="fingerprint"><span>CA public-key fingerprint</span><code>{hostState.listener.caSpkiSha256}</code></div>{/if}
     </div>
-    <button class="secondary-button" disabled={busy || !loaded} onclick={exportCertificate}><Icon name="download" size={14} />Export public certificate</button>
+    <button class="secondary-button" disabled={busy || !current} onclick={exportCertificate}><Icon name="download" size={14} />Export public certificate</button>
   </div>
   {#if hostState.listener?.lastError || error || readError || observationError}<Notification message={String(error || readError || observationError || hostState.listener?.lastError)} kind="error" />{/if}
 </section>
