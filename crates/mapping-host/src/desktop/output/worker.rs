@@ -19,6 +19,12 @@ pub(super) struct Owner {
 enum Work {
     Stop(Reply), Pause(RunToken), Setup(Setup), Data(Job), Renew(RunToken, u64), Authorize, Fault,
 }
+fn take_job(state: &mut State) -> Option<Work> {
+    let job = state.job.take()?;
+    state.executing_epoch = job.epoch;
+    state.executing_admission = job.admission;
+    Some(Work::Data(job))
+}
 impl Owner {
     pub(super) fn new(output: Coordinator, shared: Arc<Shared>, tap_durations: BTreeMap<String, Counter>) -> Self {
         Self { output, shared, armed: BTreeMap::new(), armed_admission: None, tap_durations, last_renew: None, last_authorization: 0, failure_stopped: false, renewal_requested: false }
@@ -57,12 +63,10 @@ impl Owner {
             self.failure_stopped = true;
             return Some(Work::Fault);
         }
-        if let Some(job) = state.job.take() {
-            state.executing_epoch = job.epoch;
-            state.executing_admission = job.admission;
-            return Some(Work::Data(job));
+        if state.job.as_ref().is_some_and(|job| job.prearm.is_none()) {
+            return take_job(&mut state);
         }
-        if !self.renewal_enabled(&state) { return None; }
+        if !self.renewal_enabled(&state) { return take_job(&mut state); }
         if let Some((run, admitted, id)) = state.authorization.clone() {
             if admitted.elapsed() > AUTHORIZATION_FRESHNESS || id == self.last_authorization {
                 state.authorization = None;
@@ -79,7 +83,8 @@ impl Owner {
             self.renewal_requested = true;
             return Some(Work::Authorize);
         }
-        None
+        // Wait for an outstanding authorization before starting an idle Arm.
+        if self.renewal_requested { None } else { take_job(&mut state) }
     }
     fn renewal_enabled(&self, state: &State) -> bool {
         self.last_renew.is_some() && !state.closed && !state.shutdown && state.fault.is_none()
@@ -180,8 +185,10 @@ impl Owner {
             if state.shutdown { break; }
             // Recheck predicates under the same lock used by producers so no
             // control/job notification can be lost between step and sleep.
+            let job_ready = state.job.as_ref().is_some_and(|job| job.prearm.is_none()
+                || !self.renewal_requested || !self.renewal_enabled(&state));
             if state.stop.is_some() || state.pause.is_some() || state.setup.is_some()
-                || state.job.is_some() || (state.fault.is_some() && !self.failure_stopped) { continue; }
+                || job_ready || (state.fault.is_some() && !self.failure_stopped) { continue; }
             // A fresh response can arrive after next() but before this lock.
             // Its notification must not be lost while a request is outstanding.
             if self.renewal_enabled(&state) && state.authorization.is_some()

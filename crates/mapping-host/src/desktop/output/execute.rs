@@ -35,11 +35,9 @@ fn reason(shared: &Shared, job: &Job, armed: &BTreeMap<String, Token>, cancelled
     }
     None
 }
-fn arm(output: &mut Coordinator, armed: &mut BTreeMap<String, Token>, delivery: &Delivery) -> Result<bool, String> {
-    if !cleanup(delivery) && armed.get(&delivery.action_id) != Some(&delivery.producer) {
-        if !output.arm_checked(delivery.producer.clone(), delivery.action_id.clone())? { return Ok(false); }
-        armed.insert(delivery.action_id.clone(), delivery.producer.clone());
-    }
+fn arm(output: &mut Coordinator, armed: &mut BTreeMap<String, Token>, id: String, producer: Token) -> Result<bool, String> {
+    if !output.arm_checked(producer.clone(), id.clone())? { return Ok(false); }
+    armed.insert(id, producer);
     Ok(true)
 }
 fn source_now(job: &Job) -> u64 {
@@ -57,6 +55,14 @@ fn record(completion: &mut Completion, cancelled: &mut BTreeSet<String>, deliver
 pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTreeMap<String, Token>, tap_durations: &BTreeMap<String, Counter>, mut job: Job) -> Completion {
     output.set_admission(job.admission);
     let mut completion = Completion { audit_shadow: job.audit_shadow, outcomes: vec![], dropped: vec![], error: None };
+    if let Some((id, producer)) = job.prearm {
+        let permitted = Shared::can_arm(&shared.lock(), &id, &producer, job.admission);
+        if permitted && armed.get(&id) != Some(&producer) {
+            completion.error = arm(output, armed, id, producer).err();
+        }
+        output.set_admission(None);
+        return completion;
+    }
     let mut cancelled = BTreeSet::new();
     let mut rejected = false;
     let mut pending: VecDeque<_> = std::mem::take(&mut job.deliveries).into();
@@ -86,7 +92,11 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
             // complete group afterwards, including producers already armed here.
             for delivery in &group {
                 if reason(shared, &job, armed, &cancelled, delivery).is_some() { break; }
-                if !arm(output, armed, delivery)? { rejected = true; break; }
+                if !cleanup(delivery) && armed.get(&delivery.action_id) != Some(&delivery.producer)
+                    && !arm(output, armed, delivery.action_id.clone(), delivery.producer.clone())? {
+                    rejected = true;
+                    break;
+                }
             }
             if rejected || group.iter().any(|delivery| reason(shared, &job, armed, &cancelled, delivery).is_some()) {
                 // A motion vector is one physical operation. Revoking any member

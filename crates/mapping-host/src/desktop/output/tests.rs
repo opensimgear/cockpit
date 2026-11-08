@@ -162,7 +162,7 @@ fn elapsed_queue_age_expires_held_and_suppresses_following_taps_but_allows_clean
     {
         let mut state = output.shared.lock();
         state.busy = true;
-        state.job = Some(Job { deliveries: vec![first, repeat, cleanup], source_now: 10,
+        state.job = Some(Job { deliveries: vec![first, repeat, cleanup], prearm: None, source_now: 10,
             admission: state.child_scope.map(|receipt| receipt.admission), admitted: Instant::now() - Duration::from_millis(2), epoch: state.epoch, audit_shadow: 0 });
     }
     output.drive();

@@ -40,6 +40,7 @@ pub(super) struct Completion {
 struct Job {
     admission: Option<ScopeAdmission>,
     deliveries: Vec<Delivery>,
+    prearm: Option<(String, Token)>,
     source_now: u64,
     admitted: Instant,
     epoch: u64,
@@ -94,8 +95,16 @@ impl Shared {
         self.notify();
     }
     fn current(state: &State, delivery: &Delivery) -> bool {
+        Self::current_action(state, &delivery.action_id, &delivery.producer)
+    }
+    fn current_action(state: &State, id: &str, producer: &Token) -> bool {
         (state.allow_empty && state.current.is_empty())
-            || state.current.get(&delivery.action_id) == Some(&delivery.producer)
+            || state.current.get(id) == Some(producer)
+    }
+    fn can_arm(state: &State, id: &str, producer: &Token, admission: Option<ScopeAdmission>) -> bool {
+        state.fault.is_none() && !state.closed && !state.shutdown && state.pause.is_none()
+            && state.epoch == state.executing_epoch && focus::permitted(state)
+            && child::permitted(state, admission) && Self::current_action(state, id, producer)
     }
     fn permitted(&self, request: &Request) -> bool {
         let state = self.lock();
@@ -109,10 +118,7 @@ impl Shared {
         match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => valid(delivery),
             Command::DeliverPointerBatch { deliveries } => deliveries.iter().all(valid),
-            Command::Arm { producer, action_id } => state.fault.is_none() && !state.closed
-                && !state.shutdown && state.epoch == state.executing_epoch && focus::permitted(&state)
-                && child::permitted(&state, request.admission)
-                && ((state.allow_empty && state.current.is_empty()) || state.current.get(action_id) == Some(producer)),
+            Command::Arm { producer, action_id } => Self::can_arm(&state, action_id, producer, request.admission),
             _ => true,
         }
     }
@@ -281,7 +287,11 @@ impl Output {
     pub(super) fn current(&self, delivery: &Delivery) -> bool {
         Shared::current(&self.shared.lock(), delivery)
     }
-    pub(super) fn dispatch(&self, deliveries: Vec<Delivery>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
+    #[cfg(test)]
+    fn dispatch(&self, deliveries: Vec<Delivery>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
+        self.dispatch_prepared(deliveries, None, source_now, audit_shadow, admission)
+    }
+    pub(super) fn dispatch_prepared(&self, deliveries: Vec<Delivery>, prearm: Option<(String, Token)>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
         let admitted = Instant::now();
         // Validate before serializing: the count bound also bounds serialization work.
         let bounds = if deliveries.len() > DELIVERY_LIMIT {
@@ -289,7 +299,12 @@ impl Output {
         } else {
             // Stop counting at the byte bound; never allocate an oversized
             // serialized copy on the profile input worker just to reject it.
-            serde_json::to_writer(AdmissionSize(0), &deliveries).map_err(|error| error.to_string())
+            let mut size = AdmissionSize(0);
+            if let Some(arm) = &prearm {
+                serde_json::to_writer(&mut size, arm)
+            } else {
+                serde_json::to_writer(&mut size, &deliveries)
+            }.map_err(|error| error.to_string())
         };
         let mut state = self.shared.lock();
         Self::check(&state)?;
@@ -303,7 +318,7 @@ impl Output {
         }
         state.busy = true;
         state.busy_shadow = audit_shadow;
-        state.job = Some(Job { deliveries, source_now, admitted, epoch: state.epoch, audit_shadow, admission });
+        state.job = Some(Job { deliveries, prearm, source_now, admitted, epoch: state.epoch, audit_shadow, admission });
         drop(state);
         self.drive();
         Ok(())

@@ -27,6 +27,7 @@ impl Desktop {
             .filter(|sink| matches!(sink.kind, SinkKind::Desktop { .. }))
             .cloned()
             .collect::<Vec<_>>();
+        let action_count = definitions.len();
         let mut tokens = BTreeMap::new();
         for sink in definitions {
             let Some(sample) = reducer.sample(&sink.from).cloned() else {
@@ -38,6 +39,7 @@ impl Desktop {
                 .accept(&sink.id, producer, sample, reducer.at_us(), true)?;
         }
         self.output.reconcile(&tokens);
+        if tokens.len() == action_count { self.prepare_neutral_arms(reducer, &tokens); }
         Ok(())
     }
     pub fn start(&mut self, reducer: &Phase, scope: Option<Scope>) -> Result<(), String> {

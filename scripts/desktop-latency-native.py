@@ -112,6 +112,11 @@ def axis_boundary(contract):
         conversion="The supported compiled unipolar WSS axis quantizes round(wire * 32767). The graph computes raw / 16384 - 1, centering neutral 0.5 exactly; the signed waveform has bounded quantization error.")
 
 
+def current_companion_resource(service, instance):
+    detail = companion.selected_resource(service, instance, require_current=False)
+    return detail if detail and all(port["current"] for port in detail["ports"]) else None
+
+
 def profile_for(service, instances, publication):
     document = mapping.blank("Native desktop latency " + uuid.uuid4().hex[:8])
     assignments = []
@@ -121,7 +126,7 @@ def profile_for(service, instances, publication):
     for index, instance in enumerate(instances):
         logical = "a" if index == 0 else "b"
         source = "panel-" + logical
-        detail = mapping.wait_for(lambda: companion.selected_resource(service, instance), "No current native companion ports")
+        detail = mapping.wait_for(lambda: current_companion_resource(service, instance), "No current native companion ports")
         observed = {name: next(port for port in detail["ports"] if port["descriptor"]["id"] == physical)
             for name, physical in (("button", BUTTON), ("axis", AXIS))}
         axis_boundary(observed["axis"]["descriptor"]["contract"])
@@ -281,6 +286,15 @@ def warmup_keys(service, receiver_path, peers):
         pointerBaseline=dict(observation_start=len(report["observations"]), operation_baseline=str(max(operations, default=0))))
 
 
+def neutral_owners(service):
+    runtime = native.desktop_status(service)["runtime"]
+    backend = runtime["backend"]
+    if runtime["state"] != "active" or runtime["waitingNeutral"] or backend["inFlight"] is not None:
+        return None
+    owners = [owner for owner in backend["owners"] if not owner["controls"]]
+    return owners if {owner["actionId"] for owner in owners} >= {"key-a", "key-b", "pointer-a", "pointer-b"} else None
+
+
 def coherent_sources(service, configurations, peers):
     """Correlate asynchronous inventory with the actual applied typed producers."""
     def ready():
@@ -375,7 +389,8 @@ def main():
             phase["exactAppliedApplicationScope"] = journal_scope
             for peer in peers:
                 send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
-            mapping.wait_for(lambda: not native.desktop_status(service)["runtime"]["waitingNeutral"], "Fresh controls did not arm every desktop route")
+            phase["neutralOwnersBeforePress"] = mapping.wait_for(lambda: neutral_owners(service),
+                "Fresh neutral controls did not establish empty native owners for the desktop routes")
             phase["warmupStartMarker"] = marker(service, 5 + index * 2)
             phase["warmup"] = warmup_keys(service, receiver_path, peers)
             phase["warmupEndMarker"] = marker(service, 6 + index * 2)

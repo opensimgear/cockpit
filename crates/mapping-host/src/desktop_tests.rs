@@ -187,6 +187,7 @@ fn prepared_program_fixture(
         focus_boundary: None,
         waiting_neutral: BTreeSet::new(),
         rearm_evidence: BTreeMap::new(),
+        neutral_arms: BTreeMap::new(),
         shadow: None, shadow_admission: None,
         audit_shadow: 0,
         focus_watch: Default::default(),

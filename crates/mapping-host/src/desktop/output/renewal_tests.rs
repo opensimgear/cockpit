@@ -57,6 +57,25 @@ fn due_idle_lease_requests_one_parent_wake_and_never_renews_without_a_response()
 }
 
 #[test]
+fn queued_neutral_arm_waits_for_outstanding_lease_authorization() {
+    let (output, wakes, renewals) = fixture();
+    due(&output);
+    output.drive();
+    let admission = output.child_scope().map(|receipt| receipt.admission);
+    let producer = Token { run: run(), node_id: "source".into(), dependencies: vec![] };
+    output.dispatch_prepared(vec![], Some(("key".into(), producer)), 10, 0, admission).unwrap();
+    assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    assert!(output.shared.lock().job.is_some());
+    assert!(output.snapshot().owners.is_empty());
+
+    output.renew(run()).unwrap();
+    assert_eq!(renewals.load(Ordering::SeqCst), 1);
+    assert_eq!(output.snapshot().owners.len(), 1);
+    assert!(output.snapshot().held.is_empty());
+    assert!(output.take_completion().unwrap().error.is_none());
+}
+
+#[test]
 fn early_authorization_that_expires_before_due_requests_fresh_parent_evaluation() {
     let (output, wakes, renewals) = fixture();
     output.renew(run()).unwrap();

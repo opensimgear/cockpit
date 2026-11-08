@@ -44,6 +44,7 @@ pub struct Desktop {
     focus_boundary: Option<Counter>,
     waiting_neutral: BTreeSet<String>,
     rearm_evidence: BTreeMap<String, (Token, Vec<Observation>)>,
+    neutral_arms: BTreeMap<String, (Token, bool)>,
     shadow: Option<Phase>,
     shadow_admission: Option<osg_desktop_output::protocol::ScopeAdmission>,
     audit_shadow: u64,
@@ -85,6 +86,7 @@ impl Desktop {
             focus_boundary: None,
             waiting_neutral: BTreeSet::new(),
             rearm_evidence: BTreeMap::new(),
+            neutral_arms: BTreeMap::new(),
             shadow: None,
             shadow_admission: None,
             audit_shadow: 0,
@@ -184,6 +186,7 @@ impl Desktop {
         self.output.renew(self.run.clone())?;
         self.authorization_deadline = Some(Counter(reducer.at_us().0.saturating_add(100_000)));
         if !focused {
+            self.neutral_arms.clear();
             if self.focused {
                 self.scheduler
                     .pause("Application focus lost; pending actions and motion cancelled.");
@@ -353,6 +356,7 @@ impl Desktop {
                 }
             }
         }
+        self.prepare_neutral_arms(reducer, &tokens);
         self.scheduler.advance(reducer.at_us())?;
         self.flush(reducer.at_us().0)?;
         if let Some(error) = self.scheduler.fault() {
@@ -371,6 +375,7 @@ impl Desktop {
         self.retire_scope_watch();
         self.authorization_deadline = None;
         self.scheduler.stop();
+        self.neutral_arms.clear();
         for delivery in self.scheduler.drain() { self.audit_drop(&delivery, 3); }
         self.shadow = None;
         self.shadow_admission = None;

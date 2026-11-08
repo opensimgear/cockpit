@@ -13,6 +13,22 @@ fn install(desktop: &Desktop) {
 }
 
 #[test]
+fn initial_neutral_prepares_exact_native_owner_without_submitting_input() {
+    let (mut desktop, mut phase, _, events) = fixture(Action::KeyHold { key: Key(4) }, false);
+    let initial = desktop.output.snapshot();
+    assert!(initial.held.is_empty());
+    assert_eq!(initial.owners.len(), 1);
+    assert_eq!(initial.owners[0].action_id, "action");
+    assert!(initial.owners[0].controls.is_empty());
+    assert!(events.lock().unwrap().is_empty());
+    let pressed = frame(&mut phase, 2, 2, Reason::Change, true);
+    desktop.poll_focused(&pressed, &phase, true).unwrap();
+    let active = desktop.output.snapshot();
+    assert_eq!(active.owners[0].producer, initial.owners[0].producer);
+    assert_eq!(events.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn collapsed_loss_and_return_requires_fresh_neutral_and_does_not_replay_current_admissions() {
     let (mut desktop, mut phase, _, events) = fixture(Action::KeyHold { key: Key(4) }, false);
     install(&desktop);
@@ -24,6 +40,7 @@ fn collapsed_loss_and_return_requires_fresh_neutral_and_does_not_replay_current_
     revoke.observe(notice(3, 1, true));
     let admissions = frames.into_iter().map(Into::into).collect::<Vec<Admission>>();
     desktop.poll_scope_notice(&admissions, &phase, notice(3, 1, true)).unwrap();
+    assert!(desktop.output.snapshot().owners.iter().all(|owner| owner.controls.is_empty()));
     assert_eq!(desktop.focus_boundary, Some(Counter(2)));
     assert_eq!(desktop.status()["state"], "waiting");
     assert!(desktop.output.snapshot().held.is_empty());
@@ -35,6 +52,7 @@ fn collapsed_loss_and_return_requires_fresh_neutral_and_does_not_replay_current_
     let neutral = frame(&mut phase, 4, 4, Reason::Change, false);
     let admissions = neutral.into_iter().map(Into::into).collect::<Vec<Admission>>();
     desktop.poll_scope_notice(&admissions, &phase, notice(3, 1, true)).unwrap();
+    assert!(desktop.output.snapshot().owners.iter().any(|owner| owner.action_id == "action" && owner.controls.is_empty()));
     let pressed = frame(&mut phase, 5, 5, Reason::Change, true);
     let admissions = pressed.into_iter().map(Into::into).collect::<Vec<Admission>>();
     desktop.poll_scope_notice(&admissions, &phase, notice(3, 1, true)).unwrap();
@@ -210,7 +228,7 @@ mod native {
             output, scheduler: Scheduler::from_program(run.clone(), &program).unwrap(), run,
             scope: None, focused: false, started: false, registered: false, last_error: None,
             outcomes: VecDeque::new(), dropped_outcomes: 0, diagnostics: VecDeque::new(),
-            scope_error: None, focus_boundary: None, waiting_neutral: BTreeSet::new(),
+            scope_error: None, focus_boundary: None, waiting_neutral: BTreeSet::new(), neutral_arms: BTreeMap::new(),
             rearm_evidence: BTreeMap::new(), shadow: None, shadow_admission: None, audit_shadow: 0,
             focus_watch: Default::default(), authorization_deadline: None,
         }, phase, requests, clock)

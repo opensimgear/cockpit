@@ -38,6 +38,17 @@ fn pointer() -> Delivery {
 }
 
 #[test]
+fn idle_preparation_leaves_room_for_the_active_journal() {
+    let producer = pointer().producer;
+    let mut tokens = BTreeMap::from([("key".into(), producer.clone())]);
+    assert!(compact_owner_set(&tokens, Some(&Scope::DesktopWide)));
+    tokens.get_mut("key").unwrap().node_id = "x".repeat(4097);
+    assert!(!compact_owner_set(&tokens, Some(&Scope::DesktopWide)));
+    let many = (0..33).map(|index| (format!("key-{index}"), producer.clone())).collect();
+    assert!(!compact_owner_set(&many, Some(&Scope::DesktopWide)));
+}
+
+#[test]
 fn pointer_grouping_accepts_only_adjacent_same_tick_same_run_motion() {
     let first = pointer();
     let same = pointer();

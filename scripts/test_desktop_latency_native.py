@@ -15,6 +15,19 @@ spec.loader.exec_module(workload)
 
 
 class NativeWorkloadContractTests(unittest.TestCase):
+    def test_neutral_owner_check_distinguishes_renewal_from_an_inflight_input(self):
+        owners = [{"actionId": action, "controls": []}
+            for action in ("key-a", "key-b", "pointer-a", "pointer-b")]
+        backend = {"inFlight": None, "owners": owners}
+        runtime = {"state": "active", "waitingNeutral": [], "dispatchPending": True, "backend": backend}
+        with patch.object(workload.native, "desktop_status", return_value={"runtime": runtime}):
+            self.assertEqual(workload.neutral_owners(object()), owners)
+            backend["inFlight"] = {"sequence": "7"}
+            self.assertIsNone(workload.neutral_owners(object()))
+            backend["inFlight"] = None
+            owners[0]["controls"] = [{"kind": "key", "key": 4}]
+            self.assertIsNone(workload.neutral_owners(object()))
+
     def test_partial_failure_retains_confirmed_receiver_injection_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receiver.json"

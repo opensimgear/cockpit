@@ -28,18 +28,12 @@ fn actual_desktop_poll_keeps_reducing_inputs_and_revokes_a_blocked_destination()
         worker: Worker::new(Recording { focused, events: events.clone() }), entered: Some(entered), resume: release,
     }), clock), Arc::new(move || { let _ = wake.try_send(()); }), BTreeMap::new()).unwrap();
     desktop.start_focused(&phase, true).unwrap();
-    // Complete any initial neutral cleanup before admitting the press.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while desktop.output.busy() {
-        desktop.poll_focused(&[], &phase, true).unwrap();
-        assert!(Instant::now() < deadline);
-        std::thread::yield_now();
-    }
+    arrival.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(events.lock().unwrap().is_empty(), "Neutral preparation submitted native input");
     let frames = frame(&mut phase, 2, 2, Reason::Change, true);
     let before = Instant::now();
     desktop.poll_focused(&frames, &phase, true).unwrap();
     assert!(before.elapsed() < Duration::from_millis(100), "Profile input waited for destination IPC");
-    arrival.recv_timeout(Duration::from_secs(1)).unwrap();
     // The same canonical reducer and desktop poll continue before releasing IPC.
     let frames = frame(&mut phase, 3, 3, Reason::Change, false);
     desktop.poll_focused(&frames, &phase, true).unwrap();
