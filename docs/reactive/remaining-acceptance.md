@@ -38,6 +38,11 @@ owner, and reopened on a stopped runtime after an independent Stop on
 Overview. Both transports observed the exact progress outcomes and expiry
 without status refreshes. The full nested-surface matrix remains open.
 
+[Automatic selection on reopen](../verification/2026-11-08-profile-automatic-reopen.md)
+verifies that both transports show the selected profile after background
+activation, retain the correct owner after game exit, follow a second automatic
+selection, and reopen on the stopped state after an independent Stop.
+
 [Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
 retire their readers while the document is hidden. Devices reopens on
 current desktop, driver, inventory and visibility baselines on native and
