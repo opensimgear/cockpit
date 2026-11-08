@@ -1,59 +1,30 @@
-// Opt-in, IPC-only acceptance in the running native dev Cockpit. These authored
-// SDK-layout publishers qualify acquisition/routing/inspection, not real games
-// or physical outputs. The test never navigates the UI or restarts Cockpit.
+// Opt-in acceptance in the running native dev Cockpit. The authored SDK-layout
+// publishers exercise acquisition, routing and inspection without a real game.
+// The denial scenario also checks the visible process-monitor action.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {access,mkdir,readFile,writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {access,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
+import {resolve,sep} from 'node:path';
+import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {verifyScopedTelemetryDenial} from './scoped-telemetry-permission.mjs';
 
 const enabled=process.env.OSG_ASSETTO_TELEMETRY_NATIVE==='1';
+const denied=process.env.OSG_TELEMETRY_PERMISSION_DENIED==='1';
 const execute=promisify(execFile),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const specs=[['assetto-corsa','Assetto Corsa','acs.exe'],['assetto-corsa-competizione','Assetto Corsa Competizione','AC2-Win64-Shipping.exe'],['assetto-corsa-evo','Assetto Corsa EVO','AssettoCorsaEVO.exe']];
+const permissionSpecs=[...specs,['assetto-corsa-rally','Assetto Corsa Rally','acr.exe']];
 const near=(actual,expected)=>typeof expected==='number'?typeof actual==='number'&&Math.abs(actual-expected)<=1e-5*Math.max(1,Math.abs(expected)):actual===expected;
+const normalized=value=>value.replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
 
-async function connectNative(){
-  const deadline=Date.now()+40000;let endpoint=process.env.OSG_NATIVE_PAGE_WS;
-  while(!endpoint){
-    try{
-      const response=await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224'}/json/list`,{signal:AbortSignal.timeout(5000)});
-      endpoint=(await response.json()).find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url)&&!target.url.includes('profile-activation-window'))?.webSocketDebuggerUrl;
-    }catch(error){if(Date.now()>=deadline)throw error;}
-    if(!endpoint){assert.ok(Date.now()<deadline,'A running native development Cockpit WebView is required.');await sleep(500);}
-  }
-  const socket=new WebSocket(endpoint),pending=new Map();let sequence=0;
-  await new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>{socket.close();reject(Error('Native page connection timed out.'));},8000);
-    socket.addEventListener('open',()=>{clearTimeout(timer);resolve();},{once:true});
-    socket.addEventListener('error',()=>{clearTimeout(timer);reject(Error('Native page connection failed.'));},{once:true});
-  });
-  socket.addEventListener('message',event=>{
-    const message=JSON.parse(event.data),operation=pending.get(message.id);if(!operation)return;
-    clearTimeout(operation.timer);pending.delete(message.id);
-    if(message.error)operation.reject(Error(message.error.message));else operation.resolve(message.result);
-  });
-  socket.addEventListener('close',()=>{
-    for(const operation of pending.values()){clearTimeout(operation.timer);operation.reject(Error('Native page connection closed.'));}pending.clear();
-  });
-  return{
-    async evaluate(expression){
-      const result=await new Promise((resolve,reject)=>{
-        const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(Error('Native Runtime.evaluate timed out.'));},120000);
-        pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));
-      });
-      if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description??result.exceptionDetails.text);
-      return result.result.value;
-    },
-    close(){socket.close();},
-  };
-}
-
-test('expanded Assetto physics and canonical channels reach native processing and independent passive inspection',{skip:!enabled,timeout:300000},async t=>{
+test(denied?'Assetto discovery fallback preserves the scoped telemetry permission gate':'expanded Assetto physics and canonical channels reach native processing and independent passive inspection',{skip:!enabled,timeout:300000},async t=>{
   assert.equal(process.platform,'win32');
-  const connection=await connectNative();t.after(()=>connection.close());
+  const connection=await nativePage(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224',process.env.OSG_NATIVE_PAGE_WS);
+  t.after(()=>connection.close());
+  await until(()=>connection.evaluate("typeof window.__TAURI_INTERNALS__?.invoke==='function'"),Boolean,60000);
   const directory=resolve('.research/assetto-telemetry-native',String(Date.now()));await mkdir(directory,{recursive:true});
-  const evidence={actualNativeCockpit:true,authoredNativePublishers:true,ipcOnly:true,noPhysicalOutputs:true,observedAt:new Date().toISOString(),games:[],checks:[]};
+  const evidence={actualNativeCockpit:true,authoredNativePublishers:true,ipcOnly:!denied,permissionDenial:denied,noPhysicalOutputs:true,observedAt:new Date().toISOString(),games:[],checks:[]};
   const native=async request=>{
     await writeFile(resolve(directory,'last-request.json'),JSON.stringify({command:request.command,gameId:request.gameId,resourceId:request.resourceId,offset:request.offset,at:new Date().toISOString()})+'\n');
     const response=await connection.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...request,clientId:'expanded-assetto-native-acceptance'})}})`);
@@ -76,13 +47,12 @@ test('expanded Assetto physics and canonical channels reach native processing an
     while(rows.length<total){const result=(await native({command:'profile_resources_inspect',resourceId,offset:rows.length,limit:128})).profileResources;total=result.total;assert.ok(result.ports.length||rows.length===total);rows.push(...result.ports);}
     assert.equal(rows.length,total);return rows;
   };
-  const initial=await games();
-  evidence.originalManualInstallations=initial.manualInstallations??{};
+  const initial=await games(),initialProfiles=(await native({command:'profile_status'})).profiles;
   assert.ok(!initial.detectedGames?.some(game=>game.gameId.startsWith('assetto-corsa')),'Close real Assetto games before starting private fixture publishers.');
   await native({command:'profile_selection_mode',mode:'manual'});await native({command:'profile_stop'});
 
   try{
-    for(const [gameId,name,basename] of specs){
+    for(const [gameId,name,basename] of denied ? permissionSpecs : specs){
       const working=resolve(directory,gameId);await mkdir(working,{recursive:true});
       if(gameId==='assetto-corsa'){
         const car=resolve(working,'content/cars/osg_expanded_car');await mkdir(resolve(car,'ui'),{recursive:true});await mkdir(resolve(car,'skins/default'),{recursive:true});
@@ -90,11 +60,12 @@ test('expanded Assetto physics and canonical channels reach native processing an
       }
       const executable=resolve(working,basename),stop=resolve(working,'stop');
       await execute('C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',['/nologo','/target:winexe',`/out:${executable}`,resolve('scripts/fixtures/assetto-telemetry/ExpandedProgram.cs')],{windowsHide:true});
-      const previous=(await games()).manualInstallations?.[gameId]??null;
-      const record={gameId,name,layout:gameId==='assetto-corsa'?{physics:580,graphics:296,static:684}:gameId==='assetto-corsa-competizione'?{physics:800,graphics:1588,static:820}:{physics:800,graphics:3940,static:208},phases:{}};evidence.games.push(record);
-      record.previousExecutable=previous;
+      const previous=(await games()).catalogue.find(game=>game.id===gameId);
+      const layout=gameId==='assetto-corsa-evo'?{physics:800,graphics:3940,static:208}:gameId==='assetto-corsa-competizione'?{physics:800,graphics:1588,static:820}:{physics:580,graphics:296,static:684};
+      const record={gameId,name,layout,phases:{}};evidence.games.push(record);
+      record.previousInstallation=previous?.selectedInstallationId;
       const checkpoint=async phase=>{record.lastPhase=phase;console.log(`${name}: ${phase}`);await writeFile(resolve(directory,'progress.json'),JSON.stringify(evidence,null,2)+'\n');};
-      let child,exited,profile,failed=false;
+      let child,exited,profile,installation,failed=false;
       async function stopFixture(){if(!child)return;const owned=child;await writeFile(stop,'stop');const timer=setTimeout(()=>owned.kill(),5000);try{await exited;}finally{clearTimeout(timer);child=null;}}
       const mode=async value=>{await writeFile(stop+'.mode',value);await wait(()=>readFile(stop+'.ack','utf8').then(actual=>actual===value,()=>false),`${name} publisher did not acknowledge ${value}`);};
       const profileSamples=async()=>{
@@ -112,13 +83,23 @@ test('expanded Assetto physics and canonical channels reach native processing an
         return snapshot&&Object.keys(expected).every(id=>snapshot.ports.some(port=>port.endpoint.nodeId===`value-${id}`&&port.endpoint.portId==='out'&&port.sample.status!=='known'))&&snapshot;
       },`${name} ${label} retained known processing values`);
       try{
-        await native({command:'game_installation',gameId,executable});
+        const registered=(await native({command:'game_add',name:previous?.name??name,installPath:working,executable})).games;
+        assert.equal(registered.addedGameId,gameId);
+        installation=registered.catalogue.find(game=>game.id===gameId)?.installations.find(item=>normalized(item.installPath)===normalized(working));
+        assert.ok(installation,`${gameId}: private installation registration`);
+        await native({command:'game_installation_select',gameId,installationId:installation.id});
         child=spawn(executable,[gameId,stop],{windowsHide:true,stdio:'ignore'});
         exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
         await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
         await wait(async()=>{if(child.exitCode!==null||child.signalCode!==null)throw Error(await readFile(stop+'.error','utf8').catch(()=>`Publisher exited ${child.exitCode}`));return access(stop+'.ready').then(()=>true,()=>false);},`${name} publisher never initialized`);
         await native({command:'game_integration_setup',gameId,connection:{freshnessMs:500}});
         const ready=await wait(async()=>{const game=(await games()).catalogue.find(game=>game.id===gameId);return game.integrationSetup?.state!=='setting-up'&&game;},`${name} setup never completed`);
+        if(denied){
+          assert.equal(ready.integrationSetup.verified,false,'Scoped permission denial must not verify shared memory');
+          record.permission=await verifyScopedTelemetryDenial({page:connection,request:native,gameId});
+          evidence.checks.push(`${name}: fallback discovered the process while scoped denial withheld telemetry and displayed Allow.`);
+          continue;
+        }
         assert.equal(ready.integrationSetup.verified,true,JSON.stringify(ready.integrationSetup));record.setup=ready.integrationSetup;
         await checkpoint('native setup verified');
         const unbound=await passive(gameId,'physics.wheelAngularSpeed.3',99.25);assert.equal(unbound.game.name,name);
@@ -189,10 +170,32 @@ test('expanded Assetto physics and canonical channels reach native processing an
         const cleanup=async(label,operation)=>{try{await operation();}catch(error){cleanupErrors.push(`${label}: ${error}`);}};
         await cleanup('stop fixture',stopFixture);
         if(profile){await cleanup('stop profile',()=>native({command:'profile_stop'}));await cleanup('delete profile',()=>native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision}));}
-        await cleanup('restore installation',()=>native({command:'game_installation',gameId,executable:previous}));
+        if(installation)await cleanup('restore installation',async()=>{
+          if(previous?.selectedInstallationId)await native({command:'game_installation_select',gameId,installationId:previous.selectedInstallationId});
+          assert.ok(working.startsWith(directory+sep));
+          assert.equal(normalized(installation.installPath),normalized(working));
+          await rm(working,{recursive:true,force:true});
+          if(!previous){
+            await native({command:'game_remove',gameId});
+            assert.ok(!(await games()).catalogue.some(game=>game.id===gameId));
+            return;
+          }
+          const scan=async paths=>{
+            await native({command:'game_discovery_start',paths});
+            return wait(async()=>{const state=(await games()).discovery;return state.status==='ready'&&state;},'Fixture removal discovery did not finish',90000);
+          };
+          await wait(async()=>(await games()).discovery?.status!=='scanning','Existing discovery did not finish',90000);
+          let discovery=await scan([]);
+          if(!discovery.libraries.some(library=>library.id==='disk'))discovery=await scan([directory]);
+          const removal=discovery.entries.find(item=>item.action==='remove'&&item.gameId===gameId&&item.installationId===installation.id);
+          assert.ok(removal,'Discovery must offer removal of exactly the private installation.');
+          await native({command:'game_discovery_apply',scanId:discovery.scanId,actions:discovery.entries.map(item=>({id:item.id,selected:item.id===removal.id}))});
+          assert.deepEqual((await games()).catalogue.find(game=>game.id===gameId)?.installations,previous.installations);
+        });
         if(cleanupErrors.length){record.cleanupErrors=cleanupErrors;if(!failed)throw Error(cleanupErrors.join('; '));}
       }
     }
     await writeFile(resolve(directory,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify({directory,checks:evidence.checks}));
   }catch(error){await writeFile(resolve(directory,'failure.json'),JSON.stringify({...evidence,error:String(error),state:await games().catch(()=>null)},null,2)+'\n');throw error;}
+  finally{await native({command:'profile_selection_mode',mode:initialProfiles.session.selectionMode});}
 });

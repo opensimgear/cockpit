@@ -1,4 +1,4 @@
-// Opt-in IPC-only acceptance in the existing native dev Cockpit. A private
+// Opt-in acceptance in the existing native dev Cockpit. A private
 // headless process and authored RREF UDP exercise production acquisition and
 // processing; this does not qualify a real simulator or any physical output.
 import test from 'node:test';
@@ -8,32 +8,16 @@ import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
+import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {verifyScopedTelemetryDenial} from './scoped-telemetry-permission.mjs';
 
 const setupOnly=process.env.OSG_XPLANE_SETUP_NATIVE==='1';
+const denied=process.env.OSG_TELEMETRY_PERMISSION_DENIED==='1';
 const enabled=setupOnly||process.env.OSG_XPLANE_TELEMETRY_NATIVE==='1',execute=promisify(execFile);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const near=(actual,expected)=>typeof actual==='number'&&Math.abs(actual-expected)<1e-5*Math.max(1,Math.abs(expected));
 const normalizedPath=value=>value.replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
 async function wait(read,label,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){const value=await read();if(value)return value;await sleep(150);}throw Error(label);}
-
-async function connect(){
-  let endpoint=process.env.OSG_NATIVE_PAGE_WS;
-  if(!endpoint){
-    const response=await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224'}/json/list`,{signal:AbortSignal.timeout(5000)});
-    endpoint=(await response.json()).find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url)&&!target.url.includes('profile-activation-window'))?.webSocketDebuggerUrl;
-  }
-  assert.ok(endpoint,'Start the actual native dev Cockpit with CDP enabled.');
-  const socket=new WebSocket(endpoint),pending=new Map();let sequence=0;
-  await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
-  socket.addEventListener('message',event=>{const message=JSON.parse(event.data),operation=pending.get(message.id);if(!operation)return;clearTimeout(operation.timer);pending.delete(message.id);message.error?operation.reject(Error(message.error.message)):operation.resolve(message.result);});
-  socket.addEventListener('close',()=>{for(const operation of pending.values()){clearTimeout(operation.timer);operation.reject(Error('Native page connection closed.'));}pending.clear();});
-  return{
-    async evaluate(expression){
-      const result=await new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(Error('Native IPC timed out.'));},90000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,returnByValue:true,awaitPromise:true}}));});
-      if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description??result.exceptionDetails.text);return result.result.value;
-    },close(){socket.close();},
-  };
-}
 
 async function publisher(version){
   const socket=createSocket('udp4'),clients=new Map(),events=[],started=performance.now();let mode='live',frozenClock=0,maxSubscriptions=0;
@@ -86,12 +70,13 @@ async function publisher(version){
   };
 }
 
-test(setupOnly?'X-Plane setup readiness survives the external inspection interval':'full installed X-Plane metadata supplies selected physics and canonical channels to native processing',{skip:!enabled,timeout:600000},async t=>{
+test(setupOnly?'X-Plane setup readiness survives the external inspection interval':denied?'X-Plane discovery fallback preserves the scoped telemetry permission gate':'full installed X-Plane metadata supplies selected physics and canonical channels to native processing',{skip:!enabled,timeout:600000},async t=>{
   assert.equal(process.platform,'win32');
   const directory=resolve('.research/xplane-telemetry-native',String(Date.now()));await mkdir(directory,{recursive:true});
-  const cdp=await connect();t.after(()=>cdp.close());
-  await wait(async()=>{try{return await cdp.evaluate("typeof window.__TAURI_INTERNALS__?.invoke==='function'");}catch{return false;}},'Native Cockpit IPC did not initialize',60000);
-  const evidence={actualNativeCockpit:true,authoredRrefPublisher:!setupOnly,actualSimulatorQualified:false,ipcOnly:true,noPhysicalOutputs:true,games:[],checks:[]};
+  const cdp=await nativePage(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224',process.env.OSG_NATIVE_PAGE_WS);
+  t.after(()=>cdp.close());
+  await until(()=>cdp.evaluate("typeof window.__TAURI_INTERNALS__?.invoke==='function'"),Boolean,60000);
+  const evidence={actualNativeCockpit:true,authoredRrefPublisher:!setupOnly,actualSimulatorQualified:false,ipcOnly:!denied,permissionDenial:denied,noPhysicalOutputs:true,games:[],checks:[]};
   const request=async value=>{
     await writeFile(resolve(directory,'last-request.json'),JSON.stringify({command:value.command,gameId:value.gameId,offset:value.offset,at:new Date().toISOString()})+'\n');
     const reply=await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'expanded-xplane-native-acceptance'})}})`);
@@ -169,6 +154,12 @@ test(setupOnly?'X-Plane setup readiness survives the external inspection interva
         }
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
         await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
+        if(denied){
+          record.permission=await verifyScopedTelemetryDenial({page:cdp,request,gameId});
+          assert.equal(telemetry.stats().requests,0,'A denied scope must not acquire RREF');
+          evidence.checks.push(`${name}: fallback discovered the process while scoped denial withheld telemetry and displayed Allow.`);
+          continue;
+        }
         await wait(async()=>{
           const observed=await gameState(),game=observed.catalogue.find(game=>game.id===gameId);
           record.processObservation={processMonitor:game.processMonitor??null,integrationContext:game.integrationContext??null,currentVehicle:game.currentVehicle??null,detectionErrors:observed.detectionErrors??[]};

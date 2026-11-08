@@ -25,7 +25,9 @@
       <button class="secondary-button" disabled={busy||disabled||!game.installed||game.processMonitoringSupported===false} onclick={()=>request('game_process_monitor_enable')}><Icon name="check" size={14}/>Allow</button>
     {/if}
     {#if error}<p class="monitor-error" role="alert">{error}</p>{/if}
-    {#if monitor?.state==='needs-permission'||monitor?.state==='failed'}<p class="monitor-help">Windows may ask for permission. Monitoring ends with the game or Cockpit.</p>{/if}
+    {#if monitor?.state==='needs-permission'||monitor?.state==='failed'}
+      <p class="monitor-help">Telemetry uses Windows process events to detect competing simulator instances. Automatic game detection can still use its one-second fallback. Allow may open a Windows permission prompt. Monitoring ends with the game or Cockpit.</p>
+    {/if}
     {#if monitor?.state==='failed'&&monitor.details}<details><summary>Details</summary><p>{monitor.details}</p></details>{/if}
   </section>
 {/if}

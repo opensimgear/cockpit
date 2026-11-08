@@ -15,7 +15,9 @@ async function setup(game=xplane(),request=async()=>{}){
 
 test('waiting and permission states render an explicit Allow action without requesting or elevating',async()=>{
   let calls=0;const {html,instrumented}=await setup(xplane({state:'needs-permission',message:'Permission is required.'}),async()=>calls++);
-  assert.match(html,/Permission is required\./);assert.match(html,/>Allow<\/button>/);assert.match(html,/Windows may ask for permission/);
+  assert.match(html,/Permission is required\./);assert.match(html,/>Allow<\/button>/);
+  assert.match(html,/detect competing simulator instances/);assert.match(html,/Automatic game detection can still use its one-second fallback/);
+  assert.match(html,/Allow may open a Windows permission prompt/);
   assert.equal(calls,0);assert.equal(JSON.stringify(instrumented.read()),JSON.stringify({busy:false,error:''}));
 });
 
