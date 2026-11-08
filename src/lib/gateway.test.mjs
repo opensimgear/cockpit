@@ -51,6 +51,33 @@ test('shared widget reads and saves bypass slow inventory and retain their own w
  assert.deepEqual(api.calls.map(call=>call.args.request.command),['ports','widget_library_get','widget_save','profile_stop','widget_library_get']);
 });
 
+test('a queued companion status read is withdrawn when its view is hidden', async () => {
+  const assignment = deferred();
+  const api = transport({ invokeResults: async (_command, request) => {
+    if (request.command === 'companion_assign') await assignment.promise;
+    return { ok: true, state };
+  }});
+  let visible = true;
+  const write = api.gatewayRequest({ command: 'companion_assign', companion: { companionId: 'panel' } });
+  await tick();
+  const read = api.gatewayRequest({ command: 'companion_status' }, () => visible);
+  visible = false;
+  assignment.resolve();
+  await write;
+  await assert.rejects(read, /cancelled before dispatch/);
+  assert.deepEqual(api.calls.map(call => call.args.request.command), ['companion_assign']);
+
+  visible = true;
+  await api.gatewayRequest({ command: 'companion_status' }, () => visible);
+  assert.equal(api.calls.at(-1).args.request.command, 'companion_status');
+
+  const browser = transport({ desktop: false });
+  const browserRead = browser.gatewayRequest({ command: 'companion_status' }, () => visible);
+  visible = false;
+  await assert.rejects(browserRead, /cancelled before dispatch/);
+  assert.deepEqual(browser.calls, []);
+});
+
 test('passive telemetry bypasses game setup and keeps profile Stop responsive',async()=>{
  const pending=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='game_scan')await pending.promise;return{ok:true,state};}});
  const scan=api.gatewayRequest({command:'game_scan'});await tick();

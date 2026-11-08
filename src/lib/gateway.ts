@@ -210,9 +210,10 @@ function publishCleanup(event:ProfileCleanupEvent){
   for(const listener of cleanupListeners){try{listener(event);}catch{/* Progress rendering never delays emergency output cleanup. */}}
 }
 
-export function gatewayRequest(request: GatewayRequest): Promise<GatewayState> {
+export function gatewayRequest(request: GatewayRequest, isCurrent?: () => boolean): Promise<GatewayState> {
   if (/^(mapping_|dcs_|integration_)/.test(request.command) || ['companion_feedback','companion_feedback_routes','companion_game_capture','controller_visibility_apply','controller_visibility_launch'].includes(request.command)) return Promise.reject(new GatewayError('This standalone route is retired. Use Profiles for authoring and activation, or retained recovery for previous ownership records.'));
   return queuedRequest(request, async () => {
+    if (isCurrent && !isCurrent()) throw new GatewayError('Gateway request was cancelled before dispatch.');
     if (isTauri()) {
       const phase=request.command==='profile_stop'?'deactivating':request.command==='profile_recover'?'recovering':undefined;
       const activationId=phase&&cleanupListeners.size?(request.activationId??crypto.randomUUID()):undefined;

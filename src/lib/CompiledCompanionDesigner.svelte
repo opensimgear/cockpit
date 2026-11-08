@@ -82,11 +82,11 @@
     else { draft = undefined; dirty = false; invalidate(); if (target.kind === 'companion') { details = true; connections?.showCompanion(target.id); } else { details = false; connections?.showMain(false); } }
   }
   let libraryLoad = Promise.resolve();
-  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}, current = () => true) {
+  async function send(command: CompanionCommand, companion: Record<string, unknown> = {}, current?: () => boolean) {
     const version = ++hostRequest;
-    const result = (await gatewayRequest({ command, companion })).companions;
+    const result = (await gatewayRequest({ command, companion }, current)).companions;
     if (!result) throw new Error('This operation requires the native Cockpit.');
-    if (!disposed && version >= appliedHostRequest && current()) {
+    if (!disposed && version >= appliedHostRequest && (!current || current())) {
       appliedHostRequest = version;
       host = { ...host, ...result };
     }

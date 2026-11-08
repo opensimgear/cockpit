@@ -85,9 +85,10 @@
   const currentStatus = (epoch: number) => !disposed && active && !document.hidden && epoch === statusEpoch;
   async function send(command: CompanionCommand, companion: Record<string, unknown> = {}, passiveEpoch?: number) {
     const version = ++requestVersion;
-    const result = (await gatewayRequest({ command, companion })).companions;
+    const current = passiveEpoch === undefined ? undefined : () => currentStatus(passiveEpoch);
+    const result = (await gatewayRequest({ command, companion }, current)).companions;
     if (!result) throw new Error('Companion pairing requires the native Cockpit app.');
-    if (!disposed && version >= appliedVersion && (passiveEpoch === undefined || currentStatus(passiveEpoch))) {
+    if (!disposed && version >= appliedVersion && (!current || current())) {
       appliedVersion=version; hostStatus = { ...hostStatus, ...result };
     }
     return result;
