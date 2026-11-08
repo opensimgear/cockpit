@@ -6,6 +6,7 @@ type Ports = Result<Vec<PortInfo>, String>;
 
 #[derive(Default)]
 pub(super) struct SerialTopology {
+    pub(super) recovery: Arc<crate::transport::notifications::recovery::PortRecovery>,
     refresh_gate: Mutex<()>,
     current: Mutex<Option<Ports>>,
     inventory_wake: Mutex<Weak<NativeWake>>,

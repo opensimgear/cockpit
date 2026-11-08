@@ -29,9 +29,9 @@ production lines.
 The rebuilt Windows dev Cockpit passed its USB metadata and input view checks
 in an isolated session. These checks verify passive inspection and rejection
 of an unknown endpoint through the running UI. Physical recovery remains in
-#199. Replacing the 50 ms exact-port scan with a shared device-notification
-wake remains open. A reported port can still need bounded open or firmware
-readback retries after arrival.
+#199. The [shared topology follow-up](2026-11-08-usb-topology-recovery.md)
+covers notification-driven missing-port recovery and the bounded retries
+for open and firmware readback after arrival.
 
 Dev executable SHA-256
 `81e7a79a431ec1f6de204c0f02d08f27833e4d9100c2ac0480a1a26f9277a104`.

@@ -1,6 +1,46 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+#[test]
+fn recovery_coverage_requires_a_native_watch_and_a_current_inventory() {
+    struct Inventory(AtomicBool);
+    impl super::super::Provider for Inventory {
+        fn ports(&self) -> Result<Vec<crate::transport::PortInfo>, String> {
+            if self.0.load(Ordering::Acquire) { Ok(vec![]) } else { Err("fixture serial scan failed".into()) }
+        }
+        fn adapter(&self, _: &str) -> Arc<dyn Adapter> { panic!("The fixture must not open a port") }
+    }
+
+    let provider = Arc::new(Inventory(AtomicBool::new(true)));
+    let manager = Arc::new(GatewayManager::with_provider(provider.clone()));
+    let recovery = &manager.serial_topology.recovery;
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    let watch = recovery.subscribe(&wake);
+    manager.workspace.start(Arc::downgrade(&manager), true).unwrap();
+    assert!(recovery.covered());
+
+    for available in [false, true] {
+        let previous = watch.observed();
+        provider.0.store(available, Ordering::Release);
+        manager.workspace.inner.ports_dirty.store(true, Ordering::Release);
+        manager.workspace.changed();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let observed = wake.observed();
+            if watch.observed() != previous && recovery.covered() == available { break; }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "workspace did not publish recovery coverage {available}");
+            wake.wait(observed, remaining);
+        }
+    }
+    let previous = watch.observed();
+    manager.shutdown();
+    assert!(!recovery.covered());
+    assert_ne!(watch.observed(), previous);
+}
+
 const ID: &str = "stm32:00112233445566778899aabb";
 fn port() -> Value { json!({"gatewayId":ID,"backend":"stm32","path":"COM1"}) }
 fn entry(state: Value) -> Entry {

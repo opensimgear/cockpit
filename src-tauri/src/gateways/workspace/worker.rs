@@ -1,6 +1,11 @@
 use super::*;
-use crate::transport::notifications::PortNotifications;
+use crate::transport::notifications::{recovery::PortRecovery, PortNotifications};
 use std::time::{Duration, Instant};
+
+struct RecoveryCoverage(Arc<PortRecovery>);
+impl Drop for RecoveryCoverage {
+    fn drop(&mut self) { self.0.report(false, false); }
+}
 
 pub(super) fn run(inner:Arc<Inner>,manager:Weak<GatewayManager>,notifications:bool){
     let mut view=publisher::View::new();
@@ -20,6 +25,8 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
     let mut source=if notifications {match PortNotifications::start(ports_wake.clone()){
         Ok(source)=>Some(source),Err(error)=>{notification_error=error;None}
     }}else{None};
+    let recovery_coverage = manager.upgrade().map(|manager| RecoveryCoverage(manager.serial_topology.recovery.clone()));
+    let mut recovery_covered = false;
     let mut seen_ports=ports_wake.observed();
     let mut entries=BTreeMap::<String,Entry>::new();
     let mut discovery_error=String::new();
@@ -30,6 +37,15 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         if inner.closed.load(Ordering::Acquire){break;}
         let Some(manager)=manager.upgrade() else{break;};
         if manager.closed.load(Ordering::Acquire){break;}
+        let source_error=source.as_ref().and_then(PortNotifications::error);
+        let notifications_healthy=source.is_some()&&source_error.is_none();
+        if let Some(error)=source_error {
+            notification_error=error;
+            if recovery_covered {
+                recovery_covered=false;
+                manager.serial_topology.recovery.report(false, false);
+            }
+        }
         let current_ports=ports_wake.observed();
         let topology_changed = current_ports != seen_ports;
         if inner.ports_dirty.swap(false,Ordering::AcqRel)
@@ -38,11 +54,13 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         {
             seen_ports=current_ports;
             discovery_error=manager.discover().err().unwrap_or_default();
+            let topology_failed = manager.serial_topology.cached().is_err();
+            recovery_covered = notifications_healthy && !topology_failed;
+            manager.serial_topology.recovery.report(recovery_covered, topology_changed);
             if topology_changed { manager.system_inventory.changed(); }
-            discovery_retry = (notifications && manager.serial_topology.cached().is_err())
+            discovery_retry = (notifications && topology_failed)
                 .then(|| Instant::now() + Duration::from_secs(2));
         }
-        if let Some(error)=source.as_ref().and_then(PortNotifications::error){notification_error=error;}
         let ports=manager.inventory.lock().unwrap_or_else(|p|p.into_inner()).clone();
         synchronize(inner,&manager,&mut entries,&ports)?;
         let (paused,completed)={let mut control=inner.control.lock().unwrap_or_else(|p|p.into_inner());
@@ -86,6 +104,7 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         }
         else{std::thread::park();}
     }
+    drop(recovery_coverage);
     if let Some(source)=source.as_mut(){source.shutdown()?;}
     Ok(())
 }

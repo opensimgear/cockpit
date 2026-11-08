@@ -164,14 +164,19 @@ impl Fleet {
         service
     }
     pub(crate) fn new(serial: SerialPorts, native: bool) -> Self {
+        Self::with_recovery(serial, native, None)
+    }
+    pub(crate) fn with_recovery(serial: SerialPorts, native: bool, recovery: Option<module_usb::RecoverySource>) -> Self {
         let activity=Arc::new(crate::output_leases::LeaseActivity::default());let services=activity.clone();
         let inventory_wake = Arc::new(osg_streams::NativeWake::default());
         let service_wake = inventory_wake.clone();
+        let cached_topology = recovery.as_ref().map(|source| source.ports.clone());
         let mut fleet=Self::with_create(
             serial,
             native,
-            Arc::new(move|| Arc::new(ModuleUsbService::with_activity(services.clone(), service_wake.clone()))),
+            Arc::new(move|| Arc::new(ModuleUsbService::with_activity(services.clone(), service_wake.clone(), recovery.clone()))),
         );
+        fleet.cached_topology=cached_topology;
         fleet.endpoint_activity=activity;
         fleet.inventory_wake=inventory_wake;
         fleet
@@ -202,6 +207,7 @@ impl Fleet {
         self.discover(self.native)?;
         Ok(self.snapshots())
     }
+    #[cfg(test)]
     pub(crate) fn use_cached_topology(&mut self, topology: SerialPorts) {
         self.cached_topology = Some(topology);
     }
@@ -745,6 +751,15 @@ impl Fleet {
         }
         let result = service.request(operation);
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if result.is_ok() && self.cached_topology.is_some() && state.slots.get(key).is_some_and(|slot| {
+            slot.owns(service) && !slot.present && slot.reconciliation == Reconciliation::PortLost
+        }) {
+            // Recovery can finish before the inventory reader consumes the
+            // topology commit that woke it. Adopt the retained rows first.
+            drop(state);
+            let _ = self.scan_for_inventory();
+            state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        }
         let topology_known = state.diagnostic.is_none();
         let Some(slot) = state.slots.get_mut(key).filter(|slot| slot.owns(service)) else {
             return result.and(Err("The USB worker retired during configuration reconciliation.".into()));

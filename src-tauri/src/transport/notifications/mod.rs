@@ -2,6 +2,7 @@
 //! workspace owner; observing this source never opens a serial endpoint.
 use std::sync::Arc;
 use osg_streams::NativeWake;
+pub(crate) mod recovery;
 mod directory;
 #[cfg(windows)]
 mod windows;

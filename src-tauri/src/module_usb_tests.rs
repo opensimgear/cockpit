@@ -7,6 +7,8 @@ mod stream_worker;
 mod metadata_worker;
 #[path = "module_usb/recovery_wait_tests.rs"]
 mod recovery_wait;
+#[path = "module_usb/recovery_topology_tests.rs"]
+mod recovery_topology;
 use std::{
     collections::VecDeque,
     io::{self, Read, Write},

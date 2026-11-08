@@ -3,16 +3,25 @@ use std::sync::mpsc;
 
 #[test]
 fn same_port_return_during_pending_config_change_keeps_original_worker() {
-    exercise_reconciliation(true);
+    exercise_reconciliation(true, false);
 }
 
 #[test]
 fn completed_reconciliation_without_a_current_endpoint_retires_the_worker() {
-    exercise_reconciliation(false);
+    exercise_reconciliation(false, false);
 }
 
-fn exercise_reconciliation(port_returns: bool) {
-    let (fleet, ports, created) = fixture(vec![port("COM8", false)], false);
+#[test]
+fn completed_reconciliation_adopts_the_committed_topology_before_the_inventory_reader() {
+    exercise_reconciliation(true, true);
+}
+
+fn exercise_reconciliation(port_returns: bool, defer_inventory: bool) {
+    let (mut fleet, ports, created) = fixture(vec![port("COM8", false)], false);
+    if defer_inventory {
+        let topology = ports.clone();
+        fleet.use_cached_topology(Arc::new(move || Ok(topology.lock().unwrap().clone())));
+    }
     let module = connect(&fleet, "COM8");
     let key = &module["key"];
     let key_text = key.as_str().unwrap();
@@ -53,10 +62,10 @@ fn exercise_reconciliation(port_returns: bool) {
 
     if port_returns {
         ports.lock().unwrap().push(port("COM8", false));
-        fleet.scan().unwrap();
+        if !defer_inventory { fleet.scan().unwrap(); }
         assert_eq!(created.lock().unwrap().len(), 1);
         let returning = &fleet.snapshots()[0];
-        assert!(returning.present);
+        assert_eq!(returning.present, !defer_inventory);
         assert!(!returning.admissible);
         assert!(returning.snapshot.route.is_none(), "a returned port cannot revive the old route");
     }

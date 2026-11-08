@@ -22,6 +22,8 @@ pub(crate) mod stream;
 mod input_binding;
 mod metadata_binding;
 mod metadata_control;
+mod recovery;
+pub(crate) use recovery::RecoverySource;
 const STALE: &str =
     "The USB module route changed; refresh the device and establish a fresh session.";
 const UNKNOWN_CONFIG: &str = "The USB configuration reply was lost. Read active and saved settings before another explicit change; the write was not repeated.";
@@ -182,6 +184,7 @@ struct Worker {
     baseline: Option<(UsbRouteToken, u32, u32)>,
     timing: Timing,
     cancel: Arc<AtomicBool>,
+    recovery: Option<RecoverySource>,
 }
 impl Worker {
     fn new(factory: Box<dyn Factory>, timing: Timing, cancel: Arc<AtomicBool>) -> Self {
@@ -189,6 +192,7 @@ impl Worker {
             factory,
             timing,
             cancel,
+            recovery: None,
             console: None,
             inputs:Arc::default(),binding:None,io_cancel:Arc::default(),
             wake:Arc::default(),metadata:Arc::default(),metadata_observed:0,config_revision:0,
@@ -523,67 +527,6 @@ impl Worker {
             }
             self.wake.wait(observed, remaining);
         }
-    }
-    fn reconcile(
-        &mut self,
-        prior: &UsbRouteToken,
-        expected: &Value,
-        saved: bool,
-        applied: bool,
-    ) -> Result<(), String> {
-        let expected_generation = prior
-            .configuration_generation
-            .checked_add(u32::from(applied))
-            .ok_or("USB configuration generation is exhausted.")?;
-        let explicit = self.explicit;
-        let eligible = if explicit {
-            candidate_for_explicit
-        } else {
-            candidate
-        };
-        self.close();
-        let deadline = Instant::now() + self.timing.reconnect;
-        self.wait(self.timing.settle)?;
-        while Instant::now() < deadline {
-            let ports: Vec<_> = self
-                .factory
-                .ports()?
-                .into_iter()
-                .filter(|port| {
-                    eligible(port)
-                        && port
-                            .serial_number
-                            .as_deref()
-                            .and_then(module_console::serial)
-                            .as_deref()
-                            == Some(&prior.serial)
-                })
-                .collect();
-            if ports.len() > 1 {
-                return Err(
-                    "USB module reconnection is ambiguous; the commit was not repeated.".into(),
-                );
-            }
-            if let Some(port) = ports.first() {
-                if self.connect(port, explicit).is_ok() {
-                    let actual_route = self.snapshot.route.as_ref().unwrap();
-                    if actual_route.module_id != prior.module_id || actual_route.boot != prior.boot
-                    {
-                        self.close();
-                        return Err("The USB module restarted or was replaced during configuration; the commit was not repeated.".into());
-                    }
-                    let actual = self.snapshot.config.as_ref().unwrap();
-                    if actual["config"] == *expected
-                        && actual["generation"].as_u64() == Some(expected_generation as u64)
-                        && (!saved || actual["generation"] == actual["savedGeneration"])
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-            self.wait(Duration::from_millis(50))?;
-        }
-        Err(UNKNOWN_CONFIG.into())
     }
     fn change(
         &mut self,
@@ -1060,13 +1003,13 @@ impl ModuleUsbService {
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
-    pub(crate) fn with_activity(activity:Arc<crate::output_leases::LeaseActivity>, inventory:Arc<osg_streams::NativeWake>)->Self{
-        Self::with_factory_activity(Box::new(NativeFactory),Timing::default(),activity,Some(inventory))
+    pub(crate) fn with_activity(activity:Arc<crate::output_leases::LeaseActivity>, inventory:Arc<osg_streams::NativeWake>, recovery: Option<RecoverySource>)->Self{
+        Self::with_factory_activity(Box::new(NativeFactory),Timing::default(),activity,Some(inventory),recovery)
     }
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
-        Self::with_factory_activity(factory,timing,Arc::default(),None)
+        Self::with_factory_activity(factory,timing,Arc::default(),None,None)
     }
-    fn with_factory_activity(factory:Box<dyn Factory>,timing:Timing,endpoint_activity:Arc<crate::output_leases::LeaseActivity>,inventory:Option<Arc<osg_streams::NativeWake>>)->Self{
+    fn with_factory_activity(factory:Box<dyn Factory>,timing:Timing,endpoint_activity:Arc<crate::output_leases::LeaseActivity>,inventory:Option<Arc<osg_streams::NativeWake>>,recovery:Option<RecoverySource>)->Self{
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -1080,7 +1023,7 @@ impl ModuleUsbService {
             .spawn(move || {
                 let mut module = Worker::new(factory, timing, cancel.clone());
                 let _=worker_wake.bind_thread(thread::current());module.wake=worker_wake.clone();
-                module.inputs=worker_inputs;module.io_cancel=worker_cancel;
+                module.inputs=worker_inputs;module.io_cancel=worker_cancel;module.recovery=recovery;
                 let publish=|module:&Worker|{
                     *cache.lock().unwrap_or_else(|p|p.into_inner())=module.snapshot.clone();
                     module.inputs.changed();

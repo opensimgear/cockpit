@@ -386,15 +386,13 @@ impl GatewayManager {
         let resource_ports = provider.clone();
         let serial_topology = Arc::new(serial_topology::SerialTopology::default());
         let usb_discovery = serial_topology.clone();
-        let mut module_usb = crate::module_usb_fleet::Fleet::new(
-            Arc::new(move || usb_discovery.refresh(resource_ports.as_ref())),
-            native,
-        );
-        if native {
+        let recovery = native.then(|| {
             let topology = serial_topology.clone();
-            module_usb.use_cached_topology(Arc::new(move || topology.cached()));
-        }
-        let module_usb = Arc::new(module_usb);
+            crate::module_usb::RecoverySource { ports: Arc::new(move || topology.cached()), events: serial_topology.recovery.clone() }
+        });
+        let module_usb = Arc::new(crate::module_usb_fleet::Fleet::with_recovery(
+            Arc::new(move || usb_discovery.refresh(resource_ports.as_ref())), native, recovery,
+        ));
         let configuration_gate = Arc::new(Mutex::new(()));
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
