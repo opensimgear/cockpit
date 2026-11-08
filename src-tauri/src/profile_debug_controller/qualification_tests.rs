@@ -5,6 +5,15 @@ use osg_profiles::{
 };
 
 #[test]
+fn qualification_duration_preserves_both_stop_edges_within_the_capture_window() {
+    assert_eq!(burst_duration(None), Ok(192));
+    assert_eq!(burst_duration(Some(4_800)), Ok(4_800));
+    for duration in [0, 176, 200, 4_816, u64::MAX] {
+        assert!(burst_duration(Some(duration)).is_err());
+    }
+}
+
+#[test]
 fn qualification_requires_explicit_enable_and_the_current_neutral_owner() {
     let manager = GatewayManager::mcp_test_manager();
     if !matches!(

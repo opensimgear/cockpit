@@ -92,7 +92,7 @@ function dualRateResults(submissions, events, receiverTickHz, receiptMs, clock, 
     const intact = expected.length === received.length && expected.every((value,i) => value === received[i]);
     const latency = intact ? edges.slice(0, -1).map((event,i) => receiptMs(event) - samples[i].at) : [];
     return {
-      ...lane, targetHz, actualHz,
+      ...lane, count:samples.length, targetHz, actualHz,
       submissionIntervalsMs:summarizeMilliseconds(intervals(submissionsMs)),
       gatewayRoundTripMs:summarizeMilliseconds(samples.map(sample => sample.roundTripMs)),
       pendingFramesPeak:Math.max(...samples.map(sample => sample.pendingFrames)),
@@ -107,4 +107,30 @@ function dualRateResults(submissions, events, receiverTickHz, receiptMs, clock, 
   });
 }
 
-export {summarizeMilliseconds,dualRateLanes,intervals,submitBrowserRate,browserGateway,dualRateResults};
+function combinedTimingMisses(timing, load) {
+  const misses = [];
+  const panels = Array.isArray(timing) ? timing : [timing];
+  for (const [index, panel] of panels.entries()) {
+    if (panel.udpToCanvasMs.p95 + panel.uncertaintyMs > 150) {
+      misses.push(`Panel ${index + 1} UDP-to-canvas p95 was ${panel.udpToCanvasMs.p95.toFixed(2)} ms with ${panel.uncertaintyMs.toFixed(2)} ms alignment uncertainty`);
+    }
+  }
+  if (!load) return misses;
+  if (load.overlapMs < 180) misses.push('Both input rates must overlap for at least 180 ms');
+  for (const panel of load.canvases) {
+    if (panel.earliestMs < load.overlapStart || panel.latestMs > load.overlapEnd) {
+      misses.push(`Panel ${panel.panel} must update its canvas during simultaneous load`);
+    }
+  }
+  for (const lane of load.lanes) {
+    if (Math.abs(lane.actualHz / lane.targetHz - 1) > .05) {
+      misses.push(`${lane.nodeId} sustained ${lane.actualHz.toFixed(2)} Hz against ${lane.targetHz} Hz`);
+    }
+    if (lane.submissionToReceiverMs.upper.p95 > 20 || lane.submissionToReceiverMs.upper.p99 > 50) {
+      misses.push(`${lane.nodeId} exceeded the software submission-to-Raw-Input budget`);
+    }
+  }
+  return misses;
+}
+
+export {summarizeMilliseconds,dualRateLanes,intervals,submitBrowserRate,browserGateway,dualRateResults,combinedTimingMisses};

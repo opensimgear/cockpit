@@ -48,3 +48,41 @@ matrix remain open in [#189](https://github.com/opensimgear/cockpit/issues/189)
 and [#198](https://github.com/opensimgear/cockpit/issues/198). Physical
 controller-to-preview and controller-to-virtual latency are in
 [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+## Extended 4.8-second run
+
+With `OSG_DCS_COMBINED_EXTENDED_RATES=1` and a rebuilt two-button
+receiver, the two input schedules overlapped for 4,800.15 ms. The
+receiver checks its event bound and capture end timestamp. Both
+panels painted during the overlap.
+
+| Target | Offers and actual rate | Dispatch / completion | Offer to Raw Input p50 / p95 / p99 | Peak pending frames / batch |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 Hz | 4,801 at 999.97 Hz | 999.87 / 999.88 Hz | 3.66 / 7.97 / 10.53 ms | 12 / 8 |
+| 125 Hz | 601 at 125.00 Hz | 125.00 / 124.98 Hz | 3.59 / 8.27 / 11.91 ms | 10 / 2 |
+
+Raw Input received all 5,402 source edges in order and both Stop
+releases. Both releases arrived 47.38 ms after Stop submission. The
+receiver remained active for another 4.52 s and the vJoy slot returned
+to free. In the same run, the panels measured UDP-to-canvas p95 of
+20.52 and 22.85 ms with 0.22 and 0.20 ms alignment uncertainty.
+
+The first extended attempt admitted both schedules but its fast MCP
+test client read only one sample and later saw an unexpected EOF. The
+fixture now drains the fast reader continuously after the first matched
+update. On rerun, it received updates during the burst, drained 896
+updates in total and received retirement. The unread reader's HTTP
+response closed. DCS withdrawal and recovery, process exit and cleanup
+passed with no timing misses or cleanup errors.
+
+The extended Windows dev binary SHA-256 is
+`116ade662033ba4423ca1ee13dba0ee7c148f150fc148d952f355f8d01994af6`.
+The receiver SHA-256 is
+`8ce5a3fb5fa814048be555d08b31682f51e75fd9050deb04983b9a4d9094d754`.
+The trace is `.research/dcs-physics-native/1794180557421/evidence.json`
+with SHA-256 `d5489804f8d9c7d0acb7db6506baf4f84a90b1167098d2c308e03d145ba3b68f`.
+The native qualification tests passed with the dev source enabled and
+disabled. LLVM measured 80.88% line and 76.00% function coverage for
+the native qualification module. Branch instrumentation was unavailable.
+The 30-minute soak uses a different input workload. Sustained dual-rate
+load and the physical latency in #199 remain open.

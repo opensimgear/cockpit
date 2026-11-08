@@ -12,7 +12,7 @@ import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
-import {createNativeRateBurst} from './dcs-native-rate-burst.mjs';
+import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
 import {nativeDcsCommands} from './dcs-native-command-fixture.mjs';
 import {runDcsSoak} from './dcs-feature-soak.mjs';
 import {installSoakPanel} from './dcs-soak-panel.mjs';
@@ -408,6 +408,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   async function stopped(stopNs) {
     await until(inventory,rows=>rows.find(row=>row.slot===slot.slot)?.status==='free');
     const raw=await report;
+    assert.ok(!raw.captureOverflow,'Raw Input capture exceeded the event bound');
     const events=raw.buttonEvents.filter(event=>event.report===slot.slot);
     assert.equal(new Set(events.map(event=>event.device)).size,1);
     assert.ok(events.every(event=>event.status===0x00110000));
@@ -470,36 +471,13 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       return stopped(stopNs);
     }
     const stopReplyMs=await observation.stop();
-    const {unreadMs,retired}=await observation.resumeSlow({allowClosed:seconds>0});
+    const {unreadMs,retired}=await observation.resumeSlow({allowClosed:seconds>0||nativeRates&&extendedNativeRates});
+    const fastUpdates=observation.fastUpdates();
     await observation.close();
     observation=undefined;
-    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:retired}};
+    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:retired,fastUpdates}};
   }
   return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close,openCommands:()=>commands?.open()};
 }
 
-export function combinedTimingMisses(timing, load) {
-  const misses = [];
-  const panels = Array.isArray(timing) ? timing : [timing];
-  for (const [index, panel] of panels.entries()) {
-    if (panel.udpToCanvasMs.p95 + panel.uncertaintyMs > 150) {
-      misses.push(`Panel ${index + 1} UDP-to-canvas p95 was ${panel.udpToCanvasMs.p95.toFixed(2)} ms with ${panel.uncertaintyMs.toFixed(2)} ms alignment uncertainty`);
-    }
-  }
-  if (!load) return misses;
-  if (load.overlapMs < 180) misses.push('Both input rates must overlap for at least 180 ms');
-  for (const panel of load.canvases) {
-    if (panel.earliestMs < load.overlapStart || panel.latestMs > load.overlapEnd) {
-      misses.push(`Panel ${panel.panel} must update its canvas during simultaneous load`);
-    }
-  }
-  for (const lane of load.lanes) {
-    if (Math.abs(lane.actualHz / lane.targetHz - 1) > .05) {
-      misses.push(`${lane.nodeId} sustained ${lane.actualHz.toFixed(2)} Hz against ${lane.targetHz} Hz`);
-    }
-    if (lane.submissionToReceiverMs.upper.p95 > 20 || lane.submissionToReceiverMs.upper.p99 > 50) {
-      misses.push(`${lane.nodeId} exceeded the software submission-to-Raw-Input budget`);
-    }
-  }
-  return misses;
-}
+export {combinedTimingMisses} from './vjoy-rate-transport.mjs';

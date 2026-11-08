@@ -104,6 +104,7 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
       : undefined;
     const fast = await subscribe();
     const retired = event => event.params?.uri === uri && sampleFrame(event)?.kind === 'loss';
+    let fastRetirement, fastUpdates = 0;
     const matches = (port, {portId, value}) => port.endpoint.portId === portId && port.sample.value?.value === value;
     async function samplePorts(expected) {
       const event = await fast.next(event => {
@@ -119,13 +120,22 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
         return sample;
       },
       samplePorts,
+      drainFast() {
+        fastRetirement = fast.next(event => {
+          if (retired(event)) return true;
+          if (event.params?.uri === uri && sampleFrame(event)) fastUpdates++;
+          return false;
+        });
+        void fastRetirement.catch(() => {});
+      },
+      fastUpdates: () => fastUpdates,
       async stop() {
         const startedAt = performance.now();
         const response = await post('tools/call', {name:'profile_stop', arguments:{operationId:randomUUID()}});
         assert.equal(response.status, 200);
         assert.equal((await response.json()).result.structuredContent.ok, true);
         const stopReplyMs = performance.now() - startedAt;
-        await fast.next(retired);
+        await (fastRetirement ?? fast.next(retired));
         return stopReplyMs;
       },
       async resumeSlow({allowClosed = false} = {}) {

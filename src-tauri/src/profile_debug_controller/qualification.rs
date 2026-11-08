@@ -16,6 +16,7 @@ use std::{
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
 const BURST_MS: u64 = 192;
+const MAX_BURST_MS: u64 = 4_800;
 const NS_PER_MS: u64 = 1_000_000;
 const MAX_ADMISSION_BATCH: usize = 8;
 const CLIENT_ID: &str = "desktop-reactive-qualification";
@@ -28,6 +29,16 @@ struct Request {
     owner: RunOwner,
     nodes: [String; 2],
     start_ns: String,
+    duration_ms: Option<u64>,
+}
+
+fn burst_duration(requested: Option<u64>) -> Result<u64, String> {
+    let duration = requested.unwrap_or(BURST_MS);
+    // Both lanes must finish pressed so the receiver can verify Stop releases.
+    if !(BURST_MS..=MAX_BURST_MS).contains(&duration) || duration % 16 != 0 {
+        return Err("Qualification duration must be a multiple of 16 ms from 192 to 4800 ms.".into());
+    }
+    Ok(duration)
 }
 
 #[derive(Serialize)]
@@ -54,6 +65,7 @@ struct Burst<'a> {
     manager: &'a GatewayManager,
     request: Request,
     clock: Clock,
+    duration: u64,
     expires: u64,
     streams: [String; 2],
     cancelled: AtomicBool,
@@ -76,7 +88,7 @@ impl Burst<'_> {
     }
 
     fn offer(&self, start: u64, lanes: [mpsc::SyncSender<Offer>; 2]) -> Result<(), String> {
-        for offset in 0..=BURST_MS {
+        for offset in 0..=self.duration {
             self.clock.wait_until(start + offset * NS_PER_MS)?;
             if self.cancelled.load(Ordering::Acquire) {
                 break;
@@ -108,7 +120,7 @@ impl Burst<'_> {
         offers: mpsc::Receiver<Offer>,
     ) -> Result<Vec<Submission>, String> {
         let result = (|| {
-            let mut submissions = Vec::with_capacity([193, 25][lane]);
+            let mut submissions = Vec::with_capacity((self.duration / [1, 8][lane] + 1) as usize);
             while let Ok(first) = offers.recv() {
                 if self.cancelled.load(Ordering::Acquire) {
                     break;
@@ -250,6 +262,7 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
     if request.command != "qualification_debug_burst" || request.nodes[0] == request.nodes[1] {
         return Err("Choose two distinct applied debug controllers.".into());
     }
+    let duration = burst_duration(request.duration_ms)?;
     for node in &request.nodes {
         let reply = manager.request(json!({
             "command":"profile_debug_controller_status", "clientId":CLIENT_ID,
@@ -285,7 +298,8 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
         manager,
         request,
         clock,
-        expires: start + 1_000 * NS_PER_MS,
+        duration,
+        expires: start + (duration + 1_000 - BURST_MS) * NS_PER_MS,
         streams: std::array::from_fn(|_| uuid::Uuid::new_v4().to_string()),
         cancelled: AtomicBool::new(false),
         attempted: std::array::from_fn(|_| AtomicU64::new(0)),

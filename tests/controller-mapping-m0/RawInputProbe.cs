@@ -50,6 +50,8 @@ class RawInputProbe {
     static List<object> vjoyButtons = new List<object>();
     static Dictionary<IntPtr,int> lastButtons = new Dictionary<IntPtr,int>();
     static bool observeSecondButton;
+    static int vjoyEventLimit = 256;
+    static bool vjoyCaptureOverflow;
     static WndProc callback = Handle;
     static long vjoyCaptureStarted;
     static uint HeaderSize { get { return (uint)(8 + IntPtr.Size * 2); } }
@@ -64,7 +66,7 @@ class RawInputProbe {
             if (DeviceInfo(device, RIDI_PREPARSEDDATA, descriptor, ref size) == uint.MaxValue) return;
             var usages = new ushort[128];
             var report = new byte[item];
-            for (uint index = 0; index < count && vjoyButtons.Count < 256; index++) {
+            for (uint index = 0; index < count; index++) {
                 Marshal.Copy(IntPtr.Add(bytes, (int)(index * item)), report, 0, report.Length);
                 uint length = (uint)usages.Length;
                 int status = HidP_GetUsages(0, 9, 0, usages, ref length, descriptor, report, item);
@@ -74,6 +76,10 @@ class RawInputProbe {
                 int buttons = (pressed ? 1 : 0) | (peerPressed ? 2 : 0);
                 int previous;
                 if (status != 0x00110000 || !lastButtons.TryGetValue(device, out previous) || previous != buttons) {
+                    if (vjoyButtons.Count == vjoyEventLimit) {
+                        vjoyCaptureOverflow = true;
+                        return;
+                    }
                     vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, peerPressed=peerPressed, status=status, receivedTicks=receivedTicks });
                     lastButtons[device] = buttons;
                 }
@@ -98,7 +104,7 @@ class RawInputProbe {
                             uint count = (uint)Marshal.ReadInt32(buffer, (int)HeaderSize + 4);
                             if (item > 0 && (ulong)item * count <= size - HeaderSize - 8) {
                                 reports[name] += (int)count;
-                                if (vjoyButtons.Count < 256 && vjoyDevices.Contains(device)) {
+                                if (!vjoyCaptureOverflow && vjoyDevices.Contains(device)) {
                                     ObserveVjoyButton(device, name, IntPtr.Add(buffer, (int)HeaderSize + 8), item, count, receivedTicks);
                                 }
                                 if (changes.Count < 256) {
@@ -166,6 +172,7 @@ class RawInputProbe {
             (args.Length == 2 && (!observeSecondButton || !int.TryParse(args[1], out captureMs)
                 || captureMs < 5000 || captureMs > 15000)))
             throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons [5000–15000 ms], or no arguments.");
+        if (args.Length == 2) vjoyEventLimit = 8192;
         var devices = new List<object>();
         uint count = 0;
         if (GetRawInputDeviceList(null, ref count, (uint)Marshal.SizeOf(typeof(Device))) == uint.MaxValue || count > 256)
@@ -240,6 +247,7 @@ class RawInputProbe {
             var serializer = new JavaScriptSerializer();
             if (observeVjoy) {
                 Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons,
+                    captureOverflow=vjoyCaptureOverflow,
                     receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString(),
                     receiverEndedTicks=Stopwatch.GetTimestamp().ToString()}));
             } else {
