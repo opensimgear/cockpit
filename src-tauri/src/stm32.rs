@@ -1246,7 +1246,12 @@ impl Gateway {
     }
 
     fn automatic_snapshot(&mut self) -> Result<(), String> {
-        let deadline = Instant::now() + self.timing.command;
+        self.automatic_snapshot_until(None)
+    }
+
+    fn automatic_snapshot_until(&mut self, operation_deadline: Option<Instant>) -> Result<(), String> {
+        let command_deadline = Instant::now() + self.timing.command;
+        let deadline = operation_deadline.map_or(command_deadline, |limit| limit.min(command_deadline));
         let previous = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() { return Err(PUBLICATION_EVIDENCE_CHANGED.into()); }
@@ -1257,13 +1262,15 @@ impl Gateway {
                 Err(error) if error == PUBLICATION_EVIDENCE_CHANGED => continue,
                 Err(error) if self.connection.is_some() => return Err(error),
                 Err(_) => {
-                    self.recover_automatic(Instant::now() + self.timing.reconnect)?;
+                    let limit = operation_deadline.unwrap_or_else(|| Instant::now() + self.timing.reconnect);
+                    self.recover_automatic(limit)?;
                     break None;
                 }
             }
         };
         if self.state["layoutPending"] == true {
-            self.observe_layout(None, previous)?;
+            let limit = operation_deadline.unwrap_or_else(|| Instant::now() + self.timing.reconnect);
+            self.observe_layout(None, previous, limit)?;
         }
         Ok(())
     }
@@ -1315,7 +1322,7 @@ impl Gateway {
                 return Err(error);
             }
         }
-        self.observe_layout(Some((action, id)), previous)
+        self.observe_layout(Some((action, id)), previous, Instant::now() + self.timing.reconnect)
     }
     fn expire_claims(&mut self, client: Option<&str>) {
         self.claims.retain(|_, claim| {
@@ -1329,6 +1336,10 @@ impl Gateway {
         });
     }
     fn config_command(&mut self, id: &str, command: &str) -> Result<(), String> {
+        self.config_command_with_timeout(id, command, self.timing.command)
+    }
+
+    fn config_command_with_timeout(&mut self, id: &str, command: &str, timeout: Duration) -> Result<(), String> {
         if !hex_identity(id, 32) {
             return Err("Module identity must be 32 hexadecimal digits.".into());
         }
@@ -1344,7 +1355,7 @@ impl Gateway {
             .ok_or("This firmware does not support runtime configuration.")?;
         self.exchange(
             &format!("config {id} {boot} {command}"),
-            self.timing.command,
+            timeout,
         )
     }
 
@@ -1783,54 +1794,10 @@ impl Gateway {
             .find(|m| m["id"] == id)
             .map(|m| m["boot"].clone())
             .ok_or("Module disappeared.")?;
+        let previous = self.current_publication();
         let result = self.config_command(id, command);
         if result.is_ok() {
-            let deadline = Instant::now()
-                + if automatic {
-                    self.timing.reconnect
-                } else {
-                    self.timing.command
-                };
-            let mut pending = self
-                .configs
-                .get(id)
-                .is_some_and(|v| v["pendingApply"] == true);
-            while pending {
-                if Instant::now() >= deadline {
-                    return Err("Module activation is still pending. Read its configuration before making another change.".into());
-                }
-                self.sleep(self.timing.poll)?;
-                if automatic {
-                    self.automatic_snapshot()?;
-                } else {
-                    self.exchange("snapshot", self.timing.command)?;
-                }
-                if !self.state["modules"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|m| m["id"] == id && m["boot"] == boot && m["online"] == true)
-                {
-                    return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
-                }
-                // Activation renews the module lease. A read started just before
-                // its new announcement can lose that route; retry only the read.
-                if let Err(error) = if automatic {
-                    self.read_active(id, Some(&boot))
-                } else {
-                    self.config_command(id, "get_active")
-                } {
-                    if error != CONFIG_ROUTE_CHANGED {
-                        return Err(error);
-                    }
-                } else {
-                    pending = self
-                        .configs
-                        .get(id)
-                        .is_some_and(|v| v["pendingApply"] == true);
-                }
-            }
-            return Ok(());
+            return self.observe_config_activation(id, &boot, automatic, previous);
         }
         if self.connection.is_some() && result.as_ref().is_err_and(|error| error != CONFIG_UNKNOWN)
         {

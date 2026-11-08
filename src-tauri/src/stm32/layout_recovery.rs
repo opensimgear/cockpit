@@ -46,7 +46,7 @@ impl Gateway {
         deadline: Instant,
         retry_delay: Duration,
     ) -> Result<bool, String> {
-        if self.role == Role::Can && self.state["configurationRouteEvents"] == true {
+        if self.has_command_route_events() {
             if let Some((feed, wake)) = self.watch_publication() {
                 if self.wait_for_publication_change(&feed, &wake, previous, deadline)?.is_some() {
                     return Ok(Instant::now() < deadline);
@@ -59,12 +59,83 @@ impl Gateway {
         Ok(Instant::now() < deadline)
     }
 
+    fn has_command_route_events(&self) -> bool {
+        self.role == Role::Can && self.state["configurationRouteEvents"] == true
+    }
+
+    pub(super) fn observe_config_activation(
+        &mut self,
+        id: &str,
+        boot: &Value,
+        automatic: bool,
+        mut previous: Option<PublicationFence>,
+    ) -> Result<(), String> {
+        const PENDING: &str = "Module activation is still pending. Read its configuration before making another change.";
+        const RESTARTED: &str = "Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.";
+        const SUPERSEDED: &str = "The gateway could not confirm the activated configuration generation. Review the module; the commit was not repeated.";
+        let deadline = Instant::now() + if automatic { self.timing.reconnect } else { self.timing.command };
+        let pending = |config: &Value| config["pendingApply"] == true;
+        let current_module = |state: &Value| state["modules"].as_array().unwrap().iter()
+            .any(|module| module["id"] == id && module["boot"] == *boot && module["online"] == true);
+        let Some(acknowledgement) = self.configs.get(id).filter(|config| pending(config)) else {
+            return Ok(());
+        };
+        let applied_generation = acknowledgement["generation"].as_u64().and_then(|generation| generation.checked_add(1));
+        loop {
+            if !self.wait_for_command_route(previous.as_ref(), deadline, self.timing.poll)? {
+                return Err(PENDING.into());
+            }
+            previous = self.current_publication();
+            if automatic {
+                self.automatic_snapshot_until(Some(deadline))?;
+            } else {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() { return Err(PENDING.into()); }
+                self.exchange("snapshot", remaining)?;
+            }
+            if !current_module(&self.state) { return Err(RESTARTED.into()); }
+            let mut confirmation = None;
+            if self.has_command_route_events() {
+                let announced = configuration_generation(&self.state, id).as_u64();
+                let Some((announced, applied)) = announced.zip(applied_generation) else { return Err(SUPERSEDED.into()); };
+                if announced < applied { continue; }
+                if announced > applied { return Err(SUPERSEDED.into()); }
+                confirmation = Some(applied);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Err(PENDING.into()); }
+            match self.config_command_with_timeout(id, "get_active", remaining.min(self.timing.command)) {
+                Ok(()) => {
+                    let config = &self.configs[id];
+                    let error = if !current_module(&self.state) {
+                        Some(RESTARTED)
+                    } else if confirmation.is_some_and(|generation| {
+                        config["view"] != "active" || config["generation"] != generation
+                            || configuration_generation(&self.state, id) != generation
+                    }) {
+                        Some(SUPERSEDED)
+                    } else { None };
+                    if let Some(error) = error {
+                        // The serial actor has not published this command's reply yet.
+                        self.configs.remove(id);
+                        self.active_configs.remove(id);
+                        return Err(error.into());
+                    }
+                    if !pending(config) { return Ok(()); }
+                }
+                Err(error) if error == CONFIG_ROUTE_CHANGED => {},
+                Err(error) if automatic && (error == CONFIG_ROUTE_NOT_READY || self.connection.is_none()) => {},
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     pub(super) fn observe_layout(
         &mut self,
         target: Option<(&str, &str)>,
         mut previous: Option<PublicationFence>,
+        deadline: Instant,
     ) -> Result<(), String> {
-        let deadline = Instant::now() + self.timing.reconnect;
         let watch = self.watch_publication();
         loop {
             if self.connection.is_none() {

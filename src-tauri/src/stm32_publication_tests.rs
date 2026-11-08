@@ -324,3 +324,6 @@ mod layout_recovery {
 mod command_route {
     include!("stm32/command_route_tests.rs");
 }
+mod config_activation {
+    include!("stm32/config_activation_tests.rs");
+}
