@@ -32,8 +32,13 @@ impl GameSources {
         }
         match self.reader.as_mut() {
             Some(Reader::Dcs {
-                network, transport, decoder, ..
-            }) => *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?)?),
+                network, transport, decoder, catalogue_guard, ..
+            }) => {
+                let catalogue = crate::dcs_profile::passive_watch::CatalogueWatch::open(catalogue_guard)?;
+                *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?)?);
+                if let Some(watch) = &catalogue { watch.set_wake(self.notification_wake().as_ref()); }
+                self.notifications.dcs_catalogue = catalogue;
+            }
             Some(Reader::Xplane {
                 connection,
                 outputs,
@@ -75,6 +80,7 @@ impl GameSources {
         Ok(())
     }
     fn validate_catalogue(&mut self, force: bool) -> Result<(), String> {
+        self.notifications.check_catalogue()?;
         if let Some(Reader::Dcs {
             catalogue_guard, ..
         }) = &mut self.reader
@@ -130,6 +136,9 @@ impl GameSources {
         if self.notifications.process_exited() {
             return self.lose(clock(), "The prepared game process exited.".into());
         }
+        if let Err(error) = self.notifications.check_catalogue() {
+            return self.lose(clock(), error);
+        }
         let wake_error = self.refresh_source_wakes(games).err();
         if baseline {
             let began = Instant::now();
@@ -177,6 +186,9 @@ impl GameSources {
                 }
                 if self.notifications.process_exited() {
                     return self.lose(now_us, "The prepared game process exited.".into());
+                }
+                if let Err(error) = self.notifications.check_catalogue() {
+                    return self.lose(now_us, error);
                 }
                 self.frames(snapshot, now_us)
             }

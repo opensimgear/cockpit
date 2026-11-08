@@ -70,7 +70,7 @@ fn metadata(game: &str) -> Observation {
         ),
     }
 }
-fn delivery(game: &str, session: &str, revision: u64) -> ProviderBatch {
+pub(crate) fn delivery(game: &str, session: &str, revision: u64) -> ProviderBatch {
     let mut item = metadata(game);
     item.attributes.remove("gameContextStatus");
     item.attributes.remove("processVerified");
@@ -96,7 +96,7 @@ fn delivery(game: &str, session: &str, revision: u64) -> ProviderBatch {
         vec![item],
     )
 }
-fn runtime() -> Runtime {
+pub(crate) fn runtime() -> Runtime {
     let runtime = Runtime::new(
         None,
         Arc::new(|_| panic!("native cached game delivery must not discover")),

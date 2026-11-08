@@ -120,8 +120,7 @@ struct NativeRun {
 struct NativeGameResume {
     game: crate::profile_session_games::GameSources,
     proof: crate::games::PreparedGame,
-    plan: ExecutionPlan,
-    batch: Option<osg_profiles::resources::ProviderBatch>,
+    delivery: Option<(osg_profiles::resources::ProviderBatch, game_publication::RefreshDelivery)>,
     previous: String,
 }
 pub(crate) struct NativeProfileHost {
@@ -472,7 +471,7 @@ impl NativeProfileHost {
             match receiver.try_recv() {
                 Ok(result)=>match result {
                     Ok(Some(mut replacement))=>{
-                        if state.game.accepts_replacement_from(&replacement.previous, &replacement.proof) {
+                        if state.game.accepts_replacement_from(&replacement.previous, &replacement.game) {
                             replacement.game.inherit_source_counters(&state.game);
                             replacement.game.set_wake(state.game.notification_wake());
                             let game_id = &replacement.proof.proof.game_id;
@@ -480,10 +479,11 @@ impl NativeProfileHost {
                                 .map(|(_, reader)| reader.to_owned()).or_else(|| state.game_predecessor.as_ref()
                                     .filter(|(game, _)| game == game_id).and_then(|(_, reader)| reader.clone()));
                             state.game_publication.cancel();
-                            if let Some(batch) = replacement.batch {
-                                state.game_publication.replace(batch, previous);
+                            if let Some((batch, refresh)) = replacement.delivery {
+                                state.game_publication.replace(batch, previous, refresh);
                             }
-                            state.game=replacement.game;state.game_preparation=Some(replacement.proof);state.delivery=Some(replacement.plan);
+                            state.game = replacement.game;
+                            state.game_preparation = Some(replacement.proof);
                         }
                     },
                     Ok(None)=>{},
@@ -511,16 +511,34 @@ impl NativeProfileHost {
                 std::thread::spawn(move||{
                     let result=(||->Result<Option<NativeGameResume>,String>{
                         let Some(proof)=games.prepare_profile_game_context(&id)? else{return Ok(None);};
-                        let mut snapshot=resources.snapshot_for_compile_with_companions(assignments,&companion_catalogues)?;
-                        snapshot.backend=backend;Self::game_capture(&mut snapshot,Some(&proof));
-                        let report=osg_profiles::compiler::compile(&document,&snapshot);
+                        // Delivery tokens are withdrawn with the old reader. Prepare routes
+                        // from metadata until the replacement publishes a verified baseline.
+                        let (mut snapshot, preparations) = resources
+                            .snapshot_for_preparation_with_companions(assignments.clone(), &companion_catalogues)?;
+                        snapshot.backend = backend.clone();
+                        Self::game_capture(&mut snapshot, Some(&proof));
+                        let report = osg_profiles::compiler::compile_for_preparation(&document, &snapshot, &preparations);
                         if report.program_hash!=program_hash||matches!(report.readiness,PlanReadiness::Invalid|PlanReadiness::Blocked){return Err("The returning game's mappings changed or are unavailable; save the profile to update them.".into());}
                         let plan=report.plan.ok_or("The returning game has no native delivery plan.")?;
                         let mut game=crate::profile_session_games::GameSources::prepare(&plan,Some(proof.clone()),resume_native_clock)?;
                         game.acquire(&games)?;
                         game.admit(&games)?;
-                        let batch = game_publication::resume_batch(&mut game, &games, resume_clock())?;
-                        Ok(Some(NativeGameResume{game,proof,plan,batch,previous}))
+                        let delivery = game_publication::resume_batch(&mut game, &games, resume_clock())?
+                            .map(|batch| {
+                                let proof = proof.clone();
+                                let refresh: game_publication::RefreshDelivery = Box::new(move |resources| {
+                                    let mut snapshot = resources.snapshot_for_compile_with_companions(assignments, &companion_catalogues)?;
+                                    snapshot.backend = backend;
+                                    Self::game_capture(&mut snapshot, Some(&proof));
+                                    let report = osg_profiles::compiler::compile(&document, &snapshot);
+                                    if report.program_hash != program_hash || matches!(report.readiness, PlanReadiness::Invalid | PlanReadiness::Blocked) {
+                                        return Err("The returning game's live delivery plan changed or became unavailable.".into());
+                                    }
+                                    report.plan.ok_or_else(|| "The returning game has no live delivery plan.".into())
+                                });
+                                (batch, refresh)
+                            });
+                        Ok(Some(NativeGameResume { game, proof, delivery, previous }))
                     })();
                     if sender.send(result).is_ok() {
                         if let Some(wake) = wake.and_then(|wake| wake.upgrade()) { wake.notify(); }
@@ -534,8 +552,9 @@ impl NativeProfileHost {
         let identity = state.game.provider_identity().map(|(game, reader)| (game.to_owned(), reader.to_owned()));
         if let Some(result) = state.game_publication.poll(identity.as_ref()) {
             match result {
-                Ok(true) => {},
-                Ok(false) => sample = sample.revoked_by(state.game.fail(clock(), "The native game inventory reader was replaced or withdrawn.".into())),
+                Ok(game_publication::Completion::Updated) => {},
+                Ok(game_publication::Completion::Replaced(plan)) => state.delivery = Some(*plan),
+                Ok(game_publication::Completion::Rejected) => sample = sample.revoked_by(state.game.fail(clock(), "The native game inventory reader was replaced or withdrawn.".into())),
                 Err(error) => sample = sample.revoked_by(state.game.fail(clock(), error)),
             }
         }

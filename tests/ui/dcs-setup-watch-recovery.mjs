@@ -3,6 +3,26 @@ import {readFile, rename, unlink, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 
+export async function verifyActiveDcsCatalogue({biosTarget, live, status, withdrawn, until}) {
+  const before = (await status()).profileSession;
+  if (process.env.OSG_ACTIVE_DCS_CATALOGUE_WATCH !== '1') return before;
+  const file = resolve(biosTarget, 'doc/json/AircraftAliases.json');
+  const original = await readFile(file);
+  assert.ok(before.owner);
+  try {
+    await writeFile(file, '{');
+    await until(withdrawn, 'The edited DCS catalogue retained active telemetry');
+    assert.deepEqual((await status()).profileSession.owner, before.owner, 'Catalogue invalidation must retain the applied owner');
+  } finally {
+    await writeFile(file, original);
+  }
+  await live();
+  const recovered = (await status()).profileSession;
+  assert.deepEqual(recovered.owner, before.owner, 'A fresh catalogue baseline must retain the applied owner');
+  console.log('DCS physics: active catalogue edit withdrew values and recovered under the same owner');
+  return recovered;
+}
+
 export async function verifyDcsSetupWatchRecovery(game, until, userFolder, biosTarget) {
   if (process.env.OSG_DCS_VEHICLE_CATALOGUE_WAKE === '1') await verifyDcsAliasCatalogue(game, until, biosTarget);
   if (process.env.OSG_DCS_SETUP_WATCH_RECOVERY !== '1') return;

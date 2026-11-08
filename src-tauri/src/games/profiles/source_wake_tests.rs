@@ -31,6 +31,36 @@ fn changing_the_profile_wake_keeps_exact_exit_evidence_until_stop() {
     assert!(matches!(evidence.status(&process), ExitStatus::Unavailable));
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[test]
+fn active_dcs_catalogue_change_wakes_and_withdraws_without_a_validation_result() {
+    use crate::dcs_profile::passive_watch::CatalogueWatch;
+    use osg_streams::NativeWake;
+
+    let (mut source, _, folder) = baseline_reader();
+    let games = wake_test_games(folder.path());
+    let Some(Reader::Dcs { catalogue_guard, .. }) = &source.reader else { panic!() };
+    source.notifications.dcs_catalogue = Some(CatalogueWatch::open(catalogue_guard).unwrap().unwrap());
+    let wake = Arc::new(NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    source.set_wake(Some(wake.clone()));
+    feed(&mut source, 1, true, 10_000);
+    assert!(feed(&mut source, 2, true, 20_000).fresh);
+    let observed = wake.observed();
+    std::fs::write(folder.path().join("A-10C.json"), "{}").unwrap();
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while wake.observed() == observed {
+        let remaining = deadline.checked_duration_since(Instant::now()).expect("DCS catalogue did not wake the active reader");
+        wake.wait(observed, remaining);
+    }
+
+    let loss = source.poll(&games, || 30_000);
+    assert!(loss.context_lost && !loss.fresh && !loss.frames.is_empty());
+    assert!(loss.diagnostics.iter().any(|message| message.contains("catalogue changed")));
+    assert!(source.reader.is_none());
+    assert!(source.notifications.dcs_catalogue.is_none());
+}
+
 #[test]
 fn assetto_service_needs_live_watch_and_validation_and_reverts_on_close() {
     let (mut source, _, _folder) = baseline_reader();

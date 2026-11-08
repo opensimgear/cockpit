@@ -13,7 +13,7 @@ import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
 import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
-import {verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
+import {verifyActiveDcsCatalogue, verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1', nativeCommands = process.env.OSG_DCS_COMMANDS_NATIVE === '1';
@@ -417,7 +417,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     mode = 'live'; await live(); await checkpoint('respawn requires advancing ownship baseline');
     mode = 'stopped'; evidence.phases.stopped = await withdrawn('mission stopped');
     mode = 'live'; await live();
-    evidence.phases.beforeProcessExit = (await status()).profileSession;
+    evidence.phases.beforeProcessExit = await verifyActiveDcsCatalogue({biosTarget, live, status, withdrawn: async () => { const page = await samples(); return page && Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, until});
     child.kill(); await until(() => child.exitCode !== null || child.signalCode !== null, 'Fixture process did not exit');
     evidence.phases.exit = await absent('flight.airspeed.true'); await absent(biosId);
     await until(async () => { const page = await samples(); return !page || Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, 'Process exit retained processing values');

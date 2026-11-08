@@ -889,6 +889,8 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
 
 #[path = "profile_resources_game.rs"]
 mod game_delivery;
+#[cfg(test)]
+pub(crate) use game_delivery::{test_game_delivery, test_game_runtime};
 #[path = "profile_resources/game_retention.rs"]
 mod game_retention;
 #[path = "profile_resources/authoring.rs"]

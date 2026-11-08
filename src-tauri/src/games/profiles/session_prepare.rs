@@ -12,10 +12,14 @@ impl GameSources {
                 || old.proof == game.proof && old.integration_key == game.integration_key
                     && old.aircraft_module == game.aircraft_module))
     }
-    pub(crate) fn accepts_replacement_from(&self, previous: &str, game: &PreparedGame) -> bool {
+    pub(crate) fn accepts_replacement_from(&self, previous: &str, replacement: &Self) -> bool {
         // The source may have changed while a read-only worker was validating.
         // Its captured predecessor must still be the reader being replaced.
-        self.reader_session == previous && self.accepts_replacement(game)
+        self.reader_session == previous
+            && replacement.game.as_ref().is_some_and(|game| self.accepts_replacement(game))
+            // A compile can see the right game context before inventory has
+            // restored any route. Keep retrying instead of adopting it empty.
+            && (replacement.requires_baseline() || self.sources.is_empty() && self.commands.is_empty())
     }
     pub(crate) fn inherit_source_counters(&mut self, previous: &Self) {
         for (id, source) in &mut self.sources {

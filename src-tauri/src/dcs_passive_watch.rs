@@ -1,30 +1,46 @@
-//! Exact file evidence for the passive DCS reader.
+//! Exact file notifications for DCS catalogue baselines.
 use super::{DcsCatalogueGuard, TelemetryCatalogue, SOURCE_CHANGED};
 use crate::games::ExactFileWatch;
 use osg_streams::NativeWake;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU8, Ordering},
     Arc, Mutex, Weak,
 };
 
 #[derive(Default)]
 struct State {
-    invalidated: AtomicBool,
+    invalidated: AtomicU8,
     wake: Mutex<Weak<NativeWake>>,
 }
 
-struct Watch {
+const CHANGED: u8 = 1;
+const WATCH_LOST: u8 = 2;
+
+pub(crate) struct CatalogueWatch {
     _owner: ExactFileWatch,
     state: Arc<State>,
 }
 
-impl Watch {
-    fn open(guard: &DcsCatalogueGuard) -> Result<Self, String> {
+impl CatalogueWatch {
+    pub(crate) fn open(guard: &DcsCatalogueGuard) -> Result<Option<Self>, String> {
+        let Ok(watch) = Self::register(guard) else { return Ok(None); };
+        // A previously prepared decoder needs a new baseline after the
+        // notification handles are armed. An event during that read retires it.
+        let confirmed = TelemetryCatalogue::load(&guard.path, &guard.module)?;
+        if confirmed.revision != guard.revision || confirmed.files != guard.files {
+            return Err(SOURCE_CHANGED.into());
+        }
+        watch.check()?;
+        Ok(Some(watch))
+    }
+
+    fn register(guard: &DcsCatalogueGuard) -> Result<Self, String> {
         let state = Arc::<State>::default();
         let signal = Arc::clone(&state);
-        let mut owner = ExactFileWatch::new(Arc::new(move |_| {
+        let mut owner = ExactFileWatch::new(Arc::new(move |event| {
             // File changes and lost observation both retire this baseline.
-            if !signal.invalidated.swap(true, Ordering::AcqRel) {
+            let reason = if event.is_ok() { CHANGED } else { WATCH_LOST };
+            if signal.invalidated.compare_exchange(0, reason, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                 if let Some(wake) = signal.wake.lock().unwrap_or_else(|error| error.into_inner()).upgrade() {
                     wake.notify();
                 }
@@ -35,31 +51,35 @@ impl Watch {
         Ok(Self { _owner: owner, state })
     }
 
-    fn check(&self) -> Result<(), String> {
-        if self.state.invalidated.load(Ordering::Acquire) {
-            return Err(SOURCE_CHANGED.into());
+    pub(crate) fn check(&self) -> Result<(), String> {
+        match self.state.invalidated.load(Ordering::Acquire) {
+            CHANGED => Err(SOURCE_CHANGED.into()),
+            WATCH_LOST => Err("DCS catalogue notifications were lost; prepare a new native reader.".into()),
+            _ => Ok(()),
         }
-        Ok(())
     }
+
+    pub(crate) fn set_wake(&self, wake: Option<&Arc<NativeWake>>) {
+        *self.state.wake.lock().unwrap_or_else(|error| error.into_inner()) =
+            wake.map_or_else(Weak::new, Arc::downgrade);
+        if self.state.invalidated.load(Ordering::Acquire) != 0 {
+            if let Some(wake) = wake { wake.notify(); }
+        }
+    }
+}
+
+impl Drop for CatalogueWatch {
+    fn drop(&mut self) { self.set_wake(None); }
 }
 
 pub(crate) struct PassiveCatalogueGuard {
     guard: DcsCatalogueGuard,
-    watch: Option<Watch>,
+    watch: Option<CatalogueWatch>,
 }
 
 impl PassiveCatalogueGuard {
     pub(crate) fn open(guard: DcsCatalogueGuard) -> Result<Self, String> {
-        let watch = Watch::open(&guard).ok();
-        if let Some(watch) = &watch {
-            // Confirm the already prepared decoder against a baseline read
-            // after registration. An event during that read rejects the proof.
-            let confirmed = TelemetryCatalogue::load(&guard.path, &guard.module)?;
-            if confirmed.revision != guard.revision || confirmed.files != guard.files {
-                return Err(SOURCE_CHANGED.into());
-            }
-            watch.check()?;
-        }
+        let watch = CatalogueWatch::open(&guard)?;
         Ok(Self { guard, watch })
     }
 
@@ -70,15 +90,12 @@ impl PassiveCatalogueGuard {
 
     pub(crate) fn subscribe(&self, wake: &Arc<NativeWake>) {
         if let Some(watch) = &self.watch {
-            *watch.state.wake.lock().unwrap_or_else(|error| error.into_inner()) = Arc::downgrade(wake);
-            if watch.state.invalidated.load(Ordering::Acquire) {
-                wake.notify();
-            }
+            watch.set_wake(Some(wake));
         }
     }
 
     pub(crate) fn check_watch(&self) -> Result<(), String> {
-        self.watch.as_ref().map_or(Ok(()), Watch::check)
+        self.watch.as_ref().map_or(Ok(()), CatalogueWatch::check)
     }
 
     pub(crate) fn validate(&mut self) -> Result<(), String> {

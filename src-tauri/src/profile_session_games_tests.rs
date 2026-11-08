@@ -867,8 +867,11 @@ fn unchanged_proof_recovers_only_a_lost_reader_with_a_new_advancing_baseline() {
     let prior = feed(&mut old, 2, true, 10_000);
     assert!(prior.fresh);
     let lost = old.lose(20_000, "Transient proof validation failure".into());
-    assert!(old.accepts_replacement_from(old.reader_session(), &fixture.game));
+    let empty = authored_sources(&empty_plan(), Some(fixture.game.clone())).unwrap();
+    assert!(!old.accepts_replacement_from(old.reader_session(), &empty));
+    assert!(old.needs_context(), "An unavailable plan must leave recovery pending");
     let mut replacement = authored_sources(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    assert!(old.accepts_replacement_from(old.reader_session(), &replacement));
     assert_ne!(replacement.provider_identity().unwrap().1, original_reader);
     replacement.inherit_source_counters(&old);
     assert!(!feed(&mut replacement, 3, false, 30_000).fresh);
@@ -901,15 +904,17 @@ fn unchanged_session_requires_exact_proof_and_late_predecessors_are_rejected() {
     let mut current = authored_sources(&fixture.plan, Some(next.clone())).unwrap();
     assert!(!current.accepts_replacement(&next), "Healthy readers never accept duplicate workers");
     current.lose(20_000, "Later transient failure".into());
-    assert!(!current.accepts_replacement_from(old.reader_session(), &fixture.game),
+    let prior_proof = authored_sources(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    let next_proof = authored_sources(&fixture.plan, Some(next)).unwrap();
+    assert!(!current.accepts_replacement_from(old.reader_session(), &prior_proof),
         "A late worker for the prior reader cannot replace the changed current proof");
-    assert!(current.accepts_replacement_from(current.reader_session(), &next));
+    assert!(current.accepts_replacement_from(current.reader_session(), &next_proof));
     let mut same_proof_reader = authored_sources(&fixture.plan, Some(fixture.game.clone())).unwrap();
     same_proof_reader.lose(30_000, "A later loss after recovery under the same proof".into());
     assert_ne!(same_proof_reader.reader_session(), old.reader_session());
-    assert!(!same_proof_reader.accepts_replacement_from(old.reader_session(), &fixture.game),
+    assert!(!same_proof_reader.accepts_replacement_from(old.reader_session(), &prior_proof),
         "The preparation proof may be unchanged while the exact predecessor reader has already changed");
-    assert!(same_proof_reader.accepts_replacement_from(same_proof_reader.reader_session(), &fixture.game));
+    assert!(same_proof_reader.accepts_replacement_from(same_proof_reader.reader_session(), &prior_proof));
 }
 #[test]
 fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline() {

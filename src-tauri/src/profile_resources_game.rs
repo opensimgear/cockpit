@@ -267,6 +267,8 @@ include!("games/profiles/resources_binding.rs");
 #[cfg(test)]
 #[path = "profile_resources_game_tests.rs"]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{delivery as test_game_delivery, runtime as test_game_runtime};
 
 #[cfg(test)]
 #[path = "profile_resources_game_persistence_tests.rs"]

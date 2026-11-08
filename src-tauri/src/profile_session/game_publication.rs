@@ -1,13 +1,20 @@
 //! One owned inventory writer. Live polling only queues/coalesces immutable
 //! reader batches; inventory adoption and withdrawal run off the heartbeat.
-use osg_profiles::resources::ProviderBatch;
+use osg_profiles::{compiler_models::ExecutionPlan, resources::ProviderBatch};
 use osg_streams::NativeWake;
 use std::sync::{Arc, Weak, atomic::{AtomicBool, Ordering}, mpsc};
 
 type Identity = (String, String);
+type Runtime = crate::profile_resources::Runtime;
+pub(super) type RefreshDelivery = Box<dyn FnOnce(&Runtime) -> Result<ExecutionPlan, String> + Send>;
+pub(super) enum Completion {
+    Updated,
+    Rejected,
+    Replaced(Box<ExecutionPlan>),
+}
 enum Change {
     Publish(ProviderBatch),
-    Replace { batch: ProviderBatch, previous: Option<String> },
+    Replace { batch: ProviderBatch, previous: Option<String>, refresh: RefreshDelivery },
     Withdraw(Identity),
 }
 impl Change {
@@ -25,7 +32,7 @@ struct Pending {
     publishing: bool,
     replacing: bool,
     cancelled: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<Result<bool, String>>,
+    receiver: mpsc::Receiver<Result<Completion, String>>,
 }
 #[derive(Default)]
 pub(super) struct Publication {
@@ -52,9 +59,9 @@ impl Publication {
         // Retain a cancelled pending slot until that exact worker exits.
     }
     pub(super) fn publish(&mut self, batch: ProviderBatch) { self.queued = Some(Change::Publish(batch)); }
-    pub(super) fn replace(&mut self, batch: ProviderBatch, previous: Option<String>) {
+    pub(super) fn replace(&mut self, batch: ProviderBatch, previous: Option<String>, refresh: RefreshDelivery) {
         self.cancel();
-        self.queued = Some(Change::Replace { batch, previous });
+        self.queued = Some(Change::Replace { batch, previous, refresh });
     }
     pub(super) fn claiming(&self, identity: &Identity) -> bool {
         self.queued.as_ref().is_some_and(|change| change.replacing() && change.identity() == *identity)
@@ -73,7 +80,7 @@ impl Publication {
             || self.pending.as_ref().is_some_and(|pending| pending.publishing && pending.identity == *identity
                 && !pending.cancelled.load(Ordering::Acquire))
     }
-    pub(super) fn poll(&mut self, current: Option<&Identity>) -> Option<Result<bool, String>> {
+    pub(super) fn poll(&mut self, current: Option<&Identity>) -> Option<Result<Completion, String>> {
         let pending = self.pending.as_ref()?;
         let result = match pending.receiver.try_recv() {
             Ok(result) => result,
@@ -81,24 +88,32 @@ impl Publication {
             Err(mpsc::TryRecvError::Disconnected) => Err("The native game inventory worker ended before reporting its result.".into()),
         };
         let pending = self.pending.take().unwrap();
-        if !pending.publishing && !pending.cancelled.load(Ordering::Acquire) && matches!(result, Ok(true)) {
+        if !pending.publishing && !pending.cancelled.load(Ordering::Acquire) && matches!(result, Ok(Completion::Updated)) {
             self.withdrawn = Some(pending.identity.clone());
         }
         (!pending.cancelled.load(Ordering::Acquire) && current == Some(&pending.identity)).then_some(result)
     }
-    pub(super) fn drive(&mut self, resources: Arc<crate::profile_resources::Runtime>) -> Result<(), String> {
-        self.start(move |change, cancelled| match change {
-            Change::Publish(batch) => resources.publish_current_profile_game_delivery(batch,
-                || !cancelled.load(Ordering::Acquire)),
-            Change::Replace { batch, previous } => resources.replace_profile_game_delivery(batch, previous.as_deref(),
-                || !cancelled.load(Ordering::Acquire)),
-            Change::Withdraw((game, reader)) => {
-                if cancelled.load(Ordering::Acquire) { return Ok(false); }
-                resources.withdraw_profile_game_delivery(&game, &reader).map(|_| true)
-            }
+    pub(super) fn drive(&mut self, resources: Arc<Runtime>) -> Result<(), String> {
+        self.start(move |change, cancelled| {
+            let current = || !cancelled.load(Ordering::Acquire);
+            let updated = match change {
+                Change::Publish(batch) => resources.publish_current_profile_game_delivery(batch, current)?,
+                Change::Replace { batch, previous, refresh } => {
+                    if !resources.replace_profile_game_delivery(batch, previous.as_deref(), current)? || !current() {
+                        return Ok(Completion::Rejected);
+                    }
+                    return refresh(&resources).map(|plan| Completion::Replaced(Box::new(plan)));
+                }
+                Change::Withdraw((game, reader)) => {
+                    if !current() { return Ok(Completion::Rejected); }
+                    resources.withdraw_profile_game_delivery(&game, &reader)?;
+                    true
+                }
+            };
+            Ok(if updated { Completion::Updated } else { Completion::Rejected })
         })
     }
-    fn start(&mut self, work: impl FnOnce(Change, Arc<AtomicBool>) -> Result<bool, String> + Send + 'static) -> Result<(), String> {
+    fn start(&mut self, work: impl FnOnce(Change, Arc<AtomicBool>) -> Result<Completion, String> + Send + 'static) -> Result<(), String> {
         if self.pending.is_some() { return Ok(()); }
         let Some(change) = self.queued.take() else { return Ok(()); };
         let identity = change.identity();

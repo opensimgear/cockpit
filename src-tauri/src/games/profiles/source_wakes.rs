@@ -3,6 +3,7 @@
 use super::*;
 use osg_streams::{NativeWake, NativeWatch};
 use std::sync::Arc;
+use crate::dcs_profile::passive_watch::CatalogueWatch;
 
 type BiosWatch = NativeWatch<crate::dcs_bios::decoded::Snapshot, crate::dcs_bios::decoded::Snapshot>;
 type PhysicsWatch = NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>;
@@ -12,6 +13,7 @@ type XplaneWatch = NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::Nat
 pub(super) struct SourceWakes {
     signal: Option<Arc<NativeWake>>,
     pub(super) process_exit: Option<crate::xplane::process_events::ExitWatch>,
+    pub(super) dcs_catalogue: Option<CatalogueWatch>,
     bios: Option<BiosWatch>,
     physics: Option<PhysicsWatch>,
     xplane: Option<XplaneWatch>,
@@ -22,8 +24,13 @@ impl SourceWakes {
         self.process_exit.as_ref().is_some_and(crate::xplane::process_events::ExitWatch::exited)
     }
 
+    pub(super) fn check_catalogue(&self) -> Result<(), String> {
+        self.dcs_catalogue.as_ref().map_or(Ok(()), CatalogueWatch::check)
+    }
+
     pub(super) fn clear(&mut self) {
         self.process_exit = None;
+        self.dcs_catalogue = None;
         self.clear_captures();
     }
 
@@ -48,6 +55,7 @@ impl GameSources {
         if !same {
             self.notifications.clear_captures();
             if let Some(exit) = &self.notifications.process_exit { exit.watch(signal.as_ref()); }
+            if let Some(catalogue) = &self.notifications.dcs_catalogue { catalogue.set_wake(signal.as_ref()); }
             let wake = signal.as_ref().map(Arc::downgrade);
             self.validation.set_wake(wake.clone());
             self.catalogue_validation.set_wake(wake.clone());

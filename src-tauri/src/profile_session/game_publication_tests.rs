@@ -5,7 +5,7 @@ fn batch(revision: u64) -> ProviderBatch {
     ProviderBatch { scope: "profile-game:dcs".into(), session: "reader".into(), revision,
         complete: true, observations: vec![] }
 }
-fn completion(publication: &mut Publication, identity: &Identity) -> Option<Result<bool, String>> {
+fn completion(publication: &mut Publication, identity: &Identity) -> Option<Result<Completion, String>> {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let result = publication.poll(Some(identity));
@@ -22,14 +22,14 @@ fn publication_wakes_host_after_queueing_completion() {
     let mut publication = Publication::with_wake(Some(&wake));
     publication.publish(batch(1));
     let observed = wake.observed();
-    publication.start(|_, _| Ok(true)).unwrap();
+    publication.start(|_, _| Ok(Completion::Updated)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     while wake.observed() == observed {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "Publication did not wake the host");
         wake.wait(observed, remaining);
     }
-    assert!(publication.poll(Some(&("dcs".into(), "reader".into()))).unwrap().unwrap());
+    assert!(matches!(publication.poll(Some(&("dcs".into(), "reader".into()))), Some(Ok(Completion::Updated))));
 }
 
 #[test]
@@ -42,7 +42,8 @@ fn blocked_publication_never_blocks_poll_or_spawns_more_than_one_worker() {
     publication.start(move |_, cancelled| {
         entered.send(()).unwrap();
         held.recv_timeout(Duration::from_secs(2)).unwrap();
-        Ok(!cancelled.load(Ordering::Acquire))
+        assert!(!cancelled.load(Ordering::Acquire));
+        Ok(Completion::Updated)
     }).unwrap();
     waiting.recv_timeout(Duration::from_secs(1)).unwrap();
     let began = Instant::now();
@@ -53,13 +54,13 @@ fn blocked_publication_never_blocks_poll_or_spawns_more_than_one_worker() {
     assert!(began.elapsed() < Duration::from_millis(100));
     assert!(publication.waiting(&identity));
     release.send(()).unwrap();
-    assert!(completion(&mut publication, &identity).unwrap().unwrap());
+    assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Updated))));
     publication.start(|change, _| {
         let Change::Publish(batch) = change else { panic!() };
         assert_eq!(batch.revision, 3, "Only the newest coalesced update may run next");
-        Ok(true)
+        Ok(Completion::Updated)
     }).unwrap();
-    assert!(completion(&mut publication, &identity).unwrap().unwrap());
+    assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Updated))));
     assert!(!publication.waiting(&identity));
 }
 
@@ -74,7 +75,7 @@ fn revocation_retains_blocked_worker_and_queues_exact_reader_withdrawal() {
         entered.send(()).unwrap();
         held.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(cancelled.load(Ordering::Acquire));
-        Ok(false)
+        Ok(Completion::Rejected)
     }).unwrap();
     waiting.recv_timeout(Duration::from_secs(1)).unwrap();
     publication.withdraw(identity.clone());
@@ -85,9 +86,9 @@ fn revocation_retains_blocked_worker_and_queues_exact_reader_withdrawal() {
     assert!(completion(&mut publication, &identity).is_none(), "Cancelled completion retained authority");
     publication.start(move |change, _| {
         assert!(matches!(change, Change::Withdraw(_)));
-        Ok(true)
+        Ok(Completion::Updated)
     }).unwrap();
-    assert!(completion(&mut publication, &identity).unwrap().unwrap());
+    assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Updated))));
     publication.withdraw(identity.clone());
     publication.start(|_, _| panic!("Completed reader withdrawal was repeated")).unwrap();
     assert!(publication.pending.is_none());
@@ -104,7 +105,7 @@ fn old_reader_completion_and_dropped_owner_have_no_authority() {
         entered.send(()).unwrap();
         held.recv_timeout(Duration::from_secs(2)).unwrap();
         result.send(cancelled.load(Ordering::Acquire)).unwrap();
-        Ok(true)
+        Ok(Completion::Updated)
     }).unwrap();
     waiting.recv_timeout(Duration::from_secs(1)).unwrap();
     drop(publication);
@@ -112,8 +113,34 @@ fn old_reader_completion_and_dropped_owner_have_no_authority() {
     assert!(observed.recv_timeout(Duration::from_secs(1)).unwrap());
     let mut publication = Publication::default();
     publication.publish(batch(1));
-    publication.start(|_, _| Ok(true)).unwrap();
+    publication.start(|_, _| Ok(Completion::Updated)).unwrap();
     assert!(completion(&mut publication, &("dcs".into(), "incoming-reader".into())).is_none());
+}
+
+#[test]
+fn replacement_refreshes_delivery_only_after_its_exact_reader_is_published() {
+    use crate::profile_resources::{test_game_delivery, test_game_runtime};
+
+    let resources = Arc::new(test_game_runtime());
+    resources.publish_profile_game_delivery(test_game_delivery("dcs", "reader", 1)).unwrap();
+    resources.withdraw_profile_game_delivery("dcs", "reader").unwrap();
+    let replacement = test_game_delivery("dcs", "returning", 1);
+    let identity = ("dcs".into(), replacement.session.clone());
+    let mut publication = Publication::default();
+    publication.replace(replacement.clone(), None, Box::new(|_| panic!("Rejected reader refreshed delivery")));
+    publication.drive(resources.clone()).unwrap();
+    assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Rejected))));
+
+    publication.replace(replacement, Some("reader".into()), Box::new(|resources| {
+        assert_eq!(resources.try_validate_profile_game_delivery("dcs", "returning")?, Some(()));
+        let snapshot = resources.snapshot_for_compile_with_companions(vec![], &[])?;
+        osg_profiles::compiler::compile(&osg_profiles::default_document(), &snapshot).plan
+            .ok_or_else(|| "Expected a live plan after replacement.".into())
+    }));
+    publication.drive(resources).unwrap();
+    assert!(publication.claiming(&identity));
+    assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Replaced(_)))));
+    assert!(!publication.claiming(&identity));
 }
 
 #[test]
