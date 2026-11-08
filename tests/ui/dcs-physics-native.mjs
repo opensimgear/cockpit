@@ -68,10 +68,11 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     actualBrowserCockpit: !!browserUrl, ipcOnly: !browserUrl, noPhysicalOutputs: true,
     authoredTelemetry: true, fixtureProcess: true, actualSimulatorQualified: false,
     directory, userFolder, startedAt: new Date().toISOString(), checks, cleanupErrors, phases: {}};
+  const fixtureClientId = 'dcs-physics-native';
   const request = async value => {
     const reply = browserUrl
-      ? await browserGatewayClient.request({...value, clientId: 'dcs-physics-native'})
-      : await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: 'dcs-physics-native'})}})`);
+      ? await browserGatewayClient.request({...value, clientId: fixtureClientId})
+      : await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value, clientId: fixtureClientId})}})`);
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
   const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates, seconds}) : null;
@@ -330,9 +331,10 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       nativeValues['flight.ownship.inAir'] = airborne;
       selected['flight.ownship.inAir'] = airborne;
     };
+    const submitOwnship = airborne => submitOwnshipUpdate(() => setAirborne(airborne));
     if (seconds) {
       await checkpoint('Starting the combined desktop soak');
-      evidence.phases.soak = await combined.soak({owner,directory,status,live,setAirborne});
+      evidence.phases.soak = await combined.soak({owner,directory,status,live,setAirborne,submitOwnship,fixtureClientId,biosId});
       await checkpoint('Combined desktop soak complete');
     }
     await combined?.openInspector();
@@ -340,8 +342,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
-      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner,
-        airborne => submitOwnshipUpdate(() => setAirborne(airborne)));
+      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship);
       const before = (await readers()).fast;
       const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
         setAirborne,
@@ -391,7 +392,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     const stopNs = process.hrtime.bigint();
     if (combined) Object.assign(evidence.phases.combined, await combined.stop(stopNs));
     else await request({command: 'profile_stop'});
-    const budgetMisses = [...evidence.phases.telemetryTiming.budgetMisses, ...(combined ? combinedTimingMisses(
+    const budgetMisses = [...(evidence.phases.soak?.budgetMisses ?? []), ...evidence.phases.telemetryTiming.budgetMisses, ...(combined ? combinedTimingMisses(
       evidence.phases.panelPresentation, browserUrl || nativeRates ? evidence.phases.combined : null,
     ) : [])];
     evidence.budgetMisses = budgetMisses;

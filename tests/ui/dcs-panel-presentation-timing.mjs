@@ -17,7 +17,7 @@ export async function tracePanelCanvas(page) {
   });
 }
 
-async function alignClock(page) {
+export async function alignClock(page) {
   const brackets=[];
   for(let attempt=0;attempt<16;attempt++){
     const before=Number(process.hrtime.bigint())/1e6;
@@ -28,7 +28,7 @@ async function alignClock(page) {
   return brackets.reduce((a,b)=>a.high-a.low<=b.high-b.low?a:b);
 }
 
-function summarize(values) {
+export function summarize(values) {
   const sorted=[...values].sort((a,b)=>a-b);
   const percentile=p=>sorted[Math.ceil(p*sorted.length)-1];
   return {count:values.length,p50:percentile(.5),p95:percentile(.95),p99:percentile(.99),max:sorted.at(-1)};

@@ -181,7 +181,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
 
   async function measurePresentation(owner,submitOwnship) {
     await Promise.all(panels.map(panel=>waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false,panel.page)));
-    if(observeMcp)observation=await mcpVjoyObservation(cdp,owner,{nodeId:outputNode,capturePhysical:false});
+    if(observeMcp&&!observation)observation=await mcpVjoyObservation(cdp,owner,{nodeId:outputNode,capturePhysical:false});
     presentation=await measurePanelPresentation(paired?panels.map(panel=>panel.page):page,submitOwnship);
     return presentation;
   }
@@ -199,7 +199,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   }
 
   async function soak(options) {
-    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,nodeId:outputNode,...options});
+    const openMcp=async()=>observation=await mcpVjoyObservation(cdp,options.owner,{nodeId:outputNode,
+      capturePhysical:false,streamTimeoutMs:seconds*1000+120000});
+    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,openMcp,nodeId:outputNode,...options});
     await Promise.all(panels.map(({page})=>page.evaluate(()=>{
       const baseline=window.__combinedLamp.findLast(sample=>sample.status==='fresh'&&sample.value===false);
       window.__combinedLamp.splice(0,window.__combinedLamp.length,...(baseline?[baseline]:[]));
@@ -278,7 +280,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
 
   async function startProbe() {
     probeStart=process.hrtime.bigint();
-    probe=spawn(probeExecutable,['--vjoy-buttons'],{windowsHide:true});
+    probe=spawn(probeExecutable,seconds?['--vjoy-buttons','15000']:['--vjoy-buttons'],{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const started=once(lines,'line'), trace=[];
     let probeError='';
@@ -411,6 +413,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
+    if(seconds)assert.ok(qpcNs(BigInt(raw.receiverEndedTicks))>stopNs,'Raw Input must keep capturing through Stop');
     if(browserUrl||nativeRates){
       const receiver=event=>Number(qpcNs(start+BigInt(event.receivedTicks))-probeStart)/1e6;
       const lanes=dualRateResults(dualSubmissions,events,raw.receiverTickHz,receiver,{low:0,high:0},Number(stopNs-probeStart)/1e6);
@@ -443,7 +446,6 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     return {slot:slot.slot,debugTransitions:expected.length,closedPreviewTransitions:closedPreviewEdges.length,
       panelTransitions:1,stopReleaseMs,slotFree:true,...timing};
   }
-
   async function close() {
     probe?.kill();
     stopTrace?.();
@@ -462,10 +464,10 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       return stopped(stopNs);
     }
     const stopReplyMs=await observation.stop();
-    const {unreadMs}=await observation.resumeSlow();
+    const {unreadMs,retired}=await observation.resumeSlow({allowClosed:seconds>0});
     await observation.close();
     observation=undefined;
-    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:true}};
+    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:retired}};
   }
   return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close,openCommands:()=>commands?.open()};
 }

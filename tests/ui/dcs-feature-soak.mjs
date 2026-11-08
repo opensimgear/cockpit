@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
-import {mkdir} from 'node:fs/promises';
+import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {promisify} from 'node:util';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {readSoakPanel} from './dcs-soak-panel.mjs';
+import {traceSoakPresentation, traceSoakRequests} from './dcs-soak-metrics.mjs';
 
 const fullSeconds = 30 * 60;
 const mib = 1024 ** 2;
@@ -30,7 +31,7 @@ async function nativeMemory() {
   return bytes;
 }
 
-async function startReaders(cdp, owner, nodeId) {
+async function startReaders(cdp, owner, nodeId, biosId) {
   await cdp.evaluate(`(async()=>{
     const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
     const {SharedObservations}=await import('/src/lib/streams/shared.ts');
@@ -38,6 +39,7 @@ async function startReaders(cdp, owner, nodeId) {
     const transport=createNativeObservationTransport(), cancel=new AbortController();
     const observations=new SharedObservations(transport);
     const trace=window.__dcsSoakReaders={slow:0,fast:0,runtime:0,error:null,ownerError:null,
+      telemetry:[],telemetryStatus:null,
       close(){cancel.abort();observations.close();}};
     const owner=${JSON.stringify(owner)};
     const topic=await profileNodeSamplesTopic(owner,${JSON.stringify(nodeId)});
@@ -54,6 +56,20 @@ async function startReaders(cdp, owner, nodeId) {
       const sample=state.frame.payload.ports.find(port=>port.endpoint.portId==='button-1')?.sample;
       if(sample?.status==='known'){trace.fast++;trace.value=sample.value?.value;}
     });
+    const telemetryTopic=await profileNodeSamplesTopic(owner,'telemetry');
+    const ports=['flight.ownship.inAir',${JSON.stringify(biosId)}];
+    observations.subscribeReadonly(telemetryTopic,state=>{
+      if(!health(state))return;
+      const samples=ports.map(id=>{
+        const port=state.frame.payload.ports.find(row=>row.endpoint.portId===id);
+        return {id,status:port?.sample?.status??'missing',observedUs:port?.observedUs};
+      });
+      const signature=samples.map(row=>row.status).join('/');
+      if(signature===trace.telemetryStatus)return;
+      trace.telemetryStatus=signature;
+      trace.telemetry.push({at:performance.now(),samples,revision:state.frame.revision});
+      if(trace.telemetry.length>16)trace.telemetry.shift();
+    });
     observations.subscribeReadonly('profiles.runtime',state=>{
       if(!health(state))return;
       const {profileSession:session}=state.frame.payload;
@@ -61,7 +77,8 @@ async function startReaders(cdp, owner, nodeId) {
       trace.runtime++;
       if(session.state!=='running'||session.fault||!session.owner
         ||Object.entries(owner).some(([key,value])=>session.owner[key]!==value)){
-        trace.ownerError={state:session.state,fault:session.fault,owner:session.owner};
+        trace.ownerError??={state:session.state,fault:session.fault,owner:session.owner,
+          degradation:session.degradation,at:performance.now()};
       }
     });
   })()`);
@@ -69,6 +86,8 @@ async function startReaders(cdp, owner, nodeId) {
 
 const readerStatus = cdp => cdp.evaluate(`(({slow,fast,value,runtime,error,ownerError})=>
   ({slow,fast,value,runtime,error,ownerError}))(window.__dcsSoakReaders)`);
+
+const recentTelemetry = cdp => cdp.evaluate('window.__dcsSoakReaders.telemetry');
 
 async function navigate(cdp, name) {
   const selector = JSON.stringify(`nav[aria-label="Main navigation"] button[title="${name}"]`);
@@ -89,12 +108,13 @@ function checkMemory(samples) {
   }
 }
 
-export async function runDcsSoak({cdp, request, panels, owner, seconds, directory, status, live, setAirborne, sendDebug, nodeId}) {
+export async function runDcsSoak({cdp, request, panels, owner, seconds, directory, status, live,
+  setAirborne, submitOwnship, sendDebug, openMcp, nodeId, fixtureClientId, biosId}) {
   assert.equal(panels.length, 2);
   const root = resolve(directory, 'discovery-root');
   await mkdir(root);
   const evidence = {requestedSeconds:seconds, qualifiedDuration:false, scans:0, inventory:0,
-    samples:0, nav:[], memory:[], owner};
+    samples:0, mcpSamples:0, nav:[], memory:[], owner};
   const panelSnapshots = () => Promise.all(panels.map(panel => readSoakPanel(panel.page)));
   const instances = async () => {
     const {host} = (await request({command:'companion_status',companion:{}})).companions;
@@ -128,13 +148,27 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
   const baseline = await ready(false);
   evidence.instances = await instances();
   await sendDebug(owner, false);
-  await startReaders(cdp, owner, nodeId);
+  await startReaders(cdp, owner, nodeId, biosId);
+  let traffic, presentation;
   try {
     const firstReader = await until(async () => {
       const state = await readerStatus(cdp);
       assert.equal(state.error, null);
       return state.slow === 1 && state.fast > 0 && state.runtime > 0 && state;
     });
+    const mcp = await openMcp();
+    let lastMcp;
+    const readMcp = async value => {
+      const sample = await Promise.race([mcp.sample(value), delay(5000, null, {ref:false})]);
+      assert.ok(sample, `MCP sample did not report ${value} within five seconds`);
+      if (lastMcp) {
+        assert.equal(sample.generation, lastMcp.generation);
+        assert.ok(BigInt(sample.revision) > BigInt(lastMcp.revision), 'MCP revision did not advance');
+      }
+      lastMcp = sample;
+    };
+    presentation = await traceSoakPresentation(panels);
+    traffic = await traceSoakRequests(cdp, fixtureClientId);
     const start = performance.now();
     let nextActivity = 0, nextMemory = 0, round = 0, scan, value = false, lastFast = firstReader.fast;
     const views = ['Devices', 'Games', 'Debug', 'Overview'];
@@ -143,6 +177,7 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
       const finishing = elapsed >= seconds * 1000;
       if (elapsed >= nextActivity && !finishing) {
         for (const view of views) {
+          traffic.setView(view);
           await navigate(cdp, view);
           if (!evidence.nav.includes(view)) evidence.nav.push(view);
           if (view === 'Devices') {
@@ -169,9 +204,11 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
         }
       }
       value = !value;
-      setAirborne(value);
-      await sendDebug(owner, value);
+      const [submission] = await Promise.all([submitOwnship(value), sendDebug(owner, value)]);
       const rows = await ready(value);
+      presentation.record(submission, value, rows);
+      await readMcp(value);
+      evidence.mcpSamples++;
       rows.forEach((row, index) => {
         for (const key of ['nonFreshAfterFirstFresh','identityChanges','bindingGenerationAdvances',
           'bindingGenerationRegressions','sequenceRegressions','feedbackClosures','workerErrors','invalidCounters']) {
@@ -205,6 +242,15 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
       if (!finishing) await delay(Math.min(1800, Math.max(0, seconds * 1000 - (performance.now() - start))));
     }
     evidence.elapsedMs = Math.round(performance.now() - start);
+    traffic.stop();
+    evidence.gatewayRequests = traffic.counts;
+    assert.ok(evidence.gatewayRequests.fixture.profile_status >= evidence.samples,
+      'The traffic collector must capture each explicit fixture status check');
+    assert.equal(evidence.gatewayRequests.app.unparsed, undefined, 'An unparsed gateway request prevents attribution');
+    evidence.panelPresentation = await presentation.finish();
+    evidence.budgetMisses = evidence.panelPresentation.panels
+      .filter(panel => panel.udpToCanvasUpperMs.p95 > 150)
+      .map(panel => `Panel ${panel.panel} soak UDP-to-canvas upper p95 was ${panel.udpToCanvasUpperMs.p95.toFixed(2)} ms`);
     assert.ok(evidence.elapsedMs >= seconds * 1000);
     assert.ok(evidence.scans > 0 && evidence.inventory > 0);
     evidence.fastNotifications = lastFast - firstReader.fast;
@@ -224,10 +270,19 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     }
     setAirborne(false);
     await sendDebug(owner, false);
+    if (value) await readMcp(false);
     await live();
     await ready(false);
     return evidence;
+  } catch (error) {
+    const diagnostics = await Promise.allSettled([panelSnapshots(), readerStatus(cdp), recentTelemetry(cdp)]);
+    await writeFile(resolve(directory, 'soak-failure.json'), JSON.stringify({
+      ...evidence, gatewayRequests:traffic?.counts, partialPresentation:presentation?.partial(),
+      diagnostics, failure:String(error),
+    }, null, 2) + '\n');
+    throw error;
   } finally {
+    traffic?.stop();
     await cdp.evaluate('window.__dcsSoakReaders.close(); delete window.__dcsSoakReaders');
   }
 }

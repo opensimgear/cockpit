@@ -35,6 +35,7 @@ export async function installSoakPanel(page) {
       latest: null,
       latestFresh: null,
       latestPaint: null,
+      latestPaintTransition: null,
       maxSourceAgeMs: null,
     };
 
@@ -177,12 +178,14 @@ export async function installSoakPanel(page) {
           const [red, green, blue, alpha] = image.data;
           const lit = red > 240 && green < 50 && blue < 50 && alpha === 255;
           state.paintCount++;
-          state.latestPaint = {
+          const paint = {
             at: performance.now(),
             pixel: [red, green, blue, alpha],
             lit,
             value: lit,
           };
+          if (state.latestPaint?.lit !== lit) state.latestPaintTransition = paint;
+          state.latestPaint = paint;
         }
         return result;
       };
@@ -210,6 +213,7 @@ export async function readSoakPanel(page) {
       canvasCount: document.querySelectorAll('canvas').length,
       paintCount: state?.paintCount ?? 0,
       latestPaint: state?.latestPaint ?? null,
+      latestPaintTransition: state?.latestPaintTransition ?? null,
       workerCount: state?.workerCount ?? 0,
       feedbackFrames: state?.feedbackFrames ?? 0,
       freshValues: state?.freshValues ?? 0,

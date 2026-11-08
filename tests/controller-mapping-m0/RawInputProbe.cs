@@ -159,9 +159,13 @@ class RawInputProbe {
 
 
     static int Main(string[] args) {
-        observeSecondButton = args.Length == 1 && args[0] == "--vjoy-buttons";
+        observeSecondButton = args.Length > 0 && args[0] == "--vjoy-buttons";
         bool observeVjoy = observeSecondButton || (args.Length == 1 && args[0] == "--vjoy-button");
-        if (args.Length > 0 && !observeVjoy) throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons, or no arguments.");
+        int captureMs = 5000;
+        if ((args.Length > 0 && !observeVjoy) || args.Length > 2 ||
+            (args.Length == 2 && (!observeSecondButton || !int.TryParse(args[1], out captureMs)
+                || captureMs < 5000 || captureMs > 15000)))
+            throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons [5000–15000 ms], or no arguments.");
         var devices = new List<object>();
         uint count = 0;
         if (GetRawInputDeviceList(null, ref count, (uint)Marshal.SizeOf(typeof(Device))) == uint.MaxValue || count > 256)
@@ -220,12 +224,12 @@ class RawInputProbe {
                 Console.WriteLine("ready");
                 Console.Out.Flush();
             }
-            while(clock.ElapsedMilliseconds < 5000) {
+            while(clock.ElapsedMilliseconds < captureMs) {
                 Message message;
                 // Bound one drain to ensure a flood cannot keep the probe alive forever.
                 for(int i=0;i<256 && PeekMessage(out message,IntPtr.Zero,0,0,1);++i) DispatchMessage(ref message);
                 if (observeVjoy) {
-                    uint remaining = (uint)Math.Max(0, 5000 - clock.ElapsedMilliseconds);
+                    uint remaining = (uint)Math.Max(0, captureMs - clock.ElapsedMilliseconds);
                     const uint allInput = 0x04ff, inputAvailable = 4;
                     if (MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, remaining, allInput, inputAvailable) == uint.MaxValue)
                         throw new Exception("Raw Input message wait failed: " + Marshal.GetLastWin32Error());
@@ -236,7 +240,8 @@ class RawInputProbe {
             var serializer = new JavaScriptSerializer();
             if (observeVjoy) {
                 Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons,
-                    receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString()}));
+                    receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString(),
+                    receiverEndedTicks=Stopwatch.GetTimestamp().ToString()}));
             } else {
                 Console.WriteLine(serializer.Serialize(new {
                     devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,

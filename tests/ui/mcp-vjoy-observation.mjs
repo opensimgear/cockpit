@@ -7,11 +7,12 @@ function frames(response) {
   const decoder = new TextDecoder();
   let buffer = '';
   return {
-    async next(predicate) {
+    async next(predicate, allowEnd = false) {
       for (;;) {
         const newline = buffer.indexOf('\n');
         if (newline < 0) {
           const {value, done} = await reader.read();
+          if (done && allowEnd) return null;
           assert.equal(done, false, 'MCP stream ended before the expected frame');
           buffer += decoder.decode(value, {stream:true});
           continue;
@@ -28,7 +29,8 @@ function frames(response) {
   };
 }
 
-export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', capturePhysical = true} = {}) {
+export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', capturePhysical = true,
+  streamTimeoutMs = 30000} = {}) {
   const invoke = (command, args = {}) => page.evaluate(
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
   );
@@ -65,7 +67,8 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
     const version = '2026-07-28';
     const post = (method, params) => fetch(endpoint, {
       method:'POST',
-      signal:AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+      signal:AbortSignal.any([abort.signal, AbortSignal.timeout(
+        method === 'subscriptions/listen' ? streamTimeoutMs : 30000)]),
       headers:{
         Authorization:`Bearer ${credential.token}`,
         Accept:'application/json, text/event-stream',
@@ -125,11 +128,11 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
         await fast.next(retired);
         return stopReplyMs;
       },
-      async resumeSlow() {
+      async resumeSlow({allowClosed = false} = {}) {
         const captureAfter = captureBefore && (await physicalSources()).find(source => source.id === captureBefore.id);
         const unreadMs = performance.now() - slowPausedAt;
-        await slow.next(retired);
-        return {unreadMs, captureBefore, captureAfter};
+        const retirement = await slow.next(retired, allowClosed);
+        return {unreadMs, retired:Boolean(retirement), captureBefore, captureAfter};
       },
       close,
     };
