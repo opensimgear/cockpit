@@ -1,4 +1,4 @@
-import { errorMessage, parseDelivery, type DeliveryEnvelope, type ObservationTransport, type WireFrame } from './protocol.ts';
+import { errorMessage, parseDelivery, validatedDelivery, type DeliveryEnvelope, type ObservationTransport, type WireFrame } from './protocol.ts';
 import { createObservationTransport } from './transport.ts';
 
 export interface ObservationState {
@@ -79,17 +79,23 @@ export class SharedObservations {
   }
 
   private open(topic: string, entry: Entry): void {
+    const receive = (envelope: DeliveryEnvelope, acknowledge: () => Promise<void>) => {
+      if (!this.active(topic, entry)) return;
+      try { this.accept(entry, envelope); }
+      catch (error) { this.fail(topic, entry, errorMessage(error)); return; }
+      if (this.active(topic, entry)) {
+        // All cache/listener work is synchronous and precedes acknowledgment.
+        void acknowledge().catch((error) => this.fail(topic, entry, errorMessage(error)));
+      }
+    };
     try {
       this.transport.open(topic, {
         frame: (raw, acknowledge) => {
           if (!this.active(topic, entry)) return;
-          try { this.accept(entry, parseDelivery(raw, topic)); }
-          catch (error) { this.fail(topic, entry, errorMessage(error)); return; }
-          if (this.active(topic, entry)) {
-            // All cache/listener work is synchronous and precedes acknowledgment.
-            void acknowledge().catch((error) => this.fail(topic, entry, errorMessage(error)));
-          }
+          try { receive(parseDelivery(raw, topic), acknowledge); }
+          catch (error) { this.fail(topic, entry, errorMessage(error)); }
         },
+        [validatedDelivery]: receive,
         error: (message) => this.fail(topic, entry, message),
       }, entry.controller.signal);
     } catch (error) { this.fail(topic, entry, errorMessage(error)); }

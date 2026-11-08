@@ -525,11 +525,17 @@ were about 80 ms median in both runs, with no skipped report sequences.
 
 The native build used the production recovery changes in `7f3beaf1`.
 Its SHA-256 was `436A8B8971E031BF6911211D37D83EE0495BF5BF754A3FC5A40DCBA555E608E3`.
-Raw logs are `.research/reactive/controller-preview-latency.json` and
-`controller-preview-latency-ipc.json` in the same directory. These figures
+The IPC raw log is `.research/reactive/controller-preview-latency-ipc.json`.
+The November 8 comparison replaced the earlier normal run's fixed-path
+raw file. These figures
 start at the journal commit and end at the Devices inspector. Profile-inspector
 axis timing during a deliberate sweep, physical display latency and physical
 input-to-virtual receipt remain in #199.
+
+The [November 8 delivery comparison](../verification/2026-11-08-preview-delivery-handoff.md)
+isolated a reduction in JavaScript processing cost for native reports. The
+reversed live run did not resolve a journal-to-DOM difference outside its
+clock bracket. Its separate trace directories preserve each comparison.
 
 ## User-operated qualification stays in #199
 

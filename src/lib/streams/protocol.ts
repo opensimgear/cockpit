@@ -38,7 +38,7 @@ function text(value: unknown, max = 256): value is string {
 }
 
 /** Validate the entire boundary before exposing any state to consumers. */
-export function parseDelivery(value: unknown, topic: string): DeliveryEnvelope {
+export function validateDelivery(value: unknown, topic: string): asserts value is DeliveryEnvelope {
   if (!record(value) || !text(value.subscriptionId) || !uint64(value.delivery) || !record(value.frame)) {
     throw new Error('Invalid observation delivery envelope');
   }
@@ -69,12 +69,23 @@ export function parseDelivery(value: unknown, topic: string): DeliveryEnvelope {
       || encoder.encode(JSON.stringify({ ...frame, payload: undefined })).length > 8192) {
     throw new Error('Observation frame exceeds byte budget');
   }
-  return structuredClone(value) as unknown as DeliveryEnvelope;
 }
 
+export function parseDelivery(value: unknown, topic: string): DeliveryEnvelope {
+  validateDelivery(value, topic);
+  return structuredClone(value);
+}
+
+/** First-party transports transfer a validated, detached delivery to the shared reader. */
+export const validatedDelivery = Symbol('validated observation delivery');
 export interface ObservationObserver {
   frame: (envelope: unknown, acknowledge: () => Promise<void>) => void;
+  [validatedDelivery]?: (envelope: DeliveryEnvelope, acknowledge: () => Promise<void>) => void;
   error: (message: string) => void;
+}
+export function deliverValidated(observer: ObservationObserver, envelope: DeliveryEnvelope, acknowledge: () => Promise<void>): void {
+  if (observer[validatedDelivery]) observer[validatedDelivery](envelope, acknowledge);
+  else observer.frame(envelope, acknowledge);
 }
 export interface ObservationTransport {
   open: (topic: string, observer: ObservationObserver, signal: AbortSignal) => void;

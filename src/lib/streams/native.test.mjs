@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNativeObservationTransport } from './native.ts';
 import { controllerChannelDecoder } from './controller-channel.ts';
+import { MAX_SNAPSHOT_BYTES } from './protocol.ts';
+import { SharedObservations } from './shared.ts';
 import { delivery, deferred, turn } from './fixtures.mjs';
 
 test('compact native controller snapshots restore exact values and require a fresh descriptor baseline after loss', () => {
@@ -43,6 +45,42 @@ test('compact snapshot expansion isolates nested descriptor fields', () => {
     payload:{source:{sequence:'2'}, cursor:'2', capturedUs:'20', controllerSamples:[[1,1]]}}, '2');
   expand(compact).frame.payload.controls[0].capability.extension.value = 'changed';
   assert.equal(expand(compact).frame.payload.controls[0].capability.extension.value, 'original');
+});
+
+test('shared native controller delivery detaches its baseline and checks the expanded snapshot budget before ACK', async () => {
+  const topic = 'controllers.input.source';
+  const acknowledgements = [];
+  let receive;
+  const shared = new SharedObservations(createNativeObservationTransport({
+    channel(callback) { receive = callback; return {}; },
+    async invoke(command, args) {
+      if (command === 'observation_subscribe') return 'token';
+      if (command === 'observation_acknowledge') acknowledgements.push(args.delivery);
+    },
+  }));
+  const states = [];
+  shared.subscribeReadonly(topic, state => states.push(state));
+  await turn();
+  const controls = Array.from({length: 100}, (_, index) => ({capability: {id: 'control-' + index}, value: null}));
+  const baseline = delivery({topic, source: 'controller-input', payload: {
+    source: {sequence: '1'}, cursor: '1', capturedUs: '10', controls, padding: '',
+  }});
+  const overhead = JSON.stringify(baseline.frame).length;
+  baseline.frame.payload.padding = 'x'.repeat(MAX_SNAPSHOT_BYTES - overhead - 128);
+  receive(baseline);
+  controls[0].capability.id = 'changed after delivery';
+  await turn();
+  assert.equal(states.at(-1).status, 'ready');
+  assert.equal(states.at(-1).frame.payload.controls[0].capability.id, 'control-0');
+
+  receive(delivery({topic, source: 'controller-input', revision: '2', payload: {
+    source: {sequence: '2'}, cursor: '2', capturedUs: '20',
+    controllerSamples: controls.map(() => [1, 1]),
+  }}, '2'));
+  assert.equal(states.at(-1).status, 'error');
+  assert.match(states.at(-1).error, /exceeds byte budget/);
+  assert.deepEqual(acknowledgements, ['1']);
+  shared.close();
 });
 
 test('native early channel delivery waits for token and ACK follows delivery', async () => {

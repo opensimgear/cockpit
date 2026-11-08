@@ -1,4 +1,4 @@
-import { errorMessage, parseDelivery, uint64, type DeliveryEnvelope, type ObservationObserver, type ObservationTransport } from './protocol.ts';
+import { deliverValidated, errorMessage, parseDelivery, uint64, type DeliveryEnvelope, type ObservationObserver, type ObservationTransport } from './protocol.ts';
 import { readObservationLines } from './browser/ndjson.ts';
 
 export interface BrowserObservationDependencies {
@@ -102,7 +102,7 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
       entry.delivery = delivery;
       entry.inFlight = true;
       let acknowledgment: Promise<void> | undefined;
-      entry.observer.frame(envelope, () => {
+      deliverValidated(entry.observer, envelope, () => {
         if (acknowledgment) return acknowledgment;
         if (!entry.active || !current.active) return Promise.resolve();
         entry.acknowledging = true;

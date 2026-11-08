@@ -1,8 +1,10 @@
 // Opt-in live measurement. Open the native Devices controller inspector first.
 // Measures journal commit -> JS/DOM/frame opportunities, not hardware or photon latency.
 // OSG_CONTROLLER_TRACE_IPC=1 also measures large WebView channel fetches.
+// OSG_CONTROLLER_TRACE_DIRECTORY can separate comparison runs.
 import {nativePage} from './cdp.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 const page=await nativePage();
 const traceIpc=process.env.OSG_CONTROLLER_TRACE_IPC==='1';
 const pending=new Map(),reads=new Set(),fetches=[];
@@ -117,9 +119,10 @@ try{
       unreadableFetches,kinds:[...new Set(fetches.map(packet=>packet.kind))]};
     result.channelFetches=fetches;
   }
-  await mkdir('.research/reactive',{recursive:true});
+  const directory=process.env.OSG_CONTROLLER_TRACE_DIRECTORY??'.research/reactive';
+  await mkdir(directory,{recursive:true});
   const artifact=traceIpc?'controller-preview-latency-ipc':'controller-preview-latency';
-  await writeFile(`.research/reactive/${artifact}.json`,JSON.stringify(result,null,2));
+  await writeFile(join(directory,`${artifact}.json`),JSON.stringify(result,null,2));
   if(result.errors.length)throw Error('Timing run invalid: '+result.errors.join('; '));
   const {samples,clocks,channelFetches,...summary}=result;
   console.log(JSON.stringify(summary,null,2));

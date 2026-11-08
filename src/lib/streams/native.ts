@@ -1,4 +1,4 @@
-import { errorMessage, parseDelivery, type ObservationTransport } from './protocol.ts';
+import { deliverValidated, errorMessage, parseDelivery, validateDelivery, type ObservationTransport } from './protocol.ts';
 import { controllerChannelDecoder } from './controller-channel.ts';
 
 export interface NativeObservationDependencies {
@@ -61,9 +61,13 @@ export function createNativeObservationTransport(dependencies?: NativeObservatio
             }
             const envelope = parseDelivery(value, topic);
             if (envelope.subscriptionId !== token) throw new Error('Observation subscription mismatch');
+            const canonical = expand ? expand(envelope) : envelope;
+            // The decoder owns its baseline and restores detached records.
+            // The expanded frame must still fit the canonical wire budgets.
+            if (canonical !== envelope) validateDelivery(canonical, topic);
             inFlight = true;
             let acknowledged = false;
-            observer.frame(expand ? expand(envelope) : envelope, async () => {
+            deliverValidated(observer, canonical, async () => {
               if (acknowledged || !active) return;
               acknowledged = true;
               acknowledging = true;
