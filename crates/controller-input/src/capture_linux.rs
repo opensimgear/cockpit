@@ -4,6 +4,7 @@ use std::{
     io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 const FAILED: i16 = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;

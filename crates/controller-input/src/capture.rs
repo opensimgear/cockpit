@@ -2,13 +2,13 @@
 #[cfg(target_os = "linux")]
 #[path = "capture_linux.rs"]
 pub(crate) mod linux;
+#[cfg(any(target_os = "macos", test))]
+#[path = "capture_macos.rs"]
+pub(crate) mod macos;
 use crate::registry::{Definition, Registry};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 pub type Shared = Arc<Mutex<Registry>>;
@@ -23,6 +23,8 @@ pub enum Event {
     RetryBaseline,
 }
 pub trait Input {
+    #[cfg(any(target_os = "macos", test))]
+    fn take_ready(&self) -> bool { false }
     #[cfg(target_os = "linux")]
     fn descriptor(&self) -> Option<std::os::fd::RawFd> { None }
     fn suppress(&mut self, _enabled: bool) -> Result<(), String> {
@@ -42,16 +44,14 @@ struct Connected {
     identity_path: String,
     source_id: String,
     needs_baseline: bool,
-    // A blocked baseline waits for this device's next report.
-    #[cfg(target_os = "linux")]
+    // A blocked baseline waits for this device's next notification.
     baseline_due: bool,
     suppression_owned: bool,
 }
 impl Connected {
     fn require_baseline(&mut self) {
         self.needs_baseline = true;
-        #[cfg(target_os = "linux")]
-        { self.baseline_due = true; }
+        self.baseline_due = true;
     }
 }
 pub struct Capture<P> {
@@ -110,7 +110,6 @@ impl<P: Platform> Capture<P> {
                         identity_path,
                         source_id,
                         needs_baseline: true,
-                        #[cfg(target_os = "linux")]
                         baseline_due: true,
                         suppression_owned: false,
                     },
@@ -127,13 +126,12 @@ impl<P: Platform> Capture<P> {
         r.set_backend_state("qualification-probe", diagnostics.join(" "));
         Ok(())
     }
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(test)]
     pub fn tick(&mut self) {
         self.tick_selected(|_| true);
     }
     fn tick_selected(&mut self, should_read: impl Fn(&Connected) -> bool) -> bool {
         self.commands();
-        let mut needs_recovery = false;
         self.devices.retain(|_, device| {
             if !should_read(device) { return true; }
             let id = {
@@ -147,16 +145,14 @@ impl<P: Platform> Capture<P> {
                 device.source_id = id.clone();
                 device.require_baseline();
             }
-            #[cfg(target_os = "linux")]
-            { device.baseline_due = false; }
-            let was_baseline = device.needs_baseline;
-            let result = if was_baseline {
+            device.baseline_due = false;
+            let result = if device.needs_baseline {
                 device.input.baseline()
             } else {
                 device.input.poll()
             };
             let mut r = self.shared.lock().unwrap_or_else(|p| p.into_inner());
-            let keep = match result {
+            match result {
                 Err(error) => {
                     r.fault(&id, &error);
                     r.disconnect(&id);
@@ -181,7 +177,6 @@ impl<P: Platform> Capture<P> {
                             #[cfg(target_os = "linux")]
                             Event::RetryBaseline => {
                                 device.require_baseline();
-                                needs_recovery = true;
                                 break;
                             }
                             Event::Gap(reason) => {
@@ -200,12 +195,10 @@ impl<P: Platform> Capture<P> {
                     }
                     true
                 }
-            };
-            needs_recovery |= keep && !was_baseline && device.needs_baseline;
-            keep
+            }
         });
         self.supervise();
-        needs_recovery
+        self.devices.values().any(|device| device.baseline_due)
     }
     fn commands(&mut self) {
         use crate::visibility::suppression::Command;
@@ -342,27 +335,6 @@ impl<P> Drop for Capture<P> {
             .unwrap_or_else(|p| p.into_inner())
             .disconnect_all();
     }
-}
-#[cfg(any(target_os = "macos", test))]
-pub fn run_controlled<P: Platform>(
-    platform: P,
-    shared: Shared,
-    stop: Arc<AtomicBool>,
-    control: crate::visibility::suppression::Control,
-) -> Result<(), String> {
-    let mut capture = Capture::new(platform, shared);
-    capture.control = control;
-    capture.scan()?;
-    let mut last = Instant::now();
-    while !stop.load(Ordering::Acquire) {
-        if last.elapsed() >= Duration::from_millis(500) {
-            capture.scan()?;
-            last = Instant::now();
-        }
-        capture.tick();
-        std::thread::sleep(Duration::from_millis(4));
-    }
-    Ok(())
 }
 /// All virtual output adapters must use this marker. Unknown virtual transports are rejected too.
 pub fn owned_virtual(value: &str) -> bool {

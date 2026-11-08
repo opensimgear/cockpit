@@ -1,6 +1,6 @@
 use super::*;
 use crate::registry::{Control, Identity};
-use std::{collections::VecDeque, sync::atomic::AtomicUsize};
+use std::{collections::VecDeque, sync::atomic::{AtomicBool, AtomicUsize, Ordering}};
 fn definition(path: &str) -> Definition {
     let mut button = Control::new(9, 1, 0, 0, 1);
     button.bits = 8;
@@ -28,6 +28,7 @@ struct State {
     fail_scan: bool,
     suppressions: Vec<(String, bool)>,
     fail_suppress: bool,
+    ready: BTreeSet<String>,
 }
 struct Fake {
     state: Arc<Mutex<State>>,
@@ -40,6 +41,10 @@ impl Drop for Fake {
     }
 }
 impl Input for Fake {
+    fn take_ready(&self) -> bool {
+        self.state.lock().unwrap().ready.remove(&self.path)
+    }
+
     fn suppress(&mut self, enabled: bool) -> Result<(), String> {
         let mut s = self.state.lock().unwrap();
         s.suppressions.push((self.path.clone(), enabled));
@@ -299,15 +304,63 @@ fn worker_shutdown_and_diagnostics() {
     assert!(owned_virtual("osg-virtual:a"));
     assert!(!owned_virtual("USB"));
     assert!(permission_error("macos", "denied").contains("Privacy & Security"));
-    let (_, state, r, drops) = setup();
+    let (_, state, registry, drops) = setup();
     let stop = Arc::new(AtomicBool::new(false));
+    let wake = Arc::new(macos::Wake::default());
+    let topology = Arc::new(macos::Topology::new(wake.clone()));
+    let control = crate::visibility::suppression::Control::default();
     let stopped = stop.clone();
+    let worker_wake = wake.clone();
+    let worker_topology = topology.clone();
+    let worker_registry = registry.clone();
+    let worker_state = state.clone();
+    let worker_drops = drops.clone();
+    let worker_control = control.clone();
     let handle = std::thread::spawn(move || {
-        run_controlled(Backend { state, drops }, r, stopped, Default::default())
+        macos::run(Backend { state: worker_state, drops: worker_drops }, worker_registry, &stopped,
+            worker_control, &worker_wake, &worker_topology)
     });
-    std::thread::sleep(Duration::from_millis(520));
+    let wait_detail = |check: &dyn Fn(&serde_json::Value) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let detail = {
+                let registry = registry.lock().unwrap();
+                registry.id_for_path("a").and_then(|id| registry.inspect(&id, 0).ok())
+            };
+            if let Some(detail) = detail.filter(|detail| check(detail)) { break detail; }
+            assert!(Instant::now() < deadline, "Controller worker did not publish the expected state");
+            std::thread::yield_now();
+        }
+    };
+    let baseline = wait_detail(&|detail| detail["source"]["baselineReady"] == true);
+    {
+        let mut fixture = state.lock().unwrap();
+        fixture.events.push_back(Ok(vec![Event::Values(0, BTreeMap::from([(1, 1)]))]));
+        fixture.ready.insert("a".into());
+    }
+    wake.notify();
+    wait_detail(&|detail| detail["controls"][1]["value"]["normalized"] == 1);
+    topology.arrived();
+    topology.removed(Ok("a".into()));
+    wait_detail(&|detail| detail["source"]["baselineReady"] == true &&
+        detail["source"]["generation"] != baseline["source"]["generation"]);
+    assert_eq!(drops.load(Ordering::Acquire), 1);
+    let sources = {
+        let registry = registry.lock().unwrap();
+        let id = registry.id_for_path("a").unwrap();
+        registry.physical_sources(&[id], "fixture").unwrap()
+    };
+    state.lock().unwrap().baseline.push_back(Ok(vec![Event::PendingBaseline]));
+    control.apply(sources).unwrap();
+    wake.notify();
+    wait_detail(&|detail| detail["source"]["baselineReady"] == false);
+    wait_detail(&|detail| detail["source"]["baselineReady"] == true);
+    assert_eq!(control.snapshot()["phase"], "stopped");
     stop.store(true, Ordering::Release);
+    wake.notify();
     assert!(handle.join().unwrap().is_ok());
+    assert!(macos::run(Backend { state, drops }, registry, &stop, control, &wake, &topology)
+        .unwrap_err().contains("already bound"));
 }
 
 fn select(c: &Capture<Backend>, r: &Shared) -> Vec<crate::visibility::session::Source> {
@@ -369,7 +422,7 @@ fn suppression_failure_gap_removal_and_timeout_release_every_owned_handle() {
         .unwrap()
         .events
         .push_back(Ok(vec![Event::Gap("lost".into())]));
-    c.tick();
+    assert!(c.tick_selected(|_| true));
     assert!(!c.control.active());
     c.tick();
     c.control.apply(select(&c, &r)).unwrap();

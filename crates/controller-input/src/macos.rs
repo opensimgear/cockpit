@@ -1,12 +1,9 @@
 //! IOHID controller callbacks. All access is shared; no seizure or helper is required.
 use crate::{
-    capture::{self, Event, Input, Platform, MAX_EVENTS},
+    capture::{self, macos::Wake, Event, Input, Platform, MAX_EVENTS},
     registry::{Control, Definition, Identity, Kind, MAX_CONTROLS},
 };
-use iohidmanager::hid::{
-    DeviceMatch, HidDevice, HidDeviceInfo, HidElement, HidElementType, HidManager,
-    HidManagerOptions, HidUsage,
-};
+use iohidmanager::hid::{HidDevice, HidDeviceInfo, HidElement};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -15,6 +12,9 @@ use std::{
         Arc,
     },
 };
+#[path = "macos/provider.rs"]
+mod provider;
+pub(crate) use provider::run;
 #[derive(Clone)]
 struct Element {
     cookie: u32,
@@ -129,62 +129,21 @@ trait Device: Snapshot {
 trait Provider {
     fn scan(&mut self) -> Result<Vec<(String, Box<dyn Device>)>, String>;
 }
-struct NativeProvider;
-impl Provider for NativeProvider {
-    fn scan(&mut self) -> Result<Vec<(String, Box<dyn Device>)>, String> {
-        // A fresh manager refreshes topology independently of the UI run loop.
-        let manager = HidManager::with_options(
-            HidManagerOptions::DO_NOT_LOAD_PROPERTIES | HidManagerOptions::DO_NOT_SAVE_PROPERTIES,
-        )
-        .map_err(|e| capture::permission_error("macos", e))?;
-        manager
-            .set_device_matching_multiple(&[
-                DeviceMatch::usage(HidUsage::Joystick),
-                DeviceMatch::usage(HidUsage::GamePad),
-                DeviceMatch::usage(HidUsage::Custom(1, 8)),
-            ])
-            .map_err(|e| e.to_string())?;
-        let mut devices: Vec<(String, Box<dyn Device>)> = Vec::new();
-        for device in manager.live_devices() {
-            if devices.len() >= 1024 {
-                return Err("Too many IOHID interfaces.".into());
-            }
-            let id = device.id().map_err(|e| e.to_string())?;
-            // Own a separate IOHID object so dropping the enumeration manager cannot close active input.
-            let device = HidDevice::from_id(id).map_err(|e| e.to_string())?;
-            let native = device
-                .elements()
-                .into_iter()
-                .filter(|e| {
-                    matches!(
-                        e.element_kind(),
-                        HidElementType::InputButton
-                            | HidElementType::InputAxis
-                            | HidElementType::InputMisc
-                    )
-                })
-                .collect();
-            devices.push((
-                id.0.to_string(),
-                Box::new(NativeDevice {
-                    handle: NativeHandle { device, native },
-                    opened: false,
-                }),
-            ));
-        }
-        Ok(devices)
-    }
-}
 pub struct Mac {
     provider: Box<dyn Provider>,
     devices: BTreeMap<String, Box<dyn Device>>,
 }
 impl Mac {
+    #[cfg(test)]
     pub fn new() -> Result<Self, String> {
-        Ok(Self {
-            provider: Box::new(NativeProvider),
+        Ok(Self::with_wake(Arc::new(Wake::default())))
+    }
+
+    fn with_wake(wake: Arc<Wake>) -> Self {
+        Self {
+            provider: Box::new(provider::NativeProvider(wake)),
             devices: BTreeMap::new(),
-        })
+        }
     }
 }
 impl Platform for Mac {
@@ -229,9 +188,14 @@ impl Platform for Mac {
         }))
     }
 }
-fn publish(send: &mpsc::SyncSender<NativeValue>, lost: &AtomicBool, value: NativeValue) {
-    if let Err(TrySendError::Full(_)) = send.try_send(value) {
-        lost.store(true, Ordering::Release);
+fn publish(send: &mpsc::SyncSender<NativeValue>, lost: &AtomicBool, value: NativeValue) -> bool {
+    match send.try_send(value) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            lost.store(true, Ordering::Release);
+            true
+        }
+        Err(TrySendError::Disconnected(_)) => false,
     }
 }
 trait Handle: Device {
@@ -241,6 +205,8 @@ trait Handle: Device {
 struct NativeHandle {
     device: HidDevice,
     native: Vec<HidElement>,
+    ready: Arc<AtomicBool>,
+    wake: Arc<Wake>,
 }
 impl Handle for NativeHandle {
     fn open(&self, options: u32) -> Result<(), String> {
@@ -279,14 +245,19 @@ impl Device for NativeHandle {
         send: mpsc::SyncSender<NativeValue>,
         lost: Arc<AtomicBool>,
     ) -> Result<Box<dyn std::any::Any>, String> {
+        let ready = self.ready.clone();
+        let wake = self.wake.clone();
         let subscription = self
             .device
             .on_input_value(&[], move |v| {
-                publish(
+                if publish(
                     &send,
                     &lost,
                     (v.element().cookie(), v.integer_value(), v.timestamp()),
-                )
+                ) {
+                    ready.store(true, Ordering::Release);
+                    wake.notify();
+                }
             })
             .map_err(|e| capture::permission_error("macos", e))?;
         Ok(Box::new(subscription))
@@ -312,6 +283,8 @@ fn reopen_owned(
     Ok(())
 }
 impl Snapshot for NativeHandle {
+    fn take_ready(&self) -> bool { self.ready.swap(false, Ordering::AcqRel) }
+
     fn values(&self) -> Result<Vec<NativeValue>, String> {
         let descriptors = controls(&self.elements())?;
         self.native
@@ -358,6 +331,8 @@ impl<H: Handle> Device for NativeDevice<H> {
     }
 }
 impl<H: Handle> Snapshot for NativeDevice<H> {
+    fn take_ready(&self) -> bool { self.handle.take_ready() }
+
     fn reopen(
         &mut self,
         enabled: bool,
@@ -378,6 +353,8 @@ impl<H: Handle> Snapshot for NativeDevice<H> {
     }
 }
 impl Snapshot for Box<dyn Device> {
+    fn take_ready(&self) -> bool { (**self).take_ready() }
+
     fn reopen(
         &mut self,
         enabled: bool,
@@ -426,6 +403,8 @@ fn definition(info: HidDeviceInfo, path: &str, elements: &[Element]) -> Result<D
     })
 }
 trait Snapshot {
+    fn take_ready(&self) -> bool { false }
+
     fn values(&self) -> Result<Vec<(u32, i64, u64)>, String>;
     fn reopen(
         &mut self,
@@ -450,6 +429,8 @@ impl<D: Snapshot> Drop for MacInput<D> {
     }
 }
 impl<D: Snapshot> Input for MacInput<D> {
+    fn take_ready(&self) -> bool { self.device.take_ready() }
+
     fn suppress(&mut self, enabled: bool) -> Result<(), String> {
         if !enabled && !self.suppressed {
             return Ok(());
