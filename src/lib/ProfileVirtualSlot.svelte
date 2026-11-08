@@ -83,6 +83,8 @@
     disposed=false;
     const stopLibrary=observeProfileLibrary(state=>library=state);
     const observations=new SharedObservations();
+    // The same native reader serves every visible vJoy status view.
+    observations.subscribe('system.inventory.vjoy',()=>{});
     observations.subscribe('system.inventory',state=>{
       if(state.status==='ready')void loadInventory();
       else if(state.status==='lost'||state.status==='error'){

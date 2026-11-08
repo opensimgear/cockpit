@@ -57,6 +57,6 @@
 | `src-tauri/src/system_inventory.rs:66` | Source wake | Wait for committed topology, output or exact optional driver file invalidation. |
 | `src-tauri/src/system_inventory.rs:323,329,354,362` | Fixture | Bound inventory commit and slow-provider isolation checks. |
 | `src-tauri/src/system_inventory/driver_watch.rs:153` | Fixture | Bound the wait for real Windows notification on a private fixture file. |
-| `src-tauri/src/system_inventory/vjoy_status.rs:141` | Approved acquisition | One Windows owner queries status and owner PID every 500 ms while visible Devices readers exist. Reader lifecycle and cache changes wake the owner. A helper failure uses a three-second retry. With zero readers the owner parks without a timer. |
+| `src-tauri/src/system_inventory/vjoy_status.rs:141` | Approved acquisition | One Windows owner queries status and owner PID every 500 ms while visible status readers exist. Reader lifecycle and cache changes wake the owner. A helper failure uses a three-second retry. With zero readers the owner parks without a timer. |
 | `src-tauri/src/window_persistence.rs:12` | User debounce | Coalesce window moves and resizes before saving the latest geometry. |
 | `src-tauri/src/window_persistence.rs:50,54,57,65` | Fixture | Bound window geometry coalescing and shutdown assertions. |

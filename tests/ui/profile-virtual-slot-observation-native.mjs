@@ -83,10 +83,11 @@ test(`${transport} virtual slot picker follows committed pin and ownership chang
     await navigate('Overview');
     const initial=(await request({command:'profile_status'})).profiles.profileSession;
     assert.equal(initial.owner,null);
-    const {virtualDevices}=(await request({command:'system_inventory'})).systemInventory;
-    const slot=virtualDevices.find(row=>row.status==='free'&&row.buttons>0&&Array.isArray(row.axes)
-      &&!row.forceFeedback&&!row.discreteHats&&row.buttons+row.axes.length+row.continuousHats<=128);
-    assert.ok(slot,'Use an unused compatible vJoy slot');
+    const slot=await until(async()=>{
+      const {virtualDevices}=(await request({command:'system_inventory'})).systemInventory;
+      return virtualDevices.find(row=>row.backend==='vjoy'&&row.status==='free'&&row.buttons>0&&Array.isArray(row.axes)
+        &&!row.forceFeedback&&!row.discreteHats&&row.buttons+row.axes.length+row.continuousHats<=128);
+    },Boolean,12_000).catch(cause=>{throw new Error('Use an unused compatible vJoy slot',{cause});});
     const marker=randomUUID();
     const reader=await profile('Visible slot '+marker,{buttons:['button-1'],axes:[],hats:[]});
     const lease=await profile('Independent lease '+marker,{
