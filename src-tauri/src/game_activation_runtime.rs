@@ -1,13 +1,20 @@
 //! Independent native game observer. Integration setup/readiness has no bearing
 //! on whether an ordinary hardware profile can match a running executable.
 use super::*;
-use crate::game_discovery::{BackgroundProcesses, ProcessLookup, ProcessLookupError, PROCESS_DISCOVERY_PERIOD};
+use crate::game_discovery::{BackgroundProcesses, ProcessLookup, ProcessLookupError, ACTIVE_PROCESS_PROOF_AGE, PROCESS_DISCOVERY_PERIOD};
 use osg_profiles::activation::{GameIdentity, VerifiedGame};
 
 pub(super) struct BackgroundScan {
     epoch: (u64, u64),
     started: Instant,
+    event_owned: bool,
     rows: BackgroundProcesses,
+}
+
+impl BackgroundScan {
+    pub(super) fn new(epoch: (u64, u64), started: Instant, event_owned: bool, rows: BackgroundProcesses) -> Self {
+        Self { epoch, started, event_owned, rows }
+    }
 }
 
 impl Inner {
@@ -27,6 +34,27 @@ impl Inner {
             return scan.rows.integration(games);
         }
         games.iter().map(|_| Err(ProcessLookupError::Unavailable("Waiting for the shared game process observation.".into()))).collect()
+    }
+
+    pub(super) fn profile_background_process(&self, game: &Value) -> Option<((u64, u64), Instant, ProcessLookup)> {
+        let scope = || {
+            let library = self.changes.context_wake.observed();
+            let process = self.changes.context_process_wake.observed();
+            ((library, process), self.changes.context_process_live(library))
+        };
+        let (epoch, event_owned) = scope();
+        let scan = self.background_processes.lock().unwrap_or_else(|p| p.into_inner());
+        let scan = scan.as_ref()?;
+        if self.closed.load(Ordering::Acquire) || scan.epoch != epoch || scan.event_owned != event_owned {
+            return None;
+        }
+        // A new short liveness proof must fit inside the original uniqueness
+        // window. Reading a cached scan cannot move either end of that window.
+        if !event_owned && scan.started.elapsed() + ACTIVE_PROCESS_PROOF_AGE >= PROCESS_DISCOVERY_PERIOD * 2 {
+            return None;
+        }
+        let row = scan.rows.integration_row(game)?;
+        (scope() == (epoch, event_owned)).then_some((epoch, scan.started, row))
     }
 }
 
@@ -150,8 +178,10 @@ impl GamesRuntime {
                     let retry_inventory = background.as_ref().is_some_and(BackgroundProcesses::needs_retry);
                     inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity, background.as_ref());
                     if let Some(rows) = background {
-                        *inner.background_processes.lock().unwrap_or_else(|p| p.into_inner()) = Some(BackgroundScan { epoch, started, rows });
+                        *inner.background_processes.lock().unwrap_or_else(|p| p.into_inner()) =
+                            Some(BackgroundScan::new(epoch, started, event_owned, rows));
                         inner.changes.context_update_wake.notify();
+                        inner.changes.wake_routing();
                     }
                     if !inner.closed.load(Ordering::Acquire) {
                         let retry = (!event_owned || retry_inventory).then_some(PROCESS_DISCOVERY_PERIOD)

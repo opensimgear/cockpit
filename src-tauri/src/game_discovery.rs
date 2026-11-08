@@ -56,6 +56,7 @@ pub(crate) trait Platform: Send + Sync {
 pub(crate) type ProcessLookup = Result<Option<ProcessIdentity>, ProcessLookupError>;
 
 pub(crate) const PROCESS_DISCOVERY_PERIOD: Duration = Duration::from_secs(1);
+pub(crate) const ACTIVE_PROCESS_PROOF_AGE: Duration = Duration::from_millis(100);
 
 pub(crate) struct BackgroundProcesses {
     activation: BTreeMap<String, Result<Option<ProcessIdentity>, String>>,
@@ -67,10 +68,19 @@ impl BackgroundProcesses {
             .cloned().unwrap_or_else(|| Err("The game process observation is unavailable.".into()))).collect()
     }
     pub(crate) fn integration(&self, games: &[&Value]) -> Vec<ProcessLookup> {
-        games.iter().map(|game| self.integration.get(game["id"].as_str().unwrap_or(""))
+        games.iter().map(|game| self.integration_row(game)
+            .unwrap_or_else(|| Err(ProcessLookupError::Unavailable("The game process observation is unavailable.".into())))).collect()
+    }
+    pub(crate) fn integration_row(&self, game: &Value) -> Option<ProcessLookup> {
+        self.integration.get(game["id"].as_str()?)
             .filter(|(selection, _)| *selection == process_selection(game))
             .map(|(_, row)| row.clone())
-            .unwrap_or_else(|| Err(ProcessLookupError::Unavailable("The game process observation is unavailable.".into())))).collect()
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture(game: &Value, row: ProcessLookup) -> Self {
+        Self { activation: BTreeMap::new(), integration: BTreeMap::from([
+            (game["id"].as_str().unwrap().into(), (process_selection(game), row)),
+        ]) }
     }
     pub(crate) fn needs_retry(&self) -> bool {
         self.integration.values().any(|(_, row)| matches!(row, Err(ProcessLookupError::Unavailable(_))))

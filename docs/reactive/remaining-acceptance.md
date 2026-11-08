@@ -174,6 +174,10 @@ simulator transitions remain in #199.
 [Active Windows readers watch the exact process](../verification/2026-11-08-active-game-process-exit.md).
 Confirmed exit wakes telemetry withdrawal. A current unique process inventory
 row can reuse that liveness proof, while strict command checks remain separate.
+[The active reader shares Windows discovery](../verification/2026-11-08-shared-active-process-proof.md)
+and keeps the original inventory expiry while renewing its short context
+proof. Explicit admission, strict command validation and automatic
+reacquisition keep their own checks.
 
 [Active telemetry proof continuity](../verification/2026-11-08-active-telemetry-proof-continuity.md)
 withdraws game branches when a successful process or catalogue capture starts

@@ -95,6 +95,57 @@ fn exact_exit_watch_reuses_liveness_only_with_a_current_unique_inventory_row() {
     runtime.shutdown();
 }
 
+#[cfg(windows)]
+#[test]
+fn shared_profile_process_does_not_rescan_or_extend_fallback_evidence() {
+    use crate::game_discovery::{BackgroundProcesses, ACTIVE_PROCESS_PROOF_AGE, PROCESS_DISCOVERY_PERIOD};
+    use crate::games::activation_runtime::BackgroundScan;
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    runtime.stop_test_context_observer();
+    let inner = &runtime.inner;
+    let game = runtime.registered_profile_game("x-plane-12").unwrap();
+    let process = ExitWatch::current_process_fixture();
+    let watch = ExitWatch::open(&process).unwrap();
+    let evidence = watch.evidence();
+    *platform.process.lock().unwrap() = Some(process.clone());
+    let publish = |started, event_owned, row| {
+        let epoch = (inner.changes.context_wake.observed(), inner.changes.context_process_wake.observed());
+        *inner.background_processes.lock().unwrap() = Some(BackgroundScan::new(
+            epoch, started, event_owned, BackgroundProcesses::fixture(&game, row),
+        ));
+    };
+    let observe = || inner.observe_shared_profile_process(&game, &process, Some(&evidence));
+    let before = platform.reads.load(Ordering::SeqCst);
+    let started = Instant::now();
+    publish(started, false, Ok(Some(process.clone())));
+    assert_eq!(observe(), Ok(true));
+    assert_eq!(inner.profile_background_process(&game).unwrap().1, started);
+    assert_eq!(observe(), Ok(true));
+    assert_eq!(inner.profile_background_process(&game).unwrap().1, started);
+    publish(Instant::now() - (PROCESS_DISCOVERY_PERIOD * 2 - ACTIVE_PROCESS_PROOF_AGE / 2),
+        false, Ok(Some(process.clone())));
+    assert!(matches!(observe(), Err(ProcessLookupError::Unavailable(_))));
+
+    publish(Instant::now(), false, Ok(None));
+    assert_eq!(observe(), Ok(false));
+    publish(Instant::now(), false, Ok(Some(ProcessIdentity { epoch: process.epoch ^ 1, ..process.clone() })));
+    assert_eq!(observe(), Ok(false));
+    publish(Instant::now(), false, Err(ProcessLookupError::Ambiguous("competing games".into())));
+    assert!(matches!(observe(), Err(ProcessLookupError::Ambiguous(_))));
+    publish(Instant::now(), false, Err(ProcessLookupError::Unavailable("scan failed".into())));
+    assert!(matches!(observe(), Err(ProcessLookupError::Unavailable(_))));
+    publish(Instant::now(), true, Ok(Some(process.clone())));
+    assert!(matches!(observe(), Err(ProcessLookupError::Unavailable(_))));
+    publish(Instant::now(), false, Ok(Some(process.clone())));
+    inner.changes.context_process_wake.notify();
+    assert!(matches!(observe(), Err(ProcessLookupError::Unavailable(_))));
+    assert_eq!(platform.reads.load(Ordering::SeqCst), before);
+    assert_eq!(inner.exact_process_current(&game, &process), Ok(true));
+    assert!(platform.reads.load(Ordering::SeqCst) > before);
+    runtime.shutdown();
+}
+
 #[test]
 fn observation_rechecks_setup_preparation_owner_and_installation_before_publishing() {
     for change in ["setup", "preparation", "owner", "executable", "processExecutables", "installPath", "selectedInstallationId"] {

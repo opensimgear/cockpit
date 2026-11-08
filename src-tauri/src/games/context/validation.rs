@@ -56,6 +56,9 @@ impl Inner {
     fn observe_profile_process(&self, game: &Value, expected: &ProcessIdentity,
         exit: Option<&ExitEvidence>,
     ) -> Result<bool, ProcessLookupError> {
+        if self.platform.shares_background_processes() {
+            return self.observe_shared_profile_process(game, expected, exit);
+        }
         if let Some(epoch) = self.current_process_epoch() {
             let snapshot = self.context_process_inventory.lock().unwrap_or_else(|p| p.into_inner()).clone();
             if let Some(process) = snapshot.as_ref().and_then(|snapshot| snapshot.process(game, epoch))
@@ -72,6 +75,25 @@ impl Inner {
             }
         }
         self.exact_process_current(game, expected)
+    }
+
+    fn observe_shared_profile_process(&self, game: &Value, expected: &ProcessIdentity,
+        exit: Option<&ExitEvidence>,
+    ) -> Result<bool, ProcessLookupError> {
+        let status = exit.map(|exit| exit.status(expected));
+        if status == Some(ExitStatus::Exited) { return Ok(false); }
+        let unavailable = || ProcessLookupError::Unavailable("Waiting for current shared game process evidence.".into());
+        let (epoch, started, row) = self.profile_background_process(game).ok_or_else(unavailable)?;
+        let live = match (row, status) {
+            (Ok(Some(identity)), Some(ExitStatus::Watching)) if identity == *expected => Ok(true),
+            (Err(error), Some(ExitStatus::Watching)) => Err(error),
+            (row, _) => self.process_current(row, expected),
+        };
+        if self.profile_background_process(game).is_some_and(|(next_epoch, next_started, _)| (next_epoch, next_started) == (epoch, started)) {
+            live
+        } else {
+            Err(unavailable())
+        }
     }
 }
 

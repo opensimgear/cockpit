@@ -4,7 +4,7 @@ use osg_streams::NativeWake;
 use std::sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-const FRESH: Duration = Duration::from_millis(100);
+const FRESH: Duration = crate::game_discovery::ACTIVE_PROCESS_PROOF_AGE;
 const REFRESH: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy)]

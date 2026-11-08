@@ -11,7 +11,7 @@ This page classifies the 86 current scan entries in game, DCS-BIOS, DCS ownship,
 | `src-tauri/src/dcs_physics/source.rs:137` | Fresh-baseline wait | DCS ownship subscription waits for a committed capture until its caller deadline; source commits notify it. |
 | `src-tauri/src/dcs_physics/source.rs:263` | Freshness deadline | Ownship source parks until the exact packet-derived freshness expiry or a new datagram; expiry withdraws stale evidence. |
 | `src-tauri/src/dcs_physics/source.rs:279` | Socket readiness | Ownship source awaits local UDP data, cancellation, or its exact freshness deadline. No idle receive polling remains. |
-| `src-tauri/src/game_activation_runtime.rs:159` | Approved process discovery fallback | The process owner waits for library, preference and process events. With eligible games and no usable event coverage, one scan per second supplies automatic activation and integration context. A failed inventory can also schedule recovery. Live event coverage otherwise parks the owner. |
+| `src-tauri/src/game_activation_runtime.rs:189` | Approved process discovery fallback | The process owner waits for library, preference and process events. With eligible games and no usable event coverage, one scan per second supplies automatic activation and integration context. A failed inventory can also schedule recovery. Live event coverage otherwise parks the owner. |
 | `src-tauri/src/game_context_runtime.rs:243` | Context maintenance | Game context waits on library, process and committed setup changes or its next process or reader admission deadline. Windows consumes the activation owner's shared inventory. |
 | `src-tauri/src/game_metadata_api.rs:171` | Test publication barrier | Metadata API test pauses a commit for up to five seconds to check concurrent publication. No production wait. |
 | `src-tauri/src/game_read_models/details.rs:113` | Readiness condition | A detail lease waits for its exact source readiness or retirement/close notification; no periodic check. |
@@ -56,3 +56,8 @@ This page classifies the 86 current scan entries in game, DCS-BIOS, DCS ownship,
 | `src-tauri/src/xplane/process_events/windows.rs:221` | Native monitor startup deadline | Windows process-event owner waits for helper readiness within the startup budget; timeout/cancellation/worker failure are terminal outcomes. |
 
 Assetto shared-memory sampling uses `SAMPLE_PERIOD` (plus `RETRY_PERIOD` after failures). Game process discovery retains one shared one-second check while native notifications are off or unavailable. Vehicle readers require exact process notifications and consume committed installation and setup changes. X-Plane and DCS acquisition otherwise wait on native socket, process and commit events and exact protocol, freshness or caller deadlines. Test sleeps and channel timeouts remain fixture bounds.
+
+The [active Windows telemetry validator](../../verification/2026-11-08-shared-active-process-proof.md)
+also uses the shared process inventory. Its short proof refresh still
+checks context and exact liveness. It cannot restart discovery or extend
+the scan's original uniqueness window.

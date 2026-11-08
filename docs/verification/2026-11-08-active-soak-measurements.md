@@ -79,10 +79,33 @@ submission and Windows reported the slot free. Process-exit withdrawal
 and cleanup also passed. Evidence is in
 `.research/dcs-physics-native/1794171394805/evidence.json`.
 
-The intermittent withdrawal needs diagnosis before the combined timing
-budgets can be accepted. The earlier 30-minute result remains recorded
-with its original build and workload. Real raw-input, physical display,
-LAN and simulator effects are tracked separately in [#199](https://github.com/opensimgear/cockpit/issues/199).
+## Thirty-minute Windows run
+
+The same Windows executable passed 1,800.013 measured seconds on the
+extended fixture. One profile owner, two armed loopback panels, a
+withheld native acknowledgement and two authenticated MCP subscriptions
+remained under test while Cockpit navigated and refreshed discovery.
+The fast native and MCP readers each advanced through 912 changes.
+All 60 discovery scans and 60 inventory checks completed. The main
+WebView made 1,714 app gateway calls, including 1,708 game read-model
+pages. The collector counted explicit fixture requests separately.
+
+| Loopback panel | Canvas changes | UDP submission to canvas upper p50 / p95 / p99 |
+| --- | ---: | ---: |
+| 1 | 912 | 4.61 / 7.92 / 48.21 ms |
+| 2 | 912 | 6.85 / 39.02 / 48.45 ms |
+
+Both panels stayed within the 150 ms p95 budget. The native subscriber
+resumed after acknowledgement. The fast MCP reader received retirement,
+the unread response closed, and Windows Raw Input observed both vJoy
+releases 42.83 ms after MCP Stop submission. Windows reported the slot
+free. Process-exit withdrawal and teardown passed with no errors.
+Evidence is in `.research/dcs-physics-native/1794171621628/evidence.json`.
+
+The two earlier intermittent failures did not recur during this run.
+Their cause and the full dual-rate timing budget remain open. Real
+raw-input, physical display, LAN and simulator effects are tracked
+separately in [#199](https://github.com/opensimgear/cockpit/issues/199).
 
 To repeat, use the isolated Windows dev Cockpit described in
 [the original DCS and vJoy verification](2026-11-07-dcs-panel-vjoy.md#30-minute-desktop-soak).
