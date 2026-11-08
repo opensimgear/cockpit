@@ -83,3 +83,28 @@ the interrupt was missed. The Waveshare driver reached 86.32% branch and
 
 Physical tests in #199 still need to measure a stationary hold, report
 cadence, release and stale-input cancellation on the actual GT911 panel.
+
+## USB startup correlation
+
+The host retries one pending status request per baud attempt. A valid delayed
+reply can identify the device until that attempt ends. The request identity
+retires before the port reopens on the next baud and on the first accepted
+reply. The firmware-ready notification can trigger one early retry per
+attempt. Only a matching status reply can establish identity.
+
+The baseline Windows serial worker failed the delayed-reply and ready-hint
+regressions. With the fix, all 63 Windows serial tests passed. The fake
+blocking serial peer also delivered a retired reply through the reopened
+port and verified that the worker published only the current attempt.
+The changed worker reached 87.62% line coverage. The configured serial
+gates passed at 97.87–100%. The larger serial library file reached 68.47%
+across its other entry points and platform operations.
+
+The rebuilt Windows dev Cockpit exposed both embedded firmware profiles and
+passed companion visibility and panel-assignment reopen in a private
+database. The delayed-reply and baud tests use the real serial worker with
+an authored transport.
+
+Physical USB start and reconnect remain in #199. Current firmware uses a
+status watch after identification. The older firmware status policy is a
+separate decision.

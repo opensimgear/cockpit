@@ -598,6 +598,8 @@ fn worker(
     wake: Arc<NativeWake>,
     mut open: impl FnMut(u32, Arc<NativeWake>) -> Result<ReadPump, String>,
 ) -> Result<(), String> {
+    const DISCOVERY_RETRY: Duration = Duration::from_millis(500);
+    const STATUS_INTERVAL: Duration = Duration::from_secs(1);
     let _ = wake.bind_thread(thread::current());
     let mut port = open(115200, wake.clone())?;
     let mut wire = Wire::new(wake.clone());
@@ -605,7 +607,8 @@ fn worker(
         let started = Instant::now();
         let mut baud_switched = Instant::now();
         let mut probe_framing_error = false;
-        let mut last_probe = Instant::now() - Duration::from_secs(1);
+        let mut startup_hint_seen = false;
+        let mut last_probe = Instant::now() - DISCOVERY_RETRY;
         let mut last_status = None;
         let mut scan_started:Option<Instant>=None;
         let mut recovery = recovery::Retry::default();
@@ -642,15 +645,23 @@ fn worker(
             }
             if !ready && baud_switched.elapsed() > Duration::from_secs(2) {
                 let baud = if port.baud == 115200 { 921600 } else { 115200 };
+                nonce.clear();
                 drop(port);
                 port = open(baud, wake.clone())?;
                 line.clear();
                 overflow = false;
                 baud_switched = Instant::now();
                 probe_framing_error = false;
+                startup_hint_seen = false;
+                last_probe = baud_switched - DISCOVERY_RETRY;
             }
-            if last_probe.elapsed() >= Duration::from_millis(if ready { 1000 } else { 500 }) {
-                nonce = uuid::Uuid::new_v4().to_string();
+            let probe_interval = if ready { STATUS_INTERVAL } else { DISCOVERY_RETRY };
+            if last_probe.elapsed() >= probe_interval {
+                // Retries on this baud share one pending discovery request.
+                // A slow first response is still valid until this port is replaced.
+                if ready || nonce.is_empty() {
+                    nonce = uuid::Uuid::new_v4().to_string();
+                }
                 // Ping can prompt firmware to retry the first event if its write
                 // failed. Full probes would keep an unconfirmed watch alive.
                 let probe = status_probe(&nonce, status_watch.as_deref(),
@@ -989,6 +1000,10 @@ fn worker(
                                                 ("scanError", json!("The screen could not scan Wi-Fi networks. Try again or enter the network name.")),
                                             ]);
                                         } else if let Some(status) = v["status"].as_str() {
+                                            if !ready && !startup_hint_seen && status == "serial-provisioning-ready" {
+                                                startup_hint_seen = true;
+                                                last_probe = Instant::now() - DISCOVERY_RETRY;
+                                            }
                                             if matches!(status,"panel-unsupported-corrupt-or-over-budget"|"panel-load-failed"|"panel-render-failed") {
                                                 let device=public.lock().unwrap_or_else(|p|p.into_inner())["device"].clone();
                                                 let host=hub.command(&json!({"command":"companion_status"}))?;
@@ -1013,7 +1028,6 @@ fn worker(
                 continue;
             }
             if did_action || feedback.is_some() { continue; }
-            let probe_interval = Duration::from_millis(if ready { 1000 } else { 500 });
             let mut delay = probe_interval.saturating_sub(last_probe.elapsed());
             if !ready {
                 delay = delay.min(Duration::from_secs(45).saturating_sub(started.elapsed()))

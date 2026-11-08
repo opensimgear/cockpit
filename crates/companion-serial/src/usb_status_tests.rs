@@ -1,6 +1,9 @@
 use super::*;
 use crate::native_duplex::{BlockingReceiver, CancelIo, DeadlineWriter, DuplexParts};
 mod wire;
+mod startup;
+mod fixture;
+use fixture::start_worker;
 struct ReceiverHalf(mpsc::Receiver<Vec<u8>>);
 impl BlockingReceiver for ReceiverHalf {
     fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, String> {
@@ -84,54 +87,6 @@ struct WorkerFixture {
     wake: Arc<NativeWake>,
     public: Arc<Mutex<Value>>,
     handle: thread::JoinHandle<Result<(), String>>,
-}
-
-fn start_worker(expected: Option<&'static str>, paired: bool) -> WorkerFixture {
-    let (device_tx, host_rx) = mpsc::channel();
-    let (host_tx, device_rx) = mpsc::channel();
-    let (mutations, committed) = mpsc::channel();
-    let (control, commands) = mpsc::channel();
-    let wake = Arc::new(NativeWake::default());
-    let worker_wake = wake.clone();
-    let mut duplex = Some(DuplexParts {
-        receiver: Box::new(ReceiverHalf(host_rx)),
-        writer: Box::new(WriterHalf(host_tx)),
-        cancel: Arc::new(Cancel(device_tx.clone())),
-    });
-    let public = Arc::new(Mutex::new(json!({"connected":true,"ready":false})));
-    let observed = public.clone();
-    let observer = StatusObserver::new(move || {
-        let state = observed.lock().unwrap();
-        mutations.send(state["device"]["status"].clone()).unwrap();
-    });
-    let worker_public = public.clone();
-    let handle = thread::spawn(move || {
-        let hub = Hub::new(
-            "test-host".into(),
-            Arc::new(osg_companion_service::NullSourceSink),
-        );
-        if paired {
-            assign_screen(&hub);
-        }
-        worker(
-            &hub,
-            &commands,
-            &worker_public,
-            expected,
-            &observer,
-            worker_wake,
-            |baud, wake| ReadPump::start(duplex.take().ok_or("Unexpected reopen")?, baud, wake),
-        )
-    });
-    WorkerFixture {
-        device: device_tx,
-        outgoing: device_rx,
-        committed,
-        control,
-        wake,
-        public,
-        handle,
-    }
 }
 
 fn send_frame(device: &mpsc::Sender<Vec<u8>>, frame: Value) {
