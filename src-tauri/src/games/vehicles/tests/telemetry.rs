@@ -25,7 +25,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
         process_exit: None,
         source,
         decoder,
-        guard,
+        guard: crate::dcs_profile::passive_watch::PassiveCatalogueGuard::without_watch(guard),
         connection: query,
         module: "A-10C".into(),
         resolved_aircraft: None,

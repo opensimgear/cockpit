@@ -19,6 +19,8 @@ const COMMON_PREFIX: &str = "common:CommonData:";
 #[path = "dcs_aircraft.rs"]
 mod aircraft;
 pub(crate) use aircraft::{aircraft_aliases, resolve_aircraft_module};
+#[path = "dcs_passive_watch.rs"]
+pub(crate) mod passive_watch;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CatalogueFile {
@@ -202,6 +204,9 @@ impl DcsCatalogueGuard {
         self.checked -= Duration::from_millis(251);
     }
     pub(crate) fn validate(&mut self, force: bool) -> Result<(), String> {
+        self.validate_at(force, true)
+    }
+    fn validate_at(&mut self, force: bool, check_content: bool) -> Result<(), String> {
         let now = Instant::now();
         if !force && now.duration_since(self.checked) < Duration::from_millis(250) {
             return Ok(());
@@ -213,13 +218,15 @@ impl DcsCatalogueGuard {
         }
         // The command lane and passive validator hold the same immutable
         // capture. Share completed content proofs without locking during I/O.
-        let full_checked = *self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
-        if now.saturating_duration_since(full_checked) >= Duration::from_secs(2) {
-            if TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision {
-                return Err(SOURCE_CHANGED.into());
+        if check_content {
+            let full_checked = *self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
+            if now.saturating_duration_since(full_checked) >= Duration::from_secs(2) {
+                if TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision {
+                    return Err(SOURCE_CHANGED.into());
+                }
+                let mut checked = self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
+                *checked = (*checked).max(now);
             }
-            let mut checked = self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
-            *checked = (*checked).max(now);
         }
         self.checked = now;
         Ok(())

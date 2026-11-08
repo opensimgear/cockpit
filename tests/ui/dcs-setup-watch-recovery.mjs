@@ -32,10 +32,12 @@ export async function verifyDcsSetupWatchRecovery(game, until, userFolder, biosT
   return {before, blocked, recovered};
 }
 
-export async function verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId, inspect, biosTarget}) {
+export async function verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId, inspect, biosTarget, setTraffic}) {
+  const exactCatalogue = process.env.OSG_DCS_EXACT_CATALOGUE_WATCH === '1'
+    ? await verifyExactDcsCatalogueWatch({game, until, inspect, passive, biosTarget, setTraffic}) : undefined;
   const catalogue = process.env.OSG_DCS_CATALOGUE_CONTENT_WAKE === '1'
     ? await verifyDcsCatalogueContent({game, until, inspect, biosId, biosTarget}) : undefined;
-  if (process.env.OSG_DCS_VEHICLE_SCOPE_WAKE !== '1') return catalogue && {catalogue};
+  if (process.env.OSG_DCS_VEHICLE_SCOPE_WAKE !== '1') return (catalogue || exactCatalogue) && {catalogue, exactCatalogue};
   const before = (await game()).integrationSetup;
   assert.equal(before.state, 'ready');
   const retired = script + '.fixture-held';
@@ -57,7 +59,74 @@ export async function verifyLiveDcsSetupWithdrawal({game, until, script, child, 
   await passive('flight.airspeed.true', 210.25);
   await passive(biosId, 1000);
   console.log(JSON.stringify({liveDcsSetupScopeWithdrawnAndRecovered: true}));
-  return {withdrawn: true, recovered: true, unchangedRevision: true, catalogue};
+  return {withdrawn: true, recovered: true, unchangedRevision: true, catalogue, exactCatalogue};
+}
+
+async function verifyExactDcsCatalogueWatch({game, until, inspect, passive, biosTarget, setTraffic}) {
+  const channel = 'AAP_CDUPWR:0';
+  const root = resolve(biosTarget, 'doc/json');
+  const unrelated = resolve(root, 'F-16C_50.json');
+  const selected = resolve(root, 'A-10C.json');
+  const otherBytes = await readFile(unrelated);
+  const selectedBytes = await readFile(selected);
+  const assertWithdrawn = async () => {
+    const row = (await inspect(channel)).channels.find(row => row.id === channel);
+    assert.ok(!row || (row.status !== 'known' && row.value === null), 'A retired aircraft must expose no captured value');
+  };
+  await passive(channel, 1);
+  const before = await game();
+  assert.equal(before.currentVehicle?.id, 'A-10C_2');
+  const waitForBroadGeneration = async previous => {
+    const result = await until(async () => {
+      const now = await game();
+      if (now.currentVehicle?.id !== 'A-10C_2') return {live:false};
+      const generation = now.integrationSetup.catalogueGeneration;
+      if (generation === previous) return false;
+      const row = (await inspect(channel)).channels.find(row => row.id === channel);
+      return row?.status === 'known' && row.value === 1 && {live:true, generation};
+    }, 'The provider catalogue generation did not advance');
+    assert.ok(result.live, 'An unrelated aircraft edit retired the selected reader');
+    return result.generation;
+  };
+  let changed;
+  try {
+    await writeFile(unrelated, Buffer.concat([otherBytes, Buffer.from('\n')]));
+    changed = await waitForBroadGeneration(before.integrationSetup.catalogueGeneration);
+    for (let sample = 0; sample < 5; sample++) {
+      assert.equal((await game()).currentVehicle?.id, 'A-10C_2', 'Unselected edit interrupted the reader');
+      await delay(80);
+    }
+  } finally {
+    await writeFile(unrelated, otherBytes);
+  }
+  const restored = await waitForBroadGeneration(changed);
+  let withdrawalMs;
+  setTraffic(false);
+  try {
+    await delay(140);
+    assert.equal((await game()).currentVehicle?.id, 'A-10C_2', 'The quiet stream must still have a live capture before the edit');
+    const start = performance.now();
+    try {
+      await writeFile(selected, Buffer.concat([selectedBytes, Buffer.from('\n')]));
+      await until(async () => {
+        const now = await game();
+        return !now.currentVehicle && now.vehicleStatus?.message?.includes('selected DCS aircraft');
+      }, 'The selected file edit did not wake and retire the passive reader without UDP traffic');
+      withdrawalMs = performance.now() - start;
+      await assertWithdrawn();
+    } finally {
+      await writeFile(selected, selectedBytes);
+    }
+    await delay(2300);
+    await assertWithdrawn();
+    assert.equal((await game()).currentVehicle, null);
+  } finally {
+    setTraffic(true);
+  }
+  await passive(channel, 1);
+  assert.equal((await game()).currentVehicle?.id, 'A-10C_2');
+  return {unrelatedGenerationChanged:changed, unrelatedGenerationRestored:restored,
+    withdrawalMs, recoveredWithFreshPackets:true};
 }
 
 async function verifyDcsCatalogueContent({game, until, inspect, biosId, biosTarget}) {

@@ -101,6 +101,7 @@ mod metadata_api;
 mod metadata_read;
 mod process_monitor;
 mod prepared_sources;
+pub(crate) use prepared_sources::watch::Watch as ExactFileWatch;
 mod read_model;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;

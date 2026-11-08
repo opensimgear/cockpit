@@ -16,7 +16,7 @@ import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
 import {verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
-const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
+const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1', nativeCommands = process.env.OSG_DCS_COMMANDS_NATIVE === '1';
 const seconds = soakSeconds(process.env.OSG_DCS_COMBINED_SOAK_SECONDS);
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -55,7 +55,6 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   const combinedProbe = process.env.OSG_DCS_COMBINED_VJOY_PROBE;
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
   if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
-  const nativeCommands = process.env.OSG_DCS_COMMANDS_NATIVE === '1';
   if (nativeCommands) assert.ok(nativeRates, 'The DCS command fixture requires native rates');
   if (seconds) assert.ok(observeMcp && !nativeRates, 'Soak requires combined desktop MCP with the debug and panel input profile');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
@@ -245,7 +244,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     await passive('AAP_CDUPWR:0', 1); await checkpoint('independent native, canonical and unbound BIOS inspection live');
     evidence.phases.telemetryReopen = await qualifyDcsTelemetryReopen(cdp, browserUrl, nativeValues, passive);
     await passive(biosId, 1000);
-    evidence.phases.liveSetupWithdrawal = await verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId, inspect, biosTarget});
+    evidence.phases.liveSetupWithdrawal = await verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId, inspect, biosTarget,
+      setTraffic(active) { emitPhysics = active; biosMode = active ? 'full' : 'off'; }});
     const competitor = spawn(executable, [], {cwd: dirname(executable), windowsHide: true, stdio: 'ignore'});
     try {
       await new Promise((done, reject) => { competitor.once('spawn', done); competitor.once('error', reject); });

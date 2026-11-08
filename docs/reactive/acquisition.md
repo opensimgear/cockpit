@@ -283,6 +283,16 @@ Failed captures and reads without a registered matching watcher retain the
 two-second request-time cache limit. An undrained notification fences a read
 until the worker processes the file change.
 
+The passive DCS reader registers native notifications for the file paths
+in its own prepared catalogue. That proof includes the missing optional
+or legacy candidates inspected during preparation. The reader confirms
+its baseline after registration, checks for invalidation before publishing,
+and wakes on file change or notification loss even during a quiet stream.
+While the watch is healthy, the capture path retains the short metadata
+check and skips the two-second content reload. Failed watch registration
+keeps the existing bounded validation. The separate provider catalogue
+watch can refresh authoring data without retiring an unrelated reader.
+
 The pinned ESP-IDF console forwards readiness registration to its primary
 device. The UART driver signals receive readiness on interrupt and checks
 already buffered bytes during registration. [Console VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_vfs_console/vfs_console.c) · [UART VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_uart/src/uart_vfs.c)

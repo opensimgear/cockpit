@@ -1,4 +1,5 @@
 use super::*;
+use crate::dcs_profile::passive_watch::PassiveCatalogueGuard;
 use std::collections::BTreeSet;
 
 pub(super) fn bios_channel_ids(catalogue: &Value) -> BTreeSet<String> {
@@ -82,7 +83,7 @@ pub(super) enum Reader {
         source: dcs_bios::decoded::Source,
         process_exit: Option<crate::xplane::process_events::ExitWatch>,
         decoder: dcs_profile::ExportSession,
-        guard: dcs_profile::DcsCatalogueGuard,
+        guard: PassiveCatalogueGuard,
         connection: Value,
         module: String,
         resolved_aircraft: Option<String>,
@@ -151,6 +152,7 @@ impl Reader {
                 let network = dcs_bios::Network::parse(connection)?;
                 let (decoder, guard, catalogue) =
                     dcs_profile::passive_telemetry_sources(path, module, network.freshness_ms)?;
+                let guard = PassiveCatalogueGuard::open(guard)?;
                 let source = dcs_bios::decoded::Source::open(&network, decoder.decode_spec()?)?;
                 let (physics, physics_error) = match crate::dcs_physics::Source::open() {
                     Ok(source) => (Some(source), None),
@@ -205,10 +207,11 @@ impl Reader {
                 .map(|watch| watch.map(|watch| CaptureWatch::Assetto { _watch: watch })),
             Self::Xplane(source) => source.watch(wake)
                 .map(|watch| Some(CaptureWatch::Xplane { _watch: watch, monitor: source.process_monitor() })),
-            Self::Dcs { source, physics, process_exit, .. } => {
+            Self::Dcs { source, physics, process_exit, guard, .. } => {
                 let bios = source.watch(wake.clone())?;
                 if let Some(process_exit) = process_exit { process_exit.watch(&wake); }
                 if let Some(physics) = physics { physics.watch_vehicle_commits(&wake); }
+                guard.subscribe(&wake);
                 Ok(Some(CaptureWatch::Dcs {
                     _bios: bios,
                     process_exit: process_exit.as_ref().map(crate::xplane::process_events::ExitWatch::evidence),
@@ -220,6 +223,12 @@ impl Reader {
         match self {
             Self::Dcs { capture_dirty, .. } => std::mem::take(capture_dirty),
             _ => false,
+        }
+    }
+    pub(super) fn check_catalogue_watch(&self) -> Result<(), String> {
+        match self {
+            Self::Dcs { guard, .. } => guard.check_watch(),
+            _ => Ok(()),
         }
     }
     pub(super) fn assetto_deadline(&self) -> Option<Instant> {
@@ -265,7 +274,7 @@ impl Reader {
                 capture_dirty,
                 ..
             } => {
-                guard.validate(false)?;
+                guard.validate()?;
                 decoder.accept_shared(source.snapshot()?)?;
                 let snapshot = decoder.snapshot(now_ms);
                 if let Some(aircraft) = snapshot.aircraft.as_ref()
@@ -280,9 +289,10 @@ impl Reader {
                             &current,
                             connection["freshnessMs"].as_u64().unwrap_or(1500),
                         )?;
+                        let next_guard = PassiveCatalogueGuard::open(next.1)?;
                         *source = dcs_bios::decoded::Source::open(&dcs_bios::Network::parse(connection)?, next.0.decode_spec()?)?;
                         *decoder = next.0;
-                        *guard = next.1;
+                        *guard = next_guard;
                         *bios_channels = bios_channel_ids(&next.2);
                         *module = current;
                         *capture_dirty = true;

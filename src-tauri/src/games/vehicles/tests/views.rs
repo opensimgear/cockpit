@@ -121,7 +121,8 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     let bios = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
     tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
         process_exit: crate::xplane::process_events::ExitWatch::open(&process).ok(),
-        source: bios, decoder, guard, connection: connection(5010), module: "A-10C".into(),
+        source: bios, decoder, guard: crate::dcs_profile::passive_watch::PassiveCatalogueGuard::without_watch(guard),
+        connection: connection(5010), module: "A-10C".into(),
         bios_channels: bios_channel_ids(&catalogue), physics: Some(physics), physics_error: None, physics_retry: Instant::now(),
         resolved_aircraft: None, capture_dirty: false,
     });

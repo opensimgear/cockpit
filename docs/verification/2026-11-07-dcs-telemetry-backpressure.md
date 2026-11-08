@@ -187,3 +187,54 @@ changed vehicle source module was 88.89% and LLVM function coverage was
 93.02%. The initial parallel run hit an X-Plane lease count assertion and
 the second parallel run hit a process freshness assertion. Both checks
 passed in isolation and in the serial suite.
+
+## Exact file notifications for the passive reader
+
+The passive reader now arms a native watch for the exact paths used by its
+prepared catalogue. It confirms the semantic baseline under that watch
+before accepting the reader. A selected-file event or lost notification
+wakes the reader and fences publication. Reopening requires a new baseline.
+A healthy watch replaces the recurring full catalogue load on the capture
+path. The short metadata check remains, and failed watch registration
+retains the previous bounded validation. The command lane keeps its strict
+file and content checks.
+
+The focused tests exercised a real sibling write and selected-file write.
+The sibling left the exact wake quiet. The selected file woke the reader,
+and a watch bound after invalidation still received a wake. A separate
+test verified that registration cannot certify a previously captured
+catalogue after a file has changed.
+
+The serial Windows suite passed 2,464 tests with 18 default ignores.
+Both checksum-pinned archive checks passed separately. All six changed
+native modules passed their production line gates, with 88.86% to 100%
+coverage. LLVM did not emit branch counters for these modules.
+
+The running dev clients kept A-10C telemetry live during an unselected
+F-16C catalogue edit and restore, even as the broad provider generation
+advanced. After a 140 ms quiet UDP window with a still-live capture, a
+selected-file edit woke the reader and withdrew its aircraft in 14.28 ms
+on native and 11.35 ms on browser-dev. Restoring the file with UDP still
+paused left the old value withdrawn through the reader retry interval.
+Both clients then recovered from fresh packets. The first native fixture
+incorrectly expected the aircraft-specific channel to stay listed after
+withdrawal. The corrected assertion accepts a removed channel or an
+unavailable channel with no value.
+
+| Transport | Authored packet rate | UDP to readable value p50 / p95 / p99 | Largest sampled consecutive publication interval |
+| --- | ---: | ---: | ---: |
+| Native WebView | 21.48 Hz | 17.34 / 40.36 / 47.56 ms | 73.34 ms |
+| Browser-dev | 21.44 Hz | 18.37 / 45.67 / 64.50 ms | 95.45 ms |
+
+Both current runs matched all 48 markers with one receipt held and reported
+no cleanup errors. The preceding fixtures measured 121.89 ms and 72.05 ms
+for the largest UDP-to-readable samples and sampled publication intervals
+of 143.75 ms and 147.67 ms respectively. The intervals compare consecutive
+revisions on the same clock. They cover the authored workload and do not
+qualify simulator, physical controller or display timing.
+
+The local records are `.research/dcs-physics-native/1794133924404/evidence.json`
+and `.research/dcs-physics-native/1794133981077/evidence.json`.
+The native and browser-dev binary hashes were
+`14DB1C1E8FE9065A42558F00F04936E0648E473A6D63CF83F5862B5DE1389F59`
+and `F36023CC415E49F7B7A9FF3DBFE5ECFBD3A1013C5AA7E375D24732A246EFDAAA`.

@@ -91,8 +91,10 @@ showed edited and restored descriptors, and the slowest inspection request
 fell below 23 ms in the comparison runs. Browser-dev still recorded one
 123 ms sample from UDP to readable state. The [expanded trace](../verification/2026-11-07-dcs-telemetry-backpressure.md#native-publication-spacing-with-stale-bios)
 located gaps before native publication. Stale BIOS projection now reuses
-prepared channel IDs while ownship continues. Exact source validation on
-the capture path and the other integrations remain open.
+prepared channel IDs while ownship continues. [Exact file notifications](../verification/2026-11-07-dcs-telemetry-backpressure.md#exact-file-notifications-for-the-passive-reader)
+replace recurring content loads while a passive reader has a healthy watch.
+Both clients retained the reader through an unrelated edit and withdrew on
+a selected edit during quiet UDP. Other integrations and rig timing remain open.
 
 The adapter evidence item is checked. Each supported adapter has automated
 coverage and running Cockpit evidence. The dated runs below used authored

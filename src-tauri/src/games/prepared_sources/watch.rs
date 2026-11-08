@@ -26,13 +26,13 @@ struct TargetFilter {
     tree: Option<(PathBuf, TreeFilter)>,
 }
 
-pub(in crate::games) struct Watch {
+pub(crate) struct Watch {
     watcher: RecommendedWatcher,
     changed: Changed,
 }
 
 impl Watch {
-    pub(in crate::games) fn new(changed: Changed) -> Result<Self, String> {
+    pub(crate) fn new(changed: Changed) -> Result<Self, String> {
         let watcher = native_watcher(TargetFilter::default(), changed.clone())?;
         Ok(Self {
             watcher,
@@ -42,7 +42,7 @@ impl Watch {
 
     /// Run on the source worker, before its source baseline is read.
     /// Register the complete replacement before retiring the old native watch.
-    pub(in crate::games) fn replace(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+    pub(crate) fn replace(&mut self, paths: &[PathBuf]) -> Result<(), String> {
         self.replace_with_children(paths, None)
     }
 

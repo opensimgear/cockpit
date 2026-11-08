@@ -263,6 +263,7 @@ impl Tracker {
         let id = poll.id.clone();
         let mut retain = false;
         let result = poll.result.expect("Reader work must finish before publication").and_then(|capture| {
+            poll.reader.check_catalogue_watch()?;
             if poll.reader.take_capture_change() {
                 if let Some(wake) = &self.capture_wake {
                     // Release the old stream registration before replacing it.
