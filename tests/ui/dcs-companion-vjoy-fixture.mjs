@@ -280,7 +280,8 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
 
   async function startProbe() {
     probeStart=process.hrtime.bigint();
-    probe=spawn(probeExecutable,seconds?['--vjoy-buttons','15000']:['--vjoy-buttons'],{windowsHide:true});
+    const args=seconds||nativeRates?['--vjoy-buttons','15000']:['--vjoy-buttons'];
+    probe=spawn(probeExecutable,args,{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const started=once(lines,'line'), trace=[];
     let probeError='';
@@ -413,7 +414,12 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const hz=BigInt(raw.receiverTickHz), start=BigInt(raw.receiverStartedTicks);
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
-    if(seconds)assert.ok(qpcNs(BigInt(raw.receiverEndedTicks))>stopNs,'Raw Input must keep capturing through Stop');
+    let probeAfterStopMs;
+    if(seconds||nativeRates){
+      assert.ok(raw.receiverEndedTicks,'Use a Raw Input probe with a capture end timestamp');
+      probeAfterStopMs=Number(qpcNs(BigInt(raw.receiverEndedTicks))-stopNs)/1e6;
+      assert.ok(probeAfterStopMs>0,`Raw Input must keep capturing through Stop (${probeAfterStopMs.toFixed(2)} ms)`);
+    }
     if(browserUrl||nativeRates){
       const receiver=event=>Number(qpcNs(start+BigInt(event.receivedTicks))-probeStart)/1e6;
       const lanes=dualRateResults(dualSubmissions,events,raw.receiverTickHz,receiver,{low:0,high:0},Number(stopNs-probeStart)/1e6);
@@ -421,7 +427,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
         assert.deepEqual(lane.received,lane.expected,`${lane.nodeId} ordered delivery and Stop release`);
         assert.ok(lane.stopReleaseMs>=0,`${lane.nodeId} must remain held until Stop`);
       }
-      return {slot:slot.slot,lanes,submissions:dualSubmissions,slotFree:true};
+      return {slot:slot.slot,lanes,submissions:dualSubmissions,slotFree:true,probeAfterStopMs};
     }
     const edges=field=>events.filter((event,index)=>event[field]!==(events[index-1]?.[field]??false));
     const debug=edges('pressed'), panel=edges('peerPressed');
