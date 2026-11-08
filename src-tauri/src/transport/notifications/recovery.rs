@@ -1,6 +1,65 @@
 //! Shared recovery signal for operations that depend on serial topology.
 use osg_streams::NativeWake;
-use std::sync::{Arc, Mutex, Weak};
+use crate::transport::PortInfo;
+use std::{
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, Weak},
+    time::Instant,
+};
+
+pub(crate) type SerialPorts = Arc<dyn Fn() -> Result<Vec<PortInfo>, String> + Send + Sync>;
+
+#[derive(Clone)]
+pub(crate) struct RecoverySource {
+    pub(crate) ports: SerialPorts,
+    pub(crate) events: Arc<PortRecovery>,
+}
+
+impl RecoverySource {
+    pub(crate) fn watch(&self, worker: &Arc<NativeWake>) -> RecoveryWatch {
+        let child = self.events.subscribe(worker);
+        let observed = child.observed();
+        RecoveryWatch { source: self.clone(), child, observed }
+    }
+}
+
+pub(crate) struct RecoveryWatch {
+    source: RecoverySource,
+    child: Arc<NativeWake>,
+    observed: u64,
+}
+
+impl RecoveryWatch {
+    /// Return cached topology only when a new invalidation has been covered
+    /// by the workspace monitor. Always advance the epoch baseline.
+    pub(crate) fn cached_ports(&mut self) -> Option<Vec<PortInfo>> {
+        let observed = self.child.observed();
+        let changed = observed != self.observed;
+        self.observed = observed;
+        if changed && self.covered() { (self.source.ports)().ok() } else { None }
+    }
+
+    pub(crate) fn covered(&self) -> bool {
+        self.source.events.covered()
+    }
+
+    /// Wait until the sampled topology epoch changes or the recovery window
+    /// expires. Cancellation is reported separately so callers can preserve
+    /// their own cancellation error.
+    pub(crate) fn wait_for_change(
+        &self,
+        worker: &NativeWake,
+        cancel: &AtomicBool,
+        deadline: Instant,
+    ) -> bool {
+        loop {
+            let wake = worker.observed();
+            if cancel.load(Ordering::Acquire) { return false; }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if self.child.observed() != self.observed || remaining.is_zero() { return true; }
+            worker.wait(wake, remaining);
+        }
+    }
+}
 
 #[derive(Default)]
 struct State {

@@ -116,6 +116,14 @@ mod tests {
 }
 
 impl SerialTopology {
+    pub(super) fn recovery_source(self: &Arc<Self>) -> crate::transport::notifications::recovery::RecoverySource {
+        let topology = self.clone();
+        crate::transport::notifications::recovery::RecoverySource {
+            ports: Arc::new(move || topology.cached()),
+            events: self.recovery.clone(),
+        }
+    }
+
     pub(super) fn watch_activity(&self, wake: &Arc<NativeWake>) {
         *self.activity_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
         wake.notify();

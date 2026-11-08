@@ -23,7 +23,7 @@ mod input_binding;
 mod metadata_binding;
 mod metadata_control;
 mod recovery;
-pub(crate) use recovery::RecoverySource;
+pub(crate) use crate::transport::notifications::recovery::RecoverySource;
 const STALE: &str =
     "The USB module route changed; refresh the device and establish a fresh session.";
 const UNKNOWN_CONFIG: &str = "The USB configuration reply was lost. Read active and saved settings before another explicit change; the write was not repeated.";

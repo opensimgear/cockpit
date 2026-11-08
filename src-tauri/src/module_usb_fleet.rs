@@ -4,6 +4,7 @@ use crate::module_usb::{
     self, ActionRequest, ConfigChange, ModuleUsbService, UsbRequest, UsbRouteToken, UsbSnapshot,
 };
 use crate::transport::PortInfo;
+pub(crate) use crate::transport::notifications::recovery::SerialPorts;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
@@ -23,7 +24,6 @@ mod metadata_observations_tests;
 #[path="module_usb_fleet/input_observations_tests.rs"]
 pub(crate) mod input_observations_tests;
 
-pub(crate) type SerialPorts = Arc<dyn Fn() -> Result<Vec<PortInfo>, String> + Send + Sync>;
 const MAX_PRESENT: usize = 32;
 const MAX_RETAINED: usize = 128;
 const MAX_REPLY_BYTES: usize = 110_000;

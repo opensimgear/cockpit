@@ -1,8 +1,10 @@
 //! Physical CAN gateway adapter. CDC observes and changes its registry; HID does
 //! not depend on this service, and closing Cockpit must not stop physical inputs.
 use crate::transport::{allowed_path, Connection, Factory, NativeFactory, PortInfo};
+use crate::transport::notifications::recovery::RecoverySource;
 use crate::stm32_panel_capture::{Capture as PanelCapture, Hub as PanelHub};
 use crate::stm32_panel_serial::GatewaySerial;
+use osg_streams::NativeWake;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -27,6 +29,8 @@ const CONFIG_ROUTE_NOT_READY: &str =
     "The device is renewing its CAN connection. Wait for its route before configuration.";
 const CONFIG_ROUTE_CHANGED: &str =
     "The module configuration route changed while awaiting its reply.";
+
+mod reconnect;
 
 #[path = "stm32_publication.rs"]
 mod publication;
@@ -587,6 +591,8 @@ struct Gateway {
     request_id: u32,
     timing: Timing,
     cancel: Arc<AtomicBool>,
+    recovery: Option<RecoverySource>,
+    recovery_wake: Arc<NativeWake>,
     configs: HashMap<String, Value>,
     active_configs: HashMap<String, (u64, Option<u64>, Value)>,
     actions: HashMap<String, ActionCache>,
@@ -639,6 +645,8 @@ impl Gateway {
             request_id: (uuid::Uuid::new_v4().as_u128() as u32).max(1),
             timing,
             cancel,
+            recovery: None,
+            recovery_wake: Arc::default(),
             configs: HashMap::new(),
             active_configs: HashMap::new(),
             actions: HashMap::new(),
@@ -656,15 +664,13 @@ impl Gateway {
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
-        let ports: Vec<_> = self
-            .factory
-            .ports()?
-            .into_iter()
-            .filter(|port| self.role.candidate(port))
-            .collect();
+        let ports = self.factory.ports()?;
+        Ok(self.record_ports(ports))
+    }
+    fn record_ports(&mut self, ports: Vec<PortInfo>) -> Vec<PortInfo> {
         // macOS exposes call-in and call-out aliases for one CDC interface.
         let mut by_path: HashMap<String, PortInfo> = HashMap::new();
-        for port in ports {
+        for port in ports.into_iter().filter(|port| self.role.candidate(port)) {
             let key = port
                 .path
                 .replace("/dev/tty.usbmodem", "/dev/usbmodem")
@@ -676,7 +682,7 @@ impl Gateway {
         let mut ports: Vec<_> = by_path.into_values().collect();
         ports.sort_by(|a, b| a.path.cmp(&b.path));
         self.state["ports"] = json!(ports.iter().map(PortInfo::value).collect::<Vec<_>>());
-        Ok(ports)
+        ports
     }
     fn close(&mut self) {
         self.debug_watchdog = None;
@@ -1131,6 +1137,8 @@ impl Gateway {
             .collect();
         // Once apply has been sent, losing its acknowledgement is ambiguous. Do
         // not send it again: reconnect and reconcile the committed registry.
+        let mut watch = self.recovery.as_ref().map(|source| source.watch(&self.recovery_wake));
+        let serial = self.role.serial(&expected);
         let acknowledgement = self.exchange("apply", self.timing.command);
         if let Err(error) = &acknowledgement {
             if self.connection.is_some() {
@@ -1145,13 +1153,8 @@ impl Gateway {
         let deadline = Instant::now() + self.timing.reconnect;
         let mut last_error = None;
         while Instant::now() < deadline && !self.cancel.load(Ordering::Acquire) {
-            let found = self.ports()?.into_iter().find(|port| {
-                port.serial_number
-                    .as_deref()
-                    .is_some_and(|uid| uid.eq_ignore_ascii_case(&self.role.serial(&expected)))
-                    && port.vendor_id == previous_vendor
-                    && port.product_id == previous_product
-            });
+            let found = self.reconnect_port(watch.as_mut(), &serial, &previous_vendor, &previous_product)?;
+            let missing = found.is_none();
             if let Some(port) = found {
                 match self.open(port, Some(expected.clone()), deadline) {
                     Ok(()) => {
@@ -1179,7 +1182,7 @@ impl Gateway {
                     Err(e) => last_error = Some(e),
                 }
             }
-            self.sleep(self.timing.poll)?;
+            self.wait_for_reconnect(watch.as_ref(), missing, deadline)?;
         }
         self.close();
         Err(format!("CAN gateway did not return after apply. Reconnect it to inspect whether the layout committed; apply was not repeated.{}",last_error.map(|e|format!(" {e}")).unwrap_or_default()))
@@ -1196,17 +1199,15 @@ impl Gateway {
         let uid = board.uid.clone();
         let vendor = board.info.vendor_id.clone();
         let product = board.info.product_id.clone();
+        let serial = self.role.serial(&uid);
+        let mut watch = self.recovery.as_ref().map(|source| source.watch(&self.recovery_wake));
         self.close();
         self.state["reconnecting"] = json!(true);
         let mut last_error = None;
         while Instant::now() < deadline && !self.cancel.load(Ordering::Acquire) {
-            if let Some(port) = self.ports()?.into_iter().find(|port| {
-                port.serial_number
-                    .as_deref()
-                    .is_some_and(|serial| serial.eq_ignore_ascii_case(&self.role.serial(&uid)))
-                    && port.vendor_id == vendor
-                    && port.product_id == product
-            }) {
+            let found = self.reconnect_port(watch.as_mut(), &serial, &vendor, &product)?;
+            let missing = found.is_none();
+            if let Some(port) = found {
                 match self.open(port, Some(uid.clone()), deadline) {
                     Ok(()) if self.automatic() => return Ok(()),
                     Ok(()) => {
@@ -1217,7 +1218,7 @@ impl Gateway {
                 }
             }
             self.state["reconnecting"] = json!(true);
-            self.sleep(self.timing.poll)?;
+            self.wait_for_reconnect(watch.as_ref(), missing, deadline)?;
         }
         self.close();
         Err(format!("The same CAN gateway did not return after its USB layout changed. Reconnect it to inspect its saved state; the operation was not repeated.{}", last_error.map(|error| format!(" {error}")).unwrap_or_default()))
@@ -2367,25 +2368,28 @@ impl Stm32Service {
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
+    pub(crate) fn with_topology(recovery: RecoverySource) -> Self {
+        Self::with_role_activity(Box::new(NativeFactory), Timing::default(), Role::Can, Arc::default(), Some(recovery))
+    }
     fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
         Self::with_role(factory, timing, Role::Can)
     }
     pub(crate) fn pico_debug(factory: Box<dyn Factory>) -> Self {
         Self::with_role(factory, Timing::default(), Role::PicoDebug)
     }
-    pub(crate) fn pico_debug_with_activity(factory:Box<dyn Factory>,activity:Arc<crate::output_leases::LeaseActivity>)->Self{Self::with_role_activity(factory,Timing::default(),Role::PicoDebug,activity)}
+    pub(crate) fn pico_debug_with_activity(factory:Box<dyn Factory>,activity:Arc<crate::output_leases::LeaseActivity>)->Self{Self::with_role_activity(factory,Timing::default(),Role::PicoDebug,activity,None)}
     fn with_role(factory: Box<dyn Factory>, timing: Timing, role: Role) -> Self {
-        Self::with_role_activity(factory,timing,role,Arc::default())
+        Self::with_role_activity(factory,timing,role,Arc::default(),None)
     }
-    fn with_role_activity(factory:Box<dyn Factory>,timing:Timing,role:Role,endpoint_activity:Arc<crate::output_leases::LeaseActivity>)->Self{
+    fn with_role_activity(factory:Box<dyn Factory>,timing:Timing,role:Role,endpoint_activity:Arc<crate::output_leases::LeaseActivity>,recovery:Option<RecoverySource>)->Self{
         let mut initial = empty_state();
         if role == Role::PicoDebug { initial["backend"] = json!("pico"); }
-        Self::with_role_workspace(factory, timing, role, endpoint_activity, Arc::new(workspace::Cache::new(initial)))
+        Self::with_role_workspace(factory, timing, role, endpoint_activity, Arc::new(workspace::Cache::new(initial)), recovery)
     }
     pub(crate) fn pico_debug_with_workspace(factory: Box<dyn Factory>, activity: Arc<crate::output_leases::LeaseActivity>, workspace: Arc<workspace::Cache>) -> Self {
-        Self::with_role_workspace(factory, Timing::default(), Role::PicoDebug, activity, workspace)
+        Self::with_role_workspace(factory, Timing::default(), Role::PicoDebug, activity, workspace, None)
     }
-    fn with_role_workspace(factory: Box<dyn Factory>, timing: Timing, role: Role, endpoint_activity: Arc<crate::output_leases::LeaseActivity>, workspace: Arc<workspace::Cache>) -> Self {
+    fn with_role_workspace(factory: Box<dyn Factory>, timing: Timing, role: Role, endpoint_activity: Arc<crate::output_leases::LeaseActivity>, workspace: Arc<workspace::Cache>, recovery: Option<RecoverySource>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -2407,6 +2411,10 @@ impl Stm32Service {
             .name("osg-stm32-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
+                if recovery.is_some() {
+                    let _ = gateway.recovery_wake.bind_thread(thread::current());
+                    gateway.recovery = recovery;
+                }
                 gateway.panels = worker_panels;
                 gateway.workspace = Some(workspace_latest.clone());
                 gateway.reader_wake = Some(Arc::new(move || {
@@ -2529,6 +2537,9 @@ mod tests {
     mod workspace_tests { include!("stm32/workspace_tests.rs"); }
     mod recovery_transport {
         include!("profile_recovery_transport_stm32_tests.rs");
+    }
+    mod reconnect_topology {
+        include!("stm32/reconnect_topology_tests.rs");
     }
     use std::{
         collections::VecDeque,

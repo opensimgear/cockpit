@@ -129,6 +129,9 @@ mod serial_topology;
 trait Provider: Send + Sync {
     fn ports(&self) -> Result<Vec<PortInfo>, String>;
     fn adapter(&self, backend: &str) -> Arc<dyn Adapter>;
+    fn adapter_with_topology(&self, backend: &str, _: &Arc<serial_topology::SerialTopology>) -> Arc<dyn Adapter> {
+        self.adapter(backend)
+    }
 }
 struct NativeProvider;
 impl Provider for NativeProvider {
@@ -139,6 +142,13 @@ impl Provider for NativeProvider {
         match backend {
             "pico" => Arc::new(PicoService::new()),
             _ => Arc::new(Stm32Service::new()),
+        }
+    }
+    fn adapter_with_topology(&self, backend: &str, topology: &Arc<serial_topology::SerialTopology>) -> Arc<dyn Adapter> {
+        if backend == "stm32" {
+            Arc::new(Stm32Service::with_topology(topology.recovery_source()))
+        } else {
+            self.adapter(backend)
         }
     }
 }
@@ -386,10 +396,7 @@ impl GatewayManager {
         let resource_ports = provider.clone();
         let serial_topology = Arc::new(serial_topology::SerialTopology::default());
         let usb_discovery = serial_topology.clone();
-        let recovery = native.then(|| {
-            let topology = serial_topology.clone();
-            crate::module_usb::RecoverySource { ports: Arc::new(move || topology.cached()), events: serial_topology.recovery.clone() }
-        });
+        let recovery = native.then(|| serial_topology.recovery_source());
         let module_usb = Arc::new(crate::module_usb_fleet::Fleet::with_recovery(
             Arc::new(move || usb_discovery.refresh(resource_ports.as_ref())), native, recovery,
         ));
@@ -1695,7 +1702,7 @@ impl GatewayManager {
                 if sessions.len()>=workspace::MAX_GATEWAYS&&!sessions.contains_key(&id){drop(sessions);return self.error("Workspace gateway session limit reached.",Some(&id));}
                 sessions
                     .entry(id.clone())
-                    .or_insert_with(|| self.provider.adapter(gateway_backend))
+                    .or_insert_with(|| self.provider.adapter_with_topology(gateway_backend, &self.serial_topology))
                     .clone()
             } else {
                 let Some(adapter) = sessions.get(&id) else {
