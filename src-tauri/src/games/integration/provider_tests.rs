@@ -400,17 +400,69 @@ fn dcs_catalogue_invalidation_fences_a_prepared_alias_read() {
     assert_eq!(setup.dcs_catalogue_watch_path().as_deref(), Some(catalogue.as_path()));
     setup.decorate_summary(&mut games);
     let before = games[0]["integrationSetup"].clone();
-    let (entered, observed) = std::sync::mpsc::channel();
-    let (release, blocked) = std::sync::mpsc::channel();
-    *setup.inner.catalogue_stamp_pause.lock().unwrap() = Some((entered, blocked));
-    thread::scope(|scope| {
-        let read = scope.spawn(|| setup.resource_integration_catalogue_for_vehicle("dcs", Some("Fixture")));
-        observed.recv_timeout(Duration::from_secs(3)).unwrap();
-        setup.invalidate_dcs_catalogue();
-        release.send(()).unwrap();
-        assert!(read.join().unwrap().unwrap_err().contains("changed during capture"));
-    });
+    let changes = Arc::new(AtomicU64::new(0));
+    for callback_only in [true, false] {
+        setup.update_dcs_catalogue_watch(Some(DcsCatalogueWatch {
+            path: catalogue.clone(), changes: Arc::downgrade(&changes), observed: changes.load(Ordering::Acquire),
+        }));
+        let (entered, observed) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        *setup.inner.catalogue_stamp_pause.lock().unwrap() = Some((entered, blocked));
+        thread::scope(|scope| {
+            let read = scope.spawn(|| setup.resource_integration_catalogue_for_vehicle("dcs", Some("Fixture")));
+            observed.recv_timeout(Duration::from_secs(3)).unwrap();
+            if callback_only {
+                changes.fetch_add(1, Ordering::Release);
+            } else {
+                setup.update_dcs_catalogue_watch(None);
+            }
+            release.send(()).unwrap();
+            assert!(read.join().unwrap().unwrap_err().contains("changed during capture"));
+        });
+        if callback_only {
+            // A second read still cannot use the old snapshot before rearm.
+            assert!(setup.resource_integration_catalogue("dcs").unwrap_err().contains("changed during capture"));
+        }
+    }
     setup.decorate_summary(&mut games);
     assert_ne!(games[0]["integrationSetup"]["catalogueGeneration"], before["catalogueGeneration"]);
     assert_eq!(games[0]["integrationSetup"]["providerSetupRevision"], before["providerSetupRevision"]);
+}
+
+#[test]
+fn dcs_catalogue_reuses_only_success_under_the_current_exact_watch() {
+    let scratch = Scratch::new();
+    let catalogue = scratch.0.join("catalogue");
+    fs::create_dir(&catalogue).unwrap();
+    let setup = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
+    setup.save_provider_settings(&json!({
+        "command":"game_integration_settings_save",
+        "expectedSetupRevision":setup.provider_setup_revision("dcs"),
+        "connection":dcs_connection(&catalogue),
+        "userFolder":scratch.0
+    }), &game("dcs")).unwrap();
+    let revision = setup.provider_setup_revision("dcs");
+    let fixture = json!({"fixture":"retained catalogue"});
+    let put = |result| {
+        setup.inner.catalogues.lock().unwrap().insert(
+            "dcs:CommonData".into(), (Instant::now() - Duration::from_secs(3), revision.clone(), result),
+        );
+    };
+    let changes = Arc::new(AtomicU64::new(0));
+    let watch = DcsCatalogueWatch { path: catalogue.clone(), changes: Arc::downgrade(&changes), observed: 0 };
+    setup.update_dcs_catalogue_watch(Some(watch.clone()));
+    put(Ok(Arc::new(fixture.clone())));
+    assert_eq!(setup.resource_integration_catalogue("dcs").unwrap(), fixture);
+
+    put(Err("stale cached failure".into()));
+    assert_ne!(setup.resource_integration_catalogue("dcs").unwrap_err(), "stale cached failure");
+
+    setup.update_dcs_catalogue_watch(Some(DcsCatalogueWatch { path: catalogue.join("other"), ..watch.clone() }));
+    put(Ok(Arc::new(fixture.clone())));
+    assert!(setup.resource_integration_catalogue("dcs").is_err());
+
+    setup.update_dcs_catalogue_watch(Some(watch));
+    drop(changes);
+    put(Ok(Arc::new(fixture)));
+    assert!(setup.resource_integration_catalogue("dcs").is_err());
 }

@@ -1,5 +1,6 @@
 //! Native invalidation for the selected DCS setup files.
 use super::*;
+use crate::game_integration_setup::DcsCatalogueWatch;
 use notify::{event::ModifyKind, EventKind};
 
 #[derive(Default)]
@@ -28,7 +29,9 @@ impl DcsWatch {
             (root, catalogue_file as prepared_sources::watch::ChildFilter)
         });
         if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children, wake) {
-            inner.setup.invalidate_dcs_catalogue();
+            let watch = catalogue.zip(self.catalogue.registration())
+                .map(|(path, (changes, observed))| DcsCatalogueWatch { path, changes, observed });
+            inner.setup.update_dcs_catalogue_watch(watch);
             inner.changes.mark(crate::game_read_models::signals::Domain::Setup);
             inner.changes.mark_resources();
         }

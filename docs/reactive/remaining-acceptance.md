@@ -85,9 +85,12 @@ applicable check, test and build targets.
 ## R3 adapter evidence
 
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
-matched every authored value on native and browser-dev. The longest sample
-on each transport spent most of its time inside one inspection request.
-The other integrations and simulator timing remain open.
+matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)
+removed the request-time rebuild for unchanged catalogues. Both clients
+showed edited and restored descriptors, and the slowest inspection request
+fell below 23 ms in the comparison runs. Browser-dev still recorded one
+123 ms sample from UDP to readable state. The other integrations and
+simulator timing remain open.
 
 The adapter evidence item is checked. Each supported adapter has automated
 coverage and running Cockpit evidence. The dated runs below used authored

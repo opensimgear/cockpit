@@ -2,6 +2,7 @@
 use super::*;
 use crate::game_read_models::signals::Domain;
 use osg_streams::NativeWake;
+use std::sync::{atomic::AtomicU64, Weak};
 
 const XPLANE: [&str; 2] = ["x-plane-11", "x-plane-12"];
 pub(super) const WATCH_RETRY: Duration = Duration::from_secs(2);
@@ -15,7 +16,8 @@ pub(super) struct SourceWatch {
     child_root: Option<PathBuf>,
     tree_root: Option<PathBuf>,
     watch: Option<prepared_sources::watch::Watch>,
-    dirty: Arc<AtomicBool>,
+    changes: Arc<AtomicU64>,
+    drained_changes: u64,
     retry_at: Option<Instant>,
 }
 
@@ -47,7 +49,13 @@ impl SdkWatches {
 impl SourceWatch {
     pub(super) fn active(&self) -> bool { self.watch.is_some() }
 
-    pub(super) fn change_pending(&self) -> bool { self.dirty.load(Ordering::Acquire) }
+    pub(super) fn change_pending(&self) -> bool {
+        self.changes.load(Ordering::Acquire) != self.drained_changes
+    }
+
+    pub(super) fn registration(&self) -> Option<(Weak<AtomicU64>, u64)> {
+        self.active().then(|| (Arc::downgrade(&self.changes), self.drained_changes))
+    }
 
     pub(super) fn retry_at(&self) -> Option<Instant> { self.retry_at }
 
@@ -78,8 +86,10 @@ impl SourceWatch {
     ) -> bool {
         let child_root = children.map(|(root, _)| root.to_path_buf());
         let tree_root = tree.map(|(root, _)| root.to_path_buf());
-        let invalidated = self.dirty.swap(false, Ordering::AcqRel)
+        let observed = self.changes.load(Ordering::Acquire);
+        let invalidated = observed != self.drained_changes
             || self.paths != paths || self.child_root != child_root || self.tree_root != tree_root;
+        self.drained_changes = observed;
         if !invalidated && !self.retry_at.is_some_and(|at| at <= Instant::now()) {
             return false;
         }
@@ -93,9 +103,9 @@ impl SourceWatch {
         }
         if self.watch.is_none() {
             let wake = Arc::clone(wake);
-            let dirty = self.dirty.clone();
+            let changes = self.changes.clone();
             self.watch = prepared_sources::watch::Watch::new(Arc::new(move |_| {
-                dirty.store(true, Ordering::Release);
+                changes.fetch_add(1, Ordering::Release);
                 wake.notify();
             })).ok();
         }
@@ -160,7 +170,7 @@ mod tests {
         std::fs::write(sibling, "unrelated").unwrap();
         let quiet_until = Instant::now() + Duration::from_millis(150);
         while let Some(remaining) = quiet_until.checked_duration_since(Instant::now()) {
-            assert!(!watch.dirty.load(Ordering::Acquire));
+            assert!(!watch.change_pending());
             thread::park_timeout(remaining);
         }
 

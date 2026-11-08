@@ -274,6 +274,15 @@ root and retains at most 128 custom profiles in path order. Unrelated entries
 do not use that capacity. Standard profiles and an installation's explicit
 variant remain eligible independently of the cap.
 
+A successful DCS provider catalogue remains reusable while native file
+notifications cover its exact directory. The file callback advances a
+revision before waking the context worker. Catalogue reads check that
+revision before reusing or publishing a snapshot, and the context worker
+retires the affected cache entries and publishes the catalogue change.
+Failed captures and reads without a registered matching watcher retain the
+two-second request-time cache limit. An undrained notification fences a read
+until the worker processes the file change.
+
 The pinned ESP-IDF console forwards readiness registration to its primary
 device. The UART driver signals receive readiness on interrupt and checks
 already buffered bytes during registration. [Console VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_vfs_console/vfs_console.c) · [UART VFS](https://github.com/espressif/esp-idf/blob/v5.5.2/components/esp_driver_uart/src/uart_vfs.c)

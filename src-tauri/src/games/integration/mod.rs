@@ -6,8 +6,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, MutexGuard, OnceLock, TryLockError,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak,
     },
     thread::{self, JoinHandle},
 };
@@ -24,6 +24,7 @@ struct Inner {
     states: Mutex<BTreeMap<String, Arc<Value>>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
     catalogue_generation: [std::sync::atomic::AtomicU64; 3],
+    dcs_catalogue_watch: Mutex<Option<DcsCatalogueWatch>>,
     watched_setup: Mutex<std::collections::BTreeSet<String>>,
     watched_setup_waiting: AtomicBool,
     views: Mutex<setup_cache::SetupViews>,
@@ -55,6 +56,13 @@ pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
     admission: Mutex<()>,
+}
+
+#[derive(Clone)]
+pub(crate) struct DcsCatalogueWatch {
+    pub(crate) path: PathBuf,
+    pub(crate) changes: Weak<AtomicU64>,
+    pub(crate) observed: u64,
 }
 struct SetupAdmission<'a> {
     lock: Option<MutexGuard<'a, ()>>,
@@ -129,6 +137,7 @@ impl GameIntegrationSetup {
                 views: Mutex::new(Default::default()),
                 catalogues: Mutex::new(BTreeMap::new()),
                 catalogue_generation: Default::default(),
+                dcs_catalogue_watch: Mutex::default(),
                 watched_setup: Default::default(),
                 watched_setup_waiting: AtomicBool::new(false),
                 fingerprints: Mutex::new(Default::default()),
@@ -271,8 +280,13 @@ impl GameIntegrationSetup {
             .filter(|path| path.is_absolute())
     }
 
-    pub(crate) fn invalidate_dcs_catalogue(&self) {
+    pub(crate) fn update_dcs_catalogue_watch(&self, watch: Option<DcsCatalogueWatch>) {
         let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
+        *self.inner.dcs_catalogue_watch.lock().unwrap_or_else(|error| error.into_inner()) = watch;
+        self.invalidate_dcs_catalogue(&mut cache);
+    }
+
+    fn invalidate_dcs_catalogue(&self, cache: &mut provider_settings::CatalogueCache) {
         self.inner.catalogue_generation[2].fetch_add(1, Ordering::AcqRel);
         cache.retain(|key, _| !key.starts_with("dcs:"));
     }
@@ -308,7 +322,8 @@ impl GameIntegrationSetup {
     pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
         let Some(_admission) = self.try_background_admission() else { return false; };
         if id == "dcs" {
-            self.invalidate_dcs_catalogue();
+            let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
+            self.invalidate_dcs_catalogue(&mut cache);
         } else {
             self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
         }

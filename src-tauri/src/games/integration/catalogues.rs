@@ -1,4 +1,17 @@
 use super::*;
+
+const CATALOGUE_CHANGED: &str = "The provider catalogue changed during capture; refresh the catalogue.";
+
+impl DcsCatalogueWatch {
+    fn current(&self) -> Result<bool, String> {
+        match self.changes.upgrade() {
+            Some(changes) if changes.load(Ordering::Acquire) == self.observed => Ok(true),
+            Some(_) => Err(CATALOGUE_CHANGED.into()),
+            None => Ok(false),
+        }
+    }
+}
+
 impl GameIntegrationSetup {
     /// Full provider metadata remains available for a closed game. Reading never
     /// launches a process, opens telemetry or imports an alternate binding store.
@@ -18,6 +31,7 @@ impl GameIntegrationSetup {
         let (record, revision) = self.provider_snapshot(id);
         let generation = self.inner.catalogue_generation(id);
         let catalogue_generation = generation.map(|counter| counter.load(Ordering::Acquire));
+        let mut dcs_watch = None;
         let module = if id == "dcs" {
             validate_connection(id, &record["connection"])?;
             let path = Path::new(
@@ -25,6 +39,11 @@ impl GameIntegrationSetup {
                     .as_str()
                     .ok_or("Choose a DCS-BIOS catalogue folder.")?,
             );
+            dcs_watch = self.inner.dcs_catalogue_watch.lock().unwrap_or_else(|p| p.into_inner())
+                .as_ref().filter(|watch| watch.path == path).cloned();
+            if let Some(watch) = &dcs_watch {
+                watch.current()?;
+            }
             Some(match vehicle {
                 Some(vehicle) => crate::dcs_profile::resolve_aircraft_module(path, vehicle)?,
                 None => "CommonData".into(),
@@ -53,8 +72,9 @@ impl GameIntegrationSetup {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
             if generation.map(|counter| counter.load(Ordering::Acquire)) != catalogue_generation {
-                return Err("The provider catalogue changed during capture; refresh the catalogue.".into());
+                return Err(CATALOGUE_CHANGED.into());
             }
+            let watched = dcs_watch.as_ref().map(DcsCatalogueWatch::current).transpose()?.unwrap_or(false);
             cache
                 .get(&key)
                 .filter(|(at, known, result)| {
@@ -63,7 +83,7 @@ impl GameIntegrationSetup {
                             result.as_ref().is_ok_and(|value| {
                                 value["sdkSourceStamp"] == sdk_source_stamp
                             }) || at.elapsed() < Duration::from_secs(2)
-                        } else if id.starts_with("assetto-corsa") {
+                        } else if watched || id.starts_with("assetto-corsa") {
                             result.is_ok() || at.elapsed() < Duration::from_secs(2)
                         } else {
                             at.elapsed() < Duration::from_secs(2)
@@ -133,7 +153,10 @@ impl GameIntegrationSetup {
         let cached = result.map(Arc::new);
         let mut cache = self.inner.catalogues.lock().unwrap_or_else(|p| p.into_inner());
         if generation.map(|counter| counter.load(Ordering::Acquire)) != catalogue_generation {
-            return Err("The provider catalogue changed during capture; refresh the catalogue.".into());
+            return Err(CATALOGUE_CHANGED.into());
+        }
+        if let Some(watch) = &dcs_watch {
+            watch.current()?;
         }
         cache.insert(key, (Instant::now(), revision, cached.clone()));
         cached.map(|value| value.as_ref().clone())

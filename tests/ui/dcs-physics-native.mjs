@@ -245,7 +245,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     await passive('AAP_CDUPWR:0', 1); await checkpoint('independent native, canonical and unbound BIOS inspection live');
     evidence.phases.telemetryReopen = await qualifyDcsTelemetryReopen(cdp, browserUrl, nativeValues, passive);
     await passive(biosId, 1000);
-    evidence.phases.liveSetupWithdrawal = await verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId});
+    evidence.phases.liveSetupWithdrawal = await verifyLiveDcsSetupWithdrawal({game, until, script, child, absent, passive, biosId, inspect, biosTarget});
     const competitor = spawn(executable, [], {cwd: dirname(executable), windowsHide: true, stdio: 'ignore'});
     try {
       await new Promise((done, reject) => { competitor.once('spawn', done); competitor.once('error', reject); });

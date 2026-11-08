@@ -90,3 +90,47 @@ and `C70F6C55B0EA7C6EE8B6C61D56A0546956CD864525451E3AC97A22B96A87F624`.
 All 14 telemetry and 34 stream frontend tests passed. Telemetry coverage was
 100.00% lines, 89.26% branches and 92.86% functions. Stream coverage was
 98.75% lines, 93.68% branches and 94.59% functions.
+
+## Reuse the watched DCS catalogue
+
+The inspection request could rebuild the full DCS-BIOS provider catalogue
+after two seconds, even if the files had stayed unchanged. Successful reads
+now reuse the snapshot while the native watcher covers the exact configured
+catalogue directory. A callback advances the watched revision before the
+context worker runs. A read crossed by that callback cannot reuse or publish
+the old snapshot. Worker rearm advances the catalogue generation and clears
+the affected entries. Failed captures and unavailable watches keep the
+two-second request-time limit. Alias resolution and strict native source
+checks retain their existing paths.
+
+The full instrumented Windows suite passed 2,462 tests with 18 default
+ignores. The two checksum-pinned DCS-BIOS archive checks passed separately.
+The four changed native modules measured 93.60% to 97.69% production line
+coverage. LLVM measured 78.43% to 96.67% function coverage and emitted no
+branch counters for these modules.
+
+The two dev clients each read a new CommonData altitude descriptor after an
+edit to the private JSON file and read the original descriptor after the
+fixture restored it. The first changed descriptor was readable in 152 ms
+on native and 320 ms on browser-dev, including the fixture's observation
+checks. Both restored their private profile, installation and provider
+settings without cleanup errors.
+
+| Transport | Authored packet rate | UDP to readable value p50 / p95 / p99 | Inspection request p95 / p99 |
+| --- | ---: | ---: | ---: |
+| Native WebView | 21.52 Hz | 21.91 / 31.62 / 68.29 ms | 16.50 / 22.50 ms |
+| Browser-dev | 21.40 Hz | 23.70 / 46.74 / 123.33 ms | 22.30 / 22.40 ms |
+
+Both clients matched all 24 values while the other receipt remained held.
+The inspection request maximum fell from 175.70 to 22.50 ms on native
+and from 181.10 to 22.40 ms on browser-dev. Both met the 100 ms read p95
+budget. The longest remaining browser-dev sample spent about 107 ms before
+the matching request began. The trace does not separate source processing
+from notification delivery during that interval. These results cover
+authored loopback packets and client state.
+
+Raw evidence is in `.research/dcs-physics-native/1794131624844/evidence.json`
+and `.research/dcs-physics-native/1794131681429/evidence.json`.
+The native and browser-dev binary hashes are
+`AB2570F8A65839D47D2CD51E009F7D557504ADB1C7A614858E773BD9036822BB`
+and `55355AB70D3B102049289C338432E151475E0AF5B5F6D0717C119EE9A0FA520C`.
