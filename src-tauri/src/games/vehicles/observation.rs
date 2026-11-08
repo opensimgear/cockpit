@@ -240,8 +240,9 @@ impl Tracker {
             return;
         }
         if let Some(reader) = observation.reader {
+            let wake = self.capture_wakes.as_ref().and_then(|wakes| wakes.get(&entry.integration));
             let admitted = reader.and_then(|reader| {
-                let watch = self.capture_wake.as_ref()
+                let watch = wake
                     .map(|wake| CaptureBinding::require_live(&reader, wake)).transpose();
                 match watch {
                     Ok(watch) => Ok((reader, watch)),
@@ -256,7 +257,7 @@ impl Tracker {
                     entry.capture_watch = watch;
                     self.retired.extend(entry.reader.replace(reader));
                     entry.error = None;
-                    if let Some(wake) = &self.capture_wake { wake.notify(); }
+                    if let Some(wake) = wake { wake.notify(); }
                 }
                 Err(error) => {
                     entry.error = Some(error);

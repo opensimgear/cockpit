@@ -13,7 +13,9 @@ use std::{
 
 mod inspection;
 mod catalogues;
+mod capture_wakes;
 pub(crate) use catalogues::CatalogueSource;
+pub(crate) use capture_wakes::CaptureWakes;
 
 const MAX_VEHICLES: usize = 1024;
 const MAX_SAVED: u64 = 512 * 1024;
@@ -157,7 +159,7 @@ pub(crate) struct Tracker {
     retired: Vec<Reader>,
     changes: Option<Arc<crate::game_read_models::signals::Signal>>,
     published_deadline: Option<Instant>,
-    capture_wake: Option<Arc<osg_streams::NativeWake>>,
+    capture_wakes: Option<Arc<CaptureWakes>>,
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
@@ -175,13 +177,17 @@ impl Tracker {
         known.iter().zip(Self::INSTALLATION_FIELDS).all(|(value, field)| value == &game[field])
     }
 
-    pub(crate) fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
+    pub(crate) fn watch_capture_lanes(&mut self, wakes: Arc<CaptureWakes>) {
         #[cfg(test)]
         for entry in self.entries.values_mut() {
-            entry.capture_watch = entry.reader.as_ref()
-                .and_then(|reader| CaptureBinding::open(reader, &wake).ok());
+            entry.capture_watch = entry.reader.as_ref().and_then(|reader|
+                CaptureBinding::open(reader, wakes.get(&entry.integration)?).ok());
         }
-        self.capture_wake = Some(wake);
+        self.capture_wakes = Some(wakes);
+    }
+    #[cfg(test)]
+    fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
+        self.watch_capture_lanes(Arc::new(CaptureWakes::shared(wake)));
     }
     pub(crate) fn context_deadline(&self, configured: &[String], serviced_at: Instant) -> Option<Instant> {
         configured.iter().filter_map(|id| {
@@ -190,14 +196,20 @@ impl Tracker {
                 && entry.opening.is_none() && !entry.polling && entry.retry > serviced_at).then_some(entry.retry)
         }).min()
     }
-    pub(crate) fn capture_deadline(&self) -> Option<Instant> {
+    #[cfg(test)]
+    fn capture_deadline(&self) -> Option<Instant> {
+        self.capture_deadline_for(None)
+    }
+    pub(crate) fn capture_deadline_for(&self, integration: Option<&str>) -> Option<Instant> {
         let now = Instant::now();
-        self.entries.values().filter_map(|entry| {
-            let reader = entry.reader.as_ref()?;
-            let deadline = entry.capture_watch.as_ref().and_then(|_| reader.assetto_deadline());
-            deadline.into_iter().chain(reader.ownship_retry_deadline())
-                .chain(entry.inspection.deadline(now)).min()
-        }).min()
+        self.entries.values()
+            .filter(|entry| integration.is_none_or(|id| id == entry.integration))
+            .filter_map(|entry| {
+                let reader = entry.reader.as_ref()?;
+                let deadline = entry.capture_watch.as_ref().and_then(|_| reader.assetto_deadline());
+                deadline.into_iter().chain(reader.ownship_retry_deadline())
+                    .chain(entry.inspection.deadline(now)).min()
+            }).min()
     }
     pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let weak = Arc::downgrade(&changes);
@@ -339,7 +351,7 @@ impl Tracker {
             retired: vec![],
             changes: None,
             published_deadline: None,
-            capture_wake: None,
+            capture_wakes: None,
         }
     }
 

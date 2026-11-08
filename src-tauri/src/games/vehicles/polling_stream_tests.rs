@@ -253,3 +253,31 @@ fn deadline_renewal_only_reschedules_and_elapsed_cached_view_withdraws_without_p
     tracker.set_test_vehicle("assetto-corsa", Some("car"));
     assert_eq!(tracker.view_deadline(), None);
 }
+
+impl Tracker {
+    pub(crate) fn seed_capture_reader(
+        &mut self,
+        game: &Value,
+        setup_revision: &str,
+        source: Box<dyn game_telemetry::Source>,
+    ) -> Arc<osg_streams::NativeWake> {
+        let id = game["id"].as_str().unwrap();
+        let process = ProcessIdentity {
+            pid: 42, epoch: 10, path: game["executable"].as_str().unwrap().into(),
+        };
+        self.begin_observation(game, &json!({}), Some(process), setup_revision, true, 1).unwrap();
+        let worker = self.capture_wakes.as_ref().unwrap().get(id).unwrap();
+        let wake = Arc::new(osg_streams::NativeWake::child(worker.clone()));
+        let entry = self.entries.get_mut(id).unwrap();
+        entry.opening = None;
+        entry.capture_watch = Some(CaptureBinding {
+            _watch: sources::CaptureWatch::Fixture(Arc::new(std::sync::atomic::AtomicBool::new(true))),
+            wake: wake.clone(),
+            drained: 0,
+        });
+        entry.reader = Some(Reader::Rally {
+            source, decoder: game_telemetry::Session::new(1500).unwrap(),
+        });
+        wake
+    }
+}

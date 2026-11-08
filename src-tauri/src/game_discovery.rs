@@ -226,6 +226,10 @@ const INTEGRATIONS: &[IntegrationDefinition] = &[
         executables: &["AssettoCorsaEVO.exe"],
     },
 ];
+pub(crate) fn integration_ids() -> impl Iterator<Item = &'static str> {
+    INTEGRATIONS.iter().map(|integration| integration.id)
+}
+
 fn integration_definition(id: &str) -> Result<&'static IntegrationDefinition, String> {
     INTEGRATIONS
         .iter()

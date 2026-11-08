@@ -4,6 +4,8 @@ use super::*;
 use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwner, ValidationFailure};
 #[path = "games/context/process_cache.rs"]
 pub(super) mod process_cache;
+#[path = "games/context/capture_workers.rs"]
+mod capture_workers;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -185,36 +187,11 @@ impl GamesRuntime {
             return;
         }
         let inner = self.inner.clone();
-        let capture_wake = inner.changes.vehicle_capture_wake.clone();
-        inner.update_vehicles(|vehicles| vehicles.watch_captures(capture_wake.clone()));
+        let capture_wakes = inner.changes.vehicle_capture_wakes.clone();
+        inner.update_vehicles(|vehicles| vehicles.watch_capture_lanes(capture_wakes.clone()));
         *self.observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thread::spawn(move || {
             let polling_closed = Arc::new(AtomicBool::new(false));
-            let polling_inner = inner.clone();
-            let polling_stop = polling_closed.clone();
-            let worker_wake = capture_wake.clone();
-            // Setup inspection and catalogue parsing can exceed a freshness
-            // deadline. Handle capture, scope changes and exit independently.
-            let polling = thread::spawn(move || {
-                let _ = worker_wake.bind_thread(thread::current());
-                let mut drained = None;
-                let mut scope = 0;
-                while !polling_inner.closed.load(Ordering::Acquire)
-                    && !polling_stop.load(Ordering::Acquire)
-                {
-                    let observed = worker_wake.observed();
-                    let current_scope = polling_inner.changes.vehicle_scope_wake.observed();
-                    if Some(observed) != drained || observed == u64::MAX || matches!(polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .capture_deadline(), Some(deadline) if Instant::now() >= deadline)
-                    {
-                        polling_inner.poll_vehicle_telemetry(current_scope != scope || current_scope == u64::MAX);
-                    }
-                    scope = current_scope;
-                    drained = Some(observed);
-                    let delay = polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .capture_deadline().map(|at| at.saturating_duration_since(Instant::now()));
-                    worker_wake.wait_scheduled(observed, delay);
-                }
-            });
+            let polling = capture_workers::start(inner.clone(), polling_closed.clone());
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
             let worker_wake = &inner.changes.context_worker_wake;
@@ -256,8 +233,10 @@ impl GamesRuntime {
                 }
             }
             polling_closed.store(true, Ordering::Release);
-            capture_wake.notify();
-            let _ = polling.join();
+            capture_wakes.notify_all();
+            for worker in polling {
+                let _ = worker.join();
+            }
         }));
     }
     pub(super) fn decorate_game_contexts(&self, games: &mut [Value]) {
@@ -352,28 +331,6 @@ impl Inner {
             .filter(|game| crate::game_discovery::integration_key(game).is_some())
             .cloned()
             .collect()
-    }
-    fn poll_vehicle_telemetry(&self, recheck_scope: bool) {
-        let candidates = self.vehicles.lock().unwrap_or_else(|p| p.into_inner())
-            .scoped_capture_candidates(recheck_scope);
-        if candidates.is_empty() {
-            return;
-        }
-        let revision = |games: &[Value], id: &str| {
-            games.iter().find(|game| game["id"] == id)
-                .map_or_else(String::new, |game| self.setup.vehicle_setup_revision(game))
-        };
-        let games = self.vehicle_telemetry_games();
-        let verified = candidates.into_iter()
-            .map(|candidate| candidate.verify(&games, |id| revision(&games, id), |_| None).without_renewal())
-            .collect();
-        let polls = self.update_vehicles(|vehicles| vehicles.begin_polls(verified));
-        for poll in polls {
-            let result = poll.read();
-            let games = self.vehicle_telemetry_games();
-            let result = result.verify(&games, |id| revision(&games, id), |_| None);
-            self.update_vehicles(|vehicles| vehicles.apply_poll(result));
-        }
     }
     fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
         // Other games already select their profile vehicle independently. DCS

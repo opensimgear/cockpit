@@ -95,7 +95,8 @@ impl Tracker {
             return Ok(());
         };
         let lease = observation.as_ref().and_then(std::sync::Weak::upgrade);
-        if let (Some(lease), Some(wake)) = (&lease, &self.capture_wake) { lease.watch(wake); }
+        let wake = self.capture_wakes.as_ref().and_then(|wakes| wakes.get(&entry.integration));
+        if let (Some(lease), Some(wake)) = (&lease, wake) { lease.watch(wake); }
         let mut changed = false;
         entry.inspection.update(client, channels, Instant::now(), observation, |selected| {
             if let Some(reader) = &entry.reader {
@@ -105,7 +106,7 @@ impl Tracker {
             Ok(())
         })?;
         if changed { entry.inspection.pending(true); }
-        if let Some(wake) = &self.capture_wake { wake.notify(); }
+        if let Some(wake) = wake { wake.notify(); }
         Ok(())
     }
     pub(crate) fn decorate(&self, game: &mut Value) {

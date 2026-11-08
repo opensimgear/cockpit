@@ -123,7 +123,7 @@ fn capture_and_context_workers_recover_after_a_locked_worker_panics() {
     assert!(failed.is_err());
     assert!(inner.settings.is_poisoned() && inner.vehicles.is_poisoned() && inner.contexts.is_poisoned());
     assert_eq!(inner.vehicle_telemetry_games()[0]["id"], "x-plane-12");
-    inner.poll_vehicle_telemetry(true);
+    inner.poll_vehicle_telemetry("x-plane-12", true);
     inner.refresh_game_contexts(false);
     assert_eq!(inner.vehicle_telemetry_games()[0]["id"], "x-plane-12");
     runtime.shutdown();
@@ -198,6 +198,7 @@ impl Scratch {
     }
 }
 struct FakePlatform {
+    context_supported: bool,
     process: Mutex<Option<ProcessIdentity>>,
     failed: AtomicBool,
     reads: std::sync::atomic::AtomicUsize,
@@ -206,6 +207,7 @@ struct FakePlatform {
 impl FakePlatform {
     fn new() -> Self {
         Self {
+            context_supported: true,
             process: Mutex::new(Some(ProcessIdentity {
                 pid: 42,
                 path: "/fixture/X-Plane.exe".into(),
@@ -220,7 +222,7 @@ impl FakePlatform {
 impl Platform for FakePlatform {
     fn integration_setup_supported(&self) -> bool {
         self.reads.fetch_add(1, Ordering::SeqCst);
-        true
+        self.context_supported
     }
     fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
         self.reads.fetch_add(1, Ordering::SeqCst);
@@ -467,3 +469,5 @@ include!("game_context_runtime_tests_tail.rs");
 mod decoration;
 #[path = "games/context/validation_tests.rs"]
 mod validation;
+#[path = "games/context/capture_workers_tests.rs"]
+mod capture_isolation;

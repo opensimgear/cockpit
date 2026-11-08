@@ -92,7 +92,7 @@ impl Inner {
         if let Some(changes) = self.changes.get() {
             changes.mark(crate::game_read_models::signals::Domain::Setup);
             changes.context_update_wake.notify();
-            changes.vehicle_scope_wake.notify();
+            changes.wake_vehicle_scope();
             changes.mark_resources();
         }
     }

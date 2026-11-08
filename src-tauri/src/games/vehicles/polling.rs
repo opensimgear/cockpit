@@ -96,19 +96,24 @@ impl VehiclePoll {
 impl Tracker {
     #[cfg(test)]
     pub(crate) fn poll_candidates(&mut self) -> Vec<Qualification> {
-        self.candidates(false, false)
+        self.candidates(false, false, None)
     }
     #[cfg(test)]
     pub(crate) fn capture_candidates(&mut self) -> Vec<Qualification> {
-        self.scoped_capture_candidates(false)
+        self.capture_candidates_for(None, false)
     }
-    pub(crate) fn scoped_capture_candidates(&mut self, recheck_scope: bool) -> Vec<Qualification> {
-        self.candidates(true, recheck_scope)
+    #[cfg(test)]
+    pub(super) fn scoped_capture_candidates(&mut self, recheck_scope: bool) -> Vec<Qualification> {
+        self.capture_candidates_for(None, recheck_scope)
     }
-    fn candidates(&mut self, capture_only: bool, recheck_scope: bool) -> Vec<Qualification> {
+    pub(crate) fn capture_candidates_for(&mut self, integration: Option<&str>, recheck_scope: bool) -> Vec<Qualification> {
+        self.candidates(true, recheck_scope, integration)
+    }
+    fn candidates(&mut self, capture_only: bool, recheck_scope: bool, integration: Option<&str>) -> Vec<Qualification> {
         let now = Instant::now();
         self.entries
             .iter_mut()
+            .filter(|(_, entry)| integration.is_none_or(|id| id == entry.integration))
             .filter_map(|(id, entry)| {
                 #[cfg(test)]
                 if entry.injected {
@@ -265,7 +270,7 @@ impl Tracker {
         let result = poll.result.expect("Reader work must finish before publication").and_then(|capture| {
             poll.reader.check_catalogue_watch()?;
             if poll.reader.take_capture_change() {
-                if let Some(wake) = &self.capture_wake {
+                if let Some(wake) = self.capture_wakes.as_ref().and_then(|wakes| wakes.get(&entry.integration)) {
                     // Release the old stream registration before replacing it.
                     entry.capture_watch = None;
                     entry.capture_watch = Some(CaptureBinding::require_live(&poll.reader, wake)?);
