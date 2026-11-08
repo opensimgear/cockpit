@@ -32,6 +32,18 @@ export function dismissNotification(id: number) {
   forgetTimer(id);
   notifications.update(items => items.filter(item => item.id !== id));
 }
+
+export function expireElapsedNotifications() {
+  const now = Date.now();
+  const expired = new Set<number>();
+  for (const [id, timer] of timers) {
+    if (timer.reasons.size > 0 || timer.deadline > now) continue;
+    forgetTimer(id);
+    expired.add(id);
+  }
+  if (expired.size) notifications.update(items => items.filter(item => !expired.has(item.id)));
+}
+
 export function notify(message: string, kind: Notification['kind'] = 'info') {
   if (!message.trim()) return;
   notifications.update(items => {

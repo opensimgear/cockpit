@@ -1,7 +1,9 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
-  import { notifications, dismissNotification, pauseNotification, resumeNotification } from './notifications';
+  import { notifications, dismissNotification, expireElapsedNotifications, pauseNotification, resumeNotification } from './notifications';
 </script>
+
+<svelte:document onvisibilitychange={() => { if (!document.hidden) expireElapsedNotifications(); }} />
 
 <div class="notifications" role="region" aria-label="Notifications">
   {#each $notifications as notification (notification.id)}

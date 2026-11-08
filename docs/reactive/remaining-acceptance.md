@@ -62,6 +62,11 @@ passed in the native Linux desktop and browser-dev. Overview and Devices
 reopened on the replacement, and visible removal cleared both displays.
 Native Windows USB arrival and withdrawal remain in #199.
 
+[Global notification expiry](../verification/2026-11-08-notification-deadline-reveal.md)
+now reconciles the current deadline on reveal. Both transports saved an
+actual profile while hidden, kept the current notice across navigation and
+cleared the expired notice without waiting for a delayed callback.
+
 [Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
 retire their readers while the document is hidden. Devices reopens on
 current desktop, driver, inventory and visibility baselines on native and

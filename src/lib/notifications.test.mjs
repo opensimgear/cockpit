@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { get } from 'svelte/store';
-import { notify, notifications, dismissNotification, pauseNotification, resumeNotification } from './notifications.ts';
+import { notify, notifications, dismissNotification, expireElapsedNotifications, pauseNotification, resumeNotification } from './notifications.ts';
 
 function clock(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10000 });
@@ -27,6 +27,30 @@ test('notifications of every severity expose a three-second countdown and expire
   assert.equal(get(notifications).length, 3);
   tick(1);
   assert.deepEqual(get(notifications), []);
+});
+
+test('reveal removes only elapsed notices when the renderer has delayed callbacks', t => {
+  const tick = clock(t);
+  notify('Elapsed');
+  tick(250);
+  notify('Paused');
+  pauseNotification(get(notifications)[1].id, 'focus');
+  tick(2250);
+  notify('Current');
+  const before = get(notifications);
+  let updates = 0;
+  const unsubscribe = notifications.subscribe(() => updates++);
+  t.after(unsubscribe);
+  expireElapsedNotifications();
+  assert.equal(updates, 1);
+
+  t.mock.timers.setTime(13000);
+  assert.deepEqual(get(notifications), before, 'The elapsed callback has not run');
+  expireElapsedNotifications();
+  assert.deepEqual(get(notifications), before.slice(1));
+  assert.equal(updates, 2);
+  expireElapsedNotifications();
+  assert.equal(updates, 2);
 });
 
 test('duplicates reset their deadline and visual timer without adding or moving a notification', t => {
