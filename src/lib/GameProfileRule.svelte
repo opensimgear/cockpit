@@ -12,21 +12,23 @@
   const settingsRequest=guardUiSettings(gatewayRequest);
   const client=untrack(()=>suppliedClient)??new GameProfileContextClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Matching profiles are unavailable.');return result;});
   let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),mounted=$state(false),stale=$state(true);
+  let shown=$state(true),awaitingCandidates=$state(false);
   let libraryEpoch=0,refreshQueued=false,libraryReady=false,runtimeReady=false;
   let libraryWritable=$state(false),runtimeWritable=$state(false);
   let epoch=0,disposed=false,contextId=untrack(()=>game.id);
+  const scopeId=$derived(game.id);
   const savedId=$derived(candidates?.preferredProfileId??'');
   const dirty=$derived(!!candidates&&profileId!==savedId);
-  const ready=$derived(active&&!busy&&!pending&&!stale&&libraryWritable&&runtimeWritable&&!!candidates);
-  function syncGame(){if(game.id===contextId)return;contextId=game.id;epoch++;candidates=null;profileId='';loading=false;pending=false;error='';}
+  const ready=$derived(active&&shown&&!busy&&!pending&&!stale&&!awaitingCandidates&&libraryWritable&&runtimeWritable&&!!candidates);
+  function syncGame(){if(scopeId===contextId)return;contextId=scopeId;epoch++;candidates=null;profileId='';loading=false;pending=false;error='';}
   $effect(syncGame);
   function accept(value:DeepReadonly<GameProfileCandidates>,preserveDraft=false){const edited=dirty;candidates=value;if(!preserveDraft||!edited)profileId=value.preferredProfileId??'';}
   async function refresh(){
-    if(disposed||!active||stale)return;
+    if(disposed||!active||!shown||stale)return;
     if(loading||pending){refreshQueued=true;return;}
     refreshQueued=false;const requestEpoch=++epoch,sourceEpoch=libraryEpoch,gameId=game.id;loading=true;
-    try{const value=await client.candidates(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId||!active||stale||sourceEpoch!==libraryEpoch)return;accept(value,true);error='';}
-    catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId&&!stale)error=cause instanceof Error?cause.message:String(cause);}
+    try{const value=await client.candidates(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId||!active||!shown||stale||sourceEpoch!==libraryEpoch)return;accept(value,true);awaitingCandidates=false;error='';}
+    catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId&&shown&&!stale&&sourceEpoch===libraryEpoch)error=cause instanceof Error?cause.message:String(cause);}
     finally{if(!disposed&&epoch===requestEpoch){loading=false;if(refreshQueued)void refresh();}}
   }
   async function chooseProfile(value:string){
@@ -36,13 +38,19 @@
     catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId){profileId=savedId;error=cause instanceof Error?cause.message:String(cause);}}
     finally{if(!disposed&&epoch===requestEpoch){pending=false;if(refreshQueued)void refresh();}}
   }
-  function mountProfiles(){mounted=true;return()=>{mounted=false;epoch++;};}
+  function mountProfiles(){
+    const syncVisibility=()=>{shown=!document.hidden;};
+    syncVisibility();
+    document.addEventListener('visibilitychange',syncVisibility);
+    mounted=true;
+    return()=>{mounted=false;epoch++;document.removeEventListener('visibilitychange',syncVisibility);};
+  }
   onMount(mountProfiles);onDestroy(()=>{disposed=true;epoch++;});
   function watchProfiles(){
-    syncGame();if(!mounted||!active)return;
+    syncGame();if(!mounted||!active||!shown)return;
     return untrack(()=>{
     const gameId=game.id;
-    libraryReady=false;runtimeReady=false;stale=true;let selectedPreference='',matchingProfiles='';
+    libraryReady=false;runtimeReady=false;stale=true;awaitingCandidates=true;let selectedPreference='',matchingProfiles='';
     const changed=(message?:string)=>{
       libraryEpoch++;stale=!libraryReady||!runtimeReady;
       if(stale){error=message??'Waiting for current saved profiles.';return;}
@@ -61,7 +69,11 @@
       runtimeReady=streamReady;runtimeWritable=state.value?.readOnly===false;selectedPreference=preference;
       if(different)changed(state.error);
     });
-    return()=>{libraryEpoch++;stale=true;stopLibrary();stopRuntime();};
+    return()=>{
+      libraryEpoch++;refreshQueued=false;stale=true;
+      if(loading){epoch++;loading=false;}
+      stopLibrary();stopRuntime();
+    };
     });
   }
   $effect(watchProfiles);

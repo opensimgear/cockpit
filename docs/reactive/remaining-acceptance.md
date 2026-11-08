@@ -61,6 +61,11 @@ native and browser-dev fixtures observed a visible replacement, retained a
 draft across a second external change, restored the current path on Escape,
 and reopened on a third change. Clean blur sent no mutation.
 
+Matching profiles stops candidate reads while hidden. Native and browser-dev
+both showed the latest committed preference after reveal and after reopening
+Games. Each opening made one candidate read and kept the old choice disabled
+until the current snapshot arrived.
+
 [Native driver setup](../verification/2026-11-07-optional-driver-observation.md#driver-setup-across-settings-navigation)
 retains the pending operation across Settings navigation, including when a driver
 file appears before the installer returns. Completion reaches global notifications.
