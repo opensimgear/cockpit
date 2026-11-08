@@ -92,7 +92,7 @@ fn failed_watch_withdraws_only_the_exact_setup_proof_until_recovered() {
     let runtime = GameIntegrationSetup::new(root.path().join("setup.json"), false);
     let signal = Arc::new(crate::game_read_models::signals::Signal::default());
     runtime.watch_changes(signal.clone());
-    let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true,
+    let game = json!({"id":"dcs","provider":"dcs-bios","integrationKey":"dcs","integrationCompatible":true,
         "installed":true,"executable":"first.exe"});
     let mut replacement = game.clone();
     replacement["executable"] = json!("replacement.exe");
@@ -100,10 +100,18 @@ fn failed_watch_withdraws_only_the_exact_setup_proof_until_recovered() {
     let ready = json!({"state":"ready","verified":true,"connection":{"port":7778}});
     runtime.inner.publish_setup(&game, &record, ready.clone());
     runtime.inner.publish_setup(&replacement, &record, ready);
+    let revision = runtime.vehicle_setup_revision(&game);
+    assert_eq!(revision, runtime.provider_setup_revision("dcs"));
+    let before = signal.vehicle_scope_wake.observed();
     runtime.set_setup_watch_unavailable("dcs", &game, true);
+    let scope_wake = signal.vehicle_scope_wake.observed();
+    assert_eq!(scope_wake, before + 1);
+    assert!(runtime.vehicle_setup_revision(&game).is_empty());
+    assert_eq!(runtime.vehicle_setup_revision(&replacement), revision);
     let wake = signal.context_update_wake.observed();
     runtime.set_setup_watch_unavailable("dcs", &game, true);
     assert_eq!(signal.context_update_wake.observed(), wake);
+    assert_eq!(signal.vehicle_scope_wake.observed(), scope_wake);
     assert_eq!(runtime.inner.cached_source_setup(&game, "dcs")["verified"], false);
     assert_eq!(runtime.inner.cached_source_setup(&replacement, "dcs")["state"], "ready");
     for view in [runtime.inner.cached_setup_summary(&game, "dcs"), runtime.inner.cached_setup(&game, "dcs")] {
@@ -111,5 +119,7 @@ fn failed_watch_withdraws_only_the_exact_setup_proof_until_recovered() {
         assert_eq!(view["connection"]["port"], 7778);
     }
     runtime.set_setup_watch_unavailable("dcs", &game, false);
+    assert_eq!(signal.vehicle_scope_wake.observed(), scope_wake + 1);
+    assert_eq!(runtime.vehicle_setup_revision(&game), revision);
     assert_eq!(runtime.inner.cached_source_setup(&game, "dcs")["verified"], true);
 }

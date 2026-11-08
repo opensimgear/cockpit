@@ -40,6 +40,15 @@ fn apply_watch_status(status: &mut Value, unavailable: bool) {
 }
 
 impl GameIntegrationSetup {
+    pub(crate) fn vehicle_setup_revision(&self, game: &Value) -> String {
+        let Some(id) = crate::game_discovery::integration_binding(game) else { return String::new(); };
+        let (status, unavailable, revision) = self.inner.source_setup(game, id);
+        if unavailable || !status.is_some_and(|status| status["state"] == "ready") {
+            return String::new();
+        }
+        revision
+    }
+
     pub(crate) fn set_setup_watch_unavailable(&self, id: &str, game: &Value, unavailable: bool) {
         let key = source_scope(game, id);
         {
@@ -83,6 +92,7 @@ impl Inner {
         if let Some(changes) = self.changes.get() {
             changes.mark(crate::game_read_models::signals::Domain::Setup);
             changes.context_update_wake.notify();
+            changes.vehicle_scope_wake.notify();
             changes.mark_resources();
         }
     }
@@ -135,15 +145,17 @@ impl Inner {
         views.unavailable_watches.retain(|_, key| scopes.contains(key));
         views.bytes = views.entries.values().map(|entry| entry.2).sum();
     }
-    pub(super) fn cached_source_setup(&self, game: &Value, id: &str) -> Value {
+    fn source_setup(&self, game: &Value, id: &str) -> (Option<Value>, bool, String) {
         let key = source_scope(game, id);
         let (record, revision) = self.provider_snapshot(id);
-        let (captured, unavailable) = {
-            let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
-            let status = views.source.get(&key).filter(|(known, _)| known.as_ref() == &record)
-                .map(|(_, status)| status.clone());
-            (status, views.unavailable_watches.get(id) == Some(&key))
-        };
+        let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
+        let status = views.source.get(&key).filter(|(known, _)| known.as_ref() == &record)
+            .map(|(_, status)| status.clone());
+        (status, views.unavailable_watches.get(id) == Some(&key), revision)
+    }
+
+    pub(super) fn cached_source_setup(&self, game: &Value, id: &str) -> Value {
+        let (captured, unavailable, revision) = self.source_setup(game, id);
         // Source readiness is conservatively withheld throughout any worker.
         if self.busy.load(Ordering::Acquire) {
             return json!({"state":"setting-up","verified":false,"providerSetupRevision":revision});

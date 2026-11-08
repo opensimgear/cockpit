@@ -65,7 +65,7 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
     tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
     assert!(tracker.telemetry(&game).is_some());
     let now = Instant::now();
-    assert!(tracker.maintenance_delay(now).is_some_and(|delay| delay > Duration::ZERO && delay <= deadline - now));
+    assert!(tracker.capture_deadline().is_some_and(|at| at > now));
     let candidates = tracker.poll_candidates().into_iter().map(check).collect();
     assert!(tracker.begin_polls(candidates).is_empty());
     std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
@@ -76,7 +76,6 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
     assert_eq!(tracker.entries[id].telemetry.as_ref().unwrap().status, "stale");
     assert!(tracker.capture_deadline().is_none());
     assert!(tracker.capture_candidates().is_empty());
-    assert!(tracker.maintenance_delay(Instant::now()).is_none());
 
     wake.notify();
     let candidates = tracker.capture_candidates().into_iter().map(check).collect();
@@ -86,6 +85,81 @@ fn watched_assetto_reads_only_on_capture_and_expires_without_reading() {
     assert!(tracker.telemetry(&game).is_none(), "Process loss hides cached telemetry during a detached read");
     tracker.apply_poll(poll);
     assert!(tracker.entries[id].reader.is_none());
+}
+
+#[test]
+fn configuration_wakes_recheck_quiet_and_detached_captures_without_reading() {
+    use std::sync::atomic::AtomicBool;
+
+    for (changed, detached) in [("setup", false), ("installation", false), ("setup", true), ("installation", true)] {
+        let directory = crate::test_directory();
+        let mut tracker = Tracker::new(directory.path().join("vehicles.json"));
+        let changes = Arc::new(crate::game_read_models::signals::Signal::default());
+        tracker.watch_changes(changes.clone());
+        let game = json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa",
+            "provider":"assetto-corsa","installed":true,"executable":"acs.exe"});
+        let id = "assetto-corsa";
+        let process = ProcessIdentity { pid: 42, epoch: 10, path: "acs.exe".into() };
+        tracker.begin_observation(&game, &json!({}), Some(process), "setup", true, 1).unwrap();
+        let wake = Arc::new(osg_streams::NativeWake::default());
+        let entry = tracker.entries.get_mut(id).unwrap();
+        entry.capture_watch = Some(CaptureBinding {
+            _watch: sources::CaptureWatch::Fixture(Arc::new(AtomicBool::new(true))),
+            wake: wake.clone(),
+            drained: 0,
+        });
+        entry.reader = Some(Reader::Rally {
+            source: Box::new(game_telemetry::FixtureSource::new()),
+            decoder: game_telemetry::Session::new(1500).unwrap(),
+        });
+        let check = |candidate: Qualification, game: &Value, revision: &str| {
+            candidate.verify(std::slice::from_ref(game), |_| revision.into(), |_| {
+                panic!("The capture owner already monitors this process")
+            }).without_renewal()
+        };
+        wake.notify();
+        let baseline = tracker.scoped_capture_candidates(false).into_iter()
+            .map(|candidate| check(candidate, &game, "setup")).collect();
+        let mut poll = tracker.begin_polls(baseline).pop().unwrap().read();
+        let (_, capture) = poll.result.take().unwrap().unwrap();
+        poll.result = Some(Ok((Some("fixture-car".into()), capture)));
+        tracker.apply_poll(poll);
+        let original = tracker.telemetry(&game).unwrap();
+        let generation = tracker.entries[id].generation;
+        assert_eq!(tracker.current(id).unwrap()["id"], "fixture-car");
+        assert!(tracker.scoped_capture_candidates(false).is_empty());
+
+        let unchanged = tracker.scoped_capture_candidates(true).into_iter()
+            .map(|candidate| check(candidate, &game, "setup")).collect::<Vec<_>>();
+        assert_eq!(unchanged.len(), 1, "A configuration wake checks a quiet reader");
+        assert!(tracker.begin_polls(unchanged).is_empty(), "A matching configuration requires no capture read");
+        assert!(Arc::ptr_eq(&tracker.telemetry(&game).unwrap(), &original));
+
+        let late = detached.then(|| {
+            wake.notify();
+            let candidates = tracker.scoped_capture_candidates(false).into_iter()
+                .map(|candidate| check(candidate, &game, "setup")).collect();
+            tracker.begin_polls(candidates).pop().unwrap().read()
+        });
+        let mut current_game = game.clone();
+        if changed == "installation" {
+            current_game["executable"] = json!("other.exe");
+        }
+        let revision = if changed == "setup" { "replacement" } else { "setup" };
+        let context_epoch = changes.context_update_wake.observed();
+        let invalid = tracker.scoped_capture_candidates(true).into_iter()
+            .map(|candidate| check(candidate, &current_game, revision)).collect::<Vec<_>>();
+        assert_eq!(invalid.len(), 1);
+        assert!(tracker.begin_polls(invalid).is_empty(), "Invalid scopes retire without capture reads");
+        if let Some(poll) = late { tracker.apply_poll(poll); }
+        let entry = &tracker.entries[id];
+        assert_ne!(entry.generation, generation);
+        assert!(!entry.polling && entry.reader.is_none() && entry.capture_watch.is_none());
+        assert!(tracker.current(id).is_none() && tracker.telemetry(&game).is_none());
+        assert_ne!(changes.context_update_wake.observed(), context_epoch);
+        assert!(tracker.capture_deadline().is_none());
+        assert!(tracker.scoped_capture_candidates(true).is_empty());
+    }
 }
 
 #[test]

@@ -55,13 +55,11 @@ fn capture_wakes_select_only_verified_streaming_providers() {
         "integrationKey": id, "integrationCompatible": compatible,
     })).collect();
     runtime.inner.settings.lock().unwrap().catalogue = catalogue;
-    let ids = |capture_only| runtime.inner.vehicle_telemetry_games(capture_only)
+    let ids = || runtime.inner.vehicle_telemetry_games()
         .iter().map(|game| game["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
-    assert_eq!(ids(true), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
-    assert_eq!(ids(false), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
+    assert_eq!(ids(), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
     runtime.inner.settings.lock().unwrap().metadata_error = Some("Fixture metadata error".into());
-    assert!(ids(true).is_empty());
-    assert!(ids(false).is_empty());
+    assert!(ids().is_empty());
     runtime.shutdown();
 }
 
@@ -78,10 +76,10 @@ fn capture_and_context_workers_recover_after_a_locked_worker_panics() {
     }));
     assert!(failed.is_err());
     assert!(inner.settings.is_poisoned() && inner.vehicles.is_poisoned() && inner.contexts.is_poisoned());
-    assert_eq!(inner.vehicle_telemetry_games(true)[0]["id"], "x-plane-12");
+    assert_eq!(inner.vehicle_telemetry_games()[0]["id"], "x-plane-12");
     inner.poll_vehicle_telemetry(true);
     inner.refresh_game_contexts(false);
-    assert_eq!(inner.vehicle_telemetry_games(true)[0]["id"], "x-plane-12");
+    assert_eq!(inner.vehicle_telemetry_games()[0]["id"], "x-plane-12");
     runtime.shutdown();
 }
 

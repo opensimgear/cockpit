@@ -5,7 +5,7 @@ pub(crate) struct Qualification {
     id: String,
     generation: u64,
     signature: String,
-    installation: Arc<[Value; 5]>,
+    installation: Arc<[Value; 10]>,
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
@@ -13,6 +13,7 @@ pub(crate) struct Qualification {
     qualified: Option<bool>,
     capture_changed: bool,
     capture_expired: bool,
+    drain_capture: bool,
 }
 impl Qualification {
     pub(crate) fn without_renewal(mut self) -> Self {
@@ -93,13 +94,18 @@ impl VehiclePoll {
     }
 }
 impl Tracker {
+    #[cfg(test)]
     pub(crate) fn poll_candidates(&mut self) -> Vec<Qualification> {
-        self.candidates(false)
+        self.candidates(false, false)
     }
+    #[cfg(test)]
     pub(crate) fn capture_candidates(&mut self) -> Vec<Qualification> {
-        self.candidates(true)
+        self.scoped_capture_candidates(false)
     }
-    fn candidates(&mut self, capture_only: bool) -> Vec<Qualification> {
+    pub(crate) fn scoped_capture_candidates(&mut self, recheck_scope: bool) -> Vec<Qualification> {
+        self.candidates(true, recheck_scope)
+    }
+    fn candidates(&mut self, capture_only: bool, recheck_scope: bool) -> Vec<Qualification> {
         let now = Instant::now();
         self.entries
             .iter_mut()
@@ -109,7 +115,7 @@ impl Tracker {
                     return None;
                 }
                 // Admission and open retries belong to the context owner.
-                // A fallback reader must not qualify unrelated cold entries.
+                // Scope changes also qualify readers detached for capture I/O.
                 if entry.reader.is_none() && !entry.polling
                     && entry.current.is_none() && entry.telemetry.is_none()
                 {
@@ -123,7 +129,9 @@ impl Tracker {
                 let inspection_due = entry.reader.is_some() && entry.inspection.deadline(now).is_some_and(|deadline| now >= deadline);
                 let ownship_due = entry.reader.as_ref().and_then(Reader::ownship_retry_deadline)
                     .is_some_and(|deadline| now >= deadline);
-                if (capture_only || retained_process) && !changed && !expired && !inspection_due && !ownship_due {
+                let drain_capture = changed || expired || inspection_due || ownship_due
+                    || (!capture_only && !retained_process);
+                if !drain_capture && !recheck_scope {
                     return None;
                 }
                 Some(Qualification {
@@ -138,6 +146,7 @@ impl Tracker {
                     qualified: None,
                     capture_changed: changed,
                     capture_expired: expired,
+                    drain_capture,
                 })
             })
             .collect()
@@ -169,8 +178,10 @@ impl Tracker {
                 entry.current = None;
                 entry.telemetry = None;
                 self.publish_visible(&qualification.id);
+                if let Some(changes) = &self.changes { changes.context_update_wake.notify(); }
                 continue;
             }
+            if !qualification.drain_capture { continue; }
             let inspection = entry.inspection.selection(Instant::now()).to_vec();
             if !qualification.capture_changed && entry.capture_watch.is_some() {
                 if matches!(&entry.reader, Some(Reader::Rally { .. })) && !qualification.capture_expired {
@@ -245,20 +256,24 @@ impl Tracker {
             entry.capture_watch = None;
             self.retired.push(poll.reader);
             self.publish_visible(&poll.id);
+            if let Some(changes) = &self.changes { changes.context_update_wake.notify(); }
             return;
         }
         let late = poll.at.elapsed() > Duration::from_secs(2);
         let id = poll.id.clone();
         let mut retain = false;
-        match poll
-            .result
-            .expect("Reader work must finish before publication")
-        {
-            Ok((current, capture)) => {
-                if poll.reader.take_capture_change() {
-                    entry.capture_watch = self.capture_wake.as_ref()
-                        .and_then(|wake| CaptureBinding::open(&poll.reader, wake));
+        let result = poll.result.expect("Reader work must finish before publication").and_then(|capture| {
+            if poll.reader.take_capture_change() {
+                if let Some(wake) = &self.capture_wake {
+                    // Release the old stream registration before replacing it.
+                    entry.capture_watch = None;
+                    entry.capture_watch = Some(CaptureBinding::require_live(&poll.reader, wake)?);
                 }
+            }
+            Ok(capture)
+        });
+        match result {
+            Ok((current, capture)) => {
                 self.retired.extend(entry.reader.replace(poll.reader));
                 if late {
                     // The projection missed its deadline. A still-current

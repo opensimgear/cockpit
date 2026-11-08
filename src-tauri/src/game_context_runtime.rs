@@ -185,37 +185,33 @@ impl GamesRuntime {
             return;
         }
         let inner = self.inner.clone();
+        let capture_wake = inner.changes.vehicle_capture_wake.clone();
+        inner.update_vehicles(|vehicles| vehicles.watch_captures(capture_wake.clone()));
         *self.observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thread::spawn(move || {
             let polling_closed = Arc::new(AtomicBool::new(false));
             let polling_inner = inner.clone();
             let polling_stop = polling_closed.clone();
-            let capture_wake = Arc::new(osg_streams::NativeWake::default());
-            inner.update_vehicles(|vehicles| vehicles.watch_captures(capture_wake.clone()));
             let worker_wake = capture_wake.clone();
-            // Catalogue parsing and setup inspection can take longer than the
-            // native freshness window. Keep exact process checks and telemetry
-            // draining independent of that work, without extending either lease.
+            // Setup inspection and catalogue parsing can exceed a freshness
+            // deadline. Handle capture, scope changes and exit independently.
             let polling = thread::spawn(move || {
                 let _ = worker_wake.bind_thread(thread::current());
-                let mut next_maintenance = Instant::now();
-                let mut drained = worker_wake.observed();
+                let mut drained = None;
+                let mut scope = 0;
                 while !polling_inner.closed.load(Ordering::Acquire)
                     && !polling_stop.load(Ordering::Acquire)
                 {
                     let observed = worker_wake.observed();
-                    let now = Instant::now();
-                    let maintenance_due = now >= next_maintenance
-                        && polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner).needs_process_maintenance();
-                    if maintenance_due {
-                        polling_inner.poll_vehicle_telemetry(false);
-                        next_maintenance = Instant::now() + Duration::from_millis(100);
-                    } else if observed != drained || matches!(polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    let current_scope = polling_inner.changes.vehicle_scope_wake.observed();
+                    if Some(observed) != drained || observed == u64::MAX || matches!(polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                         .capture_deadline(), Some(deadline) if Instant::now() >= deadline)
                     {
-                        polling_inner.poll_vehicle_telemetry(true);
+                        polling_inner.poll_vehicle_telemetry(current_scope != scope || current_scope == u64::MAX);
                     }
-                    drained = observed;
-                    let delay = polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner).maintenance_delay(next_maintenance);
+                    scope = current_scope;
+                    drained = Some(observed);
+                    let delay = polling_inner.vehicles.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .capture_deadline().map(|at| at.saturating_duration_since(Instant::now()));
                     worker_wake.wait_scheduled(observed, delay);
                 }
             });
@@ -345,50 +341,35 @@ impl Inner {
         drop(retired);
         value
     }
-    fn vehicle_telemetry_games(&self, capture_only: bool) -> Vec<Value> {
+    fn vehicle_telemetry_games(&self) -> Vec<Value> {
         let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
         if settings.metadata_error.is_some() {
             return vec![];
         }
         settings.catalogue.iter()
-            .filter(|game| crate::game_discovery::integration_key(game)
-                .is_some_and(|key| !capture_only || key.starts_with("assetto-corsa")
-                    || matches!(key, "dcs" | "x-plane-11" | "x-plane-12")))
+            .filter(|game| crate::game_discovery::integration_key(game).is_some())
             .cloned()
             .collect()
     }
-    fn poll_vehicle_telemetry(&self, capture_only: bool) {
-        let candidates = {
-            let mut vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
-            if capture_only { vehicles.capture_candidates() } else { vehicles.poll_candidates() }
-        };
+    fn poll_vehicle_telemetry(&self, recheck_scope: bool) {
+        let candidates = self.vehicles.lock().unwrap_or_else(|p| p.into_inner())
+            .scoped_capture_candidates(recheck_scope);
         if candidates.is_empty() {
             return;
         }
-        let games = self.vehicle_telemetry_games(capture_only);
-        // Capture wakes check configuration without renewing the process
-        // observation or querying Windows for each packet. The independent
-        // maintenance pass checks identities without a retained capture owner.
-        let alive = |process: &crate::game_discovery::ProcessIdentity| {
-            if capture_only { None } else { self.platform.alive(process).ok() }
+        let revision = |games: &[Value], id: &str| {
+            games.iter().find(|game| game["id"] == id)
+                .map_or_else(String::new, |game| self.setup.vehicle_setup_revision(game))
         };
-        let verified = candidates.into_iter().map(|candidate| {
-            let checked = candidate.verify(&games, |id| {
-                let key = games.iter().find(|game| game["id"] == id)
-                    .and_then(crate::game_discovery::integration_key).unwrap_or("");
-                self.setup.provider_setup_revision(key)
-            }, alive);
-            if capture_only { checked.without_renewal() } else { checked }
-        }).collect();
+        let games = self.vehicle_telemetry_games();
+        let verified = candidates.into_iter()
+            .map(|candidate| candidate.verify(&games, |id| revision(&games, id), |_| None).without_renewal())
+            .collect();
         let polls = self.update_vehicles(|vehicles| vehicles.begin_polls(verified));
         for poll in polls {
             let result = poll.read();
-            let current_games = self.vehicle_telemetry_games(capture_only);
-            let result = result.verify(&current_games, |id| {
-                let key = current_games.iter().find(|game| game["id"] == id)
-                    .and_then(crate::game_discovery::integration_key).unwrap_or("");
-                self.setup.provider_setup_revision(key)
-            }, alive);
+            let games = self.vehicle_telemetry_games();
+            let result = result.verify(&games, |id| revision(&games, id), |_| None);
             self.update_vehicles(|vehicles| vehicles.apply_poll(result));
         }
     }

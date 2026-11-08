@@ -264,19 +264,28 @@ impl Tracker {
             entry.catalogued = Instant::now();
         }
         if let Some(reader) = observation.reader {
-            match reader {
-                Ok(reader) => {
-                    entry.capture_watch = self.capture_wake.as_ref()
-                        .and_then(|wake| CaptureBinding::open(&reader, wake));
+            let admitted = reader.and_then(|reader| {
+                let watch = self.capture_wake.as_ref()
+                    .map(|wake| CaptureBinding::require_live(&reader, wake)).transpose();
+                match watch {
+                    Ok(watch) => Ok((reader, watch)),
+                    Err(error) => {
+                        self.retired.push(reader);
+                        Err(error)
+                    }
+                }
+            });
+            match admitted {
+                Ok((reader, watch)) => {
+                    entry.capture_watch = watch;
                     self.retired.extend(entry.reader.replace(reader));
                     entry.error = None;
-                    // Admission must wake a worker parked without any readers,
-                    // even if the provider has not published its first packet.
                     if let Some(wake) = &self.capture_wake { wake.notify(); }
                 }
                 Err(error) => {
                     entry.error = Some(error);
                     entry.retry = Instant::now() + Duration::from_secs(2);
+                    if let Some(changes) = &self.changes { changes.context_update_wake.notify(); }
                 }
             }
         }

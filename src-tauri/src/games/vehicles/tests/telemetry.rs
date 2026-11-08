@@ -248,7 +248,7 @@ fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
     #[cfg(windows)]
     {
         tracker.watch_captures(Arc::new(osg_streams::NativeWake::default()));
-        assert!(!tracker.needs_process_maintenance());
+        assert_eq!(tracker.entries["dcs"].retained_process_current(), Some(true));
         assert_eq!(tracker.capture_candidates().len(), 1, "Drain the watch's initial wake");
     }
     assert_eq!(tracker.capture_deadline(), Some(deadline));
@@ -257,7 +257,7 @@ fn dcs_ownship_retry_wakes_without_bios_data_or_process_renewal() {
     let observed = entry.observed;
     let Some(Reader::Dcs { physics_retry, .. }) = &mut entry.reader else { unreachable!() };
     *physics_retry = Instant::now();
-    assert_eq!(tracker.maintenance_delay(deadline), Some(Duration::ZERO));
+    assert!(tracker.capture_deadline().is_some_and(|at| at <= Instant::now()));
     let candidates = tracker.capture_candidates().into_iter().map(|candidate| {
         candidate.verify(std::slice::from_ref(&game), |_| "setup".into(), |_| Some(true)).without_renewal()
     }).collect();

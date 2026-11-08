@@ -45,7 +45,7 @@ fn watched_xplane_uses_its_owner_monitor_and_wakes_on_loss_without_packets() {
     tracker.apply_poll(poll.read());
     tracker.entries.get_mut(id).unwrap().observed -= Duration::from_secs(3);
     assert!(tracker.telemetry(&game).is_some());
-    assert!(tracker.maintenance_delay(Instant::now()).is_none());
+    assert!(tracker.capture_deadline().is_none());
     assert!(tracker.poll_candidates().is_empty());
 
     let observed = wake.observed();

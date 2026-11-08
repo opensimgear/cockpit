@@ -41,6 +41,8 @@ pub(crate) struct Signal {
     pub(crate) context_wake: NativeWake,
     pub(crate) context_process_wake: Arc<NativeWake>,
     pub(crate) context_update_wake: NativeWake,
+    pub(crate) vehicle_capture_wake: Arc<NativeWake>,
+    pub(crate) vehicle_scope_wake: NativeWake,
     context_process_scope: Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>,
     pub(crate) activation_wake: Arc<NativeWake>,
     resource_wake: Mutex<Weak<NativeWake>>,
@@ -56,6 +58,7 @@ pub(super) struct Batch {
 impl Default for Signal {
     fn default() -> Self {
         let context_worker_wake = Arc::new(NativeWake::default());
+        let vehicle_capture_wake = Arc::new(NativeWake::default());
         Self {
             state: Mutex::new(State { revision: 0, dirty: ALL, jobs: BTreeMap::new(), events: VecDeque::new(),
                 bytes: 0, overflow: false, closed: false, error: None }),
@@ -65,6 +68,8 @@ impl Default for Signal {
             context_process_wake: Arc::new(NativeWake::child(context_worker_wake.clone())),
             context_update_wake: NativeWake::child(context_worker_wake.clone()),
             context_worker_wake,
+            vehicle_scope_wake: NativeWake::child(vehicle_capture_wake.clone()),
+            vehicle_capture_wake,
             context_process_scope: Mutex::default(),
             activation_wake: Arc::default(),
             resource_wake: Mutex::default(),
@@ -121,6 +126,7 @@ impl Signal {
     pub(crate) fn mark_library_commit(&self) {
         self.mark(Domain::Library);
         self.context_wake.notify();
+        self.vehicle_scope_wake.notify();
         self.activation_wake.notify();
         self.wake_automatic();
         self.mark_resources();
@@ -242,6 +248,7 @@ mod tests {
         let signal = Signal::default();
         let before = signal.context_wake.observed();
         let activation_before = signal.activation_wake.observed();
+        let vehicle_before = signal.vehicle_capture_wake.observed();
         let resources = Arc::new(osg_streams::NativeWake::default());
         signal.watch_resources(&resources);
         let before_resources = resources.observed();
@@ -252,7 +259,9 @@ mod tests {
         assert_eq!(signal.context_wake.observed(), before);
         assert_eq!(signal.activation_wake.observed(), activation_before);
         assert_eq!(resources.observed(), before_resources);
+        assert_eq!(signal.vehicle_capture_wake.observed(), vehicle_before);
         signal.mark_library_commit();
+        assert_eq!(signal.vehicle_capture_wake.observed(), vehicle_before + 1);
         assert_ne!(signal.context_wake.observed(), before);
         assert_ne!(signal.activation_wake.observed(), activation_before);
         assert_ne!(resources.observed(), before_resources);

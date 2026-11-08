@@ -82,7 +82,7 @@ struct Entry {
     signature: String,
     integration: String,
     installation: String,
-    installation_fields: Arc<[Value; 5]>,
+    installation_fields: Arc<[Value; 10]>,
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
@@ -125,10 +125,19 @@ impl Entry {
     }
 }
 impl CaptureBinding {
-    fn open(reader: &Reader, worker: &Arc<osg_streams::NativeWake>) -> Option<Self> {
+    fn open(reader: &Reader, worker: &Arc<osg_streams::NativeWake>) -> Result<Self, String> {
         let wake = Arc::new(osg_streams::NativeWake::child(worker.clone()));
-        let watch = reader.capture_watch(wake.clone()).ok().flatten()?;
-        Some(Self { _watch: watch, wake, drained: 0 })
+        let watch = reader.capture_watch(wake.clone())?
+            .ok_or("Vehicle telemetry has no native capture notification.")?;
+        Ok(Self { _watch: watch, wake, drained: 0 })
+    }
+
+    fn require_live(reader: &Reader, worker: &Arc<osg_streams::NativeWake>) -> Result<Self, String> {
+        let binding = Self::open(reader, worker)?;
+        if binding._watch.retained_process_current() != Some(true) {
+            return Err("Vehicle telemetry requires a live watch on the exact game process.".into());
+        }
+        Ok(binding)
     }
 
     fn begin_drain(&mut self) -> bool {
@@ -151,35 +160,27 @@ pub(crate) struct Tracker {
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
-    const INSTALLATION_FIELDS: [&'static str; 5] =
-        ["installPath", "executable", "installed", "integrationKey", "provider"];
+    const INSTALLATION_FIELDS: [&'static str; 10] = [
+        "installPath", "executable", "installed", "integrationKey", "provider",
+        "integrationCompatible", "selectedInstallationId", "processExecutables",
+        "processMonitoringSupported", "launchSupported",
+    ];
 
-    fn installation_fields(game: &Value) -> Arc<[Value; 5]> {
+    fn installation_fields(game: &Value) -> Arc<[Value; 10]> {
         Arc::new(Self::INSTALLATION_FIELDS.map(|field| game[field].clone()))
     }
 
-    fn installation_matches(known: &[Value; 5], game: &Value) -> bool {
+    fn installation_matches(known: &[Value; 10], game: &Value) -> bool {
         known.iter().zip(Self::INSTALLATION_FIELDS).all(|(value, field)| value == &game[field])
     }
 
     pub(crate) fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
+        #[cfg(test)]
         for entry in self.entries.values_mut() {
             entry.capture_watch = entry.reader.as_ref()
-                .and_then(|reader| CaptureBinding::open(reader, &wake));
+                .and_then(|reader| CaptureBinding::open(reader, &wake).ok());
         }
         self.capture_wake = Some(wake);
-    }
-    /// Opening/retry work belongs to the context owner. This worker services
-    /// only admitted readers, including one temporarily detached for I/O.
-    pub(crate) fn maintenance_delay(&self, at: Instant) -> Option<Duration> {
-        let process = self.needs_process_maintenance().then_some(at);
-        process.into_iter().chain(self.capture_deadline()).min()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-    }
-    pub(crate) fn needs_process_maintenance(&self) -> bool {
-        self.entries.values().any(|entry| {
-            (entry.reader.is_some() || entry.polling) && entry.retained_process_current().is_none()
-        })
     }
     pub(crate) fn context_deadline(&self, configured: &[String], serviced_at: Instant) -> Option<Instant> {
         configured.iter().filter_map(|id| {
@@ -265,14 +266,7 @@ impl Tracker {
         RetiredReaders { _readers: std::mem::take(&mut self.retired) }
     }
     fn installation(game: &Value) -> String {
-        json!([
-            game["installPath"],
-            game["executable"],
-            game["installed"],
-            game["integrationKey"],
-            game["provider"]
-        ])
-        .to_string()
+        json!(Self::INSTALLATION_FIELDS.map(|field| &game[field])).to_string()
     }
     #[cfg(test)]
     pub(crate) fn set_test_vehicle(&mut self, id: &str, selected: Option<&str>) {

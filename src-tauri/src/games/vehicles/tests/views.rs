@@ -135,7 +135,7 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     capture_wake.bind_thread(std::thread::current()).unwrap();
     tracker.watch_captures(capture_wake.clone());
     #[cfg(windows)]
-    assert!(!tracker.needs_process_maintenance(), "The exact exit watch stays authoritative");
+    assert_eq!(tracker.entries["dcs"].retained_process_current(), Some(true));
     let before = capture_wake.observed();
     let packet = json!({"schemaVersion":1,"source":"osg-dcs-ownship","session":"tracker-fixture",
         "sequence":1,"modelTime":1.0,"planeId":5,"aircraft":"A-10C","allowed":true,

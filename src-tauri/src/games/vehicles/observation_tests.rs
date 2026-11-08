@@ -92,44 +92,66 @@ fn failed_verification_cannot_publish_a_new_reader() {
     assert!(entry.retry > Instant::now());
 }
 #[test]
-fn quiet_reader_admission_wakes_idle_maintenance_and_withdrawal_parks_it() {
+fn quiet_reader_admission_wakes_capture_without_a_timer() {
     let (_directory, mut tracker) = tracker();
     let wake = Arc::new(osg_streams::NativeWake::default());
     tracker.watch_captures(wake.clone());
     let baseline = wake.observed();
-    assert!(tracker.maintenance_delay(Instant::now()).is_none());
-    let opening = read(work(&mut tracker, 1));
-    assert!(tracker.maintenance_delay(Instant::now()).is_none(), "Opening runs on the context owner");
-    assert!(tracker.poll_candidates().is_empty(), "Another reader's fallback must not qualify this opening");
+    let (source, _stop_monitor) = crate::xplane::Source::monitored_inspector_fixture();
+    let opening = work(&mut tracker, 1).read_with(|_, _, _| Ok(Reader::Xplane(source)));
+    assert!(tracker.capture_deadline().is_none());
+    assert!(tracker.scoped_capture_candidates(true).is_empty());
     tracker.apply_observation(opening);
     assert_ne!(wake.observed(), baseline, "A quiet provider must wake admission without a packet");
-    assert_eq!(tracker.maintenance_delay(Instant::now()), Some(Duration::ZERO));
+    assert_eq!(tracker.entries["x-plane-12"].retained_process_current(), Some(true));
+    assert!(tracker.capture_deadline().is_none());
 
-    let candidates = tracker.poll_candidates();
+    let candidates = tracker.capture_candidates();
     let poll = tracker.begin_polls(candidates).pop().unwrap();
     assert!(tracker.entries["x-plane-12"].reader.is_none());
-    assert!(tracker.maintenance_delay(Instant::now() + Duration::from_secs(1)).is_some(),
-        "Temporarily detached I/O still owns maintenance");
+    assert!(tracker.capture_deadline().is_none());
     tracker.begin_observation(&game(), &json!({}), None, "setup", false, 2);
-    let withdrawn = wake.observed();
     tracker.apply_poll(poll.read());
-    assert!(tracker.maintenance_delay(Instant::now()).is_none());
-    assert_eq!(wake.observed(), withdrawn, "Late I/O cannot readmit a withdrawn reader");
-
-    let retry = read(work(&mut tracker, 3));
-    tracker.apply_observation(retry);
-    assert_ne!(wake.observed(), withdrawn);
-    assert!(tracker.maintenance_delay(Instant::now()).is_some());
+    assert!(tracker.entries["x-plane-12"].reader.is_none());
+    assert!(tracker.telemetry(&game()).is_none());
+    assert!(tracker.capture_deadline().is_none());
+    assert!(tracker.scoped_capture_candidates(true).is_empty());
 }
 
 #[test]
-fn failed_reader_open_does_not_schedule_vehicle_maintenance() {
+fn capture_admission_requires_notifications_and_exact_process_evidence() {
+    let (source, _publish) = crate::xplane::Source::inspector_fixture();
+    let fixtures = [
+        (Reader::Rally {
+            source: Box::new(game_telemetry::FixtureSource::new()),
+            decoder: game_telemetry::Session::new(1500).unwrap(),
+        }, "native capture notification"),
+        (Reader::Xplane(source), "exact game process"),
+    ];
+    for (reader, diagnostic) in fixtures {
+        let (_directory, mut tracker) = tracker();
+        tracker.watch_captures(Arc::new(osg_streams::NativeWake::default()));
+        let opening = work(&mut tracker, 1).read_with(|_, _, _| Ok(reader));
+        tracker.apply_observation(opening);
+        let entry = &tracker.entries["x-plane-12"];
+        assert!(entry.error.as_deref().unwrap().contains(diagnostic));
+        assert!(entry.reader.is_none() && entry.capture_watch.is_none() && entry.opening.is_none());
+        assert_eq!(tracker.context_deadline(&["x-plane-12".into()], Instant::now()), Some(entry.retry));
+        assert!(tracker.capture_deadline().is_none());
+        assert!(tracker.scoped_capture_candidates(true).is_empty());
+    }
+}
+
+#[test]
+fn failed_reader_open_schedules_only_a_context_retry() {
     let (_directory, mut tracker) = tracker();
     let failed = work(&mut tracker, 1).read_with(|_, _, _| Err("Fixture unavailable".into()));
     tracker.apply_observation(failed);
-    assert!(tracker.maintenance_delay(Instant::now()).is_none());
-    assert!(tracker.entries["x-plane-12"].error.is_some());
-    assert!(tracker.poll_candidates().is_empty(), "Open retries are scheduled by the context owner");
+    let entry = &tracker.entries["x-plane-12"];
+    assert!(entry.error.is_some());
+    assert_eq!(tracker.context_deadline(&["x-plane-12".into()], Instant::now()), Some(entry.retry));
+    assert!(tracker.capture_deadline().is_none());
+    assert!(tracker.scoped_capture_candidates(true).is_empty());
 }
 #[test]
 fn detached_observation_publishes_only_matching_current_identity_and_epoch() {
