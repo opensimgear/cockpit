@@ -14,9 +14,13 @@
 #if !CONFIG_IDF_TARGET_ESP32
 #error "Sunton 3248S035R requires IDF_TARGET=esp32"
 #endif
+#if CONFIG_PM_ENABLE || CONFIG_BT_ENABLED || CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE
+#error "Sunton GPIO36 PENIRQ requires Wi-Fi and Bluetooth sleep to be disabled"
+#endif
 #define WIDTH 480
 #define HEIGHT 320
-typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[1024];atomic_bool failed;} sunton;
+#define PENIRQ 36
+typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[1024];atomic_bool failed;bool touch_failed;} sunton;
 static sunton hardware;
 static bool transfer(spi_device_handle_t device,const void *tx,void *rx,size_t bytes){
     spi_transaction_t t={.length=bytes*8,.tx_buffer=tx,.rx_buffer=rx};
@@ -53,19 +57,28 @@ static int median(int v[5]){
 }
 static bool touch(void *context,bool *down,int *x,int *y){
     sunton *b=context;*down=false;
-    if(b->failed)return false;
+    if(b->failed||b->touch_failed)return false;
     // A released pen needs no SPI transaction or wait behind a display write.
-    if(gpio_get_level(36)!=0)return true;
+    if(gpio_get_level(PENIRQ)!=0)return true;
     if(xSemaphoreTake(b->mutex,pdMS_TO_TICKS(100))!=pdTRUE)return false;
     bool ok=!b->failed;
-    if(ok&&gpio_get_level(36)==0){
-        int xs[5],ys[5],z1=0,z2=0,unused=0;
-        ok=adc(b,0xb0,&z1)&&adc(b,0xc0,&z2);
-        for(int i=0;ok&&i<5;i++)ok=adc(b,0xd0,&xs[i])&&adc(b,0x90,&ys[i]);
-        bool off=adc(b,0x90,&unused);ok=ok&&off;
-        if(ok&&gpio_get_level(36)==0&&z1+4095-z2>=600){
-            ok=osg_sunton_point(median(xs),median(ys),CONFIG_OSG_SUNTON_X_MIN,CONFIG_OSG_SUNTON_X_MAX,CONFIG_OSG_SUNTON_Y_MIN,CONFIG_OSG_SUNTON_Y_MAX,x,y);
-            *down=ok;
+    if(ok&&gpio_get_level(PENIRQ)==0){
+        // The XPT2046 toggles PENIRQ during conversion. Re-enable GPIO
+        // interrupts before checking the live level for a release.
+        if(gpio_intr_disable(PENIRQ)!=ESP_OK){
+            b->touch_failed=true;
+            ok=false;
+        }else{
+            int xs[5],ys[5],z1=0,z2=0,unused=0;
+            ok=adc(b,0xb0,&z1)&&adc(b,0xc0,&z2);
+            for(int i=0;ok&&i<5;i++)ok=adc(b,0xd0,&xs[i])&&adc(b,0x90,&ys[i]);
+            bool off=adc(b,0x90,&unused);
+            b->touch_failed=gpio_intr_enable(PENIRQ)!=ESP_OK;
+            ok=ok&&off&&!b->touch_failed;
+            if(ok&&gpio_get_level(PENIRQ)==0&&z1+4095-z2>=600){
+                ok=osg_sunton_point(median(xs),median(ys),CONFIG_OSG_SUNTON_X_MIN,CONFIG_OSG_SUNTON_X_MAX,CONFIG_OSG_SUNTON_Y_MIN,CONFIG_OSG_SUNTON_Y_MAX,x,y);
+                *down=ok;
+            }
         }
     }
     xSemaphoreGive(b->mutex);return ok;
@@ -90,7 +103,7 @@ bool osg_board_init(osg_board *out){
     gpio_config_t outputs={.pin_bit_mask=(1ULL<<27)|(1ULL<<2)|(1ULL<<15)|(1ULL<<33)|(1ULL<<5),.mode=GPIO_MODE_OUTPUT};
     if(gpio_config(&outputs)!=ESP_OK)return false;
     gpio_set_level(27,0);gpio_set_level(15,1);gpio_set_level(33,1);gpio_set_level(5,1);
-    gpio_config_t irq={.pin_bit_mask=1ULL<<36,.mode=GPIO_MODE_INPUT};
+    gpio_config_t irq={.pin_bit_mask=1ULL<<PENIRQ,.mode=GPIO_MODE_INPUT};
     if(gpio_config(&irq)!=ESP_OK)return false;
     b->mutex=xSemaphoreCreateMutex();if(!b->mutex)return false;
     spi_bus_config_t bus={.mosi_io_num=13,.miso_io_num=12,.sclk_io_num=14,.quadwp_io_num=-1,.quadhd_io_num=-1,.max_transfer_sz=1024};
@@ -98,9 +111,12 @@ bool osg_board_init(osg_board *out){
     spi_device_interface_config_t lcd={.clock_speed_hz=24000000,.mode=0,.spics_io_num=15,.queue_size=1};
     spi_device_interface_config_t pen={.clock_speed_hz=2000000,.mode=0,.spics_io_num=33,.queue_size=1};
     if(spi_bus_add_device(SPI2_HOST,&lcd,&b->lcd)!=ESP_OK||spi_bus_add_device(SPI2_HOST,&pen,&b->pen)!=ESP_OK||!init_lcd(b))return false;
+    int unused;
+    if(!adc(b,0x90,&unused))return false; // Arm PENIRQ even before the first contact.
     uint16_t black[WIDTH]={0};
     for(int y=0;y<HEIGHT;y++)if(!write_pixels(b,0,y,WIDTH,1,black))return false;
     gpio_set_level(27,1);
-    *out=(osg_board){.width=WIDTH,.height=HEIGHT,.context=b,.write=write_pixels,.touch=touch};
+    *out=(osg_board){.width=WIDTH,.height=HEIGHT,.context=b,.write=write_pixels,.touch=touch,
+        .touch_irq_gpio=PENIRQ,.touch_penirq=true};
     ESP_LOGI("companion","Sunton ESP32-3248S035R: ST7796 480x320 landscape, XPT2046 shared SPI; verify calibration");return true;
 }

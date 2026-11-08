@@ -257,7 +257,7 @@ worker and explicit launch and setup checks are separate.
 | External vJoy slot ownership | Cockpit-owned claims wake `system.inventory`. Another process can claim or release a slot without changing device topology. The pinned vJoy SDK exposes a status query and a device removal callback. | The approved Windows status sampler serves visible status readers in Devices, Settings and the profile slot picker. It queries status and PID and publishes changed rows to `system.inventory`. |
 | External HidHide policy and executable paths | The worker owns the pinned driver's exclusive control handle. Exact PnP instance validation follows inventory commits. The service registry subtree signals policy invalidation and the worker re-reads the driver. | The ordinary account can subscribe at the service key. Registration or continuity failure retains the existing policy audit. Descendant handles blocked ancestor renames. A volume-root watch allowed renames and saw those events, but missed a drive-alias retarget that changed the resolved executable. The active executable audit awaits a decision or complete notification path. [Native probes](../verification/2026-11-08-controller-visibility-wakes.md#executable-directory-watch-experiment) |
 | Linux and macOS controller input | The qualification probe uses a polling worker. Normal Cockpit startup leaves native controller capture disabled on these platforms. | Verify platform report and topology adapters before enabling capture. |
-| ESP32 companion touch | Waveshare GT911 INT on GPIO4 wakes the touch task. One 20 ms follow-up covers an early interrupt. Held contact, faults and interrupt-registration failure retain the 20 ms cadence. A quiet 200 ms read renews the existing touch safety lease. Sunton checks PENIRQ every 20 ms. A released pen bypasses the display bus lock and uses no SPI transactions. | Qualify IRQ delivery, release and fault timing on Waveshare. Verify release during rendering on Sunton. Its PENIRQ uses GPIO36 and firmware keeps the ESP-IDF default Wi-Fi power saving. Espressif advises against GPIO36 interrupts under this condition. Disposition the touch acquisition tradeoff before acceptance. [GPIO documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/peripherals/gpio.html) and [Wi-Fi defaults](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32/api-reference/network/esp_wifi.html). |
+| ESP32 companion touch | Waveshare GT911 INT on GPIO4 and Sunton XPT2046 PENIRQ on GPIO36 wake the touch task. One 20 ms follow-up covers an early interrupt. Held contacts and transient faults keep the 20 ms deadline. A quiet 200 ms read renews the existing touch safety lease. A released Sunton pen bypasses the display bus lock and uses no SPI transactions. | Qualify IRQ delivery, release, rendering contention and fault timing on both boards. Waveshare retains timed reads if IRQ registration fails. Sunton requires its interrupt and disables Wi-Fi sleep. Confirm the remaining held/fault acquisition boundaries before acceptance. |
 | ESP32 companion display | Candidate readiness, feedback, touch changes and screen state notify the display task. It waits for visible feedback expiry or a failed-render retry deadline when needed. | Verify board builds, idle behavior and recovery on Sunton and Waveshare hardware. |
 | ESP32 USB console | The firmware requires a UART console. Its driver event queue wakes provisioning and retains one unread notification. Direct requests wait for UART readiness with their original deadline. The network task owns both reads and shares one bounded decoder. A status watch publishes the first and changed projections from that same task, including during direct requests. | Qualify command cancellation, reconnect and physical USB on both boards. The status watch uses the existing network task wake and explicit link and input deadlines. |
 
@@ -323,11 +323,16 @@ board profiles select the UART console. A failed driver startup stops the
 network task before it opens a session.
 [ESP-IDF UART event queue](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/uart.html)
 
-Sunton uses GPIO36 for PENIRQ. ESP32 documents restrictions on interrupt
-use of GPIO36 with ADC or Wi-Fi/Bluetooth sleep. The existing Sunton reader
-stays active pending a verified event path. The GT911 follow-up covers the
-documented driver behavior where INT can precede a ready report.
-[ESP32 GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/gpio.html) · [ESP32 GPIO36/39 erratum](https://docs.espressif.com/projects/esp-chip-errata/en/latest/esp32/03-errata-description/esp32/gpio-inputs-pulled-down.html) · [Linux Goodix driver](https://github.com/torvalds/linux/blob/master/drivers/input/touchscreen/goodix.c)
+Sunton uses GPIO36 for PENIRQ. Its XPT2046 does the ADC conversions externally
+over SPI. The board build disables disconnected Wi-Fi sleep, Bluetooth and
+automatic system power management. Wi-Fi sets `WIFI_PS_NONE` before the station
+starts, including provisioning scans. This is Sunton-specific and increases
+Wi-Fi power use. The driver masks GPIO36 while converting, restores the
+interrupt after the final power-down command, and checks the live level before
+reporting a press. A low pen line keeps 20 ms checks while pressure is too
+weak to accept a press. Interrupt registration or mask failures disable touch.
+The GT911 follow-up covers an INT signal that precedes a ready report.
+[ESP32 GPIO restrictions](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-reference/peripherals/gpio.html) · [ESP32 Wi-Fi power modes](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32/api-guides/wifi.html#esp32-wi-fi-power-saving-mode) · [XPT2046 datasheet](https://files.waveshare.com/wiki/common/XPT2046_Datasheet.pdf) · [Linux Goodix driver](https://github.com/torvalds/linux/blob/master/drivers/input/touchscreen/goodix.c)
 
 The recorded approval applies to the Assetto shared-memory reader. The boundaries above remain open under the original acquisition gate.
 

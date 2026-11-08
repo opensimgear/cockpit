@@ -28,6 +28,13 @@ static bool wifi_init(void){
     }
     return true;
 }
+static bool wifi_start_station(void){
+#ifdef OSG_SUNTON_PENIRQ
+    // Classic ESP32 GPIO36 cannot reliably interrupt with Wi-Fi sleep enabled.
+    if(esp_wifi_set_ps(WIFI_PS_NONE)!=ESP_OK)return false;
+#endif
+    return esp_wifi_start()==ESP_OK;
+}
 bool osg_wifi_start(const osg_settings *s){
     if(!wifi_init())return false;
     /* Driver credentials are RAM-only even if ordinary NVS is available. */
@@ -35,7 +42,7 @@ bool osg_wifi_start(const osg_settings *s){
     cfg.sta.threshold.authmode=s->password[0]?WIFI_AUTH_WPA2_PSK:WIFI_AUTH_OPEN;
     bool ok=esp_wifi_set_storage(WIFI_STORAGE_RAM)==ESP_OK&&esp_wifi_set_mode(WIFI_MODE_STA)==ESP_OK&&esp_wifi_set_config(WIFI_IF_STA,&cfg)==ESP_OK;
     mbedtls_platform_zeroize(&cfg,sizeof(cfg));
-    if(!ok||esp_wifi_start()!=ESP_OK||esp_wifi_connect()!=ESP_OK)return false;
+    if(!ok||!wifi_start_station()||esp_wifi_connect()!=ESP_OK)return false;
     return (xEventGroupWaitBits(events,1,pdFALSE,pdTRUE,pdMS_TO_TICKS(15000))&1)!=0;
 }
 void osg_wifi_stop(void){if(initialized){esp_wifi_disconnect();esp_wifi_stop();xEventGroupClearBits(events,1);}}
@@ -51,7 +58,7 @@ bool osg_wifi_clock(void){
 }
 cJSON *osg_wifi_scan(void){
     if(!wifi_init()||esp_wifi_set_storage(WIFI_STORAGE_RAM)!=ESP_OK||
-       esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||esp_wifi_start()!=ESP_OK)return NULL;
+       esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||!wifi_start_station())return NULL;
     wifi_scan_config_t scan={0};scan.show_hidden=false;scan.scan_time.active.min=40;scan.scan_time.active.max=120;
     if(esp_wifi_scan_start(&scan,true)!=ESP_OK)return NULL;
     wifi_ap_record_t records[24];uint16_t count=24;

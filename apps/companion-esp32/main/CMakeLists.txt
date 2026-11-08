@@ -12,3 +12,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE CJSON_NESTING_LIMIT=24 CJSON_CIRCULAR_LIMIT=2048)
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE OSG_BOARD_PROFILE="${OSG_BOARD_PROFILE}")
+if(OSG_BOARD_PROFILE STREQUAL "sunton-3248s035r")
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE OSG_SUNTON_PENIRQ=1)
+endif()

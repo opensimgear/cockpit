@@ -35,4 +35,29 @@ firmware/LVGL software-client sanitizer smoke. Whole-panel compositor
 coverage was 100% lines, 84.31% branches and 100% functions.
 
 Physical touch, display, USB and Wi-Fi qualification remain in #199.
-Sunton GPIO36 touch wake still needs a decision about Wi-Fi power saving.
+
+## Sunton touch interrupt candidate
+
+The candidate based on `137022d6` uses GPIO36 PENIRQ to wake the Sunton
+touch task. It masks the interrupt during SPI conversions and checks the
+live level after restoring it. Quiet checks renew the 600 ms safety lease.
+Held contacts still require coordinate sampling. The Sunton profile disables
+station modem sleep. The Waveshare profile keeps its existing Wi-Fi settings.
+
+Both images built with the same pinned SDK and fit their application
+partitions. These hashes identify the exact application images.
+
+| Board | Application bytes | Application SHA-256 |
+| --- | ---: | --- |
+| Sunton ESP32-3248S035R | 1,652,672 | `be7e4da760523394c08e3750c21118c04aa6160c6213d0f6d21ab7558c7e7062` |
+| Waveshare ESP32-S3 Touch LCD 7 | 1,666,976 | `9cb7140c6456af4efdaba29fda628605f03b8bffe698b70b3a7f27e313c45cf8` |
+
+The compiled Sunton Wi-Fi object references the power-save override. The
+Waveshare object has no such reference. Negative compile checks rejected
+Sunton builds with disconnected Wi-Fi sleep, Bluetooth, or automatic system
+power management enabled. All 13 firmware host suites passed, including the
+LVGL sanitizer smoke. The Sunton driver reached 100% line coverage, including
+release while re-enabling the interrupt and failures to mask and restore it.
+
+The board builds and software tests leave physical interrupt timing open.
+#199 covers rapid taps, release during rendering, and USB and Wi-Fi recovery.

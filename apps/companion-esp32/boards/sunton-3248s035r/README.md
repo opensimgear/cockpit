@@ -24,6 +24,13 @@ Display clock is 24 MHz and touch clock is 2 MHz. Both devices share SPI2, seria
 
 The ST7796 uses software reset, RGB565, BGR color order and landscape MADCTL 0x28. Hardware reset is tied to the board enable/reset line. SD, speaker, RGB LED and light sensor are not initialized.
 
+GPIO36 PENIRQ wakes the touch task on an edge. The task masks the interrupt
+during XPT2046 conversions and checks the pen level after restoring it.
+Held or low-pressure contacts retain 20 ms coordinate checks. A released pen
+has a 200 ms safety lease check. The Sunton firmware disables Wi-Fi modem
+sleep in connected and disconnected states for GPIO36 reliability, increasing
+Wi-Fi power use. Touch stays disabled if the interrupt cannot be armed.
+
 ## Calibration and physical qualification
 
 Initial raw X/Y calibration limits are 200–3900. The portrait sensor axes are rotated to landscape; raw Y maps to screen X, inverted raw X maps to screen Y. Unit tests verify the transform, not factory calibration on this particular panel. The four CONFIG_OSG_SUNTON_X/Y_MIN/MAX settings can be adjusted through IDF menuconfig for this build.

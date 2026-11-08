@@ -12,6 +12,8 @@ typedef struct {
     bool (*present)(void *);
     /* Optional touch interrupt input. Zero leaves the existing timed reader. */
     int touch_irq_gpio;
+    /* Active-low PENIRQ is required and stays low for an unqualified contact. */
+    bool touch_penirq;
 } osg_board;
 bool osg_board_init(osg_board *);
 #endif

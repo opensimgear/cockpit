@@ -25,6 +25,8 @@ typedef struct {size_t length;const void *tx_buffer;void *rx_buffer;} spi_transa
 int gpio_config(const gpio_config_t *);
 int gpio_set_level(int,int);
 int gpio_get_level(int);
+int gpio_intr_enable(int);
+int gpio_intr_disable(int);
 SemaphoreHandle_t xSemaphoreCreateMutex(void);
 int xSemaphoreTake(SemaphoreHandle_t,unsigned);
 int xSemaphoreGive(SemaphoreHandle_t);
