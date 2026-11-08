@@ -176,9 +176,11 @@ The shared Windows process subscription wakes game context on lifecycle events. 
 subscription lets the context worker reuse a successful batched inventory within
 the same library and event revisions. When X-Plane is the only configured
 integration, the context owner waits for notifications or a pending vehicle
-reader retry. X-Plane SDK changes use their own file watch. The 500 ms pass
-remains when process coverage is unavailable or an
-inventory read fails. Each game's installation and runtime checks still apply.
+reader retry. X-Plane SDK changes use their own file watch. Windows uses the
+shared one-second process owner when event coverage is off or unavailable.
+Context consumes that owner's committed rows. Platforms that do not share
+background process observations can schedule their own maintenance. Each
+game's installation and runtime checks still apply.
 For DCS, native changes to the selected export, BIOS, catalogue and aircraft
 files trigger setup reinspection. The Saved Games root watch observes direct
 DCS profile directory creation, removal and rename. A committed setup change

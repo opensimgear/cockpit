@@ -26,6 +26,11 @@ integrated or platform qualification.
 
 ## R7 UI consistency
 
+[Debug recovery reader lifetime](../verification/2026-11-08-companion-transport-and-timing-audit.md)
+passed three open/retire cycles on both transports. Each current baseline
+caused exactly one status read and closed readers stayed quiet. Recovery
+presentation during an actual active-profile fault remains open.
+
 [Navigation and profile progress](../verification/2026-11-08-r7-navigation-and-profile-progress.md)
 passed on the current native and browser-dev builds. The profile editor
 reopened on the committed rename, applied a saved range edit under a new

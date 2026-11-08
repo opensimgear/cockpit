@@ -1,8 +1,8 @@
 # Current timing migration matrix
 
-The current scan covers Cockpit `4ec01968`, device-gateway `e761e4d6`,
+The current scan covers Cockpit `47e19a30`, device-gateway `dfd83084`,
 device-template `c5457884` and firmware-common `64025cce`. The five tables
-record each of its 441 sites, including inline fixtures and declarations that
+record each of its 464 sites, including inline fixtures and declarations that
 the scanner finds in production files.
 
 - [Portal, browser workers, native companion and ESP32](portal-and-companions.md)
@@ -15,8 +15,9 @@ the scanner finds in production files.
 rescans the four committed trees and verifies every site has exactly one row.
 The command prints the resolved revisions. A new, moved, duplicate or deleted
 site requires a corresponding matrix update.
-`node scripts/reactive/audit.mjs --check-dispositions` independently verifies
-the original 247 historical entries.
+`node scripts/reactive/audit.mjs --committed --check-dispositions` independently
+verifies the original 247 historical entries. Both committed checks read their
+disposition tables from the same revision as the inventory they verify.
 
 ## Acquisition and publication without a named timer call
 

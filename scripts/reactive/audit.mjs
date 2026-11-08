@@ -10,6 +10,7 @@ const committed = process.argv.includes('--committed');
 const revisionAt = cwd => committed
   ? execFileSync('git', ['rev-parse', 'HEAD'], {cwd, encoding:'utf8'}).trim()
   : undefined;
+const cockpitRevision = revisionAt(root);
 const filesFromGit = (cwd, revision) => execFileSync('git', revision
   ? ['ls-tree', '-r', '--name-only', '-z', revision]
   : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
@@ -42,25 +43,26 @@ function* sourcesAt(cwd, files, revision) {
 
 if (process.argv.includes('--check-ui-timers')) {
   const { checkUiTimers } = await import('./ui-timers.mjs');
-  const revision = revisionAt(root);
-  const files = [...new Set(filesFromGit(root, revision))].filter(file =>
+  const files = [...new Set(filesFromGit(root, cockpitRevision))].filter(file =>
     /^(?:src|apps|packages)\//.test(file) && /\.(?:[cm]?[jt]s|[jt]sx|svelte)$/.test(file)
     && !/(?:^|\/)(?:tests?|fixtures|dist|target|vendor|simulation)(?:\/|$)|(?:^|\/)test-fixtures?\.|[._-](?:tests?|fixtures)\./.test(file));
-  checkUiTimers(sourcesAt(root, files, revision));
+  checkUiTimers(sourcesAt(root, files, cockpitRevision));
   console.log('Frontend timers match their documented owners.');
   process.exit(0);
 }
 
-const pinnedInventory = resolve(root, 'docs/reactive/refresh-sites.json');
+const pinnedInventory = 'docs/reactive/refresh-sites.json';
 const outputOption = process.argv.find(arg => arg.startsWith('--output='));
-const output = outputOption ? resolve(root, outputOption.slice('--output='.length)) : pinnedInventory;
+const output = resolve(root, outputOption ? outputOption.slice('--output='.length) : pinnedInventory);
 if (process.argv.includes('--check-dispositions')) {
-  const sites = JSON.parse(readFileSync(pinnedInventory, 'utf8'));
+  const documents = ['docs/reactive/native-timing-dispositions.md', 'docs/reactive/ui-refresh-classification.md'];
+  const [[, inventory], ...dispositions] = sourcesAt(root, [pinnedInventory, ...documents], cockpitRevision);
+  const sites = JSON.parse(inventory);
   const pending = new Set(sites.map(site => `${site.file}:${site.line}`));
   if (pending.size !== sites.length) throw new Error('Duplicate sites in the pinned timing inventory.');
   const classified = new Set();
-  for (const document of ['native-timing-dispositions.md', 'ui-refresh-classification.md']) {
-    const lines = readFileSync(resolve(root, 'docs/reactive', document), 'utf8').split(/\r?\n/);
+  for (const [, source] of dispositions) {
+    const lines = source.split(/\r?\n/);
     for (const line of lines) {
       if (!line.startsWith('| `')) continue;
       const column = line.split('|')[1];
@@ -95,7 +97,7 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
   const cwd = resolve(root, repository);
   let files, revision;
   try {
-    revision = revisionAt(cwd);
+    revision = repository === '.' ? cockpitRevision : revisionAt(cwd);
     files = filesFromGit(cwd, revision);
   } catch (error) {
     throw new Error(`Cannot inventory ${cwd}: ${error.message}`);
@@ -126,12 +128,13 @@ sites.sort((a,b) => a.file.localeCompare(b.file, 'en') || a.line - b.line);
 if (process.argv.includes('--check-current-dispositions')) {
   const expected = new Set(sites.map(site => `${site.file}:${site.line}`));
   const classified = new Set();
-  for (const name of ['application-workers', 'crates-and-firmware', 'games', 'native-services', 'portal-and-companions']) {
-    const path = resolve(root, 'docs/reactive/current-timing', name + '.md');
-    for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+  const documents = ['application-workers', 'crates-and-firmware', 'games', 'native-services', 'portal-and-companions']
+    .map(name => `docs/reactive/current-timing/${name}.md`);
+  for (const [path, source] of sourcesAt(root, documents, cockpitRevision)) {
+    for (const line of source.split(/\r?\n/)) {
       if (!line.startsWith('| `')) continue;
       const row = /^\| `([^:`]+):([\d,]+)` \| [^|]+ \| .+ \|$/.exec(line);
-      if (!row) throw new Error(`Invalid current timing row in ${name}: ${line}`);
+      if (!row) throw new Error(`Invalid current timing row in ${path}: ${line}`);
       for (const number of row[2].split(',')) {
         const site = `${row[1]}:${number}`;
         if (classified.has(site)) throw new Error(`Duplicate current timing disposition: ${site}`);
