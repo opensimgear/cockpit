@@ -255,9 +255,11 @@ layout, inventory and CAN route acceptance remain in #199.
 ESP32 Wi-Fi and direct USB pairing now use terminal approval subscriptions
 instead of 400 ms status requests. The software receiver/bridge tests and actual
 Cockpit protocol checks are documented in [ESP32 pairing verification](../verification/2026-11-05-esp32-pairing-events.md).
-Current ESP32 direct USB firmware also streams status changes. The host uses
-small liveness messages and requests a full snapshot for discovery and
-identity-bound recovery. Physical transport qualification remains in #199.
+Current ESP32 direct USB firmware streams status changes. The operator chose
+to [require that capability](../verification/2026-11-08-esp32-usb-status-watch-required.md).
+The host uses small liveness messages and requests a full snapshot for
+discovery and identity-bound recovery. Physical transport qualification
+remains in #199.
 Pico Debug inventory is event-driven
 with an independent watchdog renewal. Cockpit retires the older Pico protocol-1
 adapter by operator decision. The game's 100 ms process and telemetry

@@ -409,46 +409,20 @@ fn usb_reconnect_rejects_replacement_before_starting_a_session() {
 }
 
 #[test]
-fn usb_legacy_worker_keeps_correlated_status_and_stops_cleanly() {
+fn usb_worker_rejects_old_firmware_before_connecting_or_publishing_ready() {
     let fixture = start_worker(Some("screen"), true);
-    let receive = || {
-        fixture
-            .outgoing
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-    };
-    let probe = receive();
+    let probe = fixture.receive();
+    fixture.send(json!({"type":"serial-open","linkId":"usb-unqualified"}));
+    fixture.send(json!({"type":"serial-request","linkId":"usb-unqualified","requestId":"1",
+        "frame":{"type":"auth","token":"not-a-valid-token"}}));
     let mut status = json!({"protocolVersion":2,"deviceType":"esp32",
-        "requestId":probe["requestId"],"companionId":"screen","status":"offline",
+        "requestId":"retired","companionId":"screen","status":"offline",
         "setupSaved":true,"connectionMode":"serial"});
     send_frame(&fixture.device, status.clone());
-    assert_eq!(receive()["command"], "connect");
-    let next = receive();
-    assert_eq!(next["command"], "status");
-    status["status"] = json!("awaiting-assignment");
-    send_frame(&fixture.device, status.clone());
-    assert_eq!(
-        fixture
-            .committed
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap(),
-        "offline"
-    );
-    assert!(fixture
-        .committed
-        .recv_timeout(Duration::from_millis(100))
-        .is_err());
-    status["requestId"] = next["requestId"].clone();
+    status["requestId"] = probe["requestId"].clone();
     send_frame(&fixture.device, status);
-    assert_eq!(
-        fixture
-            .committed
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap(),
-        "awaiting-assignment"
-    );
-    fixture.control.send(Action::Stop).unwrap();
-    fixture.wake.notify();
-    assert_eq!(receive()["command"], "stop");
-    assert_eq!(fixture.handle.join().unwrap(), Ok(()));
+    assert_eq!(fixture.handle.join().unwrap().unwrap_err(), USB_STATUS_WATCH_REQUIRED);
+    assert!(fixture.outgoing.try_recv().is_err());
+    assert!(fixture.committed.try_recv().is_err());
+    assert_eq!(fixture.public.lock().unwrap()["ready"], false);
 }

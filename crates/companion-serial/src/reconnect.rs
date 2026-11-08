@@ -68,7 +68,7 @@ fn paired_identity(
         && value["protocolVersion"] == 2
         && value["deviceType"] == "esp32"
         && value["setupSaved"] == true
-        && (!direct_only || value["connectionMode"] == "serial")
+        && (!direct_only || (value["connectionMode"] == "serial" && value["statusEvents"] == true))
         && paired.iter().any(|client| client["companionId"] == id))
     .then(|| id.to_owned())
 }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn only_saved_paired_direct_companions_are_eligible() {
         let paired = vec![json!({"companionId":"screen"})];
-        let valid = json!({"requestId":"fresh","protocolVersion":2,"deviceType":"esp32","setupSaved":true,"connectionMode":"serial","companionId":"screen"});
+        let valid = json!({"requestId":"fresh","protocolVersion":2,"deviceType":"esp32","setupSaved":true,"connectionMode":"serial","companionId":"screen","statusEvents":true});
         assert_eq!(
             paired_identity(&valid, "fresh", &paired, true).as_deref(),
             Some("screen")
@@ -162,6 +162,11 @@ mod tests {
         let mut wifi = valid.clone();
         wifi["connectionMode"] = json!("wifi");
         assert!(paired_identity(&wifi, "fresh", &paired, false).is_some());
+        let mut legacy = valid.clone();
+        legacy.as_object_mut().unwrap().remove("statusEvents");
+        assert!(paired_identity(&legacy, "fresh", &paired, true).is_none());
+        assert!(paired_identity(&legacy, "fresh", &paired, false).is_some(),
+            "Explicit firmware update preparation can still identify the paired board");
         for (key, value) in [
             ("requestId", json!("stale")),
             ("companionId", json!("stranger")),
@@ -169,6 +174,7 @@ mod tests {
             ("connectionMode", json!("wifi")),
             ("deviceType", json!("gateway")),
             ("protocolVersion", json!(1)),
+            ("statusEvents", json!(false)),
         ] {
             let mut invalid = valid.clone();
             invalid[key] = value;
@@ -233,7 +239,7 @@ mod tests {
             assert_eq!(bytes.first(),Some(&b'\n'));
             let request: Value = serde_json::from_slice(bytes).unwrap();
             self.writes.push(request.clone());
-            let mut reply = json!({"requestId":request["requestId"],"protocolVersion":2,"deviceType":"esp32","setupSaved":true,"connectionMode":"serial","companionId":if self.wrong{"stranger"}else{"screen"}});
+            let mut reply = json!({"requestId":request["requestId"],"protocolVersion":2,"deviceType":"esp32","setupSaved":true,"connectionMode":"serial","statusEvents":true,"companionId":if self.wrong{"stranger"}else{"screen"}});
             reply["status"] = json!("offline");
             let mut data = serde_json::to_vec(&reply).unwrap();
             data.push(b'\n');

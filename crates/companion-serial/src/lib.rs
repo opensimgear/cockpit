@@ -29,6 +29,8 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroize;
+const USB_STATUS_WATCH_REQUIRED: &str =
+    "Update this ESP32 companion's firmware for direct USB. Cockpit requires USB status notifications.";
 
 pub fn ports() -> Result<Value, String> {
     let rows = serialport::available_ports().map_err(|_| "Cannot enumerate USB serial devices.")?;
@@ -266,7 +268,11 @@ impl Manager {
                 let can_reconnect=expected.is_some() || paired.as_ref().is_some_and(|host|
                     host["clients"].as_array().is_some_and(|clients|clients.iter().any(|client|
                         client["companionId"].is_string() && client["companionId"]==state["device"]["companionId"])));
-                if can_reconnect {
+                if error == USB_STATUS_WATCH_REQUIRED {
+                    state["stage"] = json!(USB_STATUS_WATCH_REQUIRED);
+                    state["ready"] = json!(false);
+                    if let Some(fields) = state.as_object_mut() { fields.remove("recovery"); }
+                } else if can_reconnect {
                     state["stage"]=json!("USB connection interrupted; reconnecting automatically");
                     state["recovery"]=json!({"phase":"waiting-for-device","attempt":0,"nextRetryMs":0,"message":"USB connection interrupted; reconnecting automatically"});
                 } else {
@@ -605,7 +611,7 @@ fn worker(
     mut open: impl FnMut(u32, Arc<NativeWake>) -> Result<ReadPump, String>,
 ) -> Result<(), String> {
     const DISCOVERY_RETRY: Duration = Duration::from_millis(500);
-    const STATUS_INTERVAL: Duration = Duration::from_secs(1);
+    const LIVENESS_INTERVAL: Duration = Duration::from_secs(1);
     let _ = wake.bind_thread(thread::current());
     let mut port = open(115200, wake.clone())?;
     let mut wire = Wire::new(wake.clone());
@@ -661,7 +667,7 @@ fn worker(
                 startup_hint_seen = false;
                 last_probe = baud_switched - DISCOVERY_RETRY;
             }
-            let probe_interval = if ready { STATUS_INTERVAL } else { DISCOVERY_RETRY };
+            let probe_interval = if ready { LIVENESS_INTERVAL } else { DISCOVERY_RETRY };
             if last_probe.elapsed() >= probe_interval {
                 // Retries on this baud share one pending discovery request.
                 // A slow first response is still valid until this port is replaced.
@@ -724,7 +730,7 @@ fn worker(
                                 nonce.clear();
                                 recoverable = false;
                                 recovery.reset();
-                                last_probe = Instant::now() - Duration::from_secs(1);
+                                last_probe = Instant::now() - LIVENESS_INTERVAL;
                             }
                         },
                         Action::Provision(mut v, id) => {
@@ -813,6 +819,9 @@ fn worker(
                         if !overflow && !line.is_empty() {
                             if let Ok(v) = serde_json::from_slice::<Value>(&line) {
                                 match v["type"].as_str() {
+                                    // A device may speak before discovery completes. It cannot
+                                    // open a Hub link before the USB capability is admitted.
+                                    Some("serial-open" | "serial-close" | "serial-request") if !ready => {}
                                     Some("serial-open") => {
                                         let link = v["linkId"]
                                             .as_str()
@@ -865,6 +874,9 @@ fn worker(
                                                 })
                                             {
                                                 return Err("Detected USB companion identity changed before reconnect.".into());
+                                            }
+                                            if snapshot && v["statusEvents"] != true {
+                                                return Err(USB_STATUS_WATCH_REQUIRED.into());
                                             }
                                             let host=hub.command(&json!({"command":"companion_status"}))?;
                                             let paired = host["clients"].as_array().is_some_and(|rows| rows.iter().any(|c|c["companionId"]==v["companionId"]));
@@ -977,7 +989,7 @@ fn worker(
                                                 provision = None;
                                                 observer.set(public, "provisioning", json!(false));
                                             }
-                                            if v["statusEvents"] == true && status_watch.is_none() {
+                                            if snapshot && status_watch.is_none() {
                                                 let id = uuid::Uuid::new_v4().to_string();
                                                 send(&mut port, &json!({"command":"status-watch","requestId":id}), public)?;
                                                 status_watch = Some(id);

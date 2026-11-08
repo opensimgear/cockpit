@@ -4,8 +4,14 @@ use super::*;
 fn usb_worker_routes_rejections_to_the_current_link_only() {
     let fixture = start_worker(None, false);
     let probe = fixture.receive();
-    fixture.send(json!({"protocolVersion":2,"deviceType":"esp32",
-        "requestId":probe["requestId"],"companionId":"screen","status":"offline","setupSaved":false}));
+    let mut status = json!({"protocolVersion":2,"deviceType":"esp32","statusEvents":true,
+        "requestId":probe["requestId"],"companionId":"screen","status":"offline","setupSaved":false});
+    fixture.send(status.clone());
+    let watch = fixture.receive();
+    assert_eq!(watch["command"], "status-watch");
+    status["type"] = json!("status-event");
+    status["requestId"] = watch["requestId"].clone();
+    fixture.send(status);
     fixture.wait_field("ready", json!(true));
     fixture.send(json!({"type":"serial-open","linkId":"usb-first"}));
     fixture.send(json!({"type":"serial-close","linkId":"usb-first"}));
