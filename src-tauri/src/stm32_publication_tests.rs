@@ -321,3 +321,6 @@ fn typed_service_uses_the_existing_serial_owner_and_closes_bounded_requests(){
 mod layout_recovery {
     include!("stm32/layout_recovery_tests.rs");
 }
+mod command_route {
+    include!("stm32/command_route_tests.rs");
+}

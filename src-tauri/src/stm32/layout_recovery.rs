@@ -2,7 +2,7 @@ use super::*;
 use super::publication_feed::PublicationFeed;
 
 impl Gateway {
-    pub(super) fn layout_publication(&self) -> Option<PublicationFence> {
+    pub(super) fn current_publication(&self) -> Option<PublicationFence> {
         self.workspace.as_ref().and_then(|cache| self.current_layout_fence(&cache.publication))
     }
 
@@ -13,7 +13,14 @@ impl Gateway {
         feed.current().filter(|fence| self.state["epoch"] == fence.epoch() && fence.is_current())
     }
 
-    fn wait_for_layout_change(
+    fn watch_publication(&self) -> Option<(PublicationFeed, Arc<NativeWake>)> {
+        let feed = self.workspace.as_ref()?.publication.clone();
+        let wake = Arc::new(NativeWake::default());
+        wake.bind_thread(thread::current()).ok()?;
+        feed.watch(&wake).then_some((feed, wake))
+    }
+
+    fn wait_for_publication_change(
         &self,
         feed: &PublicationFeed,
         wake: &NativeWake,
@@ -33,16 +40,32 @@ impl Gateway {
         }
     }
 
+    pub(super) fn wait_for_command_route(
+        &self,
+        previous: Option<&PublicationFence>,
+        deadline: Instant,
+        retry_delay: Duration,
+    ) -> Result<bool, String> {
+        if self.role == Role::Can && self.state["configurationRouteEvents"] == true {
+            if let Some((feed, wake)) = self.watch_publication() {
+                if self.wait_for_publication_change(&feed, &wake, previous, deadline)?.is_some() {
+                    return Ok(Instant::now() < deadline);
+                }
+            }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Ok(false); }
+        self.sleep(retry_delay.min(remaining))?;
+        Ok(Instant::now() < deadline)
+    }
+
     pub(super) fn observe_layout(
         &mut self,
         target: Option<(&str, &str)>,
         mut previous: Option<PublicationFence>,
     ) -> Result<(), String> {
         let deadline = Instant::now() + self.timing.reconnect;
-        let wake = Arc::new(NativeWake::default());
-        let feed = self.workspace.as_ref().map(|cache| cache.publication.clone()).filter(|feed| {
-            wake.bind_thread(thread::current()).is_ok() && feed.watch(&wake)
-        });
+        let watch = self.watch_publication();
         loop {
             if self.connection.is_none() {
                 self.recover_automatic(deadline)?;
@@ -62,13 +85,13 @@ impl Gateway {
                 return Err("The gateway controller update is still pending. Review its inventory before another change; the operation was not repeated.".into());
             }
             self.state["reconnecting"] = json!(true);
-            let mut fence = match &feed {
-                Some(feed) => self.wait_for_layout_change(feed, &wake, previous.as_ref(), deadline)?,
+            let mut fence = match &watch {
+                Some((feed, wake)) => self.wait_for_publication_change(feed, wake, previous.as_ref(), deadline)?,
                 None => None,
             };
             if fence.is_none() {
                 self.sleep(self.timing.poll.min(deadline.saturating_duration_since(Instant::now())))?;
-                fence = feed.as_ref().and_then(|feed| self.current_layout_fence(feed));
+                fence = watch.as_ref().and_then(|(feed, _)| self.current_layout_fence(feed));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() { continue; }

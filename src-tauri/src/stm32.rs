@@ -525,6 +525,7 @@ fn snapshot(wire: &Value, expected: Option<&str>) -> Result<Value, String> {
         "effectiveGeneration":if wire["controllerPublicationOverride"]==publication::capability(){wire["effectiveGeneration"].clone()}else{Value::Null},
         "running":wire["running"],"needsReconnect":if automatic {json!(false)} else {wire["needsApply"].clone()},"needsApply":if automatic {json!(false)} else {wire["needsApply"].clone()},
         "lifecycle":if automatic {json!("automatic")} else {Value::Null},
+        "configurationRouteEvents":automatic && wire["configurationRouteEvents"] == true,
         "layoutPending":if automatic {layout_pending.clone()} else {json!(false)},"layoutError":if automatic {wire["layoutError"].clone()} else {Value::Null},
         "admissionFailure":if automatic {wire["admissionFailure"].clone()} else {Value::Null},"rejectedAnnouncements":if automatic {wire["rejectedAnnouncements"].clone()} else {json!(0)},
         "reconnecting":false,"connected":true,"modules":modules,
@@ -1249,9 +1250,9 @@ impl Gateway {
         let previous = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() { return Err(PUBLICATION_EVIDENCE_CHANGED.into()); }
-            let fence = self.layout_publication();
+            let fence = self.current_publication();
             match self.exchange_guarded("snapshot", remaining, None, None, fence.as_ref()) {
-                Ok(()) if fence.is_none() && self.layout_publication().is_some() => continue,
+                Ok(()) if fence.is_none() && self.current_publication().is_some() => continue,
                 Ok(()) => break fence,
                 Err(error) if error == PUBLICATION_EVIDENCE_CHANGED => continue,
                 Err(error) if self.connection.is_some() => return Err(error),
@@ -1308,7 +1309,7 @@ impl Gateway {
             return Err("Profile updates require an enabled, online device.".into());
         }
         // A lost reply is ambiguous. Reconnect and inspect, never repeat the write.
-        let previous = self.layout_publication();
+        let previous = self.current_publication();
         if let Err(error) = self.exchange(&format!("{action} {id}"), self.timing.command) {
             if self.connection.is_some() {
                 return Err(error);
@@ -1358,23 +1359,20 @@ impl Gateway {
         }
         let deadline = Instant::now() + self.timing.command;
         let original = route.clone();
+        let read_only = child.starts_with("describe ") || child == "state"
+            || child.starts_with("ownership ");
         let result = loop {
+            let previous = if read_only { self.current_publication() } else { None };
             let result = self.exchange(
                 &format!("action {id} {} {child}", route[3]),
                 self.timing.command,
             );
-            if (child.starts_with("describe ")
-                || child == "state"
-                || child.starts_with("ownership "))
+            if read_only
                 && result.as_ref().is_err_and(|error| {
                     error == CONFIG_ROUTE_NOT_READY || error == CONFIG_ROUTE_CHANGED
                 })
-                && Instant::now() < deadline
+                && self.wait_for_command_route(previous.as_ref(), deadline, Duration::from_millis(50))?
             {
-                self.sleep(
-                    Duration::from_millis(50)
-                        .min(deadline.saturating_duration_since(Instant::now())),
-                )?;
                 self.exchange("snapshot", self.timing.command)?;
                 let refreshed = action_route(&self.state, id)
                     .ok_or("The device went offline during action discovery.")?;
@@ -1744,6 +1742,7 @@ impl Gateway {
             }) {
                 return Err("Module restarted during configuration. Read its settings and start a new setup session; the commit was not repeated.".into());
             }
+            let previous = self.current_publication();
             match self.config_command(id, "get_active") {
                 Ok(()) => return Ok(()),
                 Err(error)
@@ -1760,7 +1759,9 @@ impl Gateway {
                     if self.connection.is_none() {
                         self.recover_automatic(deadline)?;
                     }
-                    self.sleep(self.timing.poll)?;
+                    if !self.wait_for_command_route(previous.as_ref(), deadline, self.timing.poll)? {
+                        return Err(error);
+                    }
                 }
             }
         }
