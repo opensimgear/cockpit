@@ -51,6 +51,7 @@ pub(crate) struct Signal {
     activity_wake: Mutex<Weak<NativeWake>>,
     launch_wake: Mutex<Weak<NativeWake>>,
     profile_admission_wake: Mutex<Weak<NativeWake>>,
+    activation_heartbeat_wake: Mutex<Weak<NativeWake>>,
 }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
@@ -78,6 +79,7 @@ impl Default for Signal {
             activity_wake: Mutex::default(),
             launch_wake: Mutex::default(),
             profile_admission_wake: Mutex::default(),
+            activation_heartbeat_wake: Mutex::default(),
         }
     }
 }
@@ -154,9 +156,15 @@ impl Signal {
     pub(crate) fn watch_profile_admission(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.profile_admission_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
     }
+    pub(crate) fn watch_activation_heartbeat(&self, wake: &Arc<NativeWake>) {
+        *self.activation_heartbeat_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
     pub(crate) fn wake_profile_admission(&self) {
         self.wake_launch();
         if let Some(wake) = self.profile_admission_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            wake.notify();
+        }
+        if let Some(wake) = self.activation_heartbeat_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
     }

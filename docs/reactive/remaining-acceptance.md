@@ -305,6 +305,10 @@ run observed browser loss and withdrawal after 52 ms and Stop plus the
 committed slot release after 345 ms. These are fixture observations, separate
 from raw input or physical end-to-end latency.
 
+The [prepared output renewal](../verification/2026-11-08-prepared-output-heartbeat.md)
+uses the feeder's existing deadline and fault notifications during
+activation. The Windows combined vJoy and neutral desktop fixtures passed.
+
 ## Integrated Windows checks on November 6
 
 The isolated native candidate passed 2,375 library tests serially with Windows

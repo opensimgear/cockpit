@@ -109,6 +109,9 @@ Committed vehicle identity changes wake routing. Paused variant transitions
 retain bounded service until replacement finishes.
 Activation without prepared output checks its admission epoch and deadline
 around synchronous work. It does not start an idle output heartbeat worker.
+With a prepared virtual feeder, synchronous activation waits on the feeder's
+existing renewal deadline, failure, admission changes or work completion.
+Prepared desktop scopes have no registration to renew before Start.
 The hold stays disarmed until Start.
 
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline

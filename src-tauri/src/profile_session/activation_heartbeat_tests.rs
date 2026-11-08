@@ -1,4 +1,5 @@
 use super::during;
+use osg_streams::NativeWake;
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     mpsc,
@@ -19,9 +20,10 @@ fn synchronous_work_can_observe_multiple_heartbeats_before_it_finishes() {
             &worker_epoch,
             4,
             Instant::now() + Duration::from_secs(2),
+            &NativeWake::default(),
             move || {
                 worker_renewals.fetch_add(1, Ordering::AcqRel);
-                Ok(())
+                Ok(Instant::now() + Duration::from_millis(35))
             },
             || {
                 entered_tx.send(()).unwrap();
@@ -53,11 +55,12 @@ fn heartbeat_failure_is_reported_and_stops_future_renewals() {
         &epoch,
         9,
         Instant::now() + Duration::from_secs(1),
+        &NativeWake::default(),
         move || {
             if heartbeat_calls.fetch_add(1, Ordering::AcqRel) == 0 {
                 Err("injected renewal failure".to_owned())
             } else {
-                Ok(())
+                Ok(Instant::now() + Duration::from_millis(35))
             }
         },
         || {
@@ -87,9 +90,10 @@ fn epoch_cancellation_stops_renewals_and_rejects_completed_work() {
             &worker_epoch,
             2,
             Instant::now() + Duration::from_secs(2),
+            &NativeWake::default(),
             move || {
                 worker_calls.fetch_add(1, Ordering::AcqRel);
-                Ok(())
+                Ok(Instant::now() + Duration::from_millis(35))
             },
             || {
                 entered_tx.send(()).unwrap();
@@ -125,9 +129,10 @@ fn deadline_stops_renewals_and_rejects_work_that_finishes_late() {
         &epoch,
         12,
         deadline,
+        &NativeWake::default(),
         move || {
             heartbeat_calls.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+            Ok(Instant::now() + Duration::from_millis(35))
         },
         || {
             while Instant::now() < deadline + Duration::from_millis(30) {
@@ -151,9 +156,10 @@ fn work_error_is_returned_after_the_heartbeat_thread_is_stopped() {
         &epoch,
         3,
         Instant::now() + Duration::from_secs(1),
+        &NativeWake::default(),
         move || {
             heartbeat_calls.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+            Ok(Instant::now() + Duration::from_millis(35))
         },
         || Err::<(), _>("injected work failure".to_owned()),
     );
@@ -161,4 +167,25 @@ fn work_error_is_returned_after_the_heartbeat_thread_is_stopped() {
     std::thread::sleep(Duration::from_millis(30));
     assert_eq!(calls.load(Ordering::Acquire), count_at_return);
     assert_eq!(result.unwrap_err(), "injected work failure");
+}
+
+#[test]
+fn prepared_heartbeat_waits_for_the_renewal_deadline_or_a_fault_notification() {
+    let epoch = AtomicU64::new(1);
+    let wake = NativeWake::default();
+    let (service, serviced) = mpsc::channel();
+    let next = Instant::now() + Duration::from_secs(2);
+    let mut first = true;
+    let result = during(&epoch, 1, next + Duration::from_secs(1), &wake, || {
+        service.send(()).unwrap();
+        if std::mem::take(&mut first) { Ok(next) }
+        else { Err("injected feeder fault".into()) }
+    }, || {
+        serviced.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(serviced.recv_timeout(Duration::from_millis(100)), Err(mpsc::RecvTimeoutError::Timeout));
+        wake.notify();
+        serviced.recv_timeout(Duration::from_secs(1)).expect("fault must wake before renewal");
+        Ok(())
+    });
+    assert_eq!(result.unwrap_err(), "injected feeder fault");
 }

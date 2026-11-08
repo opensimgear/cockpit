@@ -1,7 +1,8 @@
 //! Renew only prepared outputs while synchronous activation work owns the caller.
 //! The scoped pump cannot outlive that work or renew beyond its epoch/deadline.
 use super::*;
-use std::{sync::mpsc, time::Duration};
+use osg_streams::NativeWake;
+use std::{sync::atomic::AtomicBool, time::Duration};
 
 fn permitted(epoch: &AtomicU64, expected: u64, deadline: Instant) -> Result<(), String> {
     NativeProfileHost::check_epoch(epoch, expected)?;
@@ -15,33 +16,52 @@ pub(super) fn during<T>(
     epoch: &AtomicU64,
     expected: u64,
     deadline: Instant,
-    mut heartbeat: impl FnMut() -> Result<(), String> + Send,
+    wake: &NativeWake,
+    mut heartbeat: impl FnMut() -> Result<Instant, String> + Send,
     work: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     permitted(epoch, expected, deadline)?;
-    heartbeat()?;
+    let mut observed = wake.observed();
+    let mut next_renewal = heartbeat()?;
     permitted(epoch, expected, deadline)?;
+    let finished = AtomicBool::new(false);
     std::thread::scope(|scope| {
-        let (finished, stop) = mpsc::channel();
-        let pump = scope.spawn(move || loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match stop.recv_timeout(remaining.min(Duration::from_millis(10))) {
-                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok::<(), String>(()),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    permitted(epoch, expected, deadline)?;
-                    heartbeat()?;
+        let pump = scope.spawn(|| {
+            wake.bind_thread(std::thread::current()).map_err(|_| "Cannot bind activation heartbeat.")?;
+            loop {
+                if finished.load(Ordering::Acquire) { return Ok::<(), String>(()); }
+                permitted(epoch, expected, deadline)?;
+                let current = wake.observed();
+                let now = Instant::now();
+                if observed != current || now >= next_renewal {
+                    observed = current;
+                    next_renewal = heartbeat()?;
+                } else {
+                    wake.wait(observed, deadline.min(next_renewal).saturating_duration_since(now));
                 }
             }
         });
         // Keep catalogue reads/publication on this caller. Joining the pump
         // before returning also prevents a cancelled publisher from running
         // after compensation or replacing a newer run's catalogue.
+        let stop = StopHeartbeat { finished: &finished, wake };
         let result = work();
-        drop(finished);
+        drop(stop);
         pump.join().map_err(|_| "Profile activation heartbeat worker panicked.".to_string())??;
         permitted(epoch, expected, deadline)?;
         result
     })
+}
+
+struct StopHeartbeat<'a> {
+    finished: &'a AtomicBool,
+    wake: &'a NativeWake,
+}
+impl Drop for StopHeartbeat<'_> {
+    fn drop(&mut self) {
+        self.finished.store(true, Ordering::Release);
+        self.wake.notify();
+    }
 }
 
 impl NativeProfileHost {
@@ -125,27 +145,40 @@ impl NativeProfileHost {
     ) -> Result<T, String> {
         self.check_transition(owner)?;
         let epoch = self.admission_epoch.clone();
+        let admission = self.games.read_model_signal();
+        let host_wake = self.native_wake.as_ref().map(Arc::downgrade);
         let state = self.run(owner)?;
         if state.reducer.is_some() {
             return Err("Only prepared neutral outputs may use the activation heartbeat.".into());
         }
+        if include_desktop && state.desktop.as_ref().is_some_and(|desktop| desktop.started()) {
+            return Err("A started desktop output cannot use the activation heartbeat.".into());
+        }
         let expected = state.admission_epoch;
         let deadline = Instant::now() + timeout;
-        if state.output.is_none() && (!include_desktop || state.desktop.is_none()) {
-            permitted(&epoch, expected, deadline)?;
-            let result = work(self);
-            permitted(&epoch, expected, deadline)?;
-            return result;
-        }
         let mut output = state.output.take();
-        let mut desktop = if include_desktop { state.desktop.take() } else { None };
-        let result = during(&epoch, expected, deadline, || {
-            if let Some(output) = output.as_mut() {
+        let desktop = if include_desktop { state.desktop.take() } else { None };
+        let result = if let Some(output) = output.as_mut() {
+            let wake = Arc::new(NativeWake::default());
+            admission.watch_activation_heartbeat(&wake);
+            let fault_wake = Arc::downgrade(&wake);
+            output.watch_fault(Arc::new(move || {
+                if let Some(wake) = fault_wake.upgrade() { wake.notify(); }
+                if let Some(wake) = host_wake.as_ref().and_then(|wake| wake.upgrade()) { wake.notify(); }
+            }));
+            during(&epoch, expected, deadline, &wake, || {
                 output.keep_alive().map_err(|error| format!("Virtual output could not stay neutral during profile activation. {error}"))?;
-            }
-            if let Some(desktop) = desktop.as_mut() { desktop.keep_alive()?; }
-            Ok(())
-        }, || work(self));
+                output.renewal_deadline().ok_or_else(|| "The prepared virtual output lease is unavailable.".into())
+            }, || work(self))
+        } else {
+            // Prepared desktop scopes have no registration to renew before Start.
+            (|| {
+                permitted(&epoch, expected, deadline)?;
+                let result = work(self);
+                permitted(&epoch, expected, deadline)?;
+                result
+            })()
+        };
         let state = self.run(owner)?;
         state.output = output;
         if include_desktop { state.desktop = desktop; }

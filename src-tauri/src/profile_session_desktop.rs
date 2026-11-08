@@ -91,6 +91,8 @@ pub(crate) struct Desktop {
     pub(crate) process_observation: Option<crate::game_activation::ProcessObservationLease>,
 }
 impl Desktop {
+    pub(crate) fn started(&self) -> bool { self.started }
+
     pub(crate) fn notification_driven(&self) -> bool {
         self.started && self.scope.is_some()
             && self.inner.as_ref().is_some_and(|inner| inner.notification_driven())
@@ -167,6 +169,7 @@ mod tests{
             profile_id:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf13".into(),profile_revision:1,game_id:Some("dcs".into())};
         let reducer=Phase::new(program.clone(),Counter(1),owner.session.clone()).unwrap();
         let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true,wake:None,process_observation:None};
+        assert!(desktop.started());
         assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
         assert!(desktop.next_deadline_us().is_none());
         assert_eq!(desktop.status()["state"],"waiting");
@@ -174,6 +177,7 @@ mod tests{
         assert_eq!(desktop.status()["scopeError"],"Waiting for the profile's game to open.");
         assert!(desktop.inner.is_none(),"Waiting must not construct or activate an output adapter");
         desktop.started=false;
+        assert!(!desktop.started());
         assert!(desktop.poll(&[],&reducer).unwrap_err().contains("adapter is stopped"),"Actual adapter failures remain errors");
     }
     #[test]

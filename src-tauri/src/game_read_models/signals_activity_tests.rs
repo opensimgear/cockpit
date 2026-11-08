@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn admission_changes_wake_both_phase_and_heartbeat_without_retaining_either() {
+    let signal = Signal::default();
+    let phase = Arc::new(NativeWake::default());
+    let heartbeat = Arc::new(NativeWake::default());
+    // A previous owner's unwind must not disable cancellation of its replacement.
+    assert!(std::panic::catch_unwind(|| {
+        let _phase = signal.profile_admission_wake.lock().unwrap();
+        let _heartbeat = signal.activation_heartbeat_wake.lock().unwrap();
+        panic!("fixture unwinds with the registration locks");
+    }).is_err());
+    signal.watch_profile_admission(&phase);
+    signal.watch_activation_heartbeat(&heartbeat);
+    signal.wake_profile_admission();
+    assert_eq!((phase.observed(), heartbeat.observed()), (1, 1));
+    assert_eq!((Arc::strong_count(&phase), Arc::strong_count(&heartbeat)), (1, 1));
+    drop(heartbeat);
+    signal.wake_profile_admission();
+    assert_eq!(phase.observed(), 2);
+}
+
+#[test]
 fn activity_wakes_for_metadata_commits_but_not_raw_telemetry() {
     let signal = Signal::default();
     let wake = Arc::new(osg_streams::NativeWake::default());
