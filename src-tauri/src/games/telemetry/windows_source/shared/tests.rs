@@ -64,7 +64,8 @@ fn process_monitor_proof_exists_before_the_first_capture_and_retires_on_loss() {
     let (monitor, _) = crate::xplane::process_events::test_monitor();
     let monitor = Arc::new(monitor);
     let identity = ProcessIdentity { pid: 1, epoch: 1, path: "test.exe".into() };
-    let mut source = SharedSource::attach(&identity, Game::Competizione, true, || Ok(Silent(Arc::downgrade(&monitor)))).unwrap();
+    let owners = OwnerSlots::default();
+    let mut source = SharedSource::attach(&owners, &identity, Game::Competizione, true, || Ok(Silent(Arc::downgrade(&monitor)))).unwrap();
     let wake = Arc::new(osg_streams::NativeWake::default());
     let watch = source.watch(wake.clone()).unwrap().unwrap();
     assert!(source.poll().unwrap().is_none());
@@ -78,6 +79,7 @@ fn process_monitor_proof_exists_before_the_first_capture_and_retires_on_loss() {
 
 #[test]
 fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop() {
+    let owners = OwnerSlots::default();
     let game = Game::Evo;
     let identity = ProcessIdentity {
         pid: 1,
@@ -85,9 +87,9 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
         path: "test.exe".into(),
     };
     let (send, input) = mpsc::channel();
-    let mut ordered = SharedSource::attach(&identity, game, false, || Ok(Input(input))).unwrap();
+    let mut ordered = SharedSource::attach(&owners, &identity, game, false, || Ok(Input(input))).unwrap();
     let mut latest =
-        SharedSource::attach::<Input>(&identity, game, true, || panic!("duplicate owner")).unwrap();
+        SharedSource::attach::<Input>(&owners, &identity, game, true, || panic!("duplicate owner")).unwrap();
     let wake = Arc::new(osg_streams::NativeWake::default());
     let watch = ordered.watch(wake.clone()).unwrap().unwrap();
     assert!(ordered.poll().unwrap().is_none());
@@ -135,7 +137,7 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
         ..identity
     };
     assert!(
-        SharedSource::attach::<Input>(&replacement, game, false, || panic!("live owner")).is_err()
+        SharedSource::attach::<Input>(&owners, &replacement, game, false, || panic!("live owner")).is_err()
     );
     let done = ordered.owner.done.clone();
     drop(ordered);
@@ -143,15 +145,16 @@ fn one_owner_delivers_independent_ordered_and_latest_reads_and_releases_on_drop(
     wait_for(|| done.load(Ordering::Acquire));
     assert!(watch.is_closed());
     let (_, next) = mpsc::channel();
-    assert!(SharedSource::attach(&replacement, game, false, || Ok(Input(next))).is_ok());
+    assert!(SharedSource::attach(&owners, &replacement, game, false, || Ok(Input(next))).is_ok());
 }
 
 #[test]
 fn contended_capture_is_skipped_without_error_or_refreshing_the_last_sample() {
+    let owners = OwnerSlots::default();
     let identity = ProcessIdentity { pid: 3, epoch: 1, path: "test.exe".into() };
     let (send, input) = mpsc::channel();
     let (observed_tx, observed_rx) = mpsc::channel();
-    let mut source = SharedSource::attach(&identity, Game::Rally, false, || {
+    let mut source = SharedSource::attach(&owners, &identity, Game::Rally, false, || {
         Ok(Intermittent(input, observed_tx))
     }).unwrap();
     let wake = Arc::new(osg_streams::NativeWake::default());
@@ -192,17 +195,18 @@ fn failed_process_lease_releases_the_owner_even_with_an_attached_reader() {
         fn terminal_error(&self) -> Option<String> { self.0.load(Ordering::Acquire).then(|| "Process lease lost.".into()) }
     }
 
+    let owners = OwnerSlots::default();
     let identity = ProcessIdentity { pid: 2, epoch: 1, path: "test.exe".into() };
     let game = Game::Corsa;
     let failed = Arc::new(AtomicBool::new(false));
-    let mut retired = SharedSource::attach(&identity, game, false, || Ok(Retired(failed.clone()))).unwrap();
+    let mut retired = SharedSource::attach(&owners, &identity, game, false, || Ok(Retired(failed.clone()))).unwrap();
     failed.store(true, Ordering::Release);
     wait_for(|| retired.owner.done.load(Ordering::Acquire));
     assert_eq!(retired.poll().unwrap_err(), "Process lease lost.");
     assert_eq!(retired.terminal_error().as_deref(), Some("Process lease lost."));
 
     let (_, input) = mpsc::channel();
-    let replacement = SharedSource::attach(&identity, game, false, || Ok(Input(input))).unwrap();
+    let replacement = SharedSource::attach(&owners, &identity, game, false, || Ok(Input(input))).unwrap();
     assert!(!Arc::ptr_eq(&retired.owner, &replacement.owner));
 }
 
@@ -210,4 +214,36 @@ fn failed_process_lease_releases_the_owner_even_with_an_attached_reader() {
 fn ordered_reader_rejects_an_invalid_process_identity_before_attachment() {
     let identity = ProcessIdentity { pid: 0, epoch: 1, path: "acr.exe".into() };
     assert!(SharedSource::open(&identity, Game::Rally).is_err());
+}
+
+#[test]
+fn held_variant_open_does_not_block_another_variant() {
+    let owners = OwnerSlots::default();
+    let slow = ProcessIdentity { pid: 41, epoch: 1, path: "slow.exe".into() };
+    let fast = ProcessIdentity { pid: 42, epoch: 1, path: "fast.exe".into() };
+    thread::scope(|scope| {
+        let (entered, opening) = mpsc::channel();
+        let (release, finish) = mpsc::channel();
+        let (fast_result, fast_reader) = mpsc::channel();
+        let owners = &owners;
+        let slow_identity = &slow;
+        let fast_identity = &fast;
+        let slow = scope.spawn(move || SharedSource::attach(owners, slow_identity, Game::Corsa, false, || {
+            entered.send(()).unwrap();
+            finish.recv().map_err(|error| error.to_string())?;
+            Err::<Input, _>("held source failed to open".into())
+        }));
+        opening.recv_timeout(Duration::from_secs(3)).unwrap();
+        let other = scope.spawn(move || {
+            let (_, input) = mpsc::channel();
+            fast_result.send(SharedSource::attach(owners, fast_identity, Game::Evo, true, || Ok(Input(input)))).unwrap();
+        });
+        let before_release = fast_reader.recv_timeout(Duration::from_secs(3));
+        release.send(()).unwrap();
+        assert_eq!(slow.join().unwrap().err().as_deref(), Some("held source failed to open"));
+        other.join().unwrap();
+        let first = before_release.expect("an unrelated game was blocked by a source open").unwrap();
+        let second = SharedSource::attach::<Input>(owners, &fast, Game::Evo, false, || panic!("duplicate owner")).unwrap();
+        assert!(Arc::ptr_eq(&first.owner, &second.owner));
+    });
 }

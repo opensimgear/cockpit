@@ -2,7 +2,6 @@ use super::{Game, RawSample, Source, WindowsSource};
 use crate::game_discovery::{normalized_path, ProcessIdentity};
 use osg_streams::{Delivery, NativeLimits, NativeStream, NativeSubscription, RetainedBytes};
 use std::{
-    collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock, Weak,
@@ -78,7 +77,24 @@ struct Slot {
     owner: Weak<Owner>,
     done: Arc<AtomicBool>,
 }
-static OWNERS: OnceLock<Mutex<BTreeMap<&'static str, Slot>>> = OnceLock::new();
+#[derive(Default)]
+struct OwnerSlots {
+    corsa: Mutex<Option<Slot>>,
+    competizione: Mutex<Option<Slot>>,
+    evo: Mutex<Option<Slot>>,
+    rally: Mutex<Option<Slot>>,
+}
+impl OwnerSlots {
+    fn for_game(&self, game: Game) -> &Mutex<Option<Slot>> {
+        match game {
+            Game::Corsa => &self.corsa,
+            Game::Competizione => &self.competizione,
+            Game::Evo => &self.evo,
+            Game::Rally => &self.rally,
+        }
+    }
+}
+static OWNERS: OnceLock<OwnerSlots> = OnceLock::new();
 
 struct Shutdown {
     stream: Stream,
@@ -209,29 +225,30 @@ pub(crate) struct SharedSource {
 
 impl SharedSource {
     pub(crate) fn open(identity: &ProcessIdentity, game: Game) -> Result<Self, String> {
-        Self::attach(identity, game, false, || {
+        Self::attach(OWNERS.get_or_init(OwnerSlots::default), identity, game, false, || {
             WindowsSource::exact(identity, game)
         })
     }
 
     pub(crate) fn open_latest(identity: &ProcessIdentity, game: Game) -> Result<Self, String> {
-        Self::attach(identity, game, true, || {
+        Self::attach(OWNERS.get_or_init(OwnerSlots::default), identity, game, true, || {
             WindowsSource::exact(identity, game)
         })
     }
 
     fn attach<S: Source + 'static>(
+        owners: &OwnerSlots,
         identity: &ProcessIdentity,
         game: Game,
         latest: bool,
         open: impl FnOnce() -> Result<S, String>,
     ) -> Result<Self, String> {
-        let mut registry = OWNERS
-            .get_or_init(Mutex::default)
+        let mut slot = owners
+            .for_game(game)
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let slot = registry.get(game.id());
-        let owner = match slot.filter(|slot| !slot.done.load(Ordering::Acquire)).and_then(|slot| slot.owner.upgrade()) {
+        let live = slot.as_ref().filter(|slot| !slot.done.load(Ordering::Acquire));
+        let owner = match live.and_then(|slot| slot.owner.upgrade()) {
             Some(owner) => {
                 if owner.identity.pid != identity.pid
                     || owner.identity.epoch != identity.epoch
@@ -242,17 +259,14 @@ impl SharedSource {
                 owner
             }
             None => {
-                if slot.is_some_and(|slot| !slot.done.load(Ordering::Acquire)) {
+                if live.is_some() {
                     return Err("Assetto is releasing its previous shared-memory reader.".into());
                 }
                 let owner = Arc::new(Owner::start(identity.clone(), open()?)?);
-                registry.insert(
-                    game.id(),
-                    Slot {
-                        owner: Arc::downgrade(&owner),
-                        done: owner.done.clone(),
-                    },
-                );
+                *slot = Some(Slot {
+                    owner: Arc::downgrade(&owner),
+                    done: owner.done.clone(),
+                });
                 owner
             }
         };
