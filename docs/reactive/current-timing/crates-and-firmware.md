@@ -58,8 +58,10 @@ See [acquisition](../acquisition.md) for broader ownership and migration context
 | `crates/desktop-output/src/audit/collector/capacity.rs:175,298` | Inline test receive deadline | Tests wait up to 2 s for fake worker responses so failures terminate promptly. |
 | `crates/desktop-output/src/audit/collector/capacity.rs:187,251` | Inline test pacing | Tests pause 30 ms to exercise capacity/race behavior. These are deterministic test timing aids. |
 | `crates/desktop-output/src/transport.rs:100` | Transport reply deadline | A transport receive waits for its supplied timeout and completes on a reply or expiry; it is request I/O, not a state poll. |
-| `crates/desktop-output/src/transport.rs:154` | Child shutdown polling | On drop, the transport checks its child with `try_wait` every 5 ms for up to 350 ms, then kills and waits for it. This is bounded process-exit polling; native child completion notification is not used here. |
-| `crates/desktop-output/src/transport.rs:158` | Child process completion | The final `Child::wait` reaps the process after stop; process exit is the trigger, not periodic acquisition. |
+| `crates/desktop-output/src/transport.rs:165` | Non-Windows child shutdown fallback | The portable transport retains bounded polling on non-Windows platforms. Cockpit enables the native desktop worker only on Windows. |
+| `crates/desktop-output/src/transport.rs:173,191` | Child process completion | The non-Windows fallback joins the terminated child. The Windows path collects the status after the exact process handle has signalled. |
+| `crates/desktop-output/src/transport.rs:190` | Exact Windows process wait | The desktop transport waits on its owned child handle for 350 ms before forced termination, then waits up to 500 ms for exact exit. Forced termination does not prove input release. |
+| `crates/desktop-output/src/transport.rs:261` | Fixture | A duplicated handle verifies that forced transport shutdown observed the exact child exit. |
 | `crates/desktop-output/src/windows.rs:107` | Windows process status query | `WaitForSingleObject(handle, 0)` is a nonblocking one-shot process-status check by the caller. It has no internal cadence; callers decide when to inspect. |
 | `crates/desktop-output/src/windows/focus/lifetime.rs:60` | Focus lifetime wait | A focus owner waits for a state change or remaining lifetime deadline; state changes signal the condition variable. |
 | `crates/desktop-output/src/windows/focus/native.rs:148` | Native focus startup deadline | Initialization waits for the focus window/thread response until the caller's deadline; channel delivery replaces repeated checks. |
@@ -96,7 +98,8 @@ See [acquisition](../acquisition.md) for broader ownership and migration context
 | `crates/virtual-controller/src/windows_jobs.rs:208` | Inline test pacing | A Windows job test sleeps 20 ms while its fixture child advances; this is test-only. |
 | `crates/virtual-controller/src/windows_launcher.rs:140` | Windows process status query | The zero-timeout handle query checks child state once; notification/wait policy is owned by its caller. |
 | `crates/virtual-controller/src/windows_process.rs:169` | Windows process status query | The zero-timeout process query is a one-shot observation and has no internal cadence. |
-| `crates/virtual-controller/src/windows_refresh.rs:184,201` | Virtual device refresh retry | The refresh owner checks the launched driver's child process every 5 ms until its refresh deadline; after termination it checks for exit every 5 ms within the separate reap deadline. These are bounded process-exit checks, with no child completion notification in this path. |
+| `crates/virtual-controller/src/windows_refresh.rs:175` | Exact Windows process wait | The explicit refresh helper waits on the exact launched process until exit or its original deadline. A failed wait triggers termination and a separate bounded reap wait. Unconfirmed exit retains the durable refresh guard. |
+| `crates/virtual-controller/src/windows_refresh.rs:194,203` | Operation and reap deadlines | The refresh owner passes the original operation and reap budgets to the exact process wait. |
 | `crates/virtual-controller/src/worker.rs:113` | Virtual worker request deadline | A request receiver waits only until its request deadline; the worker reply channel wakes it. |
 | `crates/virtual-controller/src/worker.rs:163` | Inline test completion bound | A test waits at most 50 ms for its fake worker completion notification. |
 

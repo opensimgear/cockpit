@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 fn slot() -> Slot {
     Slot {
         id: 1,
@@ -143,11 +144,13 @@ fn real_child_completion_failure_and_deadline_are_bounded_without_pnp_commands()
 fn unconfirmed_child_exit_is_distinct_from_a_settled_failure() {
     struct Child {
         answers: std::collections::VecDeque<Result<Option<bool>, String>>,
+        waits: Vec<Duration>,
         kills: usize,
         deny_kill: bool,
     }
     impl ChildControl for Child {
-        fn status(&mut self) -> Result<Option<bool>, String> {
+        fn wait(&mut self, timeout: Duration) -> Result<Option<bool>, String> {
+            self.waits.push(timeout);
             self.answers.pop_front().unwrap_or(Ok(None))
         }
         fn terminate(&mut self) -> Result<(), String> {
@@ -161,30 +164,60 @@ fn unconfirmed_child_exit_is_distinct_from_a_settled_failure() {
     }
     let mut child = Child {
         answers: [Ok(None)].into(),
+        waits: vec![],
         kills: 0,
         deny_kill: true,
     };
-    let error = await_child(&mut child, Duration::ZERO, Duration::ZERO).unwrap_err();
+    let error = await_child(
+        &mut child,
+        Duration::from_secs(7),
+        Duration::from_millis(321),
+    )
+    .unwrap_err();
     assert!(!error.quiescent);
     assert!(error.message.contains("unconfirmed"));
     assert!(error.message.contains("access denied"));
     assert_eq!(child.kills, 1);
+    assert_eq!(
+        child.waits,
+        [Duration::from_secs(7), Duration::from_millis(321)]
+    );
     let mut child = Child {
         answers: [Err("wait failed".into()), Ok(Some(false))].into(),
+        waits: vec![],
         kills: 0,
         deny_kill: false,
     };
-    let error = await_child(&mut child, Duration::ZERO, Duration::ZERO).unwrap_err();
+    let error = await_child(
+        &mut child,
+        Duration::from_millis(1234),
+        Duration::from_millis(456),
+    )
+    .unwrap_err();
     assert!(error.quiescent);
     assert!(error.message.contains("wait failed"));
+    assert!(!error.message.contains("deadline"));
+    assert_eq!(
+        child.waits,
+        [Duration::from_millis(1234), Duration::from_millis(456)]
+    );
     let mut child = Child {
         answers: [Ok(None), Err("still cannot wait".into())].into(),
+        waits: vec![],
         kills: 0,
         deny_kill: false,
     };
-    assert!(
-        !await_child(&mut child, Duration::ZERO, Duration::ZERO)
-            .unwrap_err()
-            .quiescent
+    let error = await_child(
+        &mut child,
+        Duration::from_millis(88),
+        Duration::from_millis(765),
+    )
+    .unwrap_err();
+    assert!(!error.quiescent);
+    assert!(error.message.contains("deadline"));
+    assert!(error.message.contains("still cannot wait"));
+    assert_eq!(
+        child.waits,
+        [Duration::from_millis(88), Duration::from_millis(765)]
     );
 }

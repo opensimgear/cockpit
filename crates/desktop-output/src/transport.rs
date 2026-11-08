@@ -137,30 +137,63 @@ impl Channel for ProcessChannel {
 impl Drop for ProcessChannel {
     fn drop(&mut self) {
         self.outgoing.take();
-        let deadline = Instant::now() + Duration::from_millis(350);
-        let mut reported_wait_error = false;
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    record_exit(self.audit_channel, self.child.id(), Some(status), 1);
-                    return;
-                }
-                Err(_) if !reported_wait_error => {
-                    record_exit(self.audit_channel, self.child.id(), None, 3);
-                    reported_wait_error = true;
-                }
-                _ => {}
+        #[cfg(windows)]
+        match wait_for_exit(&mut self.child, 350) {
+            Ok(Some(status)) => {
+                record_exit(self.audit_channel, self.child.id(), Some(status), 1);
+                return;
             }
-            thread::sleep(Duration::from_millis(5));
+            Ok(None) => {}
+            Err(_) => record_exit(self.audit_channel, self.child.id(), None, 3),
+        }
+        #[cfg(not(windows))]
+        {
+            let deadline = Instant::now() + Duration::from_millis(350);
+            let mut reported_wait_error = false;
+            while Instant::now() < deadline {
+                match self.child.try_wait() {
+                    Ok(Some(status)) => {
+                        record_exit(self.audit_channel, self.child.id(), Some(status), 1);
+                        return;
+                    }
+                    Err(_) if !reported_wait_error => {
+                        record_exit(self.audit_channel, self.child.id(), None, 3);
+                        reported_wait_error = true;
+                    }
+                    _ => {}
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
         }
         // Lease expiry normally cleans up first. A final kill is never proof of release.
         let _ = self.child.kill();
-        match self.child.wait() {
-            Ok(status) => record_exit(self.audit_channel, self.child.id(), Some(status), 2),
-            Err(_) => record_exit(self.audit_channel, self.child.id(), None, 3),
+        #[cfg(windows)]
+        let reaped = wait_for_exit(&mut self.child, 500);
+        #[cfg(not(windows))]
+        let reaped = self.child.wait().map(Some);
+        match reaped {
+            Ok(Some(status)) => record_exit(self.audit_channel, self.child.id(), Some(status), 2),
+            Ok(None) | Err(_) => record_exit(self.audit_channel, self.child.id(), None, 3),
         }
     }
 }
+
+#[cfg(windows)]
+fn wait_for_exit(child: &mut Child, timeout_ms: u32) -> std::io::Result<Option<ExitStatus>> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::{
+        Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::WaitForSingleObject,
+    };
+
+    // The owned Child keeps this exact handle valid through the wait.
+    match unsafe { WaitForSingleObject(child.as_raw_handle(), timeout_ms) } {
+        WAIT_OBJECT_0 => child.wait().map(Some),
+        WAIT_TIMEOUT => Ok(None),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
 fn exit_fields(channel: u64, pid: u32, status: Option<ExitStatus>, reason: u64) -> [u64; 5] {
     [channel, pid as u64,
         status.and_then(|status| status.code()).map(|code| code as u32 as u64).unwrap_or(u64::MAX),
@@ -184,6 +217,50 @@ mod tests {
     fn status(code: i32) -> ExitStatus {
         use std::os::unix::process::ExitStatusExt;
         ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_wait_observes_the_owned_child_exit_or_deadline() {
+        use std::os::windows::{
+            io::{AsHandle, AsRawHandle},
+            process::CommandExt,
+        };
+        use windows_sys::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject};
+
+        let python = std::env::var_os("OSG_TEST_PYTHON").unwrap_or_else(|| "python".into());
+        let spawn = |script, stdin| {
+            ProcessCommand::new(&python)
+                .args(["-c", script])
+                .stdin(stdin)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap()
+        };
+        let channel = |child| ProcessChannel {
+            child,
+            outgoing: None,
+            incoming: mpsc::sync_channel(1).1,
+            audit_channel: None,
+            outgoing_depth: Arc::new(AtomicUsize::new(0)),
+        };
+        let mut exited = spawn("raise SystemExit(7)", Stdio::null());
+        assert_eq!(
+            wait_for_exit(&mut exited, 5_000).unwrap().unwrap().code(),
+            Some(7)
+        );
+        drop(channel(exited));
+
+        let mut blocked = spawn("import sys; sys.stdin.buffer.read(1)", Stdio::piped());
+        assert!(wait_for_exit(&mut blocked, 20).unwrap().is_none());
+        let retained = blocked.as_handle().try_clone_to_owned().unwrap();
+        drop(channel(blocked));
+        assert_eq!(
+            unsafe { WaitForSingleObject(retained.as_raw_handle(), 0) },
+            WAIT_OBJECT_0
+        );
     }
 
     #[test]

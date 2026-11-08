@@ -8,12 +8,16 @@ use std::os::windows::process::CommandExt;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use windows_sys::Win32::{
     Devices::DeviceAndDriverInstallation::*,
-    System::{Registry::REG_SZ, SystemInformation::GetSystemDirectoryW},
+    Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+    System::{
+        Registry::REG_SZ,
+        SystemInformation::GetSystemDirectoryW,
+        Threading::WaitForSingleObject,
+    },
 };
 const LIMIT: u32 = 4096;
 fn checked(code: u32) -> Result<(), String> {
@@ -156,14 +160,27 @@ impl From<&str> for Failure {
     }
 }
 trait ChildControl {
-    fn status(&mut self) -> Result<Option<bool>, String>;
+    fn wait(&mut self, timeout: Duration) -> Result<Option<bool>, String>;
     fn terminate(&mut self) -> Result<(), String>;
 }
 impl ChildControl for std::process::Child {
-    fn status(&mut self) -> Result<Option<bool>, String> {
-        self.try_wait()
-            .map(|s| s.map(|s| s.success()))
-            .map_err(|e| e.to_string())
+    fn wait(&mut self, timeout: Duration) -> Result<Option<bool>, String> {
+        use std::os::windows::io::AsRawHandle;
+
+        // The child handle is the process object returned by spawn, so this
+        // wait cannot accidentally observe a different process or PID reuse.
+        // WaitForSingleObject accepts milliseconds; flooring keeps the native
+        // wait within the caller's budget.
+        let timeout_ms = timeout.as_millis().min(u32::MAX as u128 - 1) as u32;
+        let result = unsafe { WaitForSingleObject(self.as_raw_handle(), timeout_ms) };
+        match result {
+            WAIT_OBJECT_0 => std::process::Child::wait(self)
+                .map(|status| Some(status.success()))
+                .map_err(|error| error.to_string()),
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_FAILED => Err(std::io::Error::last_os_error().to_string()),
+            _ => Err(format!("Unexpected process wait result: {result}.")),
+        }
     }
     fn terminate(&mut self) -> Result<(), String> {
         self.kill().map_err(|e| e.to_string())
@@ -174,35 +191,28 @@ fn await_child(
     timeout: Duration,
     reap_timeout: Duration,
 ) -> Result<(), Failure> {
-    let started = Instant::now();
-    let reason = loop {
-        match child.status() {
-            Ok(Some(true)) => return Ok(()),
-            Ok(Some(false)) => {
-                return Err("Driver refresh exited unsuccessfully; verify the driver state.".into())
-            }
-            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(5)),
-            Err(error) => break format!("Driver refresh wait failed: {error}"),
-            _ => break "Driver refresh deadline expired.".to_owned(),
+    let reason = match child.wait(timeout) {
+        Ok(Some(true)) => return Ok(()),
+        Ok(Some(false)) => {
+            return Err("Driver refresh exited unsuccessfully; verify the driver state.".into())
         }
+        Ok(None) => "Driver refresh deadline expired.".to_owned(),
+        Err(error) => format!("Driver refresh wait failed: {error}"),
     };
     let termination = child.terminate().err();
-    let reap = Instant::now();
-    loop {
-        if child.status().ok().flatten().is_some() {
+    let reap_diagnostic = match child.wait(reap_timeout) {
+        Ok(Some(_)) => {
             return Err(Failure {
                 message: reason,
                 quiescent: true,
             });
         }
-        if reap.elapsed() >= reap_timeout {
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
+        Ok(None) => String::new(),
+        Err(error) => format!(" Reap wait failed: {error}"),
+    };
     Err(Failure {
         message: format!(
-            "{reason} Child exit is unconfirmed; preserve configuration for recovery.{}",
+            "{reason} Child exit is unconfirmed; preserve configuration for recovery.{reap_diagnostic}{}",
             termination
                 .map(|e| format!(" Termination failed: {e}"))
                 .unwrap_or_default()
