@@ -10,6 +10,8 @@ mod capture_workers;
 mod vehicle_openers;
 #[path = "games/context/projection.rs"]
 mod projection;
+#[path = "games/context/setup_workers.rs"]
+mod setup_workers;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -21,7 +23,6 @@ pub(crate) struct PreparedGame {
 enum SetupRefresh {
     Cached,
     Explicit,
-    Library,
 }
 impl GamesRuntime {
     /// Foreground desktop output needs exact process identity independently of
@@ -203,47 +204,46 @@ impl GamesRuntime {
             let openers = vehicle_openers::start(inner.clone(), polling_closed.clone(), &open_wakes);
             let projections = Arc::new(projection::Workers::default());
             let qualification = projections.start(&inner);
+            let setup = setup_workers::start(&inner);
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
             let worker_wake = &inner.changes.context_worker_wake;
             let _ = worker_wake.bind_thread(thread::current());
             let mut process_cache = process_cache::Cache::default();
             let mut last_library = None;
-            let mut sdk_watches = context_sdk_watch::SdkWatches::default();
-            let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
-            let mut dcs_watch = context_dcs_watch::DcsWatch::default();
-            let mut vehicle_catalogues = context_vehicle_catalogues::Catalogues::default();
+            let mut last_catalogue_scope = None;
             while !inner.closed.load(Ordering::Acquire) {
                 let observed = worker_wake.observed();
                 let started = Instant::now();
                 let library = context_wake.observed();
                 let processes = process_wake.observed();
                 let epoch = (library, processes);
-                let sdk_changed = sdk_watches.refresh(&inner);
-                assetto_watches.refresh(&inner);
-                dcs_watch.refresh(&inner);
-                vehicle_catalogues.refresh(&inner);
-                let setup = if last_library == Some(library) { SetupRefresh::Cached } else { SetupRefresh::Library };
-                let setup_current = inner.collect_game_contexts(setup, |games| {
+                if last_library != Some(library) {
+                    inner.setup.retain_background_scopes(&inner.vehicle_telemetry_games());
+                    last_library = Some(library);
+                }
+                let catalogue_scope = (library, inner.changes.vehicle_scope_wake.observed());
+                if last_catalogue_scope != Some(catalogue_scope) {
+                    context_vehicle_catalogues::retain_current(&inner);
+                    last_catalogue_scope = Some(catalogue_scope);
+                }
+                inner.collect_game_contexts(SetupRefresh::Cached, |games| {
                     inner.read_context_inventory(&mut process_cache, epoch, games,
                         |games| inner.read_context_processes(epoch, games))
                 }, Some((&projections, epoch)));
-                if sdk_changed { context_sdk_watch::publish_change(&inner); }
-                if setup_current { last_library = Some(library); }
                 if inner.closed.load(Ordering::Acquire) { break; }
                 if observed == worker_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
-                    let watch_retry = [sdk_watches.retry_at(), assetto_watches.retry_at(), dcs_watch.retry_at(), vehicle_catalogues.retry_at()]
-                        .into_iter().flatten().min().map(|at| at.saturating_duration_since(Instant::now()));
                     let maintenance = context_sdk_watch::maintenance_delay(&inner, live, started);
-                    worker_wake.wait_scheduled(observed, maintenance.into_iter().chain(watch_retry).min());
+                    worker_wake.wait_scheduled(observed, maintenance);
                 }
             }
             polling_closed.store(true, Ordering::Release);
             capture_wakes.notify_all();
             open_wakes.notify_all();
             projections.stop();
-            for worker in polling.into_iter().chain(openers).chain(qualification) {
+            inner.changes.setup_watch_wakes.notify_all();
+            for worker in polling.into_iter().chain(openers).chain(qualification).chain(setup) {
                 let _ = worker.join();
             }
             inner.update_vehicles(|vehicles| vehicles.stop_openers());

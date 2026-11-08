@@ -358,7 +358,7 @@ fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
     let refreshing_game = game.clone();
     let refresh = std::thread::spawn(move || refreshed.refresh(&[refreshing_game]));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while runtime.admission.try_lock().is_ok() {
+    while runtime.admission.try_write().is_ok() {
         assert!(
             std::time::Instant::now() < deadline,
             "Passive refresh did not retain admission through inspection"

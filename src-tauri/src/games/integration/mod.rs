@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak,
+        Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError, Weak,
     },
     thread::{self, JoinHandle},
 };
@@ -55,7 +55,7 @@ struct Inner {
 pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    admission: Mutex<()>,
+    admission: RwLock<()>,
 }
 
 #[derive(Clone)]
@@ -64,8 +64,12 @@ pub(crate) struct DcsCatalogueWatch {
     pub(crate) changes: Weak<AtomicU64>,
     pub(crate) observed: u64,
 }
+enum AdmissionGuard<'a> {
+    Background { _lock: RwLockReadGuard<'a, ()> },
+    Exclusive { _lock: RwLockWriteGuard<'a, ()> },
+}
 struct SetupAdmission<'a> {
-    lock: Option<MutexGuard<'a, ()>>,
+    lock: Option<AdmissionGuard<'a>>,
     inner: &'a Inner,
 }
 impl Drop for SetupAdmission<'_> {
@@ -74,6 +78,7 @@ impl Drop for SetupAdmission<'_> {
         if self.inner.watched_setup_waiting.swap(false, Ordering::AcqRel) {
             if let Some(changes) = self.inner.changes.get() {
                 changes.context_update_wake.notify();
+                changes.setup_watch_wakes.notify_all();
             }
         }
     }
@@ -149,15 +154,15 @@ impl GameIntegrationSetup {
                 job: Mutex::new(None),
             }),
             worker: Mutex::new(None),
-            admission: Mutex::new(()),
+            admission: RwLock::new(()),
         }
     }
     pub(crate) fn watch_changes(&self, changes: Arc<crate::game_read_models::signals::Signal>) {
         let _ = self.inner.changes.set(changes);
     }
     fn lock_admission(&self) -> SetupAdmission<'_> {
-        let lock = self.admission.lock().unwrap_or_else(|p| p.into_inner());
-        SetupAdmission { lock: Some(lock), inner: &self.inner }
+        let lock = self.admission.write().unwrap_or_else(|p| p.into_inner());
+        SetupAdmission { lock: Some(AdmissionGuard::Exclusive { _lock: lock }), inner: &self.inner }
     }
 
     #[cfg(test)]
@@ -167,12 +172,12 @@ impl GameIntegrationSetup {
     }
 
     fn try_watched_admission(&self) -> Option<SetupAdmission<'_>> {
-        let lock = match self.admission.try_lock() {
+        let lock = match self.admission.try_read() {
             Ok(lock) => lock,
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
             Err(TryLockError::WouldBlock) => return None,
         };
-        Some(SetupAdmission { lock: Some(lock), inner: &self.inner })
+        Some(SetupAdmission { lock: Some(AdmissionGuard::Background { _lock: lock }), inner: &self.inner })
     }
     /// New preparation forces a content hash; subsequent native admission checks
     /// metadata immediately, independently of the passive observer's interval.
@@ -256,11 +261,13 @@ impl GameIntegrationSetup {
         self.refresh_admitted(catalogue);
     }
 
-    pub(crate) fn refresh_background(&self, catalogue: &[Value]) -> bool {
-        let Some(_admission) = self.try_background_admission() else { return false; };
+    pub(crate) fn retain_background_scopes(&self, catalogue: &[Value]) {
         self.inner.retain_setup_scopes(catalogue);
-        self.refresh_admitted(catalogue);
-        true
+    }
+
+    pub(crate) fn refresh_background_scope(&self, catalogue: &[Value], current: impl Fn() -> bool) -> bool {
+        let Some(_admission) = self.try_background_admission() else { return false; };
+        self.refresh_scoped(catalogue, current)
     }
 
     pub(crate) fn invalidate_xplane_catalogue(&self, id: &str) {
@@ -319,31 +326,33 @@ impl GameIntegrationSetup {
         (!self.busy()).then_some(admission)
     }
 
-    pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
+    pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value, current: impl Fn() -> bool) -> bool {
         let Some(_admission) = self.try_background_admission() else { return false; };
+        if !current() { return false; }
         if id == "dcs" {
             let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
             self.invalidate_dcs_catalogue(&mut cache);
         } else {
             self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
         }
-        self.refresh_admitted(std::slice::from_ref(game));
-        true
+        self.refresh_scoped(std::slice::from_ref(game), current)
     }
 
-    // Request admission already owns this mutex. Keep passive inspection and
-    // its state publication together so it cannot overwrite a new setup worker.
     fn refresh_admitted(&self, catalogue: &[Value]) {
-        if self.busy() {
-            return;
-        }
+        self.refresh_scoped(catalogue, || true);
+    }
+
+    // Each background worker owns one integration. Admission excludes setup
+    // edits and provisioning while inspection and publication are in flight.
+    fn refresh_scoped(&self, catalogue: &[Value], current: impl Fn() -> bool) -> bool {
+        if self.busy() || !current() { return false; }
         for game in catalogue {
-            let Ok(game) = bound_game(game) else {
-                continue;
-            };
+            let Ok(game) = bound_game(game) else { continue; };
             let (record, status) = self.inner.inspect_scoped(&game);
+            if !current() { return false; }
             self.inner.publish_setup(&game, &record, status);
         }
+        true
     }
     pub(crate) fn shutdown(&self) {
         let _admission = self.lock_admission();

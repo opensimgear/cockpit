@@ -49,6 +49,12 @@ impl GameIntegrationSetup {
         revision
     }
 
+    pub(crate) fn invalidate_source_setup(&self, id: &str, game: &Value) {
+        let key = source_scope(game, id);
+        let removed = self.inner.views.lock().unwrap_or_else(|p| p.into_inner()).source.remove(&key);
+        if removed.is_some() { self.inner.changed(); }
+    }
+
     pub(crate) fn set_setup_watch_unavailable(&self, id: &str, game: &Value, unavailable: bool) {
         let key = source_scope(game, id);
         {
@@ -93,6 +99,7 @@ impl Inner {
             changes.mark(crate::game_read_models::signals::Domain::Setup);
             changes.context_update_wake.notify();
             changes.wake_vehicle_scope();
+            changes.setup_watch_wakes.notify_all();
             changes.mark_resources();
         }
     }
@@ -207,11 +214,12 @@ impl Inner {
         let id = game["id"].as_str().unwrap_or("");
         let record = self.provider_snapshot(id).0;
         #[cfg(test)]
-        if let Some((entered, release)) = self.inspection_pause.lock()
-            .unwrap_or_else(|p| p.into_inner()).take()
         {
-            entered.send(()).unwrap();
-            release.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            let pause = self.inspection_pause.lock().unwrap_or_else(|p| p.into_inner()).take();
+            if let Some((entered, release)) = pause {
+                entered.send(()).unwrap();
+                release.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            }
         }
         // Source publication always inspects the configured/default folder.
         // An explicit folder check is a separate preview, never this proof.
@@ -288,6 +296,7 @@ impl Inner {
             let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
             let states = self.states.lock().unwrap_or_else(|p| p.into_inner());
             if views.entries.get(&key).is_some_and(|(known, _, _, _)| known.as_ref() == record)
+                && views.source.contains_key(&key)
                 && states.get(id).is_some_and(|old| old.as_ref() == &status) { return; }
         }
         let raw_status = Arc::new(status.clone());

@@ -12,7 +12,7 @@ fn xplane(executable: &str) -> Value {
 fn cold_decoration_is_memory_only_and_does_not_enter_admission_or_inspection() {
     let scratch = Scratch::new();
     let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"), true));
-    let admission = runtime.admission.lock().unwrap();
+    let admission = runtime.admission.write().unwrap();
     let fingerprints = runtime.inner.fingerprints.lock().unwrap();
     let states = runtime.inner.states.lock().unwrap();
     let reader = runtime.clone();
@@ -217,7 +217,7 @@ fn cold_loaded_settings_errors_remain_visible_without_source_refresh() {
     let path = scratch.0.join("setup.json");
     crate::persistence::test_support::record(&path, "games", "setup", b"broken");
     let runtime = GameIntegrationSetup::new(path, false);
-    let _admission = runtime.admission.lock().unwrap();
+    let _admission = runtime.admission.write().unwrap();
     let mut catalogue = vec![xplane("/absent/X-Plane.exe")];
     runtime.decorate(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
@@ -230,7 +230,7 @@ fn cold_loaded_settings_errors_remain_visible_without_source_refresh() {
 fn cold_incompatible_installation_has_actionable_memory_only_setup_state() {
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
-    let _admission = runtime.admission.lock().unwrap();
+    let _admission = runtime.admission.write().unwrap();
     let mut game = xplane("/absent/X-Plane.exe");
     game["integrationCompatible"] = json!(false);
     game["installed"] = json!(false);

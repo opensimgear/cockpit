@@ -28,7 +28,7 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     release.send(()).unwrap();
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
     runtime.set_setup_watch(acr["id"].as_str().unwrap(), true);
-    assert!(runtime.refresh_watched_setup(acr["id"].as_str().unwrap(), &acr));
+    assert!(runtime.refresh_watched_setup(acr["id"].as_str().unwrap(), &acr, || true));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 
     for game in [&xplane, &acr] {
@@ -78,7 +78,7 @@ fn remove_dcs_blocks_running_game_then_restores_owned_loader_and_preserves_exter
     release.send(()).unwrap();
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
     runtime.set_setup_watch("dcs", true);
-    assert!(runtime.refresh_watched_setup("dcs", &catalogue[0]));
+    assert!(runtime.refresh_watched_setup("dcs", &catalogue[0], || true));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 
     let remove = json!({"command":"game_integration_remove","userFolder":target});

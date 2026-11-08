@@ -4,11 +4,7 @@ use crate::game_read_models::signals::Domain;
 use osg_streams::NativeWake;
 use std::sync::{atomic::AtomicU64, Weak};
 
-const XPLANE: [&str; 2] = ["x-plane-11", "x-plane-12"];
 pub(super) const WATCH_RETRY: Duration = Duration::from_secs(2);
-
-#[derive(Default)]
-pub(super) struct SdkWatches([SourceWatch; 2]);
 
 #[derive(Default)]
 pub(super) struct SourceWatch {
@@ -21,28 +17,21 @@ pub(super) struct SourceWatch {
     retry_at: Option<Instant>,
 }
 
-impl SdkWatches {
-    pub(super) fn retry_at(&self) -> Option<Instant> {
-        self.0.iter().filter_map(SourceWatch::retry_at).min()
-    }
-
-    pub(super) fn refresh(&mut self, inner: &Inner) -> bool {
-        let paths = {
-            let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
-            XPLANE.map(|id| settings.catalogue.iter()
-                .find(|game| crate::game_discovery::integration_key(game) == Some(id))
-                .and_then(|game| crate::game_integration_setup::sdk_source_path(&game["executable"]))
-                .filter(|path| path.is_absolute()))
-        };
-        let mut changed = false;
-        for ((watch, path), id) in self.0.iter_mut().zip(paths).zip(XPLANE) {
-            if watch.refresh(path.into_iter().collect(), &inner.changes.context_worker_wake) {
-                inner.setup.set_setup_watch(id, watch.active());
-                inner.setup.invalidate_xplane_catalogue(id);
-                changed = true;
-            }
-        }
-        changed
+pub(super) fn refresh_sdk(
+    watch: &mut SourceWatch,
+    inner: &Inner,
+    id: &str,
+    game: Option<&Value>,
+    wake: &Arc<NativeWake>,
+    current: impl Fn() -> bool,
+) {
+    let path = game.and_then(|game| crate::game_integration_setup::sdk_source_path(&game["executable"]))
+        .filter(|path| path.is_absolute());
+    if watch.refresh(path.into_iter().collect(), wake) && current() {
+        inner.setup.set_setup_watch(id, watch.active());
+        inner.setup.invalidate_xplane_catalogue(id);
+        publish_change(inner);
+        inner.changes.context_update_wake.notify();
     }
 }
 

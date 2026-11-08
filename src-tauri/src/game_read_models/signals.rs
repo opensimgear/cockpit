@@ -43,6 +43,7 @@ pub(crate) struct Signal {
     pub(crate) context_update_wake: NativeWake,
     pub(crate) vehicle_capture_wakes: Arc<crate::game_vehicles::CaptureWakes>,
     pub(crate) vehicle_scope_wake: NativeWake,
+    pub(crate) setup_watch_wakes: crate::game_vehicles::CaptureWakes,
     context_process_scope: Mutex<Option<(u64, Arc<crate::game_activation::ProcessContinuity>)>>,
     pub(crate) activation_wake: Arc<NativeWake>,
     resource_wake: Mutex<Weak<NativeWake>>,
@@ -69,6 +70,7 @@ impl Default for Signal {
             context_update_wake: NativeWake::child(context_worker_wake.clone()),
             context_worker_wake,
             vehicle_scope_wake: NativeWake::default(),
+            setup_watch_wakes: Default::default(),
             vehicle_capture_wakes: Arc::default(),
             context_process_scope: Mutex::default(),
             activation_wake: Arc::default(),
@@ -128,6 +130,7 @@ impl Signal {
         self.mark(Domain::Library);
         self.context_wake.notify();
         self.wake_vehicle_scope();
+        self.setup_watch_wakes.notify_all();
         self.activation_wake.notify();
         self.wake_automatic();
         self.mark_resources();

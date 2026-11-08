@@ -153,12 +153,6 @@ impl Inner {
         match setup {
             SetupRefresh::Cached => {}
             SetupRefresh::Explicit => self.setup.refresh(&games),
-            SetupRefresh::Library => {
-                // Explicit preparation owns its setup admission.
-                if !self.setup.refresh_background(&games) {
-                    return false;
-                }
-            }
         }
         let setup_epoch = self.changes.vehicle_scope_wake.observed();
         self.setup.decorate_source(&mut games);

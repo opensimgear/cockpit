@@ -2,6 +2,7 @@
 use super::*;
 use crate::game_integration_setup::DcsCatalogueWatch;
 use notify::{event::ModifyKind, EventKind};
+use osg_streams::NativeWake;
 
 #[derive(Default)]
 pub(super) struct DcsWatch {
@@ -22,21 +23,27 @@ impl DcsWatch {
             .into_iter().flatten().min()
     }
 
-    pub(super) fn refresh(&mut self, inner: &Inner) {
-        let wake = &inner.changes.context_worker_wake;
+    pub(super) fn change_pending(&self) -> bool {
+        self.source.change_pending()
+    }
+
+    pub(super) fn refresh(
+        &mut self, inner: &Inner, game: Option<&Value>, wake: &Arc<NativeWake>,
+        current: impl Fn() -> bool,
+    ) {
         let catalogue = inner.setup.dcs_catalogue_watch_path();
         let children = catalogue.as_deref().map(|root| {
             (root, catalogue_file as prepared_sources::watch::ChildFilter)
         });
-        if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children, wake) {
+        if self.catalogue.refresh_with_children(catalogue.iter().cloned().collect(), children, wake) && current() {
             let watch = catalogue.zip(self.catalogue.registration())
                 .map(|(path, (changes, observed))| DcsCatalogueWatch { path, changes, observed });
             inner.setup.update_dcs_catalogue_watch(watch);
             inner.changes.mark(crate::game_read_models::signals::Domain::Setup);
             inner.changes.mark_resources();
+            inner.changes.context_update_wake.notify();
         }
-        let game = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
-            .catalogue.iter().find(|game| crate::game_discovery::integration_key(game) == Some("dcs")).cloned();
+        if !current() { return; }
         let installed = game.as_ref().is_some_and(|game| game["installed"] == true);
         let install = game.as_ref().and_then(|game| game["installPath"].as_str())
             .map(PathBuf::from).filter(|path| path.is_absolute());
@@ -65,21 +72,25 @@ impl DcsWatch {
         let children = self.saved_games.as_deref().map(|root| {
             (root, dcs_profile_directory as prepared_sources::watch::ChildFilter)
         });
+        if self.source.change_pending() && current() {
+            if let Some(game) = game { inner.setup.invalidate_source_setup("dcs", game); }
+        }
         let source_changed = self.source.refresh_with_children(self.paths.clone(), children, wake);
+        if !current() { return; }
         if source_changed {
             self.pending = self.source.active();
             inner.setup.set_setup_watch("dcs", self.pending && self.scope.is_some());
             if !self.pending { inner.changes.mark_resources(); }
         }
-        if let Some(game) = &game {
+        if let Some(game) = game {
             let unavailable = self.source.retry_at().is_some()
                 || (self.scope.is_none() && self.saved_games_retry.is_some());
             if unavailable {
                 inner.setup.set_setup_watch_unavailable("dcs", game, true);
             }
             if self.pending {
-                self.pending = !inner.setup.refresh_watched_setup("dcs", game);
-                if !self.pending {
+                self.pending = !inner.setup.refresh_watched_setup("dcs", game, || current() && !self.source.change_pending());
+                if !self.pending && current() {
                     if !unavailable { inner.setup.set_setup_watch_unavailable("dcs", game, false); }
                     inner.changes.mark_resources();
                 }

@@ -55,16 +55,16 @@ fn releasing_setup_admission_wakes_one_deferred_file_inspection() {
     let signal = Arc::new(crate::game_read_models::signals::Signal::default());
     runtime.watch_changes(signal.clone());
     let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true});
-    assert!(runtime.refresh_watched_setup("dcs", &game));
+    assert!(runtime.refresh_watched_setup("dcs", &game, || true));
     let admission = runtime.lock_admission();
     let before = signal.context_update_wake.observed();
-    assert!(!runtime.refresh_watched_setup("dcs", &game));
-    assert!(!runtime.refresh_watched_setup("dcs", &game));
+    assert!(!runtime.refresh_watched_setup("dcs", &game, || true));
+    assert!(!runtime.refresh_watched_setup("dcs", &game, || true));
     assert_eq!(signal.context_update_wake.observed(), before);
     drop(admission);
     assert_eq!(signal.context_update_wake.observed(), before + 1);
 
-    assert!(runtime.refresh_watched_setup("dcs", &game));
+    assert!(runtime.refresh_watched_setup("dcs", &game, || true));
     let after_retry = signal.context_update_wake.observed();
     drop(runtime.lock_admission());
     assert_eq!(signal.context_update_wake.observed(), after_retry);
@@ -79,11 +79,11 @@ fn library_baseline_defers_a_held_setup_gate_and_wakes_on_release() {
     let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true});
     let admission = runtime.lock_admission();
     let before = signal.context_update_wake.observed();
-    assert!(!runtime.refresh_background(std::slice::from_ref(&game)));
+    assert!(!runtime.refresh_background_scope(std::slice::from_ref(&game), || true));
     assert_eq!(signal.context_update_wake.observed(), before);
     drop(admission);
     assert_eq!(signal.context_update_wake.observed(), before + 1);
-    assert!(runtime.refresh_background(&[game]));
+    assert!(runtime.refresh_background_scope(&[game], || true));
 }
 
 #[test]
@@ -122,4 +122,33 @@ fn failed_watch_withdraws_only_the_exact_setup_proof_until_recovered() {
     assert_eq!(signal.vehicle_scope_wake.observed(), scope_wake + 1);
     assert_eq!(runtime.vehicle_setup_revision(&game), revision);
     assert_eq!(runtime.inner.cached_source_setup(&game, "dcs")["verified"], true);
+}
+
+#[test]
+fn background_baselines_are_independent_and_a_retired_scope_cannot_publish() {
+    let root = crate::test_directory();
+    let runtime = GameIntegrationSetup::new(root.path().join("setup.json"), false);
+    let game = |id: &str, provider: &str| json!({
+        "id": id, "provider": provider, "integrationKey": id, "integrationCompatible": true,
+    });
+    let first = game("dcs", "dcs-bios");
+    let sibling = game("x-plane-12", "x-plane");
+    let current = AtomicBool::new(true);
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, release_rx));
+
+    std::thread::scope(|threads| {
+        let first_result = threads.spawn(|| runtime.refresh_background_scope(
+            std::slice::from_ref(&first), || current.load(Ordering::Acquire)));
+        let blocked = entered_rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+        let sibling_published = runtime.refresh_background_scope(std::slice::from_ref(&sibling), || true);
+        current.store(false, Ordering::Release);
+        let _ = release.send(());
+        assert!(blocked && sibling_published);
+        assert!(!first_result.join().unwrap());
+    });
+    let views = runtime.inner.views.lock().unwrap();
+    assert!(!views.source.contains_key(&source_scope(&first, "dcs")));
+    assert!(views.source.contains_key(&source_scope(&sibling, "x-plane-12")));
 }

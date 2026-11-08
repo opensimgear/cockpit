@@ -134,14 +134,18 @@ fn a_pending_library_baseline_does_not_publish_from_unchecked_setup() {
     let scratch = Scratch::new();
     let (runtime, _, _) = runtime(&scratch);
     runtime.stop_test_context_observer();
+    let mut game = runtime.registered_profile_game("x-plane-12").unwrap();
+    game["selectedInstallationId"] = json!("unchecked-scope");
+    runtime.seed_test_catalogue(vec![game.clone()]);
     runtime.inner.setup.with_test_admission(|| {
-        assert!(!runtime.inner.refresh_game_contexts_with_inventory(SetupRefresh::Library, |_| {
-            panic!("An incomplete library baseline must not reach process projection");
-        }));
+        assert!(!runtime.inner.setup.refresh_background_scope(std::slice::from_ref(&game), || true));
+        runtime.inner.refresh_game_contexts(false);
+        let contexts = runtime.inner.contexts.lock().unwrap();
+        assert!(contexts.preparation("x-plane-12").unwrap().is_none());
     });
-    assert!(runtime.inner.refresh_game_contexts_with_inventory(
-        SetupRefresh::Library, |games| runtime.inner.platform.integration_processes(games),
-    ));
+    assert!(runtime.inner.setup.refresh_background_scope(&[game], || true));
+    runtime.inner.refresh_game_contexts(false);
+    assert!(runtime.inner.contexts.lock().unwrap().preparation("x-plane-12").unwrap().is_some());
     runtime.shutdown();
 }
 
@@ -473,3 +477,5 @@ mod validation;
 mod capture_isolation;
 #[path = "games/context/vehicle_openers_tests.rs"]
 mod startup_isolation;
+#[path = "games/context/setup_workers_tests.rs"]
+mod setup_workers;

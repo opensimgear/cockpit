@@ -119,8 +119,7 @@ now handles native reads and freshness deadlines independently per integration.
 A blocked reader can no longer delay another integration's capture.
 [Passive reader startup](../verification/2026-11-08-vehicle-reader-startup.md)
 runs native open and initial watch registration on separate workers by
-integration. Setup watch registration and the shared baseline refresh remain
-under #192. Simulator acceptance remains in #199.
+integration. Simulator acceptance remains in #199.
 
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
 matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)
@@ -221,8 +220,10 @@ scope. A superseded read is discarded before projection.
 [Background context qualification](../verification/2026-11-08-context-projection.md)
 runs executable checks, process liveness and catalogue lookup independently
 by integration. One blocked check cannot stop another integration from
-publishing. Setup watch registration and the shared setup baseline still
-need separate qualification.
+publishing. [Setup watch owners](../verification/2026-11-08-setup-watch-owners.md)
+now handle native watch registration, background setup and aircraft catalogue
+baselines independently by integration. Provider changes and explicit setup
+commands still require exclusive admission.
 
 ### Queued DCS commands during an unavailable lookup
 

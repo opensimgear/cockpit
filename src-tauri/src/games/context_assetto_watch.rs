@@ -1,44 +1,46 @@
 //! Watch the selected Assetto executable and any supported sibling runtime.
 use super::*;
 use crate::game_telemetry::Game;
-
-const PROVIDERS: [Game; 4] = [Game::Corsa, Game::Competizione, Game::Evo, Game::Rally];
-
-#[derive(Default)]
-pub(super) struct AssettoWatches([ProviderWatch; 4]);
+use osg_streams::NativeWake;
 
 #[derive(Default)]
-struct ProviderWatch {
+pub(super) struct ProviderWatch {
     source: context_sdk_watch::SourceWatch,
     pending: bool,
 }
 
-impl AssettoWatches {
+impl ProviderWatch {
     pub(super) fn retry_at(&self) -> Option<Instant> {
-        self.0.iter().filter_map(|watch| watch.source.retry_at()).min()
+        self.source.retry_at()
     }
 
-    pub(super) fn refresh(&mut self, inner: &Inner) {
-        let games = {
-            let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
-            PROVIDERS.map(|provider| settings.catalogue.iter()
-                .find(|game| crate::game_discovery::integration_key(game) == Some(provider.id()))
-                .cloned())
-        };
-        for ((watch, game), provider) in self.0.iter_mut().zip(games).zip(PROVIDERS) {
-            let paths = game.as_ref().and_then(|game| game["executable"].as_str())
-                .map(|executable| crate::acr_setup::executable_watch_paths(Path::new(executable), provider))
-                .unwrap_or_default();
-            if watch.source.refresh(paths, &inner.changes.context_worker_wake) {
-                inner.setup.set_setup_watch(provider.id(), watch.source.active());
-                watch.pending = watch.source.active();
-            }
-            if let Some(game) = &game {
-                if watch.source.retry_at().is_some() {
-                    inner.setup.set_setup_watch_unavailable(provider.id(), game, true);
-                } else if watch.pending {
-                    watch.pending = !inner.setup.refresh_watched_setup(provider.id(), game);
-                    if !watch.pending { inner.setup.set_setup_watch_unavailable(provider.id(), game, false); }
+    pub(super) fn change_pending(&self) -> bool {
+        self.source.change_pending()
+    }
+
+    pub(super) fn refresh(
+        &mut self, inner: &Inner, provider: Game, game: Option<&Value>, wake: &Arc<NativeWake>,
+        current: impl Fn() -> bool,
+    ) {
+        let paths = game.and_then(|game| game["executable"].as_str())
+            .map(|executable| crate::acr_setup::executable_watch_paths(Path::new(executable), provider))
+            .unwrap_or_default();
+        if self.source.change_pending() && current() {
+            if let Some(game) = game { inner.setup.invalidate_source_setup(provider.id(), game); }
+        }
+        if self.source.refresh(paths, wake) && current() {
+            inner.setup.set_setup_watch(provider.id(), self.source.active());
+            self.pending = self.source.active();
+        }
+        if !current() { return; }
+        if let Some(game) = game {
+            if self.source.retry_at().is_some() {
+                inner.setup.set_setup_watch_unavailable(provider.id(), game, true);
+            } else if self.pending {
+                self.pending = !inner.setup.refresh_watched_setup(provider.id(), game,
+                    || current() && !self.source.change_pending());
+                if !self.pending && current() {
+                    inner.setup.set_setup_watch_unavailable(provider.id(), game, false);
                 }
             }
         }
