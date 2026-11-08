@@ -15,6 +15,7 @@ import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
 import {openDcsTelemetryReaders} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
+import {verifyDcsSetupWatchRecovery} from './dcs-setup-watch-recovery.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1';
@@ -210,6 +211,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     const recoveredSetup = (await game()).integrationSetup;
     assert.equal(recoveredSetup.state, 'ready');
     assert.equal(recoveredSetup.recoveryNeeded, false);
+    evidence.phases.setupWatchRecovery = await verifyDcsSetupWatchRecovery(game, until, userFolder);
     const json = async file => JSON.parse(await readFile(resolve(biosTarget, 'doc/json', file), 'utf8'));
     const commonOutput = control(await json('CommonData.json'), 'ALT_MSL_FT').outputs[0];
     const aircraftOutput = control(await json('A-10C.json'), 'AAP_CDUPWR').outputs.find(row => row.type === 'integer');

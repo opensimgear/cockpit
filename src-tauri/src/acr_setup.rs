@@ -84,7 +84,9 @@ pub(crate) fn executable_watch_paths(executable: &Path, game: Game) -> Vec<PathB
         return Vec::new();
     }
     let mut paths = vec![executable.to_path_buf()];
-    paths.extend(sibling_runtime(executable, game));
+    if let Some(runtime) = sibling_runtime(executable, game) {
+        paths.extend(runtime.ancestors().take_while(|path| Some(*path) != executable.parent()).map(Path::to_path_buf));
+    }
     paths
 }
 

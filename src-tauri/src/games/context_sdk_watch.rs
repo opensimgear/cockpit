@@ -4,7 +4,7 @@ use crate::game_read_models::signals::Domain;
 use osg_streams::NativeWake;
 
 const XPLANE: [&str; 2] = ["x-plane-11", "x-plane-12"];
-const WATCH_RETRY: Duration = Duration::from_secs(2);
+pub(super) const WATCH_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(super) struct SdkWatches([SourceWatch; 2]);
@@ -98,13 +98,11 @@ pub(super) fn publish_change(inner: &Inner) {
 pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: Instant) -> Option<Duration> {
     let settings = inner.settings.lock().unwrap_or_else(|error| error.into_inner());
     let mut configured = Vec::new();
-    let mut needs_setup_maintenance = false;
     for game in &settings.catalogue {
-        let Some(key) = crate::game_discovery::integration_key(game) else { continue; };
+        if crate::game_discovery::integration_key(game).is_none() { continue; }
         let Some(id) = game["id"].as_str() else { continue; };
         if game["installed"] == true || game["executable"].is_string() || game["installPath"].is_string() {
             configured.push(id.to_owned());
-            needs_setup_maintenance |= inner.setup.needs_external_setup(key);
         }
     }
     drop(settings);
@@ -112,13 +110,8 @@ pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: 
     if !process_live && !inner.platform.shares_background_processes() {
         return Some(crate::game_discovery::PROCESS_DISCOVERY_PERIOD);
     }
-    let now = Instant::now();
-    let setup = needs_setup_maintenance.then(|| {
-        inner.context_setup_check.lock().unwrap_or_else(|p| p.into_inner())
-            .unwrap_or(now) + Duration::from_secs(2)
-    });
-    let vehicle = inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).context_deadline(&configured, serviced_at);
-    setup.into_iter().chain(vehicle).min().map(|at| at.saturating_duration_since(now))
+    inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).context_deadline(&configured, serviced_at)
+        .map(|at| at.saturating_duration_since(Instant::now()))
 }
 
 #[cfg(all(test, any(target_os = "windows", target_os = "linux", target_os = "macos")))]

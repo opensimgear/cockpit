@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, rename, writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, rename, unlink, writeFile} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
 import test from 'node:test';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
@@ -9,6 +9,7 @@ const enabled = browserUrl || process.env.OSG_ASSETTO_FILE_WATCH_NATIVE === '1';
 const gameId = 'assetto-corsa-rally';
 const unverified = 'needs its first native verification';
 const changed = 'executable/build changed';
+const unavailable = 'Setup file notifications are unavailable';
 
 test('the Assetto setup reader follows sibling runtime creation, replacement and removal', {
   skip: !enabled || process.platform !== 'win32', timeout: 60000,
@@ -18,6 +19,7 @@ test('the Assetto setup reader follows sibling runtime creation, replacement and
   const installPath = await mkdtemp(resolve(fixtures, 'installation-'));
   const executable = resolve(installPath, 'acr.exe');
   const runtime = resolve(installPath, 'acr/Binaries/Win64/acr.exe');
+  const blocker = resolve(installPath, 'acr');
   const replacement = resolve(installPath, 'new.exe');
   await writeFile(executable, 'Fixture launcher. Never executed.');
   await writeFile(replacement, 'Different fixture build. Never executed.');
@@ -64,6 +66,17 @@ test('the Assetto setup reader follows sibling runtime creation, replacement and
     const baseline = await waitFor('configured for native shared memory');
     assert.equal(baseline.verified, false);
 
+    await writeFile(blocker, 'A regular file prevents native registration below this path.');
+    const blocked = await waitFor(unavailable);
+    assert.equal(blocked.state, 'needs-attention');
+    assert.equal(blocked.verified, false);
+    // Leave the blocker in place across a failed registration retry.
+    await new Promise(resolve => setTimeout(resolve, 2200));
+    assert.deepEqual(await setup(), blocked);
+    await unlink(blocker);
+    const recovered = await waitFor(unverified);
+    assert.equal(recovered.providerSetupRevision, baseline.providerSetupRevision);
+
     const publish = async (step, operation, text) => {
       const start = performance.now();
       await operation();
@@ -82,7 +95,7 @@ test('the Assetto setup reader follows sibling runtime creation, replacement and
     assert.ok(timings.reduce((total, {ms}) => total + ms, 0) < 4000,
       'Four sequential changes cannot come from the two-second fallback');
     assert.deepEqual(stateQueries, []);
-    console.log(JSON.stringify({transport: browserUrl ? 'browser-dev' : 'native', timings, stateQueries}));
+    console.log(JSON.stringify({transport: browserUrl ? 'browser-dev' : 'native', watchRecovered: true, timings, stateQueries}));
   } finally {
     stopTrace();
     try {

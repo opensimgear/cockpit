@@ -54,7 +54,6 @@ struct Inner {
     contexts: Mutex<crate::game_context::Broker>,
     vehicles: Mutex<crate::game_vehicles::Tracker>,
     dcs_vehicle_catalogues: Mutex<std::collections::BTreeSet<String>>,
-    context_setup_check: Mutex<Option<Instant>>,
     context_process_inventory: Mutex<Option<Arc<context_runtime::process_cache::Snapshot>>>,
     background_processes: Mutex<Option<activation_runtime::BackgroundScan>>,
     #[cfg(windows)]
@@ -175,7 +174,6 @@ impl GamesRuntime {
                 contexts: Mutex::new({let mut value=crate::game_context::Broker::default();value.watch_changes(changes.clone());value}),
                 vehicles: Mutex::new(vehicles),
                 dcs_vehicle_catalogues: Mutex::new(Default::default()),
-                context_setup_check: Mutex::new(None),
                 context_process_inventory: Mutex::new(None),
                 background_processes: Mutex::new(None),
                 #[cfg(windows)]

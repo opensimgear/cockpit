@@ -86,63 +86,57 @@ fn capture_and_context_workers_recover_after_a_locked_worker_panics() {
 }
 
 #[test]
+fn a_pending_library_baseline_does_not_publish_from_unchecked_setup() {
+    let scratch = Scratch::new();
+    let (runtime, _, _) = runtime(&scratch);
+    runtime.stop_test_context_observer();
+    runtime.inner.setup.with_test_admission(|| {
+        assert!(!runtime.inner.refresh_game_contexts_with_inventory(SetupRefresh::Library, |_| {
+            panic!("An incomplete library baseline must not reach process projection");
+        }));
+    });
+    assert!(runtime.inner.refresh_game_contexts_with_inventory(
+        SetupRefresh::Library, |games| runtime.inner.platform.integration_processes(games),
+    ));
+    runtime.shutdown();
+}
+
+#[test]
 fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_registration() {
     let scratch = Scratch::new();
     let (runtime, platform, _) = runtime(&scratch);
-    let checked = &runtime.inner.context_setup_check;
-    let wait_for_setup = || {
+    let wait_for_process = |expected| {
         let deadline = Instant::now() + Duration::from_secs(3);
-        while checked.lock().unwrap().is_none() {
-            assert!(Instant::now() < deadline, "Game context worker did not refresh setup");
+        while runtime.inner.contexts.lock().unwrap().view("x-plane-12")["processVerified"] != expected {
+            assert!(Instant::now() < deadline, "Game context worker did not publish the current process");
             thread::sleep(Duration::from_millis(10));
         }
     };
 
-    *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(Vec::new());
-    wait_for_setup();
-    *checked.lock().unwrap() = None;
-    thread::sleep(Duration::from_millis(650));
-    assert!(checked.lock().unwrap().is_none(), "Idle context worker ran a timed refresh");
+    wait_for_process(false);
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), None);
+
+    runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
+    wait_for_process(true);
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), Some(crate::game_discovery::PROCESS_DISCOVERY_PERIOD));
 
     let library = runtime.inner.changes.context_wake.observed();
-    runtime.inner.changes.context_process_wake.notify();
-    wait_for_setup();
-    assert_eq!(runtime.inner.changes.context_wake.observed(), library, "Process events do not invalidate the library scope");
-    *checked.lock().unwrap() = None;
-
     *platform.process.lock().unwrap() = None;
-    runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
-    wait_for_setup();
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, false, Instant::now()), Some(crate::game_discovery::PROCESS_DISCOVERY_PERIOD));
-    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now()), None);
+    runtime.inner.changes.context_process_wake.notify();
+    wait_for_process(false);
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now()), None,
+        "There is no pending reader open or setup inspection");
+    assert_eq!(runtime.inner.changes.context_wake.observed(), library, "Process events do not invalidate the library scope");
 
     let mut catalogue = platform.catalogue(&BTreeMap::new());
     catalogue.push(json!({"id":"assetto-corsa","provider":"assetto-corsa",
         "integrationKey":"assetto-corsa","integrationCompatible":true,"installed":true}));
-    *checked.lock().unwrap() = None;
-    runtime.seed_test_catalogue(catalogue);
-    wait_for_setup();
-    let delay = || context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now());
-    assert!(delay().is_some(), "An unwatched Assetto installation needs maintenance");
-    runtime.inner.setup.set_setup_watch("assetto-corsa", true);
-    assert_eq!(delay(), None, "A watched Assetto installation waits for its source or setup owner");
-    runtime.inner.setup.set_setup_watch("assetto-corsa", false);
-
-    let mut catalogue = platform.catalogue(&BTreeMap::new());
     catalogue.push(json!({"id":"dcs","provider":"dcs-bios","integrationKey":"dcs",
         "integrationCompatible":true,"executable":"DCS.exe"}));
-    *checked.lock().unwrap() = None;
     runtime.seed_test_catalogue(catalogue);
-    wait_for_setup();
-    assert!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now())
-        .is_some_and(|delay| delay > Duration::from_millis(500)));
-    runtime.inner.setup.set_dcs_discovery_watch(true);
-    assert!(delay().is_some(), "Discovery alone cannot cover DCS setup files");
-    runtime.inner.setup.set_setup_watch("dcs", true);
-    assert_eq!(delay(), None, "Fully watched DCS waits for its source or setup owner");
-    runtime.inner.setup.set_dcs_discovery_watch(false);
-    assert!(delay().is_some(), "Watching setup files alone cannot cover discovery");
+    assert_eq!(context_sdk_watch::maintenance_delay(&runtime.inner, true, Instant::now()), None,
+        "Uncovered setup scopes do not schedule a periodic inspection");
     runtime.shutdown();
 }
 
@@ -319,7 +313,6 @@ fn owner_publication_does_no_discovery_and_admission_still_rechecks_the_process(
         .prepare_profile_game_context("x-plane-12")
         .unwrap()
         .unwrap();
-    *runtime.inner.context_setup_check.lock().unwrap() = None;
     let before = platform.reads.load(Ordering::SeqCst);
     runtime
         .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
@@ -329,7 +322,6 @@ fn owner_publication_does_no_discovery_and_admission_still_rechecks_the_process(
         before,
         "Publishing the applied owner must not perform synchronous native discovery"
     );
-    assert!(runtime.inner.context_setup_check.lock().unwrap().is_none());
     let token = runtime
         .admit_prepared_game_context(&prepared.proof)
         .unwrap();

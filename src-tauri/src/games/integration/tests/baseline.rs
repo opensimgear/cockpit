@@ -27,11 +27,7 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     let (release, blocked) = std::sync::mpsc::channel();
     release.send(()).unwrap();
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
-    runtime.refresh_external_setup(std::slice::from_ref(&xplane));
-    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
     runtime.set_setup_watch(acr["id"].as_str().unwrap(), true);
-    runtime.refresh_external_setup(std::slice::from_ref(&acr));
-    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
     assert!(runtime.refresh_watched_setup(acr["id"].as_str().unwrap(), &acr));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 
@@ -82,8 +78,6 @@ fn remove_dcs_blocks_running_game_then_restores_owned_loader_and_preserves_exter
     release.send(()).unwrap();
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
     runtime.set_setup_watch("dcs", true);
-    runtime.refresh_external_setup(&catalogue);
-    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
     assert!(runtime.refresh_watched_setup("dcs", &catalogue[0]));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 

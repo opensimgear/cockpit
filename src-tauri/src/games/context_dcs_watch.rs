@@ -11,12 +11,14 @@ pub(super) struct DcsWatch {
     pending: bool,
     installed: bool,
     saved_games: Option<PathBuf>,
+    saved_games_retry: Option<Instant>,
     install: Option<PathBuf>,
 }
 
 impl DcsWatch {
     pub(super) fn retry_at(&self) -> Option<Instant> {
-        self.source.retry_at().into_iter().chain(self.catalogue.retry_at()).min()
+        [self.source.retry_at(), self.catalogue.retry_at(), self.saved_games_retry]
+            .into_iter().flatten().min()
     }
 
     pub(super) fn refresh(&mut self, inner: &Inner) {
@@ -36,8 +38,18 @@ impl DcsWatch {
         let install = game.as_ref().and_then(|game| game["installPath"].as_str())
             .map(PathBuf::from).filter(|path| path.is_absolute());
         let scope = game.as_ref().and_then(|game| inner.setup.dcs_setup_watch_scope(game));
-        if self.installed != installed || self.scope != scope || self.install != install {
-            self.saved_games = installed.then(crate::dcs_setup::saved_games_root).and_then(Result::ok);
+        let installation_changed = self.installed != installed || self.install != install;
+        let resolve_root = installation_changed || self.scope != scope
+            || self.saved_games_retry.is_some_and(|at| at <= Instant::now());
+        let mut root_changed = false;
+        if resolve_root {
+            let root = installed.then(crate::dcs_setup::saved_games_root).and_then(Result::ok);
+            root_changed = self.saved_games != root;
+            self.saved_games = root;
+            self.saved_games_retry = (cfg!(windows) && installed && self.saved_games.is_none())
+                .then(|| Instant::now() + context_sdk_watch::WATCH_RETRY);
+        }
+        if installation_changed || self.scope != scope || root_changed {
             self.paths = scope.as_ref().map_or_else(Vec::new, |(target, install)| {
                 crate::dcs_setup::setup_watch_paths(target, install.as_deref())
             });
@@ -50,16 +62,24 @@ impl DcsWatch {
         let children = self.saved_games.as_deref().map(|root| {
             (root, dcs_profile_directory as prepared_sources::watch::ChildFilter)
         });
-        if self.source.refresh_with_children(self.paths.clone(), children, wake) {
+        let source_changed = self.source.refresh_with_children(self.paths.clone(), children, wake);
+        if source_changed {
             self.pending = self.source.active();
             inner.setup.set_setup_watch("dcs", self.pending && self.scope.is_some());
-            inner.setup.set_dcs_discovery_watch(self.pending && children.is_some());
             if !self.pending { inner.changes.mark_resources(); }
         }
-        if self.pending {
-            if let Some(game) = &game {
+        if let Some(game) = &game {
+            let unavailable = self.source.retry_at().is_some()
+                || (self.scope.is_none() && self.saved_games_retry.is_some());
+            if unavailable {
+                inner.setup.set_setup_watch_unavailable("dcs", game, true);
+            }
+            if self.pending {
                 self.pending = !inner.setup.refresh_watched_setup("dcs", game);
-                if !self.pending { inner.changes.mark_resources(); }
+                if !self.pending {
+                    if !unavailable { inner.setup.set_setup_watch_unavailable("dcs", game, false); }
+                    inner.changes.mark_resources();
+                }
             }
         }
     }

@@ -71,23 +71,45 @@ fn releasing_setup_admission_wakes_one_deferred_file_inspection() {
 }
 
 #[test]
-fn fully_watched_external_setup_pass_skips_a_held_admission_gate() {
+fn library_baseline_defers_a_held_setup_gate_and_wakes_on_release() {
     let root = crate::test_directory();
-    let runtime = Arc::new(GameIntegrationSetup::new(root.path().join("setup.json"), false));
-    runtime.set_setup_watch("dcs", true);
-    runtime.set_dcs_discovery_watch(true);
+    let runtime = GameIntegrationSetup::new(root.path().join("setup.json"), false);
+    let signal = Arc::new(crate::game_read_models::signals::Signal::default());
+    runtime.watch_changes(signal.clone());
+    let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true});
     let admission = runtime.lock_admission();
-    let (done, received) = std::sync::mpsc::channel();
-    let worker = {
-        let runtime = runtime.clone();
-        thread::spawn(move || {
-            let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true});
-            runtime.refresh_external_setup(&[game]);
-            done.send(()).unwrap();
-        })
-    };
-    let completed = received.recv_timeout(std::time::Duration::from_secs(2));
+    let before = signal.context_update_wake.observed();
+    assert!(!runtime.refresh_background(std::slice::from_ref(&game)));
+    assert_eq!(signal.context_update_wake.observed(), before);
     drop(admission);
-    worker.join().unwrap();
-    assert!(completed.is_ok(), "A covered scope must not enter background admission");
+    assert_eq!(signal.context_update_wake.observed(), before + 1);
+    assert!(runtime.refresh_background(&[game]));
+}
+
+#[test]
+fn failed_watch_withdraws_only_the_exact_setup_proof_until_recovered() {
+    let root = crate::test_directory();
+    let runtime = GameIntegrationSetup::new(root.path().join("setup.json"), false);
+    let signal = Arc::new(crate::game_read_models::signals::Signal::default());
+    runtime.watch_changes(signal.clone());
+    let game = json!({"id":"dcs","provider":"dcs-bios","integrationCompatible":true,
+        "installed":true,"executable":"first.exe"});
+    let mut replacement = game.clone();
+    replacement["executable"] = json!("replacement.exe");
+    let record = runtime.inner.provider_snapshot("dcs").0;
+    let ready = json!({"state":"ready","verified":true,"connection":{"port":7778}});
+    runtime.inner.publish_setup(&game, &record, ready.clone());
+    runtime.inner.publish_setup(&replacement, &record, ready);
+    runtime.set_setup_watch_unavailable("dcs", &game, true);
+    let wake = signal.context_update_wake.observed();
+    runtime.set_setup_watch_unavailable("dcs", &game, true);
+    assert_eq!(signal.context_update_wake.observed(), wake);
+    assert_eq!(runtime.inner.cached_source_setup(&game, "dcs")["verified"], false);
+    assert_eq!(runtime.inner.cached_source_setup(&replacement, "dcs")["state"], "ready");
+    for view in [runtime.inner.cached_setup_summary(&game, "dcs"), runtime.inner.cached_setup(&game, "dcs")] {
+        assert_eq!(view["state"], "needs-attention");
+        assert_eq!(view["connection"]["port"], 7778);
+    }
+    runtime.set_setup_watch_unavailable("dcs", &game, false);
+    assert_eq!(runtime.inner.cached_source_setup(&game, "dcs")["verified"], true);
 }

@@ -12,6 +12,11 @@ pub(crate) struct PreparedGame {
     pub catalogue: Value,
     pub aircraft_module: Option<String>,
 }
+enum SetupRefresh {
+    Cached,
+    Explicit,
+    Library,
+}
 impl GamesRuntime {
     /// Foreground desktop output needs exact process identity independently of
     /// optional simulator telemetry setup and catalogue qualification.
@@ -219,7 +224,7 @@ impl GamesRuntime {
             let worker_wake = &inner.changes.context_worker_wake;
             let _ = worker_wake.bind_thread(thread::current());
             let mut process_cache = process_cache::Cache::default();
-            let mut last_library = context_wake.observed();
+            let mut last_library = None;
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             let mut dcs_watch = context_dcs_watch::DcsWatch::default();
@@ -233,7 +238,8 @@ impl GamesRuntime {
                 assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
                 let scope = inner.changes.context_process_live(library).then_some(epoch);
-                inner.refresh_game_contexts_with_inventory(library != last_library, |games| {
+                let setup = if last_library == Some(library) { SetupRefresh::Cached } else { SetupRefresh::Library };
+                let setup_current = inner.refresh_game_contexts_with_inventory(setup, |games| {
                     let rows = process_cache.read_using(games, scope.filter(|_| inner.current_process_epoch() == Some(epoch)),
                         |games| inner.read_context_processes(epoch, games));
                     let snapshot = if inner.current_process_epoch() == Some(epoch) { process_cache.snapshot() } else { None };
@@ -241,7 +247,7 @@ impl GamesRuntime {
                     rows
                 });
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
-                last_library = library;
+                if setup_current { last_library = Some(library); }
                 if inner.closed.load(Ordering::Acquire) { break; }
                 if observed == worker_wake.observed() {
                     let live = inner.changes.context_process_live(library) && process_cache.is_current(epoch);
@@ -408,14 +414,15 @@ impl Inner {
         .and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
     }
     pub(super) fn refresh_game_contexts(&self, force_setup: bool) {
-        self.refresh_game_contexts_with_inventory(force_setup, |games| self.platform.integration_processes(games));
+        let setup = if force_setup { SetupRefresh::Explicit } else { SetupRefresh::Cached };
+        self.refresh_game_contexts_with_inventory(setup, |games| self.platform.integration_processes(games));
     }
 
     fn refresh_game_contexts_with_inventory(
         &self,
-        force_setup: bool,
+        setup: SetupRefresh,
         inventory: impl FnOnce(&[&Value]) -> Vec<crate::game_discovery::ProcessLookup>,
-    ) {
+    ) -> bool {
         let epoch = match self
             .contexts
             .lock()
@@ -423,7 +430,7 @@ impl Inner {
             .begin_observation()
         {
             Ok(epoch) => epoch,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let installation_metadata = self.guard_installation_metadata();
         let mut games = self
@@ -443,18 +450,15 @@ impl Inner {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .retain_bindings(&bound_ids);
-        let mut checked = self
-            .context_setup_check
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if force_setup || checked.is_none() {
-            self.setup.refresh(&games);
-            *checked = Some(Instant::now());
-        } else if checked.is_some_and(|last| last.elapsed() >= Duration::from_secs(2)) {
-            self.setup.refresh_external_setup(&games);
-            *checked = Some(Instant::now());
+        match setup {
+            SetupRefresh::Cached => {}
+            SetupRefresh::Explicit => self.setup.refresh(&games),
+            SetupRefresh::Library => {
+                // A newer observation cannot publish an unchecked library
+                // baseline while explicit preparation owns setup admission.
+                if !self.setup.refresh_background(&games) { return false; }
+            }
         }
-        drop(checked);
         self.setup.decorate_source(&mut games);
         let admission: Vec<_> = games.iter().map(|game| {
             let supported = self.platform.integration_setup_supported()
@@ -539,6 +543,7 @@ impl Inner {
                 .unwrap_or_else(|p| p.into_inner())
                 .observe(id, epoch, observation, lookup_unavailable);
         }
+        true
     }
 }
 

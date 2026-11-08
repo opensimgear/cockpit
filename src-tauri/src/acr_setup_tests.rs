@@ -344,7 +344,9 @@ fn assetto_watch_targets_include_runtime_files_before_they_exist() {
         let executable = scratch.0.join(launcher);
         let runtime = scratch.0.join(runtime);
         assert!(!runtime.exists());
-        assert_eq!(executable_watch_paths(&executable, game), [executable, runtime]);
+        let targets = executable_watch_paths(&executable, game);
+        assert_eq!(targets[0], executable);
+        assert_eq!(targets[1..], runtime.ancestors().take(4).map(Path::to_path_buf).collect::<Vec<_>>());
     }
     assert!(executable_watch_paths(Path::new("acr.exe"), Game::Rally).is_empty());
 }

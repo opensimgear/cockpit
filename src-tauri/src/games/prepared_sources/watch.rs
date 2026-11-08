@@ -7,15 +7,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 const MAX_TARGETS: usize = 2048;
 const MAX_DIRECTORIES: usize = 64;
+const REGISTRATION_ATTEMPTS: usize = 3;
 const MAX_ERROR_BYTES: usize = 1024;
 pub(in crate::games) type ChildFilter = fn(EventKind, &std::ffi::OsStr) -> bool;
 type Changed = Arc<dyn Fn(Result<(), String>) + Send + Sync>;
-type Targets = Arc<Mutex<Arc<TargetFilter>>>;
 
 #[derive(Debug, Default)]
 struct TargetFilter {
@@ -26,17 +26,14 @@ struct TargetFilter {
 
 pub(in crate::games) struct Watch {
     watcher: RecommendedWatcher,
-    targets: Targets,
     changed: Changed,
 }
 
 impl Watch {
     pub(in crate::games) fn new(changed: Changed) -> Result<Self, String> {
-        let targets = Arc::new(Mutex::new(Arc::new(TargetFilter::default())));
-        let watcher = native_watcher(targets.clone(), changed.clone())?;
+        let watcher = native_watcher(TargetFilter::default(), changed.clone())?;
         Ok(Self {
             watcher,
-            targets,
             changed,
         })
     }
@@ -50,40 +47,40 @@ impl Watch {
     pub(in crate::games) fn replace_with_children(
         &mut self, paths: &[PathBuf], children: Option<(&Path, ChildFilter)>,
     ) -> Result<(), String> {
-        let (mut targets, directories) = configuration(paths)?;
-        if let Some((root, filter)) = children {
+        let (mut targets, mut directories) = configuration(paths)?;
+        let children = if let Some((root, filter)) = children {
             let root = comparison_path(root);
             if !targets.paths.contains(&root) {
                 return Err("The child watch root must be an exact source target.".into());
             }
-            // If the directory is absent, its nearest existing ancestor wakes
-            // the owner on creation so it can register the child watch.
-            targets.children = Some((root, filter));
-        }
-        let mut replacement = native_watcher(self.targets.clone(), self.changed.clone())?;
-        for directory in directories.values() {
-            replacement
-                .watch(directory, RecursiveMode::NonRecursive)
-                .map_err(|error| {
-                    bounded(format!(
-                        "Cannot watch artwork source {}: {error}",
-                        directory.display()
-                    ))
+            Some((root, filter))
+        } else { None };
+        for _ in 0..REGISTRATION_ATTEMPTS {
+            let watched_directories = targets.directories.clone();
+            targets.children = children.clone();
+            let mut replacement = native_watcher(targets, self.changed.clone())?;
+            for directory in directories.values() {
+                replacement.watch(directory, RecursiveMode::NonRecursive).map_err(|error| {
+                    bounded(format!("Cannot watch artwork source {}: {error}", directory.display()))
                 })?;
+            }
+            // A missing parent can appear between resolving its nearest
+            // ancestor and arming the watch. Baseline only after the exact
+            // directory set is covered by active handles.
+            let (current_targets, current_directories) = configuration(paths)?;
+            if current_directories != directories || current_targets.directories != watched_directories {
+                targets = current_targets;
+                directories = current_directories;
+                continue;
+            }
+            self.watcher = replacement;
+            return Ok(());
         }
-        // A fresh native watcher also rearms paths whose directories were replaced.
-        // Never hold this lock while calling notify, dropping a watcher, or waking
-        // the source worker: native callbacks may be completing concurrently.
-        *self
-            .targets
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Arc::new(targets);
-        self.watcher = replacement;
-        Ok(())
+        Err("Artwork source directories changed during native watch registration.".into())
     }
 }
 
-fn native_watcher(targets: Targets, changed: Changed) -> Result<RecommendedWatcher, String> {
+fn native_watcher(targets: TargetFilter, changed: Changed) -> Result<RecommendedWatcher, String> {
     if matches!(
         RecommendedWatcher::kind(),
         WatcherKind::PollWatcher | WatcherKind::NullWatcher
@@ -97,7 +94,7 @@ fn native_watcher(targets: Targets, changed: Changed) -> Result<RecommendedWatch
     })
 }
 
-fn dispatch(event: notify::Result<Event>, targets: &Targets, changed: &Changed) {
+fn dispatch(event: notify::Result<Event>, targets: &TargetFilter, changed: &Changed) {
     let event = match event {
         Err(error) => {
             changed(Err(bounded(format!(
@@ -116,10 +113,6 @@ fn dispatch(event: notify::Result<Event>, targets: &Targets, changed: &Changed) 
     if matches!(event.kind, EventKind::Access(_)) {
         return;
     }
-    let targets = targets
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone();
     if event.paths.iter().any(|path| {
         let path = comparison_path(path);
         // ReadDirectoryChangesW reports directory last-write changes when an

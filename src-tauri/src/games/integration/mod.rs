@@ -26,7 +26,6 @@ struct Inner {
     catalogue_generation: [std::sync::atomic::AtomicU64; 3],
     watched_setup: Mutex<std::collections::BTreeSet<String>>,
     watched_setup_waiting: AtomicBool,
-    dcs_discovery_watched: AtomicBool,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
@@ -132,7 +131,6 @@ impl GameIntegrationSetup {
                 catalogue_generation: Default::default(),
                 watched_setup: Default::default(),
                 watched_setup_waiting: AtomicBool::new(false),
-                dcs_discovery_watched: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 assetto_setup_wake: Mutex::new(None),
@@ -151,6 +149,12 @@ impl GameIntegrationSetup {
     fn lock_admission(&self) -> SetupAdmission<'_> {
         let lock = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         SetupAdmission { lock: Some(lock), inner: &self.inner }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_test_admission(&self, observe: impl FnOnce()) {
+        let _admission = self.lock_admission();
+        observe();
     }
 
     fn try_watched_admission(&self) -> Option<SetupAdmission<'_>> {
@@ -243,6 +247,13 @@ impl GameIntegrationSetup {
         self.refresh_admitted(catalogue);
     }
 
+    pub(crate) fn refresh_background(&self, catalogue: &[Value]) -> bool {
+        let Some(_admission) = self.try_background_admission() else { return false; };
+        self.inner.retain_setup_scopes(catalogue);
+        self.refresh_admitted(catalogue);
+        true
+    }
+
     pub(crate) fn invalidate_xplane_catalogue(&self, id: &str) {
         if let Some(generation) = self.inner.catalogue_generation(id) {
             let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
@@ -278,33 +289,24 @@ impl GameIntegrationSetup {
             .map(|target| (target.to_path_buf(), install.map(Path::to_path_buf)))
     }
 
-    pub(crate) fn dcs_setup_fully_watched(&self) -> bool {
-        self.inner.dcs_discovery_watched.load(Ordering::Acquire) && self.catalogue_watched("dcs")
-    }
-
-    pub(crate) fn set_dcs_discovery_watch(&self, active: bool) {
-        self.inner.dcs_discovery_watched.store(active, Ordering::Release);
-    }
-
     pub(crate) fn set_setup_watch(&self, id: &str, active: bool) {
         let mut watched = self.inner.watched_setup.lock().unwrap_or_else(|error| error.into_inner());
         if active { watched.insert(id.into()); } else { watched.remove(id); }
     }
 
-    pub(crate) fn needs_external_setup(&self, id: &str) -> bool {
-        (id == "dcs" && !self.dcs_setup_fully_watched())
-            || (id.starts_with("assetto-corsa") && !self.catalogue_watched(id))
-    }
-
-    pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
-        if self.busy() { return false; }
-        let Some(_admission) = self.try_watched_admission().or_else(|| {
+    fn try_background_admission(&self) -> Option<SetupAdmission<'_>> {
+        if self.busy() { return None; }
+        let admission = self.try_watched_admission().or_else(|| {
             // Retry after recording demand so a release between the first
             // attempt and registration cannot strand the pending file change.
             self.inner.watched_setup_waiting.store(true, Ordering::Release);
             self.try_watched_admission()
-        }) else { return false; };
-        if self.busy() { return false; }
+        })?;
+        (!self.busy()).then_some(admission)
+    }
+
+    pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
+        let Some(_admission) = self.try_background_admission() else { return false; };
         if id == "dcs" {
             self.invalidate_dcs_catalogue();
         } else {
@@ -312,21 +314,6 @@ impl GameIntegrationSetup {
         }
         self.refresh_admitted(std::slice::from_ref(game));
         true
-    }
-
-    pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {
-        let mut candidates = catalogue.iter().filter_map(|game| {
-            let key = crate::game_discovery::integration_key(game)?;
-            self.needs_external_setup(key).then_some((game, key))
-        }).peekable();
-        if candidates.peek().is_none() { return; }
-        let _admission = self.lock_admission();
-        let watched = self.inner.watched_setup.lock().unwrap_or_else(|error| error.into_inner()).clone();
-        for (game, key) in candidates {
-            if !watched.contains(key) || (key == "dcs" && self.inner.dcs_discovery_changed(game)) {
-                self.refresh_admitted(std::slice::from_ref(game));
-            }
-        }
     }
 
     // Request admission already owns this mutex. Keep passive inspection and

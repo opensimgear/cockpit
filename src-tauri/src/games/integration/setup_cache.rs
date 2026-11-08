@@ -12,6 +12,7 @@ pub(super) struct SetupViews {
     entries: BTreeMap<String, (Arc<Value>, Arc<Value>, usize, u64)>,
     source: BTreeMap<String, (Arc<Value>, Value)>,
     previews: BTreeMap<String, (Arc<Value>, Arc<Value>)>,
+    unavailable_watches: BTreeMap<String, String>,
     bytes: usize,
     sequence: u64,
 }
@@ -26,6 +27,29 @@ fn source_scope(game: &Value, id: &str) -> String {
         game["executable"], game["installPath"], game["selectedInstallationId"],
         game["installed"], game["processExecutables"]
     ]))
+}
+
+fn apply_watch_status(status: &mut Value, unavailable: bool) {
+    if unavailable && status["state"] != "setting-up"
+        && status["settingsError"] != true && status["recoveryNeeded"] != true
+    {
+        status["state"] = json!("needs-attention");
+        status["verified"] = json!(false);
+        status["message"] = json!("Setup file notifications are unavailable. Cockpit will retry the file watch.");
+    }
+}
+
+impl GameIntegrationSetup {
+    pub(crate) fn set_setup_watch_unavailable(&self, id: &str, game: &Value, unavailable: bool) {
+        let key = source_scope(game, id);
+        {
+            let mut views = self.inner.views.lock().unwrap_or_else(|error| error.into_inner());
+            if unavailable == (views.unavailable_watches.get(id) == Some(&key)) { return; }
+            if unavailable { views.unavailable_watches.insert(id.into(), key); }
+            else { views.unavailable_watches.remove(id); }
+        }
+        self.inner.changed();
+    }
 }
 
 impl SetupViews {
@@ -82,9 +106,11 @@ impl Inner {
     pub(super) fn cached_setup_summary(&self, game: &Value, id: &str) -> Value {
         let key = source_scope(game, id);
         let (record, revision) = self.provider_snapshot(id);
-        let status = {
+        let (status, unavailable) = {
             let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
-            views.entries.get(&key).filter(|(known, _, _, _)| known.as_ref() == &record).map(|(_, status, _, _)| Arc::clone(status))
+            let status = views.entries.get(&key).filter(|(known, _, _, _)| known.as_ref() == &record)
+                .map(|(_, status, _, _)| Arc::clone(status));
+            (status, views.unavailable_watches.get(id) == Some(&key))
         };
         let Some(status) = status else { return self.cached_setup(game, id); };
         let mut summary = serde_json::Map::new();
@@ -95,6 +121,7 @@ impl Inner {
         status["live"] = json!("waiting");
         status["liveMessage"] = json!("Setup is configuration metadata. Inspect the applied profile for actual source delivery.");
         self.decorate_provider_snapshot(id, &record, &revision, &mut status);
+        apply_watch_status(&mut status, unavailable);
         status
     }
     pub(super) fn retain_setup_scopes(&self, catalogue: &[Value]) {
@@ -105,15 +132,17 @@ impl Inner {
         views.entries.retain(|key, _| scopes.contains(key));
         views.source.retain(|key, _| scopes.contains(key));
         views.previews.retain(|key, _| scopes.contains(key));
+        views.unavailable_watches.retain(|_, key| scopes.contains(key));
         views.bytes = views.entries.values().map(|entry| entry.2).sum();
     }
     pub(super) fn cached_source_setup(&self, game: &Value, id: &str) -> Value {
         let key = source_scope(game, id);
         let (record, revision) = self.provider_snapshot(id);
-        let captured = {
+        let (captured, unavailable) = {
             let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
-            views.source.get(&key).filter(|(known, _)| known.as_ref() == &record)
-                .map(|(_, status)| status.clone())
+            let status = views.source.get(&key).filter(|(known, _)| known.as_ref() == &record)
+                .map(|(_, status)| status.clone());
+            (status, views.unavailable_watches.get(id) == Some(&key))
         };
         // Source readiness is conservatively withheld throughout any worker.
         if self.busy.load(Ordering::Acquire) {
@@ -121,16 +150,18 @@ impl Inner {
         }
         let mut status = captured.unwrap_or_else(|| json!({"state":"checking","verified":false}));
         status["providerSetupRevision"] = json!(revision);
+        apply_watch_status(&mut status, unavailable);
         status
     }
     pub(super) fn cached_setup(&self, game: &Value, id: &str) -> Value {
         let key = source_scope(game, id);
         let (record, revision) = self.provider_snapshot(id);
-        let captured = {
+        let (captured, unavailable) = {
             let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
-            views.entries.get(&key)
+            let status = views.entries.get(&key)
                 .filter(|(known, _, _, _)| known.as_ref() == &record)
-                .map(|(_, status, _, _)| Arc::clone(status))
+                .map(|(_, status, _, _)| Arc::clone(status));
+            (status, views.unavailable_watches.get(id) == Some(&key))
         };
         let mut status = captured.map(|status| status.as_ref().clone()).unwrap_or_else(|| {
             if let Some(error) = &self.settings_error {
@@ -149,6 +180,7 @@ impl Inner {
         status["live"] = json!("waiting");
         status["liveMessage"] = json!("Setup is configuration metadata. Inspect the applied profile for actual source delivery.");
         self.decorate_provider_snapshot(id, &record, &revision, &mut status);
+        apply_watch_status(&mut status, unavailable);
         status
     }
 
@@ -157,18 +189,6 @@ impl Inner {
         self.views.lock().unwrap_or_else(|error| error.into_inner())
             .entries.get(&key).filter(|(known, _, _, _)| known.as_ref() == record)
             .map(|(_, status, _, _)| Arc::clone(status))
-    }
-
-    pub(super) fn dcs_discovery_changed(&self, game: &Value) -> bool {
-        if self.dcs_discovery_watched.load(Ordering::Acquire) {
-            return false;
-        }
-        let (record, _) = self.provider_snapshot("dcs");
-        let Some(previous) = self.dcs_prepared_setup(game, &record) else { return true; };
-        let candidates = crate::dcs_setup::discover_user_folders(
-            game["installPath"].as_str().map(Path::new),
-        ).unwrap_or_default();
-        previous["candidates"] != json!(candidates)
     }
 
     pub(super) fn inspect_scoped(&self, game: &Value) -> (Value, Value) {
@@ -249,7 +269,7 @@ impl Inner {
             status["checkPreview"] = preview.as_ref().clone();
         }
         // Repeated passive inspections keep the same immutable view and avoid
-        // encoding a large identical catalogue every source polling interval.
+        // encoding a large identical catalogue after a source invalidation.
         {
             let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner());
             if &saved["games"][id] != record { return; }

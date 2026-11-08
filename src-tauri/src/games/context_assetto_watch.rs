@@ -33,9 +33,12 @@ impl AssettoWatches {
                 inner.setup.set_setup_watch(provider.id(), watch.source.active());
                 watch.pending = watch.source.active();
             }
-            if watch.pending {
-                if let Some(game) = &game {
+            if let Some(game) = &game {
+                if watch.source.retry_at().is_some() {
+                    inner.setup.set_setup_watch_unavailable(provider.id(), game, true);
+                } else if watch.pending {
                     watch.pending = !inner.setup.refresh_watched_setup(provider.id(), game);
+                    if !watch.pending { inner.setup.set_setup_watch_unavailable(provider.id(), game, false); }
                 }
             }
         }

@@ -129,7 +129,7 @@ fn unavailable_lookup_withholds_proof_and_commands_then_recovers_the_same_contex
     assert!(validate().unwrap().is_some());
     assert_eq!(runtime.profile_game_context("x-plane-12").unwrap(), token);
 
-    runtime.inner.refresh_game_contexts_with_inventory(false, |games| {
+    runtime.inner.refresh_game_contexts_with_inventory(SetupRefresh::Cached, |games| {
         games.iter().map(|_| Err(ProcessLookupError::Ambiguous("Competing processes".into()))).collect()
     });
     assert!(validate().is_err());

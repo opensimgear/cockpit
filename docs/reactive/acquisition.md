@@ -187,8 +187,9 @@ removed scope clears the deadline.
 When a watched DCS or Assetto setup inspection meets an occupied setup gate,
 it retains its pending work. The synchronous gate owner wakes game context
 after unlocking. An async setup worker wakes context when it clears its busy
-state. Only uncovered setup scopes still schedule the external inspection
-fallback.
+state. An uncovered setup scope withdraws readiness. It recovers from a new
+baseline after registration succeeds. Setup inspection follows file and library
+changes, startup, or an explicit setup or profile operation.
 X-Plane passive inspection schedules explicit demand at its lease deadline.
 Closing an observation wakes the vehicle worker to release its channels even
 when the native capture has no updates.
@@ -197,13 +198,11 @@ arrive. The retry does not renew the separate process qualification.
 Watched DCS readers use an interruptible wait on the exact selected Windows
 process handle. When the required watches are available, capture, retry, and
 process exit each have independent wakes without a vehicle liveness timer.
-The two-second pass remains for scopes where native watches could not be
-installed. Assetto
-reinspects the selected executable on native file changes. The Rally and
+Assetto reinspects the selected executable on native file changes. The Rally and
 Competizione watches include the possible sibling runtime before it exists.
 With live process notifications and a working Assetto file watch, the context
-owner can park between events. The two-second deadline remains when a watch
-cannot be registered or a watched reinspection is waiting for setup admission.
+owner can park between events. A failed watch keeps its registration deadline.
+A deferred inspection wakes when setup admission becomes available.
 X-Plane setup readiness comes from committed local settings and executable
 selection. The context owner watches each selected installation's
 `Resources/plugins/DataRefs.txt` with an exact native file filter. Changes
@@ -226,7 +225,7 @@ worker and explicit launch and setup checks are separate.
 | Runtime/activation/progress | Native profile and activation read models publish committed health and progress; the activation window uses its scoped subscription | Verify cancellation, compensation and independent heartbeat under mixed faults and load |
 | Automatic selection/recovery/learning | Committed context and control wakes, captured input, registry release and retry deadlines | Qualify recovery and learning through context loss and reconnect. Passive subscribers have no authority. |
 | Debug/topology/live/path/virtual previews | Shared observation snapshots and report updates | Verify nested lifetimes and current snapshots on reopen. Virtual preview observes acknowledged output. |
-| DCS-BIOS / managed DCS export | Native UDP readiness publishes source captures. Freshness and source recovery have independent deadlines. | Qualify simulator effects, exact process watch lifetime and uncovered setup/vehicle scopes. |
+| DCS-BIOS / managed DCS export | Native UDP readiness publishes source captures. Freshness and source recovery have independent deadlines. | Qualify simulator effects, exact process watch lifetime and uncovered vehicle scopes. |
 | X-Plane | Shared RREF owner receives datagrams on socket readiness. Timed subscription renewal and component freshness have separate deadlines. | Qualify selected version, process consent and simulator expiry/recovery. |
 | Shared-memory telemetry | games/telemetry/windows_source double-copy sample | One native sampler per active game is approved at the shared-memory boundary. Downstream consumers subscribe to committed captures |
 | Games/rules/catalogues/setup | game_get_state, GameProfileRule, jobs | Publish process/context, committed rules, catalogue replacement and background job completion; explicit rescan remains a command |
@@ -246,8 +245,7 @@ worker and explicit launch and setup checks are separate.
 | Boundary | Current behavior | Remaining gate |
 | --- | --- | --- |
 | Windows process observation | General Settings opts in to Windows process events. The watcher requires access under the current Windows account. While events are off or unavailable, one native scan per second feeds automatic activation and background integration context. The owner parks without monitorable installations and wakes on catalogue or preference commits. Live continuity loss retires the watcher and permits one replacement after completion. Initial denial leaves the fallback active. Scoped integration setup still has its explicit temporary helper. | The user approved the discovery boundary in [#189](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6712663423). Privileged event continuity and exact lifetime need operator qualification. Applied-session and command authority checks keep their own safety budgets. |
-| Game file-watch registration | A failed native registration schedules another attempt after two seconds for the same scope. Success takes one new baseline. Repeated failure on unchanged paths publishes no new generation. Removing the scope cancels the retry. | The recovery deadline owns watch registration. DCS catalogue recovery and the Assetto Rally sibling-runtime watch have running Cockpit evidence. |
-| Uncovered game setup inspection | While a configured Assetto installation lacks its executable watch, the context owner can inspect setup after two seconds. DCS uses the same fallback when setup or Saved Games discovery is uncovered. When only DCS discovery is uncovered, it checks the discovery signature and re-inspects setup only when that signature changes. Fully watched scopes skip this pass. | Retire or explicitly disposition these acquisition fallbacks. [Assetto Rally watch evidence](../verification/2026-11-07-assetto-setup-file-watch.md) applies when registration succeeds. |
+| Game file-watch registration | A failed native registration schedules another attempt after two seconds for the same scope. DCS retries resolution of an unavailable Saved Games root. Success takes one new baseline. Repeated registration failure preserves the unavailable status, and removing the scope cancels the retry. | The registration deadline recovers notifications. DCS and Assetto setup readiness follows file events and the recovery baseline. [Running verification](../verification/2026-11-08-setup-watch-recovery.md) |
 | Vehicle process qualification | The independent vehicle worker can check process continuity every 100 ms while an admitted reader, including one detached for I/O, lacks retained exact process evidence. A retained exact watch suppresses the pass. Capture expiry and reader-open retry have separate deadlines. | Retire or explicitly disposition the process qualification fallback. |
 | External vJoy slot ownership | Cockpit-owned claims wake `system.inventory`. Another process can claim or release a slot without changing device topology. The pinned vJoy SDK exposes a status query and a device removal callback. | The approved Windows status sampler is shared by visible Devices readers. It queries status and PID and publishes changed rows to `system.inventory`. |
 | External HidHide policy and executable paths | The worker owns the pinned driver's exclusive control handle. Exact PnP instance validation follows inventory commits. The service registry subtree signals policy invalidation and the worker re-reads the driver. | The ordinary account can subscribe at the service key. Registration or continuity failure retains the existing policy audit. A Windows experiment found that opening descendant directory handles blocks ordinary ancestor renames, even with delete sharing. The executable audit remains pending a decision or independent notification path. [Native probe](../verification/2026-11-08-controller-visibility-wakes.md#executable-directory-watch-experiment) |
@@ -394,7 +392,7 @@ source is included even though the gateway repository stores it under
 | Owner | Disposition of newly inventoried calls |
 | --- | --- |
 | Native scheduler and producer-owned caches | Activity, device inventory, profile read models, companion status, and USB/CAN readers wake on source changes. Explicit deadlines cover retained evidence, request budgets, persistence retry and cleanup. Indefinite waits park the actor. |
-| Game and profile service scheduling | Game read models wake on producer commits and expire captures at their retained deadlines. Global process discovery owns the shared one-second fallback. The setup and vehicle fallbacks remain in the unresolved table. Profile routing chooses its nearest actual deadline or the service bound when a source has no usable watch. |
+| Game and profile service scheduling | Game read models wake on producer commits and expire captures at their retained deadlines. Global process discovery owns the shared one-second fallback. Vehicle process qualification remains in the unresolved table. Setup watchers retry registration without inspecting setup files between events. Profile routing chooses its nearest actual deadline or the service bound when a source has no usable watch. |
 | Native companion peers and local gateway | Peer presence uses a direct wake and a reconnect deadline. Pairing waits for the offer's expiry or its terminal event. Windows serial and socket waits select I/O readiness or the current operation deadline. Local gateway socket timeouts bound individual request reads and writes. |
 | Desktop dispatch and process handles | The dispatch worker waits on command, scope and deadline handles. The audit collector bounds capacity waits by the caller's deadline. Zero-time process handle checks validate identity or exit during an owned operation. The long-running X-Plane process waits also select shutdown. |
 | ESP32 | UART provisioning blocks on a driver queue. Display notification waits also handle explicit expiry and render retry. Touch and connected network maintenance retain the cadences described above. |

@@ -12,9 +12,8 @@ const OH6_INVENTORY: &str = include_str!("../../../examples/dcs-bios/aircraft/OH
 
 /// Return exact files whose contents or presence can change DCS setup inspection.
 ///
-/// This intentionally does not include the installation root or Saved Games root
-/// as directory watches. Callers can watch `saved_games_root()` separately for
-/// discovery, and pass the selected installation for its bounded mod inputs.
+/// Parent paths inside the selected roots keep folder replacement observable.
+/// Callers watch `saved_games_root()` separately for profile discovery.
 pub(crate) fn setup_watch_paths(target: &Path, install: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
     let mut roots = vec![target];
@@ -58,6 +57,11 @@ pub(crate) fn setup_watch_paths(target: &Path, install: Option<&Path>) -> Vec<Pa
             }
         }
     }
+    let parents = paths.iter().flat_map(|path| {
+        let root = if path.starts_with(target) { target } else { install.unwrap_or(target) };
+        path.ancestors().skip(1).take_while(move |parent| parent.starts_with(root)).map(Path::to_path_buf)
+    }).collect::<Vec<_>>();
+    paths.extend(parents);
     paths.into_iter().collect()
 }
 

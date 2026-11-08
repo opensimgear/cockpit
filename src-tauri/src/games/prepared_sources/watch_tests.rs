@@ -162,19 +162,17 @@ fn configuration_rejects_invalid_paths_and_explicit_bounds_without_truncation() 
 }
 
 #[test]
-fn callback_reports_loss_ignores_access_and_releases_filter_lock_before_waking() {
+fn callback_reports_loss_and_ignores_access() {
     use notify::event::{AccessKind, CreateKind, Flag};
     let directory = crate::test_directory();
     let target = directory.path().join("selected.png");
-    let targets = Arc::new(Mutex::new(Arc::new(TargetFilter {
+    let targets = TargetFilter {
         children: None,
         paths: BTreeSet::from([comparison_path(&target)]),
         directories: BTreeSet::new(),
-    })));
+    };
     let (send, receive) = mpsc::channel();
-    let callback_targets = targets.clone();
     let callback: Changed = Arc::new(move |change| {
-        assert!(callback_targets.try_lock().is_ok());
         send.send(change).unwrap();
     });
     dispatch(
@@ -213,7 +211,7 @@ fn directory_content_changes_are_ignored_but_files_and_parent_replacements_wake(
     let file = missing_parent.join("selected.png");
     let (filter, _) =
         configuration(&[root.path().into(), missing_parent.clone(), file.clone()]).unwrap();
-    let targets = Arc::new(Mutex::new(Arc::new(filter)));
+    let targets = filter;
     let (send, receive) = mpsc::channel();
     let callback: Changed = Arc::new(move |change| {
         send.send(change).unwrap();
