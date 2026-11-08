@@ -6,7 +6,7 @@
 | `src-tauri/src/activity/writer.rs:87` | Source wake and deadlines | Committed producer groups wake Activity. Hourly pruning and an outstanding persistence retry supply its timed wakes. |
 | `src-tauri/src/companion/host/detection.rs:77` | Source wake and retry | Native port or hub-record changes wake listener and USB detection. An outstanding listener bind or exact USB reconnect can request a retry. |
 | `src-tauri/src/companion/host/detection.rs:109` | Fixture | Wait for an occupied port to become available in the listener recovery test. |
-| `src-tauri/src/companion/host/firmware_observation.rs:62` | Fixture | Bound a wait for the terminal firmware status. |
+| `src-tauri/src/companion/host/firmware_observation.rs:70` | Fixture | Bound a wait for the terminal firmware status. |
 | `src-tauri/src/companion/host/presence_observation.rs:46` | Source wake | Wait for committed companion presence or shutdown. |
 | `src-tauri/src/desktop/progress/geometry.rs:101` | Operation deadline | Wait up to two seconds for native popup geometry work on the window thread. |
 | `src-tauri/src/desktop/progress/mod.rs:245` | Operation deadline | Wait up to two seconds for the current popup operation on the window thread. |

@@ -213,10 +213,16 @@ impl Manager {
         Ok(())
     }
     fn attach_inner(&self, port: &str, hub: Hub, expected: Option<String>) -> Result<(), String> {
-        if self.flash_state.lock().unwrap_or_else(|p| p.into_inner())["flashing"] == true {
-            return Err("Wait for firmware installation to finish.".into());
+        {
+            let mut flash = self.flash_state.lock().unwrap_or_else(|p| p.into_inner());
+            if flash["flashing"] == true {
+                return Err("Wait for firmware installation to finish.".into());
+            }
+            if !flash.is_null() {
+                *flash = Value::Null;
+                if let Some(observe) = &self.flash_observer { observe(&flash); }
+            }
         }
-        *self.flash_state.lock().unwrap_or_else(|p| p.into_inner()) = Value::Null;
         if self.links.lock().unwrap_or_else(|p|p.into_inner()).get(port)
             .is_some_and(|link| link.join.as_ref().is_some_and(|worker| !worker.is_finished())
                 && link.state.lock().unwrap_or_else(|p| p.into_inner())["connected"] == true) {
@@ -1242,8 +1248,12 @@ mod tests {
         let manager = Manager::with_observers(Arc::new(move |state| {
             send.send(state.clone()).unwrap();
         }), || {}, || {});
+        let hub = Hub::new("flash-test-host".into(), Arc::new(osg_companion_service::NullSourceSink));
+        let port = format!("missing-firmware-fixture-{}", uuid::Uuid::new_v4());
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":true,"waitingForBoot":true});
+        assert_eq!(manager.attach(&port, hub.clone()).unwrap_err(), "Wait for firmware installation to finish.");
+        assert!(receive.try_recv().is_err());
         manager.cancel_firmware_wait().unwrap();
         assert_eq!(manager.status()["cancelRequested"],true);
         assert_eq!(receive.try_recv().unwrap()["cancelRequested"], true);
@@ -1251,6 +1261,10 @@ mod tests {
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":false,"flashCancelled":true});
         assert_eq!(manager.status()["flashCancelled"],true);
+        assert!(manager.attach(&port, hub.clone()).is_err());
+        assert_eq!(receive.try_recv().unwrap(), Value::Null);
+        assert!(manager.attach(&port, hub).is_err());
+        assert!(receive.try_recv().is_err());
     }
     #[test]
     fn releasing_a_link_notifies_only_when_a_link_was_present() {

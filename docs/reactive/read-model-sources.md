@@ -170,6 +170,16 @@ shared with the shell. The details opened firmware-progress and release readers
 only while visible. All four baselines led to one `companion_status` read per
 open. Hiding the document or closing the details retired their exact readers.
 
+Serial attach clears the retained firmware result in the USB manager and
+publishes the same clear on `companion.firmware`. Attach during an active
+flash leaves the stream unchanged, and a repeated attach after the clear
+publishes nothing. The native broker regression verifies delivery to live and
+late readers and the cleared snapshot after reopening. In private dev builds,
+a temporary stimulus exercised the real flash worker against a nonexistent
+serial port. Both Cockpit clients observed the retained terminal error, its
+withdrawal on attach, and a null snapshot on reopen. Physical firmware
+installation remains in #199.
+
 Debug's Runtime & recovery tab reads status after its observation baseline.
 Hiding the document or switching tabs retires that reader. Reopening starts
 with a new baseline before cached recovery actions can be used. The native

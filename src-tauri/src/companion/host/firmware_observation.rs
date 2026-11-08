@@ -33,7 +33,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn firmware_failure_is_retained_for_passive_readers() {
+    fn firmware_failure_is_retained_until_attach_clears_it_for_current_and_late_readers() {
         let runtime = Runtime::new(None, Arc::new(super::super::CompanionProvider::new(Arc::new(|| 1))));
         let services = runtime.services().unwrap();
         let observations = observations::Runtime::new();
@@ -55,6 +55,14 @@ mod tests {
                     assert!(state["flashId"].is_string());
                     let mut late = broker.subscribe("firmware-late", "ui", TOPIC).unwrap();
                     assert_eq!(late.try_recv().unwrap().unwrap().payload, Some(state));
+                    assert!(services.usb.attach(&port, services.hub.clone()).is_err());
+                    assert!(services.usb.status()["flashId"].is_null());
+                    assert_eq!(reader.try_recv().unwrap().unwrap().payload, Some(Value::Null));
+                    assert_eq!(late.try_recv().unwrap().unwrap().payload, Some(Value::Null));
+                    let mut reopened = broker.subscribe("firmware-reopen", "browser", TOPIC).unwrap();
+                    assert_eq!(reopened.try_recv().unwrap().unwrap().payload, Some(Value::Null));
+                    assert!(services.usb.attach(&port, services.hub.clone()).is_err());
+                    assert!(reader.try_recv().unwrap().is_none());
                     break;
                 }
             }
