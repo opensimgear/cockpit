@@ -10,7 +10,21 @@ open. Six of the open criteria were transferred to #199 for user-operated
 qualification. Some remaining criteria have delivered software and outstanding
 integrated or platform qualification.
 
-#190 (R1, shared stream contracts) and #197 (R8, MCP workflow parity) are closed. Integrated qualification remains open in #198.
+#190 (R1, shared stream contracts), #191 (R2, native input), #194 (R5,
+committed read models) and #197 (R8, MCP workflow parity) are closed.
+Integrated qualification remains open in #198.
+
+For R2, the [input acquisition inventory](acquisition.md#r2-native-input-transport-gate)
+records the Windows Raw Input, USB CDC and CAN push paths. Ordinary
+Linux and macOS controller capture remains gated by #189. The VKB sweep,
+hotplug, physical USB/CAN and Linux/macOS controller qualification remain
+in #199.
+
+For R5, the [source matrix](read-model-sources.md) accounts for committed
+producers, and the [running delivery checks](../verification/2026-11-08-r5-read-model-delivery.md)
+cover discovery, process, filesystem, settings and Activity on native
+Windows and browser-dev. Windows process-event consent and watcher lifetime
+and macOS LaunchAgent delivery remain in #199.
 
 ## Software and software qualification remain in the original issues
 
@@ -19,7 +33,6 @@ integrated or platform qualification.
 | #189 | The [current timing matrix](current-timing/README.md) accounts for the scanned sites and documents acquisition inside hardware and platform loops. DCS and Assetto setup [withdraw readiness when file watch registration fails and recover from a fresh baseline](../verification/2026-11-08-setup-watch-recovery.md). Passive vehicle admission requires a live exact process watch and a capture notification. Installation and setup commits wake scope revalidation independently of the catalogue worker. DCS alias and X-Plane installed aircraft catalogues use [scoped native file notifications](../verification/2026-11-08-vehicle-catalogue-wakes.md). Remaining gates are decisions for active acquisition fallbacks and qualification against the R0 budgets. The user approved one native shared-memory reader per active Assetto game. The approved [Windows process discovery boundary](../verification/2026-11-07-game-process-discovery-preference.md) uses a Settings opt-in and one shared one-second check when events are off or denied. |
 | #192 | Passive and active telemetry retain their exact readers during transient process inventory failures. A [late catalogue refresh](../verification/2026-11-07-slow-vehicle-catalogue.md) also preserves the admitted passive reader and its existing capture. Active proof expiry withdraws samples and requires a fresh baseline. Unstable Assetto page copies preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. The [DCS backpressure fixture](../verification/2026-11-07-dcs-telemetry-backpressure.md) verifies BIOS expiry alongside fresh ownship captures and a stalled reader on both transports. [Scoped Windows denial](../verification/2026-11-08-scoped-telemetry-permission.md) preserves game discovery while withholding X-Plane and Assetto telemetry. Granted access, cross-integration contention and actual simulator qualification remain open. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. Authored DCS profiles with [explicit](../verification/2026-11-08-mixed-game-desktop-wakes.md) and [selected-game](../verification/2026-11-08-selected-game-desktop-wakes.md) desktop scopes run without the 5 ms service interval while their watches and process proof are healthy. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
-| #194 | The [read-model source matrix](read-model-sources.md) and [running delivery checks](../verification/2026-11-08-r5-read-model-delivery.md) verify discovery, process, filesystem, settings and Activity delivery on native Windows and Edge browser-dev. The process fixture uses the approved Windows fallback. Granted-event consent and watcher lifetime remain in #199. Native macOS auto-start delivery remains open. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #196 | Main navigation, Activity retention, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. [Debug telemetry](../verification/2026-11-07-telemetry-reopen-parity.md) follows visible game renames and shows current metadata and authored DCS samples after reopening on both transports. Native General discards desktop status replies after hiding and shows background tray and progress commits on reopen. Browser-dev shows the desktop-only controls as unavailable and follows the saved progress value. Native AI settings retires its status reader while hidden and reconciles a background credential revocation on reopen. Browser-dev shows the desktop-only AI settings boundary without a status request. Native dirty editor, controller metadata and companion listener checks passed. Companion library reopen passed on native and across separate browser-dev tabs. The [applied virtual preview](../verification/2026-11-07-virtual-preview-reopen.md) mounts hidden without subscribing and shows the latest routed sample on each reveal on both transports. [Debug desktop readiness](../verification/2026-11-07-debug-desktop-readiness-details.md) now opens only when the details are expanded and retires on collapse, hide and navigation. Native and browser-dev verified exact collapse retirement. Other nested lifetime and background/reopen checks remain open. |
 | #198 | The [30-minute authored Windows soak](../verification/2026-11-07-dcs-panel-vjoy.md#30-minute-desktop-soak), [software burst and fault scenarios](../verification/2026-11-07-stream-fault-scenarios.md), and [terminal observation reopen](../verification/2026-11-08-terminal-observation-reopen.md) passed. Physical unplug and replug remain in #199. All eight top-level views passed [60-second native and browser-dev idle traces](../verification/2026-11-08-idle-transport-matrix.md) with zero gateway requests. The broader integrated matrix, full timing budget, applicable suites and CI, and final acquisition inventory remain open. |
@@ -28,8 +41,9 @@ integrated or platform qualification.
 
 [Debug recovery reader lifetime](../verification/2026-11-08-companion-transport-and-timing-audit.md)
 passed three open/retire cycles on both transports. Each current baseline
-caused exactly one status read and closed readers stayed quiet. Recovery
-presentation during an actual active-profile fault remains open.
+caused exactly one status read and closed readers stayed quiet. Both
+transports also reopened on the exact [profile fault and recovered state](../verification/2026-11-08-profile-runtime-fault-reopen.md)
+after feeder loss and recovery while Debug was closed.
 
 [Navigation and profile progress](../verification/2026-11-08-r7-navigation-and-profile-progress.md)
 passed on the current native and browser-dev builds. The profile editor
