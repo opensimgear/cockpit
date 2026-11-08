@@ -26,6 +26,13 @@ integrated or platform qualification.
 
 ## R7 UI consistency
 
+[Navigation and profile progress](../verification/2026-11-08-r7-navigation-and-profile-progress.md)
+passed on the current native and browser-dev builds. The profile editor
+reopened on the committed rename, applied a saved range edit under a new
+owner, and reopened on a stopped runtime after an independent Stop on
+Overview. Both transports observed the exact progress outcomes and expiry
+without status refreshes. The full nested-surface matrix remains open.
+
 [Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
 retire their readers while the document is hidden. Devices reopens on
 current desktop, driver, inventory and visibility baselines on native and

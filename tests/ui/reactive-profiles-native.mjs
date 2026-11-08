@@ -2,11 +2,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {browserPage,nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
 const browserUrl=process.env.OSG_REACTIVE_PROFILES_BROWSER_URL;
 const transport=browserUrl?'browser-dev':'native';
+const ready=page=>until(()=>page.evaluate(`!!document.querySelector('nav[aria-label="Main navigation"]')
+ && (${Boolean(browserUrl)} || typeof window.__TAURI_INTERNALS__?.invoke==='function')`));
 const requestProfile=async(page,value)=>{
  const body=JSON.stringify({...value,clientId:'independent-profile-readmodel-acceptance'});
  const result=await page.evaluate(browserUrl
@@ -29,6 +31,7 @@ test(transport+' profile streams update independent consumers and preserve dirty
  });
  const request=value=>requestProfile(page,value);
  try{
+  await ready(page);
   await page.call('Network.enable');
   await page.evaluate(`(async()=>{
    const {ProfileReadModels,observeProfileLibrary,observeProfileRuntime}=await import('/src/lib/profile-read-models/shared.ts');
@@ -121,16 +124,22 @@ test(transport+' saves and reopens a real profile editor after background change
  };
  const profileRow=value=>page.evaluate(`window.__editorReopen?.state.value?.profiles.find(row=>row.name===${JSON.stringify(value)})`);
  const currentOwner=()=>page.evaluate('window.__editorReopen?.runtime.value?.profileSession.owner');
+ const activationResult=(id,origin,outcome)=>page.evaluate(`window.__editorReopen?.progress.find(progress=>
+   progress?.profileId===${JSON.stringify(id)} && progress.origin===${JSON.stringify(origin)}
+   && progress.phase==='succeeded' && progress.outcome===${JSON.stringify(outcome)})`);
  try{
+  await ready(page);
   await page.call('Network.enable',{maxPostDataSize:65536});
   await page.evaluate(`(async()=>{
    const {observeProfileLibrary,observeProfileRuntime}=await import('/src/lib/profile-read-models/shared.ts');
-   const probe=window.__editorReopen={};
+   const {observeProfileActivation}=await import('/src/lib/profile-activation-observation.ts');
+   const probe=window.__editorReopen={progress:[]};
    const stopLibrary=observeProfileLibrary(state=>probe.state=state);
    const stopRuntime=observeProfileRuntime(state=>probe.runtime=state);
-   probe.stop=()=>{stopRuntime();stopLibrary();};
+   const stopProgress=observeProfileActivation(value=>probe.progress.push(value));
+   probe.stop=()=>{stopProgress();stopRuntime();stopLibrary();};
   })()`);
-  await until(()=>page.evaluate("window.__editorReopen?.state.status==='ready'"));
+  await until(()=>page.evaluate("window.__editorReopen?.state.status==='ready' && window.__editorReopen.progress.length>0"));
 
   await navigate('Profiles');
   await click('.profiles-workspace button','Add');
@@ -155,6 +164,7 @@ test(transport+' saves and reopens a real profile editor after background change
   const firstOwner=await until(currentOwner,owner=>owner?.profileId===id,5000);
   const activationMs=performance.now()-activationStarted;
   assert.ok(activationMs<5000,`Output-free activation took ${Math.round(activationMs)} ms`);
+  const started=await until(()=>activationResult(id,'manual','active'));
   await click('.profiles-workspace button',`Edit ${closed}`);
   await until(editorName,current=>current===closed);
   await until(()=>page.evaluate(`(()=>{
@@ -178,16 +188,30 @@ test(transport+' saves and reopens a real profile editor after background change
   assert.ok(saved.revision>reopened.document.revision);
   const applied=await until(currentOwner,owner=>owner?.profileId===id&&owner.profileRevision===saved.revision,30000);
   assert.notEqual(applied.generation,firstOwner.generation);
+  const reapplied=await until(()=>activationResult(id,'saved-changes','active'));
+  assert.notEqual(reapplied.activationId,started.activationId);
   const {document}=await requestProfile(page,{command:'profile_get',id});
   const debug=document.resources.find(resource=>resource.kind==='debug-controller');
   assert.equal(debug.ports.find(port=>port.id==='axis-1').contract.schema.min,0);
+  await navigate('Overview');
+  const stopId=randomUUID();
+  await requestProfile(page,{command:'profile_stop',activationId:stopId});
+  const stopped=await until(()=>activationResult(id,'deactivation','inactive'));
+  assert.equal(stopped.activationId,stopId);
+  await until(currentOwner,owner=>owner===null);
+  await until(()=>page.evaluate('window.__editorReopen.progress.at(-1)===null'));
+  activationRequested=false;
+  await navigate('Profiles');
+  await until(()=>page.evaluate(`!!document.querySelector(${JSON.stringify(`button[aria-label="Activate ${last}"]:enabled`)})?.checkVisibility()`));
   assert.equal(calls.filter(command=>command==='profile_editor_save').length,2);
-  assert.deepEqual(calls.filter(command=>['profile_list','profile_status','profile_automatic_status'].includes(command)),[]);
+  assert.deepEqual(calls.filter(command=>['profile_list','profile_status','profile_automatic_status',
+   'profile_activation_current','profile_activation_status'].includes(command)),[]);
   console.log(JSON.stringify({transport,uiSaves:2,activationMs:Math.round(activationMs),visibleBackgroundRename:true,currentOnReopen:true,
-   savedControllerRange:true,activeRevisionObserved:true,refreshRequests:0}));
+   savedControllerRange:true,activeRevisionObserved:true,activationAndStopProgress:true,stoppedOnReopen:true,refreshRequests:0}));
  }catch(error){
   const diagnostics=await page.evaluate(`({
    runtime:window.__editorReopen?.runtime,
+   progress:window.__editorReopen?.progress.map(value=>value&&[value.activationId,value.origin,value.phase,value.outcome]),
    messages:[...document.querySelectorAll('[role="alert"], .toast p, .runtime-notice')].map(node=>node.textContent.trim())
   })`).catch(()=>null);
   throw new Error(JSON.stringify({transport,id,calls,owner:await currentOwner().catch(()=>null),diagnostics}),{cause:error});
