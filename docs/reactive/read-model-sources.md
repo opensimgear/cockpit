@@ -128,6 +128,15 @@ Activate in browser-dev and 177 ms in the native WebView. It now asserts a
 five-second bound for this output-free fixture. Physical controller
 capture-to-preview and capture-to-output latency remain in #199.
 
+The CAN device and debug previews use the same visible reader. Hiding the
+document retires it and clears the calibrated values. Revealing it admits a
+fresh snapshot for the exact route. In the running native WebView and Edge
+browser-dev, the calibrated preview rendered an authored update, withdrew on
+hide, and showed the value committed while hidden when it reopened. Both
+transports rejected malformed topics and a valid topic for an unconnected
+gateway without supplying an input frame. The positive UI fixture authors
+its capture data. Live CAN gateway and module capture remains in #199.
+
 The controller inventory fixture verifies an exact-source metadata rename and
 restore through the native and browser-dev transports. Two inventory readers
 see the same commit while the selected input reader remains ready. A closed

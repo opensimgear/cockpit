@@ -1,4 +1,5 @@
 import { SharedObservations, type ObservationState } from './streams/shared.ts';
+import { visibleObservation } from './visible-observation.ts';
 
 export type CanInputRoute = Readonly<{
   epoch: number; node: number; sourceNode: number; boot: number; lease: number; configurationGeneration: number;
@@ -33,5 +34,7 @@ export function canPanelPreview(state: ObservationState, topic: string): CanPane
 }
 
 export function observeCanPanel(topic: string, listener: (preview?: CanPanelPreview) => void): () => void {
-  return observations.subscribe(topic, state => listener(canPanelPreview(state, topic)));
+  const reader = visibleObservation(observations, topic, state => listener(canPanelPreview(state, topic)), () => listener());
+  reader.setVisible(true);
+  return () => reader.close();
 }

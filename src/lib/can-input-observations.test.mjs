@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canInputTopic, canPanelPreview } from './can-input-observations.ts';
+import { canInputTopic, canPanelPreview, observeCanPanel } from './can-input-observations.ts';
+import { SharedObservations } from './streams/shared.ts';
 
 const gateway = 'stm32:00112233445566778899aabb';
 const moduleId = '00112233445566778899aabbccddeeff';
@@ -28,4 +29,43 @@ test('CAN preview keeps raw axes and withdraws them on loss or wrong scope', () 
   assert.equal(canPanelPreview({ ...state, frame: { ...state.frame, payload: { status: 'unavailable' } } }, topic), undefined);
   payload.axes[2] = 65536;
   assert.equal(canPanelPreview(state, topic), undefined);
+});
+
+test('CAN preview retires the hidden reader and renders the latest snapshot on reveal', t => {
+  const document = new EventTarget();
+  document.hidden = true;
+  globalThis.document = document;
+  let axis = 10;
+  const lifecycle = [];
+  t.mock.method(SharedObservations.prototype, 'subscribe', (actual, listener) => {
+    assert.equal(actual, topic);
+    lifecycle.push('open');
+    listener({ status: 'ready', frame: { topic, source: 'can-inputs', payload: {
+      status: 'ready', route: { epoch: 1, node: 2, sourceNode: 3, boot: 4, lease: 5, configurationGeneration: 6 },
+      held: [], axes: [axis, 0, 0, 0, 0, 0, 0, 0], axisAvailable: [true, false, false, false, false, false, false, false],
+    } } });
+    return () => lifecycle.push('retire');
+  });
+  const samples = [];
+  const stop = observeCanPanel(topic, sample => samples.push(sample?.axes[0]));
+  const hide = hidden => {
+    document.hidden = hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  try {
+    assert.deepEqual(lifecycle, []);
+    hide(false);
+    hide(true);
+    assert.deepEqual(lifecycle, ['open', 'retire']);
+    assert.deepEqual(samples, [10, undefined]);
+    axis = 20;
+    hide(false);
+    assert.deepEqual(samples, [10, undefined, 20]);
+    stop();
+    hide(false);
+    assert.deepEqual(lifecycle, ['open', 'retire', 'open', 'retire']);
+  } finally {
+    stop();
+    delete globalThis.document;
+  }
 });
