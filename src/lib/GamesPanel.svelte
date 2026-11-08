@@ -48,6 +48,8 @@
   const discoveryFresh=$derived(!liveDiscovery||discoveryModel.status==='ready');
   const discoveryValue=$derived((liveDiscovery?discoveryModel.value:status?.discovery) as GamesState['discovery']);
   const gameState:GamesState=$derived(gamesWithJobs({...(receivedStatus??{catalogue:[]}),discovery:discoveryValue},jobsModel.status==='ready'?jobsModel.value:undefined));
+  const discoveryReview = $derived(discoveryFresh && gameState.discovery
+    && ['scanning', 'ready', 'failed'].includes(gameState.discovery.status) ? gameState.discovery : undefined);
   const streamReady=$derived(currentModel.status==='ready');
   const tags=$derived(gameState.tags??{});
   const games=$derived(filterGameList(gameState.catalogue,filters,profiles));
@@ -246,11 +248,24 @@
     </div>
   {:else}
     <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.length} discovered · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<button class="secondary-button filter-button" class:active={filtersOpen||filterCount>0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter games" title={filterCount?`Filter games (${filterCount} selected)`:'Filter games'} onclick={()=>filtersOpen=!filtersOpen}><Icon name="sliders" size={17}/></button><button class="secondary-button" disabled={locked} onclick={()=>addDialog=true}><Icon name="plus" size={14}/>Add</button><button class="secondary-button" disabled={locked||!discoveryFresh} onclick={discoverInstallation}><Icon name="refresh" size={14}/>Rescan</button>{/snippet}</PageHeader>
-    {#if discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status!=='applied'}
-      <section class:scanning={gameState.discovery.status==='scanning'} class="panel initial-discovery" role="status" aria-live="polite"><Icon name={gameState.discovery.status==='scanning'?'refresh':'info'} size={20}/><div><strong>{gameState.discovery.status==='scanning'?'Discovering your games…':'Review discovered games'}</strong><p>{gameState.discovery.libraries.filter(library=>library.status==='complete'||library.status==='preparing').length} of {gameState.discovery.libraries.length} libraries checked · {gameState.discovery.libraries.reduce((total,library)=>total+library.found,0)} installations found. {gameState.discovery.status==='scanning'?'Your game list will be ready after you review and apply the results.':'Open the scan results to select the changes to apply.'}</p></div><button class="secondary-button" onclick={()=>discoveryView=true}><Icon name="search" size={14}/>View results</button></section>
+    {#if discoveryReview}
+      {@const scanning = discoveryReview.status === 'scanning'}
+      <section class:scanning class="panel initial-discovery" role="status" aria-live="polite">
+        <Icon name={scanning ? 'refresh' : 'info'} size={20}/>
+        <div>
+          <strong>{scanning ? 'Discovering your games…' : discoveryReview.status === 'failed' ? 'Game scan failed' : 'Review discovered games'}</strong>
+          <p>
+            {discoveryReview.libraries.filter(library => library.status === 'complete' || library.status === 'preparing').length} of {discoveryReview.libraries.length} libraries checked · {discoveryReview.libraries.reduce((total, library) => total + library.found, 0)} installations found.
+            {#if scanning && discoveryReview.firstStart}Your game list will be ready after you review and apply the results.
+            {:else if discoveryReview.status === 'ready'}Open the scan results to select the changes to apply.
+            {/if}
+          </p>
+        </div>
+        <button class="secondary-button" onclick={() => discoveryView = true}><Icon name="search" size={14}/>View results</button>
+      </section>
     {/if}
     {#if filtersOpen}<div id={filterPanelId}><GameListFilters games={gameState.catalogue} {tags} busy={locked} bind:filters manageTags={()=>tagsDialog=true} onclear={()=>filtersOpen=false}/></div>{/if}
-    {#if receivedStatus&&!games.length&&!(discoveryFresh&&gameState.discovery?.firstStart&&gameState.discovery.status!=='applied')}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>{filters=emptyGameListFilters();filtersOpen=false;}}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked||!discoveryFresh} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
+    {#if receivedStatus&&!games.length&&!discoveryReview}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>{filters=emptyGameListFilters();filtersOpen=false;}}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked||!discoveryFresh} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}

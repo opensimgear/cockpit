@@ -247,6 +247,16 @@ test('first discovery shows progress on the list instead of an empty-catalogue m
  assert.ok(!html.includes('No games found'));
 });
 
+test('Games offers the current discovery review after first setup until the scan is applied',()=>{
+ const base={...discoveryFixture(),firstStart:false};
+ const labels={scanning:'Discovering your games',ready:'Review discovered games',failed:'Game scan failed'};
+ for(const status of ['idle','scanning','ready','failed','applied']){
+  const html=render(GamesPanel,{props:{status:{catalogue:[],discovery:{...base,status}},busy:false,request:noRequest}}).body;
+  assert.equal(html.includes('View results'),Object.hasOwn(labels,status),status);
+  if(labels[status])assert.ok(html.includes(labels[status]),status);
+ }
+});
+
 test('discovery keeps game names and executable choices without manual match controls',async()=>{
  const View=await component('./GameDiscoveryView.svelte'),discovery=discoveryFixture();
  discovery.entries=[{id:'steam',gameId:'steam-flight',name:'Flight Simulator',action:'add',library:'Steam',installPath:'C:/Steam/Flight',executableCandidates:[]},{id:'disk',gameId:'disk-flight',name:'FlightSim',action:'add',library:'Local paths',installPath:'D:/Flight',executableCandidates:[]}];

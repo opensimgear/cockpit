@@ -280,6 +280,18 @@ The discovery fixture runs against native Cockpit with
 of a known title, a generic executable, same-volume relocation, and explicit
 removal. The browser fixture also covers the first-start results banner.
 
+Games shows **View results** for the current scan while it runs, waits for
+review, or has failed. Opening that review uses the existing discovery stream.
+This also covers scans started from another client after first setup.
+`tests/ui/game-discovery-reopen.mjs` completed first setup with no selected
+changes in a private database, then started one scan while Games was visible
+and a second while Overview was visible. The Windows WebView and Edge
+browser-dev opened the current review in both cases. After reopen they showed
+the second scan's entry and withdrew the first. Both runs made two authored
+scan requests, zero extra scan requests and zero game state refresh reads.
+The baseline Windows WebView reached Ready and lacked the review button.
+The fixture executables contained text and were never launched.
+
 Windows WebView and Edge browser-dev both delivered one header and shared
 read-model transition for each authored process boundary without repeat UI
 queries. A committed executable-path replacement withdrew the old identity
