@@ -174,12 +174,16 @@ fn loaded_dcs_aircraft_selects_module_without_saved_selection_and_editor_reads_d
         Arc::new(DcsPlatform),
     );
     runtime.inner.closed.store(true, Ordering::Release);
+    runtime.inner.changes.context_wake.notify();
+    runtime.inner.changes.activation_wake.notify();
     for observer in [&runtime.observer, &runtime.activation_observer] {
         if let Some(observer) = observer.lock().unwrap().take() {
             observer.join().unwrap();
         }
     }
     runtime.inner.closed.store(false, Ordering::Release);
+    // Establish the tracker signature before injecting simulator state.
+    runtime.inner.refresh_game_contexts(true);
     runtime.set_test_vehicle("dcs", Some("A-10C"));
     let first = runtime
         .prepare_profile_game_context("dcs")

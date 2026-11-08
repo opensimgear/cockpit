@@ -153,3 +153,34 @@ fn unavailable_command_lookup_does_not_mask_owner_retirement_during_native_io() 
         Err(ValidationFailure::Invalid(_))));
     runtime.shutdown();
 }
+
+#[test]
+fn inventory_superseded_during_capture_cannot_reach_context_or_profile_readers() {
+    for change in ["process", "library", "continuity"] {
+        let scratch = Scratch::new();
+        let (runtime, _, _) = runtime(&scratch);
+        runtime.stop_test_context_observer();
+        let inner = &runtime.inner;
+        let game = runtime.registered_profile_game("x-plane-12").unwrap();
+        let library = inner.changes.context_wake.observed();
+        let continuity = Arc::new(crate::game_activation::ProcessContinuity::default());
+        assert!(continuity.begin());
+        inner.changes.set_context_process_scope(library, Some(continuity.clone()));
+        let epoch = inner.current_process_epoch().unwrap();
+        let mut cache = process_cache::Cache::default();
+        let rows = inner.read_context_inventory(&mut cache, epoch, &[&game], |_| {
+            match change {
+                "process" => inner.changes.context_process_wake.notify(),
+                "library" => inner.changes.context_wake.notify(),
+                "continuity" => continuity.retire(),
+                _ => unreachable!(),
+            }
+            vec![Ok(None)]
+        });
+        assert!(matches!(&rows[..], [Err(crate::game_discovery::ProcessLookupError::Unavailable(error))]
+            if error == "Game process observation was superseded."));
+        assert!(cache.snapshot().is_none());
+        assert!(inner.context_process_inventory.lock().unwrap().is_none());
+        runtime.shutdown();
+    }
+}

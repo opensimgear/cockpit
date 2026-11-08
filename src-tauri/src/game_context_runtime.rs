@@ -219,14 +219,10 @@ impl GamesRuntime {
                 assetto_watches.refresh(&inner);
                 dcs_watch.refresh(&inner);
                 vehicle_catalogues.refresh(&inner);
-                let scope = inner.changes.context_process_live(library).then_some(epoch);
                 let setup = if last_library == Some(library) { SetupRefresh::Cached } else { SetupRefresh::Library };
                 let setup_current = inner.refresh_game_contexts_with_inventory(setup, |games| {
-                    let rows = process_cache.read_using(games, scope.filter(|_| inner.current_process_epoch() == Some(epoch)),
-                        |games| inner.read_context_processes(epoch, games));
-                    let snapshot = if inner.current_process_epoch() == Some(epoch) { process_cache.snapshot() } else { None };
-                    *inner.context_process_inventory.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot;
-                    rows
+                    inner.read_context_inventory(&mut process_cache, epoch, games,
+                        |games| inner.read_context_processes(epoch, games))
                 });
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 if setup_current { last_library = Some(library); }

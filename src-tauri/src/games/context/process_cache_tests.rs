@@ -57,7 +57,7 @@ fn keeps_successful_and_ambiguous_rows_usable_while_retrying_unavailable_rows() 
     let games = games();
     let selected: Vec<_> = games.iter().collect();
     let clean = vec![Ok(Some(identity(10))), Ok(None), Err(ProcessLookupError::Ambiguous("multiple matches".into()))];
-    let platform = FakePlatform::new(vec![rows_with_unavailable(), clean.clone()]);
+    let platform = FakePlatform::new(vec![rows_with_unavailable()]);
     let mut cache = Cache::default();
     let epoch = (4, 9);
 
@@ -72,11 +72,27 @@ fn keeps_successful_and_ambiguous_rows_usable_while_retrying_unavailable_rows() 
     changed_selection["executable"] = json!("replacement.exe");
     assert_eq!(snapshot.process(&changed_selection, epoch), None);
 
-    assert_eq!(cache.read(&platform, &selected, Some(epoch)), clean);
-    assert_eq!(platform.reads.load(Ordering::SeqCst), 2, "Unavailable rows cause a fresh inventory attempt");
+    let partial = cache.read_using(&selected, Some(epoch), |retried| {
+        assert_eq!(retried, [&games[1]], "Only the unavailable game may be read again");
+        Vec::new()
+    });
+    assert_eq!(partial, rows_with_unavailable(), "An incomplete retry cannot erase healthy rows");
+    assert!(!cache.is_current(epoch));
+
+    let recovered = cache.read_using(&selected, Some(epoch), |retried| {
+        assert_eq!(retried, [&games[1]]);
+        vec![Ok(None)]
+    });
+    assert_eq!(recovered, clean);
     assert!(cache.is_current(epoch), "Ambiguous is definitive and does not require a retry");
     assert_eq!(cache.read(&platform, &selected, Some(epoch)), clean);
-    assert_eq!(platform.reads.load(Ordering::SeqCst), 2, "a definitive inventory is reusable");
+    assert_eq!(platform.reads.load(Ordering::SeqCst), 1, "a definitive inventory is reusable");
+
+    let replaced = cache.read_using(&selected, Some((epoch.0, epoch.1 + 1)), |retried| {
+        assert_eq!(retried, selected);
+        vec![Ok(Some(identity(20))), Ok(None), Ok(None)]
+    });
+    assert_eq!(replaced[0], Ok(Some(identity(20))), "A new event epoch requires new proof");
 }
 
 #[test]
@@ -86,7 +102,8 @@ fn rejects_snapshots_when_inventory_cardinality_is_wrong() {
     let platform = FakePlatform::new(vec![vec![Ok(Some(identity(10)))]]);
     let mut cache = Cache::default();
 
-    assert_eq!(cache.read(&platform, &selected, Some((4, 9))).len(), 1);
+    let result = cache.read(&platform, &selected, Some((4, 9)));
+    assert_eq!(result, unavailable_rows(&selected, "Game process inventory was incomplete."));
     assert!(cache.snapshot().is_none());
     assert!(!cache.is_current((4, 9)));
 }

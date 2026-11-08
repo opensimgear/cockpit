@@ -215,8 +215,10 @@ BIOS and ownship recovery, and process exit with no cleanup errors.
 Executable SHA-256 was
 `4AE8A5A13979A5265DBCCC82BC92EEB1C5CD3CE8760C276626F5B21C716D8FCA`.
 
-Transient lookup failure was injected in the native tests. Cross-adapter
-contention and qualification remain open.
+[Watched process inventory retries](../verification/2026-11-08-context-inventory-scope.md)
+preserve definitive rows and retry only unavailable rows within the exact
+scope. A superseded read is discarded before projection. Shared per-game
+process qualification and actual simulator acceptance remain open.
 
 ### Queued DCS commands during an unavailable lookup
 

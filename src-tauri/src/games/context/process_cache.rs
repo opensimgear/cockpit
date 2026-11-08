@@ -1,7 +1,8 @@
 //! A process inventory is reusable only inside the exact live event scope.
+use super::Inner;
 use crate::game_discovery::{process_selection, ProcessLookup, ProcessLookupError};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 
 #[derive(Default)]
 pub(super) struct Cache {
@@ -33,15 +34,30 @@ impl Cache {
         let epoch = epoch.filter(|_| games.iter().all(|game| game["processMonitoringSupported"] == true));
         let selection: Vec<_> = games.iter().map(|game| process_selection(game)).collect();
         if let Some(snapshot) = self.snapshot.as_ref().filter(|snapshot|
-            Some(snapshot.epoch) == epoch && snapshot.selection == selection
-                && snapshot.rows.iter().all(|row| !matches!(row, Err(ProcessLookupError::Unavailable(_))))
-        )
+            Some(snapshot.epoch) == epoch && snapshot.selection == selection)
         {
-            return snapshot.rows.clone();
+            let pending: Vec<_> = snapshot.rows.iter().enumerate().filter_map(|(index, row)|
+                matches!(row, Err(ProcessLookupError::Unavailable(_))).then_some(index)).collect();
+            let mut rows = snapshot.rows.clone();
+            if pending.is_empty() {
+                return rows;
+            }
+            let selected: Vec<_> = pending.iter().map(|&index| games[index]).collect();
+            let retried = capture(&selected);
+            if retried.len() == pending.len() {
+                for (index, row) in pending.into_iter().zip(retried) {
+                    rows[index] = row;
+                }
+                self.snapshot = Some(Arc::new(Snapshot { epoch: snapshot.epoch, selection, rows: rows.clone() }));
+            }
+            return rows;
         }
         let rows = capture(games);
-        self.snapshot = epoch.filter(|_| rows.len() == games.len())
-            .map(|epoch| Arc::new(Snapshot { epoch, selection, rows: rows.clone() }));
+        if rows.len() != games.len() {
+            self.snapshot = None;
+            return unavailable_rows(games, "Game process inventory was incomplete.");
+        }
+        self.snapshot = epoch.map(|epoch| Arc::new(Snapshot { epoch, selection, rows: rows.clone() }));
         rows
     }
 
@@ -51,6 +67,33 @@ impl Cache {
     }
 
     pub(super) fn snapshot(&self) -> Option<Arc<Snapshot>> { self.snapshot.clone() }
+}
+
+fn unavailable_rows(games: &[&Value], reason: &str) -> Vec<ProcessLookup> {
+    games.iter().map(|_| Err(ProcessLookupError::Unavailable(reason.into()))).collect()
+}
+
+impl Inner {
+    pub(super) fn read_context_inventory(
+        &self,
+        cache: &mut Cache,
+        epoch: (u64, u64),
+        games: &[&Value],
+        capture: impl FnOnce(&[&Value]) -> Vec<ProcessLookup>,
+    ) -> Vec<ProcessLookup> {
+        let current = || !self.closed.load(Ordering::Acquire)
+            && (self.changes.context_wake.observed(), self.changes.context_process_wake.observed()) == epoch;
+        let watched = self.current_process_epoch() == Some(epoch);
+        let rows = current().then(|| cache.read_using(games, watched.then_some(epoch), capture));
+        let still_watched = self.current_process_epoch() == Some(epoch);
+        let rows = rows.filter(|_| current() && (!watched || still_watched));
+        if rows.is_none() {
+            cache.snapshot = None;
+        }
+        *self.context_process_inventory.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            if still_watched { cache.snapshot() } else { None };
+        rows.unwrap_or_else(|| unavailable_rows(games, "Game process observation was superseded."))
+    }
 }
 
 #[cfg(test)]
