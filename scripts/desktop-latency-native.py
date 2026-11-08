@@ -376,7 +376,9 @@ def main():
             for peer in peers:
                 send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
             mapping.wait_for(lambda: not native.desktop_status(service)["runtime"]["waitingNeutral"], "Fresh controls did not arm every desktop route")
+            phase["warmupStartMarker"] = marker(service, 5 + index * 2)
             phase["warmup"] = warmup_keys(service, receiver_path, peers)
+            phase["warmupEndMarker"] = marker(service, 6 + index * 2)
             phase["nativeSources"] = coherent_sources(service, configurations, peers)
             phase["uiBefore"] = control(service, "latency_ui_load", enabled=index == 1, profileName=saved["name"])
             phase["startMarker"] = marker(service, 1 + index * 2)
@@ -400,9 +402,9 @@ def main():
             phase["uiAfter"] = control(service, "latency_ui_load", enabled=False, profileName=saved["name"])
             if index == 1:
                 ui = phase["uiAfter"]
-                assert ui["mode"] == "real-svelte-profiles-auto-refresh" and ui["realProfilesView"] and ui["nativeCockpit"], ui
+                assert ui["mode"] == "real-svelte-profiles-navigation" and ui["realProfilesView"] and ui["nativeCockpit"], ui
                 assert ui["targetProfileVisible"] and ui["profileName"] == saved["name"], ui
-                assert ui["refreshEvents"] >= 20 and ui["refreshEventsDelivered"] == ui["refreshEvents"], ui
+                assert ui["navigationChanges"] >= 20, ui
             # Cleanup input is deliberately outside the phase marker interval.
             for peer in peers: send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
             mapping.wait_for(lambda: native.desktop_status(service)["runtime"]["backend"]["held"] == [], "Neutral cleanup retained native keys")
@@ -415,8 +417,8 @@ def main():
                 companion.wait_native_companions(service, configurations, peers, previous=phase["nativeSources"])
         evidence["injected"] = True
         evidence["checks"] = ["Two independent authenticated real WSS sources drove immediate distinct KeyA/KeyB holds and explicit normalized pointer processing load",
-            "Idle and real Svelte Profiles automatic-refresh phases retain exact accepted source sequences and changed-key receiver/native ownership counts between native audit markers",
-            "The UI-load phase delivers at least 20 focus-refresh events to the actual mounted native Profiles view, reports event counts accurately and never relies on passive reads making the UI busy",
+            "Idle and real Svelte Profiles navigation phases retain exact accepted source sequences and changed-key receiver/native ownership counts between native audit markers",
+            "The UI-load phase observes at least 20 transitions between native Overview and Profiles without shifting OS foreground to the WebView",
             "Every phase uses a fresh receiver, exact native scope and explicit Apply, followed by neutral cleanup, clean Stop and an acknowledged bounded audit checkpoint"]
     except Exception as error:
         evidence["failure"] = str(error)

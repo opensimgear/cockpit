@@ -210,8 +210,9 @@ def nearest_rank(values, percentile):
 def latency(values, frequency):
     if not values:
         return None
-    p95, p99 = nearest_rank(values, 95), nearest_rank(values, 99)
+    p50, p95, p99 = (nearest_rank(values, percentile) for percentile in (50, 95, 99))
     return dict(samples=len(values), p95Ticks=str(p95), p99Ticks=str(p99),
+        p50UsCeil=(p50 * 1_000_000 + frequency - 1) // frequency,
         p95UsCeil=(p95 * 1_000_000 + frequency - 1) // frequency,
         p99UsCeil=(p99 * 1_000_000 + frequency - 1) // frequency,
         strictP95Below5ms=p95 * 1_000_000 < 5_000 * frequency,
@@ -338,6 +339,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
         intervals.append((begin.qpc, end.qpc))
         excluded = Counter({key: 0 for key in EXCLUDED})
         samples, joined, target, source_set = [], set(), set(), set()
+        dispatches = defaultdict(list)
         phase_errors = []
         phase_captures = [event for event in by["SourceCapture"] if begin.qpc < event.qpc < end.qpc]
         for capture in phase_captures:
@@ -400,6 +402,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                     require(all(left.qpc <= right.qpc for left, right in zip(causal, causal[1:])), "causal QPC order violation")
                     require(send.qpc - capture.qpc > 1, "ambiguous admission-to-SendInput QPC interval (one tick or less)")
                     samples.append(send.qpc - capture.qpc)
+                    dispatches[nf[6]].append((capture.sequence, capture.qpc, send.qpc))
             except AuditError as error:
                 excluded["unacked"] += 1
                 phase_errors.append(str(error))
@@ -415,7 +418,11 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
             excluded["cleanup"] += sum(event.kind == "SubmitReturned" and event.f[3] != 1 and begin.qpc < event.qpc < end.qpc for event in worker.events)
         excluded["synthetic"] += sum(event.kind == "SyntheticFrame" for event in phase_events)
         phase_errors.extend(errors)
+        ordered = [sorted(source) for source in dispatches.values()]
+        if any(before[2] > after[2] for source in ordered for before, after in zip(source, source[1:])):
+            phase_errors.append("selected native submissions reversed source order")
         measured = latency(samples, parent.frequency) if not phase_errors else None
+        first = latency([source[0][2] - source[0][1] for source in ordered], parent.frequency) if measured else None
         counts_match = len(target) == len(samples) == phase.expected_edges and len(source_set) == expected_key_sources
         phase_results.append(dict(name=phase.name, expectedKeyEdges=phase.expected_edges,
             admittedBatches=len(phase_captures), admittedChanges=sum(event.f[7] for event in phase_captures),
@@ -425,7 +432,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
             queues=dict(nativeQueuedFramesMax=max((event.f[11] for event in phase_events if event.kind == "NativeEnqueue"), default=0),
                 parentOutstandingReservationsMax=max((event.f[2] for event in phase_events if event.kind == "RequestQueued"), default=0),
                 workerOutstandingReservationsMax=max((event.f[2] for worker in workers.values() for event in worker.events if event.kind == "RequestQueued" and begin.qpc < event.qpc < end.qpc), default=0)),
-            latency=measured, errors=sorted(set(phase_errors)), expectedCountsMatch=counts_match,
+            latency=measured, firstDispatchBySource=first, errors=sorted(set(phase_errors)), expectedCountsMatch=counts_match,
             passed=bool(measured and measured["strictP95Below5ms"] and measured["strictP99Below10ms"] and counts_match and not any(excluded[key] for key in ("noop", "collision", "skipped", "cleanup", "unacked", "fault", "unresolved")))))
     # Each exact worker must have a successfully acknowledged Stop, independent
     # of latency endpoints. A footer alone never proves native ownership cleanup.

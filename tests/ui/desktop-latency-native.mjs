@@ -1,15 +1,15 @@
 // Opt-in real WSS -> existing native Cockpit workload; no native activity on discovery.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {mkdir, readFile, writeFile, rm, readdir, open, stat} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
+import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const enabled = process.env.OSG_DESKTOP_LATENCY_NATIVE === '1' && process.env.OSG_DESKTOP_NATIVE_INJECT === '1';
-const root = resolve('.'), artifacts = resolve('.research/desktop-latency-native');
+const root = resolve('.'), artifacts = resolve(process.env.OSG_DESKTOP_LATENCY_ARTIFACTS ?? '.research/desktop-latency-native');
 const allowed = new Set(['companion_status', 'companion_enable', 'companion_disable', 'companion_pair_offer',
  'companion_approve', 'companion_revoke', 'companion_assign', 'companion_unassign', 'companion_publish_begin',
  'companion_publish_chunk', 'companion_publish_commit', 'profile_status', 'profile_list', 'profile_delete',
@@ -18,10 +18,7 @@ const allowed = new Set(['companion_status', 'companion_enable', 'companion_disa
  'profile_desktop_capture_application', 'profile_desktop_audit_checkpoint', 'profile_desktop_audit_marker']);
 
 async function invoke(page, request) {
- return page.evaluate(request => {
-  if (!window.__TAURI_INTERNALS__?.invoke) throw Error('The existing page is not native Cockpit');
-  return window.__TAURI_INTERNALS__.invoke('gateway_request', {request: {...request, clientId: 'desktop-latency-native-check'}});
- }, request);
+ return page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request', {request: ${JSON.stringify({...request, clientId: 'desktop-latency-native-check'})}})`);
 }
 
 async function powershell(script, env = {}) {
@@ -88,47 +85,62 @@ async function closeReceiver(target) {
 }
 
 async function profilesUi(page) {
- await page.evaluate(() => {
-  const button = [...document.querySelectorAll('button')].find(node => node.textContent.trim() === 'Profiles');
-  button?.click(); // DOM handler only: never bring the WebView to OS foreground.
-  document.querySelector('button.back-profiles')?.click();
- });
- await page.waitForFunction(() => !!document.querySelector('.profiles-workspace .list-tools'), undefined, {timeout: 5000});
+ await until(() => page.evaluate(`(() => {
+  const button = document.querySelector('nav[aria-label="Main navigation"] button[title="Profiles"]');
+  if (!button) return false;
+  button.click(); // Leave OS foreground with the test receiver.
+  return true;
+ })()`));
+ await until(() => page.evaluate(`(() => {
+  const workspace = document.querySelector('.profiles-workspace');
+  if (!workspace || workspace.closest('[hidden]')) return false;
+  if (workspace.querySelector('[aria-label="Saved profiles"]')) return true;
+  workspace.querySelector('button.header-back:not(:disabled)')?.click();
+  return false;
+ })()`));
 }
 
 async function uiLoad(page, start, profileName) {
  if (start) {
   await profilesUi(page);
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await page.waitForFunction(name => [...document.querySelectorAll('.profile-list .profile-copy strong')].some(node => node.textContent.trim() === name), profileName, {timeout: 5000});
+  await until(() => page.evaluate(`[...document.querySelectorAll('.profile-list .profile-copy strong')].some(node => node.textContent.trim() === ${JSON.stringify(profileName)})`));
  }
- return page.evaluate(({start, profileName}) => {
+ const evaluateLoad = ({start, profileName}) => {
   const previous = window.__osgDesktopLatencyUi;
   if (previous) previous.cleanup();
-  const snapshot = state => state ? {mode: 'real-svelte-profiles-auto-refresh', refreshEvents: state.events, refreshEventsDelivered: state.delivered,
+  const snapshot = state => state ? {mode: 'real-svelte-profiles-navigation', navigationChanges: state.changes,
    domMutations: state.mutations, elapsedMs: performance.now() - state.began,
    profileName: state.profileName, realProfilesView: !!document.querySelector('.profiles-workspace .profile-list'), nativeCockpit: !!window.__TAURI_INTERNALS__,
    targetProfileVisible: [...document.querySelectorAll('.profile-list .profile-copy strong')].some(node => node.textContent.trim() === state.profileName),
    visibleRuntimeStatus: document.querySelector('[aria-label="Runtime profile status"]')?.textContent?.trim() ?? ''}
-   : {mode: 'idle', refreshEvents: 0, refreshEventsDelivered: 0, domMutations: 0, elapsedMs: 0};
+   : {mode: 'idle', navigationChanges: 0, domMutations: 0, elapsedMs: 0};
   if (!start) { delete window.__osgDesktopLatencyUi; return snapshot(previous); }
   const section = document.querySelector('.profiles-workspace');
   if (!section?.querySelector('.profile-list') || !window.__TAURI_INTERNALS__) throw Error('The actual native Svelte Profiles list is unavailable');
-  const state = {events: 0, delivered: 0, currentEvent: null, mutations: 0, began: performance.now(), profileName};
-  // Exercise the real focus-refresh handler without making the WebView foreground.
-  // Count event delivery, not native completions or UI busy transitions: passive
-  // refresh deliberately coalesces pending reads and keeps the controls usable.
-  const observedFocus = event => { if (event === state.currentEvent) state.delivered++; };
-  window.addEventListener('focus', observedFocus);
+  const navigation = document.querySelector('nav[aria-label="Main navigation"]');
+  const overview = navigation?.querySelector('button[title="Overview"]');
+  const profiles = navigation?.querySelector('button[title="Profiles"]');
+  if (!overview || !profiles) throw Error('The native navigation controls are unavailable');
+  const state = {changes: 0, mutations: 0, began: performance.now(), profileName};
+  let visible = true, pending = null;
   state.observer = new MutationObserver(records => {
    state.mutations += records.length;
   });
-  state.observer.observe(section, {subtree: true, attributes: true, childList: true, characterData: true});
-  state.timer = setInterval(() => { if (!document.hidden && section.isConnected) { state.events++; state.currentEvent = new Event('focus'); window.dispatchEvent(state.currentEvent); state.currentEvent = null; } }, 40);
-  state.cleanup = () => { clearInterval(state.timer); state.observer.disconnect(); window.removeEventListener('focus', observedFocus); };
+  state.observer.observe(section.parentElement, {subtree: true, attributes: true, childList: true, characterData: true});
+  state.timer = setInterval(() => {
+   if (document.hidden || !section.isConnected) return;
+   const current = !section.closest('[hidden]');
+   if (pending !== null && current !== pending) return;
+   if (current !== visible) state.changes++;
+   visible = current;
+   pending = !current;
+   (current ? overview : profiles).click();
+  }, 120);
+  state.cleanup = () => { clearInterval(state.timer); state.observer.disconnect(); profiles.click(); };
   window.__osgDesktopLatencyUi = state;
   return snapshot(state);
- }, {start, profileName});
+ };
+ return page.evaluate(`(${evaluateLoad})(${JSON.stringify({start, profileName})})`);
 }
 
 test('real native desktop audit under two-source input and Svelte UI load', {skip: !enabled, timeout: 300_000}, async () => {
@@ -139,18 +151,15 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
  const appHash = createHash('sha256').update(await readFile(executable)).digest('hex');
  const appRows = await powershell("$ErrorActionPreference='Stop'; $expected=[IO.Path]::GetFullPath($env:OSG_LATENCY_EXPECTED_EXE); $rows=@(Get-CimInstance Win32_Process -Filter \"Name = 'osg-cockpit.exe'\" | Where-Object {$_.ExecutablePath -eq $expected -and $_.CommandLine -notlike '*--osg-desktop-input-worker*'} | ForEach-Object {[pscustomobject]@{pid=$_.ProcessId;executable=$_.ExecutablePath;created=$_.CreationDate.ToUniversalTime().ToString('o')}}); ConvertTo-Json -InputObject $rows -Compress", {OSG_LATENCY_EXPECTED_EXE: executable});
  assert.equal(appRows.length, 1, 'The hash must belong to the exact existing native app process');
- const require = createRequire(import.meta.url), {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
  await mkdir(artifacts, {recursive: true});
  await rm(resolve(artifacts, 'parent-checkpoint.json'), {force: true});
- const browser = await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9222');
+ const page = await nativePage();
  try {
-  const page = browser.contexts().flatMap(context => context.pages()).find(page => /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(page.url()));
-  assert.ok(page, 'An already-running native development Cockpit is required');
+  await profilesUi(page);
   const before = await stopped(page, false), preferences = before.desktop;
   const profileBefore = (await invoke(page, {command: 'profile_status'})).state.profiles;
   assert.equal(profileBefore.session.selectionMode, 'manual');
   const listenerBefore = (await invoke(page, {command: 'companion_status'})).state.companions.listener?.enabled ?? false;
-  await profilesUi(page);
   const token = randomUUID(), commands = [], profiles = new Map(), paired = new Set(), assigned = new Set(), receivers = [];
   let server, pythonChild, target;
   try {
@@ -220,7 +229,7 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    const cleanup = {errors: []};
    const attempt = async (label, operation) => { try { return await operation(); } catch (error) { cleanup.errors.push(`${label}: ${String(error)}`); } };
    await attempt('Stop actual UI refresh', () => uiLoad(page, false, ''));
-   await attempt('Stop native profile', async () => { const result = await invoke(page, {command: 'profile_stop'}); assert.equal(result.ok, true); });
+   await attempt('Stop native profile', async () => { const result = await invoke(page, {command: 'profile_stop'}); assert.equal(result.ok, true, result.error); });
    const clear = await attempt('Prove clean native ownership', async () => { cleanup.ownershipProof = await stopped(page, commands.some(item => item.command === 'profile_apply')); return true; }) === true;
    cleanup.ownershipCleanupConfirmed = clear; cleanup.needsRootCleanup = !clear;
    if (clear) {
@@ -263,5 +272,5 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    if (server) await new Promise(resolve => server.close(resolve));
    assert.deepEqual(cleanup.errors, [], 'Inspect the native latency cleanup evidence');
   }
- } finally { await browser.close(); }
+ } finally { page.close(); }
 });

@@ -102,6 +102,9 @@ class LatencyTests(unittest.TestCase):
         phase = report["phases"][0]
         self.assertEqual((phase["admittedChanges"], phase["selectedKeyChanges"], phase["successfulKeyEdges"]), (8, 4, 4))
         self.assertEqual(phase["latency"]["p95UsCeil"], 1000)
+        self.assertEqual(phase["latency"]["p50UsCeil"], 1000)
+        self.assertEqual(phase["firstDispatchBySource"]["samples"], 2)
+        self.assertEqual(phase["firstDispatchBySource"]["p95UsCeil"], 1000)
         self.assertFalse(report["physicalCaptureMeasured"])
 
     def test_nearest_rank_and_strict_thresholds_use_integer_ticks(self):
@@ -111,6 +114,18 @@ class LatencyTests(unittest.TestCase):
         self.assertFalse(Fixture(delta=10000).run()["phases"][0]["latency"]["strictP99Below10ms"])
         self.assertFalse(Fixture(delta=5000).run()["passed"])
         self.assertTrue(audit.latency([49999], 10_000_000)["strictP95Below5ms"])
+
+    def test_later_dispatch_cannot_overtake_first_dispatch_from_same_source(self):
+        fixture = Fixture()
+        for rows, times in ((fixture.worker, {"SubmitReturned": 44000, "WorkerOutcome": 44010}),
+                            (fixture.parent, {"ParentOutcome": 44020})):
+            for row in rows:
+                if row["kind"] in times and row["fields"][1] == "1":
+                    row["qpc"] = str(times[row["kind"]])
+        phase = fixture.run()["phases"][0]
+        self.assertFalse(phase["passed"])
+        self.assertIsNone(phase["firstDispatchBySource"])
+        self.assertIn("selected native submissions reversed source order", phase["errors"])
 
     def test_journal_diagnostics_do_not_replace_or_change_latency_endpoints(self):
         fixture = Fixture()
