@@ -105,6 +105,9 @@ impl Adapter for PointerRecording {
 }
 impl Channel for PointerChannel {
     fn request(&mut self, request: &Request) -> Result<Ack, String> {
+        if matches!(request.command, Command::Stop) {
+            self.worker.tick(clock() + 1_000)?;
+        }
         let mut ack = self.worker.receive(request.clone(), clock());
         match std::mem::replace(&mut *self.fault.lock().unwrap(), PointerFault::None) {
             PointerFault::None => {},
@@ -190,6 +193,44 @@ fn definitive_pointer_rejection_persists_paused_holds_without_replaying_motion()
     assert_eq!(retained.held, vec![key()]);
     assert_eq!(retained.possible_held, vec![key()]);
     assert_eq!(events.lock().unwrap().iter().filter(|event| matches!(event, NativeEvent::Pointer { .. })).count(), 1);
+}
+
+#[test]
+fn exact_stop_releases_holds_after_unacknowledged_guarded_delivery() {
+    struct LateDelivery { channel: PointerChannel, awaiting_reply: bool }
+    impl Channel for LateDelivery {
+        fn request(&mut self, request: &Request) -> Result<Ack, String> {
+            let result = self.channel.request(request);
+            self.awaiting_reply = matches!(request.command, Command::DeliverGuarded { .. }) && result.is_err();
+            result
+        }
+        fn has_timed_out_reply(&self) -> bool { self.awaiting_reply }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.json");
+    let fault = Arc::new(Mutex::new(PointerFault::None));
+    let events = Arc::new(Mutex::new(vec![]));
+    let channel = PointerChannel { worker: crate::worker::Worker::new(PointerRecording(events.clone())), fault: fault.clone() };
+    let mut c = Coordinator::with_channel(Box::new(LateDelivery { channel, awaiting_reply: false }), clock);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    *fault.lock().unwrap() = PointerFault::Transport;
+    assert!(c.submit_guarded(delivery(), 0, Counter(1_000)).is_err());
+    assert!(Coordinator::inspect_journal(&path).unwrap().uncertain);
+    assert_eq!(c.snapshot().possible_held, vec![key()]);
+
+    c.stop_all().unwrap();
+    let stopped = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(stopped.phase, "stopped");
+    assert!(stopped.cleanup_complete && !stopped.uncertain);
+    assert!(stopped.held.is_empty() && stopped.possible_held.is_empty() && stopped.in_flight.is_none());
+    assert!(stopped.owners.is_empty() && stopped.runs.is_empty());
+    assert_eq!(*events.lock().unwrap(), vec![
+        NativeEvent::Key { usage: 4, down: true, repeat: false },
+        NativeEvent::Key { usage: 4, down: false, repeat: false },
+    ]);
 }
 #[test]
 fn expired_pointer_motion_never_reaches_the_adapter() {

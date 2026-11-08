@@ -41,6 +41,7 @@ test('native scope notifications release on away and require fresh neutral after
   };
   const keys=value=>value.observations.filter(item=>item.injectedMarker&&item.scanCode===30&&[256,257].includes(item.message));
   try {
+    await until(()=>page.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'));
     assert.equal((await session()).owner,null);stopped=true;
     preferences=await desktop();
     const first=await launch('first'), second=await launch('second');

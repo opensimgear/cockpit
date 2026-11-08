@@ -97,6 +97,7 @@ impl Coordinator {
             // recovery releases possible holds and never replays its deadline.
             request.deadline_us = Some(Counter(0));
         }
+        let resolving_timeout = matches!(request.command, Command::Stop) && self.channel.has_timed_out_reply();
         let result = self.channel.request(&request).and_then(|ack| {
             if ack.sequence != request.sequence {
                 return Err("Stale desktop worker acknowledgement.".into());
@@ -120,7 +121,18 @@ impl Coordinator {
                 && (!ack.cleanup_complete || !ack.held.is_empty()) {
                 return Err("Desktop worker cleanup acknowledgement is incomplete.".into());
             }
-            let mut reconciled = self.stage_guard_receipts(&ack)?;
+            let stopping = ack.ok && matches!(request.command, Command::Stop);
+            let mut reconciled = if stopping && resolving_timeout {
+                // An unacknowledged delivery may have installed a guard that
+                // released before Stop. The exact empty terminal ACK proves
+                // all releases without trusting intermediate owner receipts.
+                if ack.released_guards.len() > MAX_OWNERS {
+                    return Err("Desktop release receipt budget exceeded.".into());
+                }
+                Some(self.reducer.clone())
+            } else {
+                self.stage_guard_receipts(&ack)?
+            };
             let scopes = self.stage_scope_receipts(&request, &ack)?;
             if !scopes.paused.is_empty() {
                 let next = reconciled.get_or_insert_with(|| self.reducer.clone());

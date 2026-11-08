@@ -28,6 +28,8 @@ mod transaction;
 
 pub trait Channel: Send {
     fn request(&mut self, request: &Request) -> Result<Ack, String>;
+    /// An exact queued request timed out while waiting for its first reply.
+    fn has_timed_out_reply(&self) -> bool { false }
     /// Sidecar identity only; recording channels provide no native correlation.
     fn audit_id(&self) -> Option<crate::audit::Id> {
         None
@@ -218,12 +220,20 @@ impl Coordinator {
                 Err("Desktop terminal Stop journal commit failed; preserve recovery evidence.".into())
             };
         }
+        let resolving_timeout = self.channel.has_timed_out_reply();
         self.send(Command::Stop, None, vec![])?;
         self.terminal_stopped = true;
         self.reducer.stop();
         self.snapshot.phase = "stopped".into();
         self.snapshot.runs.clear();
-        self.sync_owners()?;
+        // Exact terminal Stop proves cleanup even when the preceding delivery
+        // timed out. Keep recovery evidence if the final journal commit fails.
+        let was_uncertain = self.snapshot.uncertain;
+        self.snapshot.uncertain &= !resolving_timeout;
+        if let Err(error) = self.sync_owners() {
+            self.snapshot.uncertain = was_uncertain;
+            return Err(error);
+        }
         self.stop_committed = true;
         Ok(())
     }

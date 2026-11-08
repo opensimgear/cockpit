@@ -15,6 +15,7 @@ pub struct ProcessChannel {
     child: Child,
     outgoing: Option<SyncSender<(Vec<u8>, u64)>>,
     incoming: Receiver<Result<serde_json::Value, String>>,
+    timed_out_reply: Option<u64>,
     audit_channel: Option<crate::audit::Id>,
     outgoing_depth: Arc<AtomicUsize>,
 }
@@ -80,6 +81,7 @@ impl ProcessChannel {
             child,
             outgoing: Some(outgoing),
             incoming,
+            timed_out_reply: None,
             audit_channel,
             outgoing_depth,
         };
@@ -104,6 +106,10 @@ impl ProcessChannel {
 impl Channel for ProcessChannel {
     fn request(&mut self, request: &Request) -> Result<Ack, String> {
         let deadline = Instant::now() + Duration::from_millis(100);
+        let stopping = matches!(request.command, Command::Stop);
+        if self.timed_out_reply.is_some() && !stopping {
+            return Err("A timed-out desktop worker accepts only terminal Stop.".into());
+        }
         let mut bytes = serde_json::to_vec(request).map_err(|e| e.to_string())?;
         if bytes.len() > FRAME_LIMIT {
             return Err("Desktop parent frame exceeds 64 KiB.".into());
@@ -126,13 +132,49 @@ impl Channel for ProcessChannel {
             crate::audit::record_at(at, crate::audit::Kind::RequestQueued,
                 &[channel, request.sequence.0, queued_depth as u64]);
         }
-        let value = self.reply(deadline.saturating_duration_since(Instant::now()))?;
+        if stopping {
+            // The writer drains the already queued Stop before closing stdin.
+            // The helper exits after Stop, so the channel cannot send another.
+            self.outgoing.take();
+        }
+        await_ack(&self.incoming, &mut self.timed_out_reply, request.sequence.0, stopping, deadline)
+    }
+    fn has_timed_out_reply(&self) -> bool { self.timed_out_reply.is_some() }
+    fn audit_id(&self) -> Option<crate::audit::Id> { self.audit_channel }
+}
+
+fn await_ack(
+    incoming: &Receiver<Result<serde_json::Value, String>>,
+    timed_out_reply: &mut Option<u64>,
+    sequence: u64,
+    stopping: bool,
+    deadline: Instant,
+) -> Result<Ack, String> {
+    let mut previous = timed_out_reply.take();
+    loop {
+        let value = match incoming.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(value) => value?,
+            Err(error) => {
+                if error == mpsc::RecvTimeoutError::Timeout && !stopping {
+                    *timed_out_reply = Some(sequence);
+                }
+                return Err("Desktop worker died or exceeded its response deadline.".into());
+            }
+        };
+        let ack: Ack = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        if let Some(late) = previous.take() {
+            // Ignore only the exact outstanding delivery reply. Its contents
+            // cannot clear possible holds or grant any new output authority.
+            if ack.sequence.0 != late {
+                return Err("Unexpected reply before desktop Stop acknowledgement.".into());
+            }
+            continue;
+        }
         if Instant::now() >= deadline {
             return Err("Desktop worker acknowledgement exceeded its deadline.".into());
         }
-        serde_json::from_value(value).map_err(|e| e.to_string())
+        return Ok(ack);
     }
-    fn audit_id(&self) -> Option<crate::audit::Id> { self.audit_channel }
 }
 impl Drop for ProcessChannel {
     fn drop(&mut self) {
@@ -208,6 +250,43 @@ fn record_exit(channel: Option<crate::audit::Id>, pid: u32, status: Option<ExitS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reply(sequence: u64) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "sequence": sequence.to_string(), "operationId": null, "pointerBatch": null,
+            "ok": true, "attempted": 0, "confirmed": 0, "uncertain": false,
+            "cleanupComplete": true, "skipped": false, "scopeRejected": false,
+            "scopes": [], "error": null, "held": [], "releasedGuards": [],
+        }))
+    }
+
+    #[test]
+    fn late_delivery_cannot_replace_or_block_the_exact_stop_ack() {
+        let (send, incoming) = mpsc::sync_channel(2);
+        let mut late = None;
+        assert!(await_ack(&incoming, &mut late, 5, false, Instant::now()).is_err());
+        assert_eq!(late, Some(5));
+        send.send(reply(5)).unwrap();
+        send.send(reply(6)).unwrap();
+        let ack = await_ack(&incoming, &mut late, 6, true, Instant::now() + Duration::from_secs(1)).unwrap();
+        assert_eq!(ack.sequence.0, 6);
+        assert!(ack.cleanup_complete);
+        assert_eq!(late, None);
+    }
+
+    #[test]
+    fn late_reply_alone_or_an_unexpected_sequence_cannot_prove_stop() {
+        for (first, error) in [(5, "response deadline"), (4, "Unexpected reply"), (6, "Unexpected reply")] {
+            let (send, incoming) = mpsc::sync_channel(1);
+            let mut late = Some(5);
+            send.send(reply(first)).unwrap();
+            drop(send);
+            let result = await_ack(&incoming, &mut late, 6, true, Instant::now() + Duration::from_secs(1));
+            assert!(result.unwrap_err().contains(error));
+            assert_eq!(late, None);
+        }
+    }
+
     #[cfg(windows)]
     fn status(code: i32) -> ExitStatus {
         use std::os::windows::process::ExitStatusExt;
@@ -243,6 +322,7 @@ mod tests {
             child,
             outgoing: None,
             incoming: mpsc::sync_channel(1).1,
+            timed_out_reply: None,
             audit_channel: None,
             outgoing_depth: Arc::new(AtomicUsize::new(0)),
         };
