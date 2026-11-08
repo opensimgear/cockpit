@@ -1,6 +1,7 @@
 import type { ControllerControl, ControllerResult, HostController } from './controllers.ts';
 import { SharedObservations, type ReadonlyObservationState } from './streams/shared.ts';
 import { uint64, type WireFrame } from './streams/protocol.ts';
+import { visibleSubscription } from './visible-observation.ts';
 import type { DeepReadonly } from './profiles.ts';
 
 export type ControllerInputDetail = DeepReadonly<ControllerResult>;
@@ -207,29 +208,38 @@ export class ControllerInputObservations {
       frame = undefined;
       pending = undefined;
     };
-    const stop = this.observe(sourceId, state => {
-      const previous = rendered?.detail;
-      const detail = state.detail;
-      if (state.status !== 'ready' || !detail?.source?.baselineReady
-        || rendered?.status !== 'ready' || !previous?.source?.baselineReady
-        || previous.session !== detail.session || previous.source.generation !== detail.source.generation) {
-        cancel();
-        rendered = state;
-        this.notify(listener, state);
-        return;
-      }
-      pending = state;
-      frame ??= clock.requestAnimationFrame(() => {
-        frame = undefined;
-        const next = pending;
-        pending = undefined;
-        if (next) {
-          rendered = next;
-          this.notify(listener, next);
+    const demand = visibleSubscription(() => {
+      const stop = this.observe(sourceId, state => {
+        const previous = rendered?.detail;
+        const detail = state.detail;
+        if (state.status !== 'ready' || !detail?.source?.baselineReady
+          || rendered?.status !== 'ready' || !previous?.source?.baselineReady
+          || previous.session !== detail.session || previous.source.generation !== detail.source.generation) {
+          cancel();
+          // Keep the controller card mounted during reconnect, with values withdrawn.
+          rendered = detail || !previous ? state : { ...state, detail: previous };
+          this.notify(listener, rendered);
+          return;
         }
+        pending = state;
+        frame ??= clock.requestAnimationFrame(() => {
+          frame = undefined;
+          const next = pending;
+          pending = undefined;
+          if (next) {
+            rendered = next;
+            this.notify(listener, next);
+          }
+        });
       });
+      return () => {
+        stop();
+        cancel();
+        rendered = { status: 'connecting', detail: clear(rendered?.detail) };
+      };
     });
-    return () => { stop(); cancel(); };
+    demand.setVisible(true);
+    return demand.close;
   }
 
   observe(sourceId: string, listener: Listener): () => void {

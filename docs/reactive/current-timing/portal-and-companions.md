@@ -41,8 +41,8 @@
 | `src/lib/CompanionConnections.svelte:208` | Presentation | Display the countdown against a pairing offer's existing expiry. Native owns approval and expiry. |
 | `src/lib/CompanionConnections.svelte:231` | Command recovery | Wait once after a finished USB flash for the board to re-enumerate before requesting connection. |
 | `src/lib/CompiledCompanionDesigner.svelte:228` | Resource cleanup | Revoke the export blob URL after its download click. |
-| `src/lib/controller-observations.ts:14` | Declaration | Testable interface for a display-frame callback. |
-| `src/lib/controller-observations.ts:222` | Presentation | Draw the latest continuous sample once when the capture makes the preview dirty. |
+| `src/lib/controller-observations.ts:15` | Declaration | Testable interface for a display-frame callback. |
+| `src/lib/controller-observations.ts:225` | Presentation | Draw the latest continuous sample once when the capture makes the visible preview dirty. Hiding cancels pending presentation and releases the preview reader. |
 | `src/lib/game-read-models/test-fixture.mjs:38` | Fixture | Bound the test helper's wait for a read-model condition. |
 | `src/lib/gateway-workspace.ts:65,66` | Lease deadline | Schedule or cancel renewal of editing claims already held by this client. Workspace data comes from the native observation. |
 | `src/lib/GenericWidgetDesigner.svelte:194` | Resource cleanup | Revoke the compiled export blob URL after its download click. |

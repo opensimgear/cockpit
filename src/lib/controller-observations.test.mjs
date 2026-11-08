@@ -42,6 +42,17 @@ function setup() {
   return { client, observations, opens, states, off, send };
 }
 
+function previewDocument(t, hidden = false) {
+  const document = new EventTarget();
+  document.hidden = hidden;
+  globalThis.document = document;
+  t.after(() => { delete globalThis.document; });
+  return value => {
+    document.hidden = value;
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+}
+
 test('shares reduction, late snapshot, immutable consumer isolation and reference-counted cancellation', () => {
   const { client, states, opens, off, send } = setup();
   const seen = [];
@@ -67,7 +78,8 @@ test('shares reduction, late snapshot, immutable consumer isolation and referenc
   assert.equal(states.length, before);
 });
 
-test('preview renders only the latest continuous report per frame and clears immediately on loss', () => {
+test('preview renders only the latest continuous report per frame and clears immediately on loss', t => {
+  previewDocument(t);
   const { client, states, send } = setup();
   const previews = [], frames = new Map();
   let nextFrame = 0;
@@ -100,6 +112,51 @@ test('preview renders only the latest continuous report per frame and clears imm
   assert.equal(frames.size, 1);
   stop();
   assert.equal(frames.size, 0);
+});
+
+test('hidden preview cancels its frame and demand, then renders the current baseline immediately', t => {
+  const setHidden = previewDocument(t, true);
+  const { client, states, opens, off, send } = setup();
+  const previews = [], frames = new Map();
+  let nextFrame = 0;
+  const stop = client.observePreview(id, state => previews.push(state), {
+    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame(handle) { frames.delete(handle); },
+  });
+  send();
+  assert.equal(previews.length, 0, 'A preview mounted hidden never starts');
+  setHidden(false);
+  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  send(change());
+  assert.equal(frames.size, 1);
+  setHidden(true);
+  assert.equal(frames.size, 0);
+  assert.equal(opens[0].signal.aborted, false, 'Independent readers keep their demand');
+  send(change({ source: controller({ sequence: '3' }), cursor: '3', capturedUs: '12' }));
+  assert.equal(states.at(-1).detail.source.sequence, '3');
+  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  setHidden(false);
+  assert.equal(previews.at(-1).detail.source.sequence, '3', 'Shared current state presents without a frame delay');
+  assert.equal(frames.size, 0);
+
+  setHidden(true);
+  off();
+  assert.equal(opens[0].signal.aborted, true);
+  setHidden(false);
+  assert.equal(opens.length, 2);
+  assert.equal(previews.at(-1).status, 'connecting');
+  assert.equal(previews.at(-1).detail.source.id, id, 'Reconnecting preserves the selected card');
+  assert.equal(previews.at(-1).detail.source.baselineReady, false);
+  assert.equal(previews.at(-1).detail.controls[0].value, null);
+  send(snapshot({ source: controller({ sequence: '6' }), cursor: '6', capturedUs: '15' }), { kind: 'snapshot' });
+  assert.equal(previews.at(-1).detail.source.sequence, '6');
+  assert.equal(previews.at(-1).detail.controls[0].value.native, 0);
+  assert.equal(frames.size, 0);
+  stop();
+  assert.equal(opens[1].signal.aborted, true);
+  setHidden(true);
+  setHidden(false);
+  assert.equal(opens.length, 2);
 });
 
 test('published values, rows and descriptors remain immutable even in delayed consumers', async () => {

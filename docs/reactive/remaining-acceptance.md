@@ -42,6 +42,11 @@ retires both of its readers on document hide or card exit. Native and
 browser-dev reopened on the preference committed while hidden. The
 surrounding Devices inventory reader retained its own lifetime.
 
+The [physical controller preview](../verification/2026-11-08-controller-preview-visibility.md)
+releases input demand and cancels its queued presentation frame while hidden.
+Native and browser-dev reopen on a fresh input baseline and preserve the
+controller detail draft. Real VKB preview cadence remains in #199.
+
 The companion and integration port sections share the same tile, filter and
 pager. The tile owns spacing, typography and status styles. Companion authoring
 controls retain concise labels, icons and accessible remove actions. The
