@@ -433,17 +433,23 @@ impl NativeProfileHost {
         document.desktop_outputs.first().is_some_and(|output|matches!(output.scope.as_ref(),None|Some(osg_profiles::DesktopScope::SelectedGame)))
     }
     fn refresh_desktop_context(games:&crate::games::GamesRuntime,state:&mut NativeRun)->Result<Vec<String>,String>{
-        if !Self::context_desktop(&state.document)||state.desktop.is_none(){return Ok(vec![]);}
+        use crate::game_activation::CurrentProcessObservation::{Busy, Observed, Unavailable};
+        if !Self::context_desktop(&state.document) { return Ok(vec![]); }
+        let Some(desktop) = state.desktop.as_mut() else { return Ok(vec![]); };
+        desktop.process_observation = None;
         let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_deref()).or(state.owner.game_id.as_deref());
         let Some(id)=id else{return Ok(vec![]);};
-        let (scope,diagnostics)=match games.try_observed_desktop_process(id) {
-            Ok(crate::game_activation::CurrentProcessObservation::Observed(process))=>(process.map(|process|osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(&process)}),vec![]),
-            Ok(crate::game_activation::CurrentProcessObservation::Busy)=>return Ok(vec![]),
-            Ok(crate::game_activation::CurrentProcessObservation::Unavailable)=>return Ok(vec!["Context scoped bindings are waiting for a fresh native process observation.".into()]),
-            Err(error)=>(None,vec![format!("Context scoped bindings are waiting: {error}")]),
+        let (observation, lease) = games.desktop_process_observation(id);
+        let (scope, diagnostics) = match observation {
+            Observed(process) => (process.map(|process| osg_desktop_output::Scope::Application {
+                identity: crate::profile_session_desktop::identity(&process),
+            }), vec![]),
+            Busy => return Ok(vec![]),
+            Unavailable => (None, vec!["Context scoped bindings are waiting for a fresh native process observation.".into()]),
         };
-        state.desktop.as_mut().unwrap().refresh_context(scope.clone())?;
-        state.desktop_scope=scope;
+        desktop.refresh_context(scope.clone())?;
+        desktop.process_observation = lease;
+        state.desktop_scope = scope;
         Ok(diagnostics)
     }
     fn withdraw_game(resources: &crate::profile_resources::Runtime, state: &NativeRun) -> Result<(), String> {
@@ -1237,7 +1243,8 @@ impl Host for NativeProfileHost {
             let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
-        [routing, state.game.validation_deadline(), state.game.assetto_capture_deadline(),
+        [routing, (!state.vehicle_paused).then(|| state.desktop.as_ref().and_then(|desktop| desktop.context_deadline())).flatten(),
+            state.game.validation_deadline(), state.game.assetto_capture_deadline(),
             state.dcs_hid.withdrawal_deadline(), state.scripts.next_deadline(),
             (!state.vehicle_paused).then(|| state.publication.proof_deadline()).flatten(),
             state.companions.feedback_deadline(), state.output.as_ref().and_then(|output|

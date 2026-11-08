@@ -90,6 +90,7 @@ impl Signal {
         *scope = continuity.map(|continuity| (library, continuity));
         drop(scope);
         self.context_process_wake.notify();
+        self.wake_routing();
     }
 
     pub(crate) fn context_process_live(&self, library: u64) -> bool {
@@ -132,6 +133,7 @@ impl Signal {
         self.mark(Domain::Runtime);
         self.wake_automatic();
         self.wake_launch();
+        self.wake_routing();
     }
     /// Only the journaled launch hold can install a confirmation waiter.
     pub(crate) fn watch_launch(&self, wake: &Arc<osg_streams::NativeWake>) {
@@ -162,10 +164,13 @@ impl Signal {
     }
     pub(crate) fn mark_vehicle_context(&self) {
         self.context_update_wake.notify();
+        self.wake_routing();
+        self.wake_automatic();
+    }
+    pub(crate) fn wake_routing(&self) {
         if let Some(wake) = self.routing_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
             wake.notify();
         }
-        self.wake_automatic();
     }
     pub(crate) fn watch_resources(&self, wake: &Arc<osg_streams::NativeWake>) {
         *self.resource_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);

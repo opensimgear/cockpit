@@ -27,6 +27,7 @@ fn empty_wrapper(scope: Option<Scope>, started: bool) -> Desktop {
         scope,
         started,
         wake: None,
+        process_observation: None,
     }
 }
 
@@ -37,6 +38,12 @@ fn absent_game_scope_starts_dormant_and_stops_without_acquiring_output() {
 
     desktop.start(&reducer, None, None).unwrap();
     assert_eq!(desktop.status()["state"], "waiting");
+    let expires = std::time::Instant::now();
+    desktop.process_observation = Some(crate::game_activation::ProcessObservationLease::Expires(expires));
+    assert_eq!(desktop.context_deadline(), Some(expires));
+    assert!(!desktop.context_notification_driven(), "Process proof alone cannot qualify a missing adapter");
+    desktop.process_observation = Some(crate::game_activation::ProcessObservationLease::Events);
+    assert_eq!(desktop.context_deadline(), None);
     assert!(desktop.poll(&[], &reducer).unwrap().is_empty());
     desktop.refresh_context(None).unwrap();
     desktop.keep_alive().unwrap();

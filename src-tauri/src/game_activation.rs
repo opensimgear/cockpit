@@ -94,6 +94,12 @@ pub(crate) enum CurrentProcessObservation {
     Observed(Option<ProcessIdentity>),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessObservationLease {
+    Events,
+    Expires(Instant),
+}
+
 pub(crate) fn process_candidate(game: &Value) -> bool {
     game["installed"] == true && game["processMonitoringSupported"] == true
 }
@@ -150,7 +156,10 @@ impl Observer {
     }
     fn set_worker_live(&self, live: bool) {
         self.2.store(live, Ordering::Release);
-        if let Some(signal) = self.1.get() { signal.wake_launch(); }
+        if let Some(signal) = self.1.get() {
+            signal.wake_launch();
+            signal.wake_routing();
+        }
     }
     pub(crate) fn view_deadline(&self)->Option<Instant> {
         let state = self.0.lock().unwrap_or_else(|p|p.into_inner());
@@ -162,20 +171,27 @@ impl Observer {
     /// the mapping heartbeat. The desktop worker still checks exact process
     /// identity and foreground ownership before each native submission.
     pub(crate) fn try_current_process(&self, id: &str) -> CurrentProcessObservation {
+        self.try_current_process_with_lease(id).0
+    }
+
+    pub(crate) fn try_current_process_with_lease(&self, id: &str)
+        -> (CurrentProcessObservation, Option<ProcessObservationLease>) {
+        use CurrentProcessObservation::{Busy, Observed, Unavailable};
         let state = match self.0.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return CurrentProcessObservation::Busy,
+            Err(std::sync::TryLockError::WouldBlock) => return (Busy, None),
         };
         if !state.fresh() {
-            return CurrentProcessObservation::Unavailable;
+            return (Unavailable, None);
         }
-        state.entries.get(id).map_or(
-            CurrentProcessObservation::Unavailable,
-            |entry| CurrentProcessObservation::Observed(
-                entry.confirmed.as_ref().map(|proof| proof.process.clone()),
-            ),
-        )
+        let Some(entry) = state.entries.get(id) else { return (Unavailable, None); };
+        let lease = if state.continuity.is_some() {
+            Some(ProcessObservationLease::Events)
+        } else {
+            state.at.and_then(|at| at.checked_add(MAX_AGE)).map(ProcessObservationLease::Expires)
+        };
+        (Observed(entry.confirmed.as_ref().map(|proof| proof.process.clone())), lease)
     }
     #[cfg(test)]
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
@@ -299,7 +315,7 @@ impl Observer {
         }
         state.tracks_processes = games.iter().any(process_candidate);
         state.at = Some(Instant::now());
-        let changed=state.entries!=previous || state.fresh()!=was_fresh;drop(state);
+        let changed=!same_source || state.entries!=previous || state.fresh()!=was_fresh;drop(state);
         if let Some(signal)=self.1.get() {
             if changed {signal.mark_process_activation();} else {signal.wake.notify();}
         }

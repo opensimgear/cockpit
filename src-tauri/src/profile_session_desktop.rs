@@ -88,11 +88,22 @@ pub(crate) struct Desktop {
     scope: Option<Scope>,
     started: bool,
     wake: Option<Arc<osg_streams::NativeWake>>,
+    pub(crate) process_observation: Option<crate::game_activation::ProcessObservationLease>,
 }
 impl Desktop {
     pub(crate) fn notification_driven(&self) -> bool {
         self.started && self.scope.is_some()
             && self.inner.as_ref().is_some_and(|inner| inner.notification_driven())
+    }
+    pub(crate) fn context_notification_driven(&self) -> bool {
+        self.process_observation.is_some()
+            && (self.notification_driven() || self.started && self.scope.is_none() && self.inner.is_some())
+    }
+    pub(crate) fn context_deadline(&self) -> Option<std::time::Instant> {
+        match self.process_observation {
+            Some(crate::game_activation::ProcessObservationLease::Expires(at)) => Some(at),
+            _ => None,
+        }
     }
     pub(crate) fn next_deadline_us(&self) -> Option<Counter> {
         if !self.started || self.scope.is_none() { return None; }
@@ -106,7 +117,7 @@ impl Desktop {
         let inner=osg_mapping_host::desktop::Desktop::acquire(run,program,preferences.value.enabled,settings::qualified(),
             crate::config_paths::config_path().with_file_name(journal_name(owner)?),scope.clone(),
             Arc::new(move || { if let Some(wake) = &notification { wake.notify(); } }))?;
-        Ok(Self { inner:Some(inner), owner:owner.clone(), program:program.clone(), scope, started:false, wake })
+        Ok(Self { inner:Some(inner), owner:owner.clone(), program:program.clone(), scope, started:false, wake, process_observation:None })
     }
     pub(crate) fn start(&mut self,reducer:&Phase,_game:Option<&crate::games::PreparedGame>,captured:Option<Scope>)->Result<(),String>{
         if let Some(captured)=captured { self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.bind_scope_before_start(captured.clone())?;self.scope=Some(captured); }
@@ -155,7 +166,7 @@ mod tests{
         let owner=RunOwner{session:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf12".into(),generation:1,
             profile_id:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf13".into(),profile_revision:1,game_id:Some("dcs".into())};
         let reducer=Phase::new(program.clone(),Counter(1),owner.session.clone()).unwrap();
-        let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true,wake:None};
+        let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true,wake:None,process_observation:None};
         assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
         assert!(desktop.next_deadline_us().is_none());
         assert_eq!(desktop.status()["state"],"waiting");

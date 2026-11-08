@@ -39,6 +39,13 @@ impl GamesRuntime {
         if self.inner.closed.load(Ordering::Acquire) { return Err("The native game observer has stopped.".into()); }
         Ok(self.inner.activation.try_current_process(game_id))
     }
+    pub(crate) fn desktop_process_observation(&self, game_id: &str)
+        -> (crate::game_activation::CurrentProcessObservation, Option<crate::game_activation::ProcessObservationLease>) {
+        if self.inner.closed.load(Ordering::Acquire) || !self.inner.activation.worker_live() {
+            return (crate::game_activation::CurrentProcessObservation::Unavailable, None);
+        }
+        self.inner.activation.try_current_process_with_lease(game_id)
+    }
     /// Membership for current native selections is distinct from the syntax
     /// checks used to read persisted profiles and removed-game recovery state.
     pub(crate) fn registered_profile_game(&self, game_id: &str) -> Result<Value, String> {

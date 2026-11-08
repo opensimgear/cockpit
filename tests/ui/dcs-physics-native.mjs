@@ -77,7 +77,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     assert.equal(reply.ok, true, `${value.command}: ${reply.error}`); return reply.state;
   };
   const combined = combinedProbe ? combinedDcsFixture(cdp, request, combinedProbe, {browserUrl, observeMcp, nativeRates, seconds}) : null;
-  const desktop = !browserUrl && process.env.OSG_DCS_DESKTOP_WAKES === '1' ? dcsDesktopWakes(request, until) : null;
+  const desktopMode = {'1': 'desktop-wide', 'selected-game': 'selected-game'}[process.env.OSG_DCS_DESKTOP_WAKES];
+  const desktop = !browserUrl && desktopMode ? dcsDesktopWakes(request, until, desktopMode) : null;
   if (combined) evidence.ipcOnly = false;
   const games = async () => (await request({command: 'game_get_state'})).games;
   const game = async () => (await games()).catalogue.find(item => item.id === 'dcs');
@@ -310,7 +311,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     evidence.captured = {resource, ports: chosen, profile};
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     evidence.phases.live = await live(); await checkpoint('selected physics and BIOS reach identity processing');
-    if (desktop) { evidence.phases.desktopWakes = await desktop.verify(); await live(); }
+    if (desktop) { evidence.phases.desktopWakes = await desktop.verify(child.pid); await live(); }
     for (const phase of ['paused', 'active-pause', 'denied', 'frozen']) {
       mode = phase; evidence.phases[phase] = await withdrawn(phase);
       mode = 'live'; await live(); await checkpoint(`${phase} withdrawal and rearm verified`);
@@ -418,6 +419,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     evidence.phases.exit = await absent('flight.airspeed.true'); await absent(biosId);
     await until(async () => { const page = await samples(); return !page || Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, 'Process exit retained processing values');
     evidence.phases.afterProcessExit = (await status()).profileSession;
+    if (desktop) evidence.phases.desktopExit = await desktop.verifyExit();
     checks.push('Independent inspection and selected native/canonical profile values preserve zero/false and units; unbound wind and BIOS aircraft gauge remain inspectable.');
     checks.push('Counter-only BIOS renewals preserve retained values. BIOS expiry withdraws its identity output without withdrawing fresh ownship.');
     checks.push(nativeCommands ? 'A fresh BIOS baseline allows the command profile to reapply without replay.' : 'A new read-only run can start from ownship alone and BIOS recovers independently.');

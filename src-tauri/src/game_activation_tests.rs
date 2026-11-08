@@ -102,14 +102,24 @@ fn launch_wait_accepts_only_the_exact_confirmed_process_without_native_scans() {
 fn live_desktop_process_reads_cached_identity_without_scanning_or_waiting() {
     let platform = fake();
     let observer = Observer::default();
+    let signal = Arc::new(crate::game_read_models::signals::Signal::default());
+    let routing = Arc::new(osg_streams::NativeWake::default());
+    signal.watch_vehicle_routing(&routing);
+    observer.watch_changes(signal);
+    let _worker = observer.worker_scope();
     assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Unavailable);
     observer.observe(&platform, &[game()]);
     assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(None));
     *platform.current.lock().unwrap() = Ok(Some(running(1)));
     observer.observe(&platform, &[game()]);
     observer.observe(&platform, &[game()]);
+    let confirmed = routing.observed();
+    observer.observe(&platform, &[game()]);
+    assert_eq!(routing.observed(), confirmed, "A stable scan must not wake routing");
     let scans = platform.scans.load(Ordering::Relaxed);
-    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(Some(running(1))));
+    let (observation, lease) = observer.try_current_process_with_lease("dcs");
+    assert_eq!(observation, CurrentProcessObservation::Observed(Some(running(1))));
+    assert!(matches!(lease, Some(ProcessObservationLease::Expires(at)) if Some(at) == observer.view_deadline()));
     assert_eq!(platform.scans.load(Ordering::Relaxed), scans);
     let mut state = observer.0.lock().unwrap();
     let began = Instant::now();
@@ -121,6 +131,10 @@ fn live_desktop_process_reads_cached_identity_without_scanning_or_waiting() {
     *platform.current.lock().unwrap() = Ok(None);
     observer.observe(&platform, &[game()]);
     assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(None));
+    assert_ne!(routing.observed(), confirmed, "A withdrawn process must wake routing");
+    let withdrawn = routing.observed();
+    drop(_worker);
+    assert_ne!(routing.observed(), withdrawn, "Stopping the worker must wake routing");
 }
 
 #[test]
@@ -482,6 +496,7 @@ fn live_inventory_continuity_withdraws_proof_immediately_and_fences_replacement(
     observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE * 2);
     assert_eq!(observer.snapshot().unwrap(), [first.clone()]);
     assert!(observer.view_deadline().is_none());
+    assert!(matches!(observer.try_current_process_with_lease("dcs").1, Some(ProcessObservationLease::Events)));
 
     live.retire();
     assert!(!live.begin());

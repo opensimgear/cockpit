@@ -114,10 +114,12 @@ The hold stays disarmed until Start.
 Desktop tap, repeat, pointer motion and reducer deadlines enter native deadline
 selection. Foreground, desktop and session changes notify the parent and helper
 scope owners. The helper also wakes for native commands and release deadlines.
-An explicitly scoped desktop output can share this scheduling with a watched
-game. Both the game source and desktop scope must have live notification
-coverage. A selected-game desktop scope still depends on separate process
-selection and retains fallback service.
+Desktop output can share this scheduling with a watched game. Both the game
+source and desktop scope must have live notification coverage. A selected-game
+scope also wakes on committed process changes and worker retirement. It
+schedules the observation's expiry when the shared process owner uses its
+one-second fallback. A stale observation parks the desktop output. A busy
+observer keeps the current exact scope and requests another service pass.
 First-dispatch, burst timing and broader adapter combinations remain open.
 
 November 4 audit update. Workspace discovery now enumerates serial ports on

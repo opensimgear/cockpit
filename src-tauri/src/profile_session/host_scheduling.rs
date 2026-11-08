@@ -28,11 +28,7 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
     let watched_game = game.is_some() && state.game.watched_game_source()
         && state.game.provider_identity().is_some_and(|(provider, _)| Some(provider) == game)
         && state.game_preparation.as_ref().is_some_and(|prepared| Some(prepared.proof.game_id.as_str()) == game)
-        && !state.game_publication.deferred
-        // Selected-game desktop scopes also depend on the separate activation
-        // observer. A fixed desktop scope can use its own native watch.
-        && !NativeProfileHost::context_desktop(&state.document)
-        && !NativeProfileHost::context_desktop(&state.source_document);
+        && !state.game_publication.deferred;
     // DCS command completion and failure wake the same host as telemetry.
     let watched_dcs = watched_game && state.game_preparation.as_ref()
         .is_some_and(|prepared| prepared.integration_key == "dcs");
@@ -72,6 +68,9 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
 fn desktop_notifications(state: &NativeRun) -> bool {
     if state.document.desktop_outputs.is_empty() && state.source_document.desktop_outputs.is_empty() {
         state.desktop.is_none()
+    } else if NativeProfileHost::context_desktop(&state.document)
+        || NativeProfileHost::context_desktop(&state.source_document) {
+        state.desktop.as_ref().is_some_and(|desktop| desktop.context_notification_driven())
     } else {
         state.desktop.as_ref().is_some_and(|desktop| desktop.notification_driven())
     }
