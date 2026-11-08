@@ -115,9 +115,10 @@ mod tests {
 
     #[test]
     fn discovery_tracks_only_variant_file_and_leaves_saved_games_root_explicit() {
-        let install = Path::new("D:/Games/DCS");
+        let root = crate::test_directory();
+        let install = root.path().join("DCS");
         assert_eq!(
-            install_discovery_watch_paths(Some(install)),
+            install_discovery_watch_paths(Some(&install)),
             vec![install.join("dcs_variant.txt")]
         );
         assert!(install_discovery_watch_paths(None).is_empty());

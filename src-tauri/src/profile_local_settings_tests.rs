@@ -86,11 +86,18 @@ fn registered_game_local_settings_are_readable_and_unknown_ids_are_rejected() {
         "expectedActiveOwner":null,
         "settings":{"profileId":osg_profiles::DEFAULT_PROFILE_ID,"priority":0,"enabled":true}
     }));
-    assert_eq!(saved["ok"], true, "{saved}");
-    assert_eq!(
-        saved["state"]["localSettings"]["settings"]["rule"]["identity"]["gameId"],
-        game_id
-    );
+    if cfg!(windows) {
+        assert_eq!(saved["ok"], true, "{saved}");
+        assert_eq!(
+            saved["state"]["localSettings"]["settings"]["rule"]["identity"]["gameId"],
+            game_id
+        );
+    } else {
+        assert_eq!(saved["ok"], false, "{saved}");
+        assert_eq!(saved["error"], "The selected installation has no native process monitoring support.");
+        let current = request(json!({"command":"profile_local_settings_get","scope":"game-rule","gameId":game_id}));
+        assert_eq!(current, read);
+    }
 
     let invalid = request(json!({
         "command":"profile_local_settings_get",
