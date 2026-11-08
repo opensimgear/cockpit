@@ -67,6 +67,16 @@ now reconciles the current deadline on reveal. Both transports saved an
 actual profile while hidden, kept the current notice across navigation and
 cleared the expired notice without waiting for a delayed callback.
 
+The [passive learning stream fixture](../../tests/ui/profile-learning-observation-reopen.mjs)
+passed on native Windows and browser-dev. An attached HID controller already
+had a complete baseline. Each gateway delivered listening at revision 2,
+retired the exact reader, then reopened at revision 3 after an independent
+cancellation. The exact capture was stopped with no candidates and the
+profile runtime stayed stopped. Fifteen focused client, controller and
+component tests passed. The existing controller editor exposes its port
+catalogue. Its former learning panel has had no portal caller since
+`2013ce62`, which predates R7.
+
 [Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
 retire their readers while the document is hidden. Devices reopens on
 current desktop, driver, inventory and visibility baselines on native and
