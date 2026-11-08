@@ -5,13 +5,14 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 38 checked and 17
+The original #189–198 acceptance list has 55 criteria, with 39 checked and 16
 open. Six of the open criteria were transferred to #199 for user-operated
 qualification. Some remaining criteria have delivered software and outstanding
 integrated or platform qualification.
 
 #190 (R1, shared stream contracts), #191 (R2, native input), #194 (R5,
-committed read models) and #197 (R8, MCP workflow parity) are closed.
+committed read models), #196 (R7, reactive UI) and #197 (R8, MCP workflow
+parity) are closed.
 Integrated qualification remains open in #198.
 
 For R2, the [input acquisition inventory](acquisition.md#r2-native-input-transport-gate)
@@ -34,10 +35,18 @@ and macOS LaunchAgent delivery remain in #199.
 | #192 | Passive and active telemetry retain their exact readers during transient process inventory failures. A [late catalogue refresh](../verification/2026-11-07-slow-vehicle-catalogue.md) also preserves the admitted passive reader and its existing capture. Active proof expiry withdraws samples and requires a fresh baseline. Unstable Assetto page copies preserve the original capture's age. The authored DCS fixture verifies independent BIOS and ownship withdrawal and recovery in the running Cockpit. The [DCS backpressure fixture](../verification/2026-11-07-dcs-telemetry-backpressure.md) verifies BIOS expiry alongside fresh ownship captures and a stalled reader on both transports. [Scoped Windows denial](../verification/2026-11-08-scoped-telemetry-permission.md) preserves game discovery while withholding X-Plane and Assetto telemetry. Granted access, cross-integration contention and actual simulator qualification remain open. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles now use retained wakes and deadlines, and the recent-application chooser also uses native events. Authored DCS profiles with [explicit](../verification/2026-11-08-mixed-game-desktop-wakes.md) and [selected-game](../verification/2026-11-08-selected-game-desktop-wakes.md) desktop scopes run without the 5 ms service interval while their watches and process proof are healthy. The controlled two-window focus check passes after Windows is unlocked. Remaining work includes live simulator effects, broader focus and child-loss qualification, and first-dispatch and burst timing. Sustained latency qualification is interrupted by WSL foreground takeover. |
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
-| #196 | Main navigation, Activity retention, repeated profile game-query handoff, preference reopen and Games detail reopen after a background commit are verified on native and browser-dev. [Debug telemetry](../verification/2026-11-07-telemetry-reopen-parity.md) follows visible game renames and shows current metadata and authored DCS samples after reopening on both transports. Native General discards desktop status replies after hiding and shows background tray and progress commits on reopen. Browser-dev shows the desktop-only controls as unavailable and follows the saved progress value. Native AI settings retires its status reader while hidden and reconciles a background credential revocation on reopen. Browser-dev shows the desktop-only AI settings boundary without a status request. Native dirty editor, controller metadata and companion listener checks passed. Companion library reopen passed on native and across separate browser-dev tabs. The [applied virtual preview](../verification/2026-11-07-virtual-preview-reopen.md) mounts hidden without subscribing and shows the latest routed sample on each reveal on both transports. [Debug desktop readiness](../verification/2026-11-07-debug-desktop-readiness-details.md) now opens only when the details are expanded and retires on collapse, hide and navigation. Native and browser-dev verified exact collapse retirement. Other nested lifetime and background/reopen checks remain open. |
 | #198 | The [30-minute authored Windows soak](../verification/2026-11-07-dcs-panel-vjoy.md#30-minute-desktop-soak), [software burst and fault scenarios](../verification/2026-11-07-stream-fault-scenarios.md), and [terminal observation reopen](../verification/2026-11-08-terminal-observation-reopen.md) passed. Physical unplug and replug remain in #199. All eight top-level views passed [60-second native and browser-dev idle traces](../verification/2026-11-08-idle-transport-matrix.md) with zero gateway requests. The broader integrated matrix, full timing budget, applicable suites and CI, and final acquisition inventory remain open. |
 
 ## R7 UI consistency
+
+The [R7 acceptance matrix](../verification/2026-11-08-r7-reopen-acceptance.md)
+records the final background and reopen evidence. A real pending launch
+produced current application-level progress on reveal. Cancellation while
+hidden retired the presenter and left no active owner on both transports.
+
+[Debug desktop readiness](../verification/2026-11-07-debug-desktop-readiness-details.md)
+opens only for expanded details. Both transports verified exact retirement
+on collapse, hide and navigation.
 
 [Debug recovery reader lifetime](../verification/2026-11-08-companion-transport-and-timing-audit.md)
 passed three open/retire cycles on both transports. Each current baseline
@@ -50,7 +59,7 @@ passed on the current native and browser-dev builds. The profile editor
 reopened on the committed rename, applied a saved range edit under a new
 owner, and reopened on a stopped runtime after an independent Stop on
 Overview. Both transports observed the exact progress outcomes and expiry
-without status refreshes. The full nested-surface matrix remains open.
+without status refreshes.
 
 [Automatic selection on reopen](../verification/2026-11-08-profile-automatic-reopen.md)
 verifies that both transports show the selected profile after background
@@ -136,7 +145,7 @@ running Windows Cockpit passed the companion input/output tile and paging
 fixture on November 7. Ten focused port UI tests and the full companion
 coverage command also passed. The WebView loaded the development frontend,
 which contained unrelated local profile edits. The component review used
-committed main. The physical VKB and broader background/reopen gates remain open.
+committed main. The physical VKB display and input timing checks remain in #199.
 
 The DCS aircraft editor follows provider settings and changes to JSON in the
 selected DCS-BIOS catalogue directory through native file notifications. The
