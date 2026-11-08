@@ -419,8 +419,17 @@ fn run(
                 .iter()
                 .map(|s| s.instance.clone())
                 .collect::<Vec<_>>();
+            let verify_instances = |adapter: &mut Box<dyn Adapter>| {
+                for (source, instance) in initial.iter().zip(&expected_instances) {
+                    if adapter.instance(&source.interface)? != *instance {
+                        return Err("A hidden controller instance changed.".into());
+                    }
+                }
+                Ok(())
+            };
             let mut checked_inventory = inventory.observed();
             session.check(capture_source.sources(&ids))?;
+            session.verify(&verify_instances)?;
             if cancel.load(Ordering::Acquire) {
                 return session.stop();
             }
@@ -431,6 +440,7 @@ fn run(
                 let inventory_epoch = inventory.observed();
                 if checked_inventory != inventory_epoch {
                     session.check(capture_source.sources(&ids))?;
+                    session.verify(&verify_instances)?;
                     checked_inventory = inventory_epoch;
                 }
                 if let Ok(request) = reads.try_recv() {
@@ -450,11 +460,6 @@ fn run(
                                     "A visibility executable moved; stop and select its new path."
                                         .into(),
                                 );
-                            }
-                        }
-                        for (source, instance) in initial.iter().zip(&expected_instances) {
-                            if adapter.instance(&source.interface)? != *instance {
-                                return Err("A hidden controller instance changed.".into());
                             }
                         }
                         if adapter.read()? != expected_policy {

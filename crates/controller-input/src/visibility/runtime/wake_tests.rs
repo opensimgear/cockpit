@@ -121,3 +121,66 @@ fn unavailable_inventory_watch_fails_before_policy_mutation() {
     assert!(!state.lock().unwrap().active);
     assert!(journal::inspect(&path).unwrap().is_none());
 }
+
+struct InstanceProbe {
+    driver: Box<dyn Adapter>,
+    reads: Arc<AtomicU64>,
+    replaced: Arc<AtomicBool>,
+}
+
+impl Backend for InstanceProbe {
+    fn read(&mut self) -> Result<State, String> { self.driver.read() }
+    fn change(&mut self, expected: &State, desired: &State) -> Result<(), String> {
+        self.driver.change(expected, desired)
+    }
+}
+
+impl Adapter for InstanceProbe {
+    fn executable(&mut self, path: &str) -> Result<String, String> {
+        self.driver.executable(path)
+    }
+    fn instance(&mut self, interface: &str) -> Result<String, String> {
+        self.reads.fetch_add(1, Ordering::AcqRel);
+        if self.replaced.load(Ordering::Acquire) {
+            return Ok(r"HID\REPLACEMENT".into());
+        }
+        self.driver.instance(interface)
+    }
+}
+
+#[test]
+fn exact_instance_lookup_runs_on_inventory_changes_and_withdraws_replacement() {
+    let ReadyCapture { registry, task, factory, capture, state, fresh_read, resume_read } = ReadyCapture::new();
+    let reads = Arc::new(AtomicU64::new(0));
+    let replaced = Arc::new(AtomicBool::new(false));
+    let probe_reads = reads.clone();
+    let probe_replaced = replaced.clone();
+    let factory: Factory = Arc::new(move || Ok(Box::new(InstanceProbe {
+        driver: factory()?, reads: probe_reads.clone(), replaced: probe_replaced.clone(),
+    })));
+    let temp = crate::test_directory();
+    let path = temp.path().join("visibility.json");
+    let mut worker = Worker::default();
+    let Task::Apply { ids, .. } = &task else { unreachable!() };
+    let id = ids[0].clone();
+    let status = worker.start(task, path.clone(), factory, capture).unwrap();
+    fresh_read.recv_timeout(Duration::from_secs(4)).unwrap();
+    registry.lock().unwrap().report(&id, 1, &BTreeMap::from([(0, 0), (1, 0)])).unwrap();
+    resume_read.send(()).unwrap();
+    assert!(worker.completion().wait(&status.job_id, false, Duration::from_secs(1)).unwrap());
+    assert_eq!(worker.snapshot().unwrap().phase, "active");
+    let before = reads.load(Ordering::Acquire);
+    assert_eq!(before, 2, "preflight and post-hide instance proofs");
+    std::thread::sleep(DRIVER_AUDIT + Duration::from_millis(50));
+    assert_eq!(reads.load(Ordering::Acquire), before);
+
+    replaced.store(true, Ordering::Release);
+    let mut definition = crate::tests::fixture("exact-interface", None);
+    definition.identity.backend = "windows-raw-input".into();
+    assert_eq!(registry.lock().unwrap().connect(definition).unwrap(), id);
+    assert!(worker.completion().wait(&status.job_id, true, Duration::from_secs(1)).unwrap());
+    assert!(worker.snapshot().unwrap().message.contains("hidden controller instance changed"));
+    assert_eq!(reads.load(Ordering::Acquire), before + 1);
+    assert!(!state.lock().unwrap().active);
+    assert!(journal::inspect(&path).unwrap().unwrap().clean);
+}
