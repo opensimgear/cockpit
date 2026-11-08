@@ -471,3 +471,5 @@ mod decoration;
 mod validation;
 #[path = "games/context/capture_workers_tests.rs"]
 mod capture_isolation;
+#[path = "games/context/vehicle_openers_tests.rs"]
+mod startup_isolation;

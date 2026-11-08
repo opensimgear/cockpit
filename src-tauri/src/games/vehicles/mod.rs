@@ -47,6 +47,7 @@ fn vehicle(game: &str, value: &str) -> Option<Value> {
 
 mod sources;
 mod observation;
+pub(crate) use observation::VehicleObservation;
 mod polling;
 use sources::*;
 fn validate_saved(saved: &Value) -> Result<(), String> {
@@ -101,6 +102,7 @@ struct Entry {
     generation: u64,
     polling: bool,
     opening: Option<u64>,
+    queued_open: Option<Box<VehicleObservation>>,
     detached_physics: Option<crate::dcs_physics::SourceView>,
     capture_watch: Option<CaptureBinding>,
     inventory_revision: u64,
@@ -160,6 +162,7 @@ pub(crate) struct Tracker {
     changes: Option<Arc<crate::game_read_models::signals::Signal>>,
     published_deadline: Option<Instant>,
     capture_wakes: Option<Arc<CaptureWakes>>,
+    open_wakes: Option<Arc<CaptureWakes>>,
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
@@ -352,6 +355,7 @@ impl Tracker {
             changes: None,
             published_deadline: None,
             capture_wakes: None,
+            open_wakes: None,
         }
     }
 

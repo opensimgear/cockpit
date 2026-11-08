@@ -177,6 +177,7 @@ impl Tracker {
                 entry.generation = entry.generation.wrapping_add(1);
                 entry.polling = false;
                 entry.opening = None;
+                entry.queued_open = None;
                 entry.detached_physics = None;
                 entry.capture_watch = None;
                 self.retired.extend(entry.reader.take());

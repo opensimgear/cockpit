@@ -116,8 +116,11 @@ quiet.
 
 [Passive telemetry capture](../verification/2026-11-08-vehicle-capture-workers.md)
 now handles native reads and freshness deadlines independently per integration.
-A blocked reader can no longer delay another integration's capture. Provider
-startup isolation and simulator qualification remain open.
+A blocked reader can no longer delay another integration's capture.
+[Passive reader startup](../verification/2026-11-08-vehicle-reader-startup.md)
+runs native open and initial watch registration on separate workers by
+integration. Process inventory, setup qualification, and simulator acceptance
+remain under #192 and #199.
 
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
 matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)

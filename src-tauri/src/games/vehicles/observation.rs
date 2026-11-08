@@ -10,12 +10,29 @@ pub(crate) struct VehicleObservation {
     process: Option<ProcessIdentity>,
     inspection: Vec<String>,
     reader: Option<Result<Reader, String>>,
+    prepared_watch: Option<Result<CaptureBinding, String>>,
     installation: String,
     setup_revision: String,
     identity: Option<ProcessIdentity>,
     verified: Option<bool>,
 }
 impl VehicleObservation {
+    #[cfg(test)]
+    pub(crate) fn test_opening_pid(&self) -> u32 {
+        self.process.as_ref().unwrap().pid
+    }
+    fn is_opening(&self) -> bool {
+        self.process.is_some()
+    }
+    pub(crate) fn can_open(&self) -> bool {
+        self.verified == Some(true)
+    }
+    pub(crate) fn prepare_watch(mut self, wake: &Arc<osg_streams::NativeWake>) -> Self {
+        if let Some(Ok(reader)) = &self.reader {
+            self.prepared_watch = Some(CaptureBinding::require_live(reader, wake));
+        }
+        self
+    }
     pub(crate) fn read(self) -> Self {
         self.read_with(Reader::open)
     }
@@ -36,6 +53,17 @@ impl VehicleObservation {
         }
         self
     }
+    pub(crate) fn verify_ready(
+        self,
+        games: &[Value],
+        revision: impl FnOnce(&Value) -> String,
+        alive: impl FnMut(&ProcessIdentity) -> Result<bool, String>,
+    ) -> Self {
+        let current = games.iter().find(|game| game["id"] == self.id);
+        let revision = current.map_or_else(String::new, revision);
+        self.verify(games, &revision, alive)
+    }
+
     pub(crate) fn verify(
         mut self,
         games: &[Value],
@@ -53,6 +81,29 @@ impl VehicleObservation {
     }
 }
 impl Tracker {
+    pub(crate) fn watch_openers(&mut self, wakes: Arc<CaptureWakes>) {
+        self.open_wakes = Some(wakes);
+    }
+    pub(crate) fn stop_openers(&mut self) {
+        self.open_wakes = None;
+        for entry in self.entries.values_mut() {
+            entry.queued_open = None;
+            entry.opening = None;
+        }
+    }
+    pub(crate) fn defer_open(&mut self, observation: VehicleObservation) -> Option<VehicleObservation> {
+        let Some(wake) = self.open_wakes.as_ref().and_then(|wakes| wakes.get(&observation.integration))
+            .filter(|_| observation.is_opening()) else { return Some(observation); };
+        let entry = self.entries.get_mut(&observation.id).expect("Observation must own a tracker entry");
+        entry.queued_open = Some(Box::new(observation));
+        wake.notify();
+        None
+    }
+    pub(crate) fn take_open(&mut self, integration: &str) -> Option<VehicleObservation> {
+        self.entries.values_mut().filter(|entry| entry.integration == integration)
+            .find_map(|entry| entry.queued_open.take().map(|work| *work))
+    }
+
     #[cfg(test)]
     pub(crate) fn observe(
         &mut self,
@@ -138,6 +189,7 @@ impl Tracker {
             generation: 0,
             polling: false,
             opening: None,
+            queued_open: None,
             detached_physics: None,
             capture_watch: None,
             inventory_revision: 0,
@@ -152,6 +204,7 @@ impl Tracker {
             entry.generation = entry.generation.wrapping_add(1);
             entry.polling = false;
             entry.opening = None;
+            entry.queued_open = None;
             entry.detached_physics = None;
             if entry.installation != Self::installation(game) || entry.setup_revision != setup_revision {
                 entry.inspection = inspection::Demand::default();
@@ -191,6 +244,7 @@ impl Tracker {
             process,
             inspection: entry.inspection.selection(now).to_vec(),
             reader: None,
+            prepared_watch: None,
             installation: entry.installation.clone(),
             setup_revision: entry.setup_revision.clone(),
             identity: entry.process.clone(),
@@ -198,6 +252,9 @@ impl Tracker {
         };
         self.publish_visible(id);
         Some(observation)
+    }
+    fn wake_open_retry(&self) {
+        if let Some(changes) = &self.changes { changes.context_update_wake.notify(); }
     }
     pub(crate) fn apply_observation(&mut self, observation: VehicleObservation) {
         let Some(entry) = self.entries.get_mut(&observation.id) else {
@@ -218,6 +275,7 @@ impl Tracker {
             return;
         }
         if observation.verified == Some(false) {
+            entry.queued_open = None;
             entry.generation = entry.generation.wrapping_add(1);
             entry.polling = false;
             entry.opening = None;
@@ -227,6 +285,7 @@ impl Tracker {
             entry.current = None;
             entry.telemetry = None;
             entry.retry = Instant::now() + Duration::from_secs(2);
+            if owns_opening { self.wake_open_retry(); }
             self.retired.extend(observation.reader.and_then(Result::ok));
             self.publish_visible(&observation.id);
             return;
@@ -234,7 +293,10 @@ impl Tracker {
         if observation.verified.is_none() || entry.observed.elapsed() > Duration::from_secs(2) {
             // Late process work cannot revoke an admitted reader or make its
             // proof current. Only an unadmitted opener must retry.
-            if owns_opening { entry.retry = Instant::now() + Duration::from_secs(2); }
+            if owns_opening {
+                entry.retry = Instant::now() + Duration::from_secs(2);
+                self.wake_open_retry();
+            }
             self.retired.extend(observation.reader.and_then(Result::ok));
             self.publish_visible(&observation.id);
             return;
@@ -242,8 +304,10 @@ impl Tracker {
         if let Some(reader) = observation.reader {
             let wake = self.capture_wakes.as_ref().and_then(|wakes| wakes.get(&entry.integration));
             let admitted = reader.and_then(|reader| {
-                let watch = wake
-                    .map(|wake| CaptureBinding::require_live(&reader, wake)).transpose();
+                let watch = match observation.prepared_watch {
+                    Some(watch) => watch.map(Some),
+                    None => wake.map(|wake| CaptureBinding::require_live(&reader, wake)).transpose(),
+                };
                 match watch {
                     Ok(watch) => Ok((reader, watch)),
                     Err(error) => {

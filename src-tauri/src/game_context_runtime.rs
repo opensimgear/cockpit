@@ -6,6 +6,8 @@ use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwn
 pub(super) mod process_cache;
 #[path = "games/context/capture_workers.rs"]
 mod capture_workers;
+#[path = "games/context/vehicle_openers.rs"]
+mod vehicle_openers;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
@@ -188,10 +190,15 @@ impl GamesRuntime {
         }
         let inner = self.inner.clone();
         let capture_wakes = inner.changes.vehicle_capture_wakes.clone();
-        inner.update_vehicles(|vehicles| vehicles.watch_capture_lanes(capture_wakes.clone()));
+        let open_wakes = Arc::new(crate::game_vehicles::CaptureWakes::default());
+        inner.update_vehicles(|vehicles| {
+            vehicles.watch_capture_lanes(capture_wakes.clone());
+            vehicles.watch_openers(open_wakes.clone());
+        });
         *self.observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(thread::spawn(move || {
             let polling_closed = Arc::new(AtomicBool::new(false));
             let polling = capture_workers::start(inner.clone(), polling_closed.clone());
+            let openers = vehicle_openers::start(inner.clone(), polling_closed.clone(), &open_wakes);
             let context_wake = &inner.changes.context_wake;
             let process_wake = &inner.changes.context_process_wake;
             let worker_wake = &inner.changes.context_worker_wake;
@@ -234,9 +241,11 @@ impl GamesRuntime {
             }
             polling_closed.store(true, Ordering::Release);
             capture_wakes.notify_all();
-            for worker in polling {
+            open_wakes.notify_all();
+            for worker in polling.into_iter().chain(openers) {
                 let _ = worker.join();
             }
+            inner.update_vehicles(|vehicles| vehicles.stop_openers());
         }));
     }
     pub(super) fn decorate_game_contexts(&self, games: &mut [Value]) {
@@ -321,16 +330,6 @@ impl Inner {
             let value = update(&mut vehicles); (value, vehicles.take_retired()) };
         drop(retired);
         value
-    }
-    fn vehicle_telemetry_games(&self) -> Vec<Value> {
-        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
-        if settings.metadata_error.is_some() {
-            return vec![];
-        }
-        settings.catalogue.iter()
-            .filter(|game| crate::game_discovery::integration_key(game).is_some())
-            .cloned()
-            .collect()
     }
     fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
         // Other games already select their profile vehicle independently. DCS
@@ -446,14 +445,13 @@ impl Inner {
                 .ok()
                 .map(|(connection, _, _)| connection);
             if let Some(connection) = connection {
-                let work = self.update_vehicles(|vehicles| vehicles.begin_inventory_observation(&game, &connection, process.clone(), &revision,
-                        supported && game["integrationSetup"]["state"] == "ready", epoch));
+                let work = self.update_vehicles(|vehicles| {
+                    vehicles.begin_inventory_observation(game, &connection, process.clone(), &revision,
+                        supported && game["integrationSetup"]["state"] == "ready", epoch)
+                        .and_then(|work| vehicles.defer_open(work))
+                });
                 if let Some(work) = work {
-                    let observed = work.read();
-                    let current_games = self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone();
-                    let observed = observed.verify(&current_games, &self.setup.provider_setup_revision(integration),
-                        |process| self.platform.alive(process));
-                    self.update_vehicles(|vehicles| vehicles.apply_observation(observed));
+                    vehicle_openers::finish_inline(self, integration, work);
                 }
             }
             let vehicle_id = self.runtime_vehicle_id(id);

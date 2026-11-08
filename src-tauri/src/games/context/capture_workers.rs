@@ -35,6 +35,16 @@ fn run(inner: &Inner, stop: &AtomicBool, integration: &str, wake: &NativeWake) {
 }
 
 impl Inner {
+    pub(super) fn vehicle_telemetry_games(&self) -> Vec<Value> {
+        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        if settings.metadata_error.is_some() {
+            return vec![];
+        }
+        settings.catalogue.iter()
+            .filter(|game| crate::game_discovery::integration_key(game).is_some())
+            .cloned()
+            .collect()
+    }
     pub(super) fn poll_vehicle_telemetry(&self, integration: &str, recheck_scope: bool) {
         let candidates = self.vehicles.lock().unwrap_or_else(|p| p.into_inner())
             .capture_candidates_for(Some(integration), recheck_scope);
