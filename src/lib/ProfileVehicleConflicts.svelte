@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {onDestroy,untrack} from 'svelte';
+  import {onDestroy,onMount,untrack} from 'svelte';
   import type {ProfileCompilerClient} from './profile-compilation';
   import type {DeepReadonly,ProfileDocument,ProfileLocalAssignment} from './profiles';
   import {ProfileVehicleConflictController} from './profile-vehicle-conflicts';
@@ -8,10 +8,19 @@
     compiler:Pick<ProfileCompilerClient,'compile'|'inspect'>;inventoryRevision?:number;active?:boolean;
   }=$props();
   const controller=new ProfileVehicleConflictController(untrack(()=>compiler));
-  let previewState=$state.raw(controller.state);
+  let previewState=$state.raw(controller.state),shown=$state(false);
   const unsubscribe=controller.subscribe(value=>previewState=value);
   const scope=$derived(activeVehicleTabId?`Base + ${document.vehicleTabs?.find(tab=>tab.id===activeVehicleTabId)?.vehicleName??'vehicle'}`:'Integration');
-  $effect(()=>{controller.update(document,assignments,activeVehicleTabId,inventoryRevision,active);});
+  onMount(()=>{
+    const visibility=()=>{shown=!window.document.hidden;};
+    visibility();
+    window.document.addEventListener('visibilitychange',visibility);
+    return()=>window.document.removeEventListener('visibilitychange',visibility);
+  });
+  $effect(()=>{
+    if(!active||!shown){controller.clear();return;}
+    controller.update(document,assignments,activeVehicleTabId,inventoryRevision);
+  });
   onDestroy(()=>{unsubscribe();controller.dispose();});
   function location(nodeId:string|null,resourceId:string|null,portId:string|null):string{
     const id=nodeId??resourceId,node=[...document.resources,...document.processingNodes,...document.virtualOutputs,...(document.desktopOutputs??[])].find(node=>node.id===id);

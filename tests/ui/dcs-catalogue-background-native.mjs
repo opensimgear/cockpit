@@ -86,6 +86,23 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
   assert.ok(expectedDatabase && isAbsolute(expectedDatabase), 'Set OSG_SQLITE_DATABASE to the isolated dev database.');
   assertPrivatePath(isolatedRoot, resolve(expectedDatabase));
   const page = browserUrl ? await browserPage(browserUrl) : await nativePage();
+  const compileReads = [];
+  let watchedProfileId;
+  const stopTrace = page.listen(({method,params}) => {
+    if (method !== 'Network.requestWillBeSent' || !params.request.postData) return;
+    const path = new URL(params.request.url).pathname;
+    if (path !== (browserUrl ? '/api/gateway/' : '/gateway_request')) return;
+    const body = JSON.parse(params.request.postData);
+    const request = body.request ?? body;
+    if (request.command === 'profile_compile' && request.document?.id === watchedProfileId) {
+      compileReads.push(request.document.name);
+    }
+  });
+  const setHidden = hidden => page.evaluate(`(() => {
+    if (${hidden}) Object.defineProperty(document, 'hidden', {configurable:true,value:true});
+    else delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  })()`);
   const request = async value => {
     if (browserUrl) return page.evaluate(
       `import(${JSON.stringify(new URL('/src/lib/gateway.ts', browserUrl).href)}).then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`,
@@ -139,6 +156,7 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
   let scratch;
   try {
     await until(() => page.evaluate(`!!document.querySelector('nav[aria-label="Main navigation"]')`));
+    await page.call('Network.enable', {maxPostDataSize:65536});
     await verifyDatabase(request, expectedDatabase);
     scratch = await mkdtemp(join(isolatedRoot, 'fixtures-'));
     const userFolder = join(scratch, 'Saved Games');
@@ -170,6 +188,7 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
     assert.equal(resource.attributes.aircraftModule, originalModule);
     const profileName = `DCS background ${randomUUID()}`;
     const profile = await seedProfile(request, profileName, resource.id);
+    watchedProfileId = profile.id;
     const storedProfile = async () => {
       const {profiles: {document, assignments}} = await request({command: 'profile_assignments_get', id: profile.id});
       return {document, assignments};
@@ -198,9 +217,16 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
     const secondSetup = await setup();
     assert.notEqual(secondSetup.providerSetupRevision, firstSetup.providerSetupRevision);
 
+    await until(() => compileReads.includes(draftName));
+    await setHidden(true);
+    const beforeHidden = compileReads.length;
     await writeJson(second, originalModule, moduleWithControls(module, 'PATH_CONTROL', 'EDIT_CONTROL'));
+    const editedSetup = await until(setup, value => value.catalogueGeneration !== secondSetup.catalogueGeneration);
+    await new Promise(resolve => setTimeout(resolve, 700));
+    assert.equal(compileReads.length, beforeHidden, 'The hidden editor must not compile the changed catalogue.');
+    await setHidden(false);
     const changedModule = await waitForInputs(3, 'Edited active module file');
-    const editedSetup = await setup();
+    await until(() => compileReads.slice(beforeHidden).includes(draftName));
     assert.equal(editedSetup.providerSetupRevision, secondSetup.providerSetupRevision);
     assert.notEqual(editedSetup.catalogueGeneration, secondSetup.catalogueGeneration);
 
@@ -248,8 +274,11 @@ test(`${transport} refreshes an open DCS aircraft integration after background c
     assert.equal(reopened.origin, original.origin);
     assert.deepEqual(reopened.position, original.position);
     assert.deepEqual(await storedProfile(), before, 'Catalogue refresh must preserve the saved profile and assignments.');
+    console.log(JSON.stringify({transport, hiddenConflictCompiles:0, conflictCheckResumed:true, currentAircraftInputs:reopened.inputs}));
   } finally {
+    stopTrace();
     try {
+      await setHidden(false).catch(() => {});
       await page.close();
     } finally {
       if (scratch) {

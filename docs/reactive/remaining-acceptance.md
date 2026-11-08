@@ -91,7 +91,9 @@ Desktop and browser-dev fixtures verify path changes, in-place edits and alias
 remaps while the profile remains open, then another edit while it is closed.
 The open draft retains its unsaved rename and layout. Reopening shows the
 current ports, and the saved profile and assignments retain their original
-values. The fixtures use private databases and authored catalogue files.
+values. The [vehicle conflict preview](../verification/2026-11-08-vehicle-conflict-visibility.md)
+also stops compiling while the document is hidden and checks the current
+draft on reveal. The fixtures use private databases and authored catalogue files.
 The Windows suite passed 2,393 tests with 18 default ignores. The four
 configured native coverage gates passed. The additional DCS context watcher
 measured 81.13% production line coverage. All 19 local Nx projects passed their
