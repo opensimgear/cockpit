@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Notification from './Notification.svelte';
   import RuntimeEditor from './RuntimeEditor.svelte';
   import ActionControl from './ActionControl.svelte';
@@ -8,6 +8,7 @@
   import { ModuleUsbClient, usbRoutesEqual, type UsbModule, type UsbActions, type UsbMetadataConfig } from './module-usb';
   import { observeUsbInputs, type UsbInputObservationState } from './usb-input-observations';
   import { observeUsbMetadata, type UsbMetadataObservationState, type UsbMetadataPayload } from './usb-metadata-observations';
+  import { visibleSubscription } from './visible-observation';
   import { cloneConfig, type RuntimeConfig, type RuntimeSnapshot } from './runtime-config';
   import type { DeepReadonly } from './profiles';
   import type { DeviceAction, ActionValue } from './device-actions';
@@ -23,14 +24,36 @@
   let commandModule: DeepReadonly<UsbModule> | undefined;
   let latestMetadata: DeepReadonly<UsbMetadataPayload> | undefined;
   let claimReceiptRevision: number | undefined;
+  let inspectedKey: string | undefined;
   let lossEpoch = 0;
   const snapshot = $derived(module?.snapshot.config ? editorSnapshot(module.snapshot.config) : undefined);
   const actions = $derived(module?.snapshot.actions?.status === 'ready' ? module.snapshot.actions as UsbActions : undefined);
   const inputs = $derived(inputObservation.status === 'ready' && inputObservation.value?.ready && inputObservation.value.route
     && module?.snapshot.connected && module.snapshot.route && usbRoutesEqual(inputObservation.value.route, module.snapshot.route) ? inputObservation.value.state : null);
   const inputUnavailable = $derived(inputObservation.error || inputObservation.value?.error || (inputObservation.status === 'connecting' ? 'Waiting for a USB input baseline.' : 'USB inputs are unavailable for this route.'));
-  $effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));
-  $effect(() => observeUsbMetadata(endpointKey, state => {
+  const awaitingBaseline = $derived(metadataObservation.status === 'connecting');
+  const controlsBusy = $derived(busy || awaitingBaseline);
+  $effect(watchDetails);
+  function watchDetails() {
+    const key = endpointKey;
+    const readers = visibleSubscription(() => {
+      const stopInputs = observeUsbInputs(key, state => { inputObservation = state; });
+      const stopMetadata = observeUsbMetadata(key, receiveMetadata);
+      if (inspectedKey !== key) {
+        inspectedKey = key;
+        void run(() => client.status(key));
+      }
+      return () => { stopInputs(); stopMetadata(); };
+    }, () => {
+      inputObservation = { status: 'connecting' };
+      metadataObservation = { status: 'connecting' };
+      latestMetadata = undefined;
+      editing = false;
+    });
+    untrack(() => readers.setVisible(true));
+    return () => readers.close();
+  }
+  function receiveMetadata(state: UsbMetadataObservationState) {
     metadataObservation = state;
     if (state.status === 'ready' && state.value) {
       latestMetadata = state.value;
@@ -43,7 +66,7 @@
       editing = false; claimSnapshot = undefined; claimReceiptRevision = undefined;
       module = undefined;
     }
-  }));
+  }
   function revision(value: DeepReadonly<UsbModule> | undefined): number | undefined {
     const result = (value?.snapshot.config as { revision?: number } | null)?.revision;
     return typeof result === 'number' && Number.isSafeInteger(result) && result > 0 ? result : undefined;
@@ -160,29 +183,28 @@
   }
   async function invoke(action: DeviceAction, values: ActionValue[]) { return module ? run(() => client.invoke(module!, action.id, values), false) : false; }
   onMount(() => {
-    void run(() => client.status(endpointKey));
     return () => { disposed = true; if (claimSnapshot) void client.release(claimSnapshot).catch(() => {}); };
   });
 </script>
 
 <section class="panel usb-details" aria-label="Direct USB device details">
-  <div class="panel-heading"><div><h2>Direct USB</h2><p>Connection, module configuration and device actions.</p></div><span class="quiet-tag">{!module ? 'Checking…' : editing ? 'Setup active' : module.snapshot.connected ? 'Connected' : 'Disconnected'}</span></div>
+  <div class="panel-heading"><div><h2>Direct USB</h2><p>Connection, module configuration and device actions.</p></div><span class="quiet-tag">{!module || awaitingBaseline ? 'Checking…' : editing ? 'Setup active' : module.snapshot.connected ? 'Connected' : 'Disconnected'}</span></div>
   <div class="usb-body">
   {#if error}<Notification message={error} kind="error" />{/if}
   <div class="usb-actions">
-    <button class="secondary-button" disabled={busy} onclick={() => run(() => client.status(endpointKey), !editing)}><Icon name="refresh" size={14} />Refresh</button>
-    {#if !module?.snapshot.connected}<button class="secondary-button" disabled={busy} onclick={connect}><Icon name="usb" size={14} />Connect</button>
-    {:else}<button class="secondary-button" disabled={busy || editing} onclick={() => run(() => client.disconnect(endpointKey))}><Icon name="close" size={14} />Disconnect</button>{/if}
+    <button class="secondary-button" disabled={controlsBusy} onclick={() => run(() => client.status(endpointKey), !editing)}><Icon name="refresh" size={14} />Refresh</button>
+    {#if !module?.snapshot.connected}<button class="secondary-button" disabled={controlsBusy} onclick={connect}><Icon name="usb" size={14} />Connect</button>
+    {:else}<button class="secondary-button" disabled={controlsBusy || editing} onclick={() => run(() => client.disconnect(endpointKey))}><Icon name="close" size={14} />Disconnect</button>{/if}
     {#if module?.snapshot.connected}
-      {#if editing}<button class="secondary-button" disabled={busy} onclick={release}><Icon name="close" size={14} />End setup</button>
-      {:else}<button class="secondary-button" disabled={busy} onclick={claim}><Icon name="settings" size={14} />Begin setup</button>{/if}
+      {#if editing}<button class="secondary-button" disabled={controlsBusy} onclick={release}><Icon name="close" size={14} />End setup</button>
+      {:else}<button class="secondary-button" disabled={controlsBusy} onclick={claim}><Icon name="settings" size={14} />Begin setup</button>{/if}
     {/if}
   </div>
-  {#if snapshot && draft}<div class="usb-configuration"><RuntimeEditor bind:config={draft} {snapshot} {editing} {busy} request={configure} automatic controllerEnabled={false} /></div>{/if}
+  {#if snapshot && draft}<div class="usb-configuration"><RuntimeEditor bind:config={draft} {snapshot} {editing} busy={controlsBusy} request={configure} automatic controllerEnabled={false} /></div>{/if}
   {#if module?.snapshot.connected}
     <section class="usb-device-actions" aria-label="USB device actions">
-    <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}><Icon name="search" size={14} />Discover</button></div>
-    {#each actions?.actions ?? [] as action (action.id)}<ActionControl action={action as DeviceAction} snapshot={actions!} ready={!busy} {busy} {invoke} />{/each}
+    <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={controlsBusy} onclick={() => run(() => client.describeActions(module!), false)}><Icon name="search" size={14} />Discover</button></div>
+    {#each actions?.actions ?? [] as action (action.id)}<ActionControl action={action as DeviceAction} snapshot={actions!} ready={!controlsBusy} busy={controlsBusy} {invoke} />{/each}
     </section>
   {/if}
   {#if inputs}<p class="usb-input-status">Live inputs: {inputs.held.filter(Boolean).length} pressed · {inputs.axes.length ? inputs.axes.map((value, index) => inputs?.axisAvailable[index] ? value : 'Unavailable').join(', ') : 'No axes'}</p>

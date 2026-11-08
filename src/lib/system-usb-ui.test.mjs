@@ -26,7 +26,12 @@ const endpoint = () => ({ key, port: { path: 'COM8', serialNumber: serial }, pre
 
 async function harness() {
   let current = endpoint(), handlers, mountedCleanup;
-  const calls = [], mounts = [], custom = new Map(), timers = new Map(), document = { hidden: false };
+  const calls = [], mounts = [], custom = new Map(), timers = new Map();
+  const document = Object.assign(new EventTarget(), { hidden: false });
+  const visibility = {};
+  const visibilitySource = await readFile(new URL('./visible-observation.ts', import.meta.url), 'utf8');
+  vm.runInNewContext(ts.transpileModule(visibilitySource, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText,
+    { exports: visibility, document });
   const inputListeners = new Set(), metadataListeners = new Set();
   const subscribe = listeners => (selectedKey, listener) => {
     assert.equal(selectedKey, key);
@@ -56,11 +61,9 @@ async function harness() {
   };
   const file = new URL('./SystemUsbDetails.svelte', import.meta.url);
   const source = (await readFile(file, 'utf8')).replaceAll('\r\n', '\n')
-    .replace('$effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));', 'onMount(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));')
-    .replace('$effect(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;', 'onMount(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;')
+    .replace('$effect(watchDetails);', 'onMount(watchDetails);')
     .replace('</script>', `capture({run,client,connect,claim,release,configure,invoke,get module(){return module;},get editing(){return editing;},get busy(){return busy;},get error(){return error;},get draft(){return draft;},setDraft(value){draft=value;}});</script>`);
-  assert.match(source, /onMount\(\(\) => observeUsbMetadata\(/, 'The server harness must mount the metadata observer.');
-  assert.match(source, /onMount\(\(\) => observeUsbInputs\(/, 'The server harness must mount the input observer.');
+  assert.match(source, /onMount\(watchDetails\)/, 'The server harness must mount the visible readers.');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' }), exports = {};
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
     exports, document, setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; }, clearInterval(id) { timers.delete(id); }, capture(value) { handlers = value; }, require(name) {
@@ -70,6 +73,7 @@ async function harness() {
       if (name === './gateway') return { gatewayRequest };
       if (name === './usb-input-observations') return { observeUsbInputs: subscribe(inputListeners) };
       if (name === './usb-metadata-observations') return { observeUsbMetadata: subscribe(metadataListeners) };
+      if (name === './visible-observation') return visibility;
       const normalized = name.replace(/\.ts$/, '');
       if (modules.has(normalized)) return modules.get(normalized);
       throw Error('Unexpected component import ' + name);
@@ -335,13 +339,41 @@ test('an Apply completed after navigation releases any returned writer using the
   assert.equal(releases.at(-1).route.configurationGeneration, 2);
 });
 
-test('mounted USB details leave input acquisition to the shared subscription without a refresh timer', async () => {
-  const h = await harness(); await h.mount(); h.calls.length = 0;
+test('USB details retire both readers while hidden and resume from a fresh baseline without losing the draft', async () => {
+  const h = await harness();
+  h.document.hidden = true; await h.mount();
+  assert.equal(h.inputListeners.size, 0);
+  assert.equal(h.metadataListeners.size, 0);
+  assert.deepEqual(h.calls, []);
+  const show = async visible => {
+    h.document.hidden = !visible;
+    h.document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+  };
+  await show(true); h.publishMetadata(h.current);
+  await h.handlers.claim();
+  h.handlers.setDraft({ ...config(), name: 'Unsaved USB draft' });
+  h.calls.length = 0;
   assert.equal(h.timers.size, 0);
   assert.equal(h.inputListeners.size, 1);
   assert.equal(h.metadataListeners.size, 1);
-  h.document.hidden = true; await settle();
-  h.document.hidden = false; await settle();
+  await show(false);
+  assert.equal(h.inputListeners.size, 0);
+  assert.equal(h.metadataListeners.size, 0);
+  assert.equal(h.handlers.editing, false);
+  const replacement = plain(h.current);
+  replacement.snapshot.route.connectionGeneration++;
+  replacement.snapshot.config.config.name = 'Current USB configuration';
+  h.setCurrent(replacement);
+  await show(true);
+  assert.equal(h.handlers.editing, false);
+  h.publishMetadata(replacement);
+  assert.equal(h.inputListeners.size, 1);
+  assert.equal(h.metadataListeners.size, 1);
+  assert.equal(h.handlers.module.snapshot.config.config.name, 'Current USB configuration');
+  assert.equal(h.handlers.module.snapshot.route.connectionGeneration, replacement.snapshot.route.connectionGeneration);
+  assert.equal(h.handlers.draft.name, 'Unsaved USB draft');
+  assert.equal(h.handlers.editing, false);
   assert.deepEqual(h.calls, []);
   h.cleanup();
   assert.equal(h.inputListeners.size, 0);

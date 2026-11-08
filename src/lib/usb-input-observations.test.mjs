@@ -159,8 +159,7 @@ test('USB view subscribes passively, removes the acquisition timer and keeps pus
   const mounts = [], calls = [], observations = []; let handlers, emit, stopped = false;
   const module = { key, snapshot: { connected: true, route: route(), config: null, claimedBy: null } };
   // SSR does not execute effects; schedule this exact subscription as a mount hook.
-  const instrumented = source.replace('$effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));',
-    'onMount(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));')
+  const instrumented = source.replace('$effect(watchDetails);', 'onMount(watchDetails);')
     .replace('</script>', 'capture({get module(){return module;},get inputObservation(){return inputObservation;},get draft(){return draft;},setDraft(value){draft=value;}});</script>');
   const { js } = compile(instrumented, { filename: componentFile.pathname, generate: 'server' }), output = {};
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
@@ -171,6 +170,10 @@ test('USB view subscribes passively, removes the acquisition timer and keeps pus
       if (name === './gateway') return { gatewayRequest() { throw Error('unexpected command'); } };
       if (name === './usb-input-observations') return { observeUsbInputs(selected, listener) { observations.push(selected); emit = listener; return () => { stopped = true; }; } };
       if (name === './usb-metadata-observations') return { observeUsbMetadata() { return () => {}; } };
+      if (name === './visible-observation') return { visibleSubscription(subscribe) {
+        let stop;
+        return { setVisible() { stop = subscribe(); }, close() { stop?.(); } };
+      } };
       if (name === './module-usb') return { ...modules.get('./module-usb'), ModuleUsbClient: class { async status(selected) { calls.push(selected); return module; } } };
       const normalized = name.replace(/\.ts$/, ''); if (modules.has(normalized)) return modules.get(normalized);
       throw Error(name);

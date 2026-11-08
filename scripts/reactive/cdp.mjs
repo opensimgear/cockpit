@@ -1,11 +1,12 @@
 import {createRequire} from 'node:module';
 
-export async function browserPage(url) {
+export async function browserPage(url, initScript) {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
   const browser = await chromium.launch({headless:true, channel:process.env.OSG_BROWSER_CHANNEL});
   try {
     const context = await browser.newContext();
+    if (initScript) await context.addInitScript({content:initScript});
     const page = await context.newPage();
     await page.goto(url);
     await page.getByRole('navigation', {name:'Main navigation'}).waitFor();

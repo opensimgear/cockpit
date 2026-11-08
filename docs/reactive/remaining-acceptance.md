@@ -55,6 +55,10 @@ releases input demand and cancels its queued presentation frame while hidden.
 Native and browser-dev reopen on a fresh input baseline and preserve the
 controller detail draft. Real VKB preview cadence remains in #199.
 
+[Direct USB details](../verification/2026-11-08-usb-details-visibility.md)
+retire the exact input and metadata readers while the document is hidden.
+The card reopens on current stream baselines and preserves its local setup draft.
+
 The Games executable field follows committed changes for the selected
 installation and preserves a local edit until commit or Escape. The running
 native and browser-dev fixtures observed a visible replacement, retained a
