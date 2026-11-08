@@ -56,6 +56,9 @@ struct Inner {
     dcs_vehicle_catalogues: Mutex<std::collections::BTreeSet<String>>,
     context_setup_check: Mutex<Option<Instant>>,
     context_process_inventory: Mutex<Option<Arc<context_runtime::process_cache::Snapshot>>>,
+    background_processes: Mutex<Option<activation_runtime::BackgroundScan>>,
+    #[cfg(windows)]
+    process_preferences: Option<crate::persistence::ui::Preferences>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
     discovery:Mutex<discovery_review::Review>,
@@ -126,8 +129,12 @@ impl GamesRuntime {
             .and_then(|game|game["integrationKey"].as_str()).unwrap_or(id).to_owned();
         self.inner.setup.provider_preferences_snapshot(&key)
     }
-    pub(crate) fn new(panel:CleanupIo,paths:Paths,platform:Arc<dyn Platform>)->Self {Self::construct(panel,paths,platform,true)}
-    fn construct(_panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>,auto_discovery:bool) -> Self {
+    pub(crate) fn new(panel:CleanupIo,paths:Paths,platform:Arc<dyn Platform>,preferences:crate::persistence::ui::Preferences)->Self {
+        let _ = preferences.read("game-process-events");
+        Self::construct(panel,paths,platform,true,Some(preferences))
+    }
+    fn construct(_panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>,auto_discovery:bool,
+        #[cfg_attr(not(windows), allow(unused_variables))] process_preferences:Option<crate::persistence::ui::Preferences>) -> Self {
         let changes=Arc::new(crate::game_read_models::signals::Signal::default());
         let mut vehicles = crate::game_vehicles::Tracker::new(
             paths.installations.with_file_name("game-vehicles-v1.json"),
@@ -170,6 +177,9 @@ impl GamesRuntime {
                 dcs_vehicle_catalogues: Mutex::new(Default::default()),
                 context_setup_check: Mutex::new(None),
                 context_process_inventory: Mutex::new(None),
+                background_processes: Mutex::new(None),
+                #[cfg(windows)]
+                process_preferences,
                 activation,
                 settings: Mutex::new(Settings {
                     saved,
@@ -370,7 +380,7 @@ impl GamesRuntime {
             if game.get("integrationCompatible").is_none() && game["provider"].is_string() {game["integrationCompatible"]=json!(true);}
             if game.get("integrationKey").is_none() && crate::game_discovery::integration_provider(game["id"].as_str().unwrap_or("")).is_some_and(|provider|game["provider"]==provider) {game["integrationKey"]=game["id"].clone();}
         }
-        let runtime=Self::construct(panel,paths,platform,false);
+        let runtime=Self::construct(panel,paths,platform,false,None);
         if !catalogue.is_empty() {runtime.seed_test_catalogue(catalogue);}
         let observer_missing=runtime.activation_observer.lock().unwrap().is_none();
         if observer_missing {runtime.start_activation_observer();}

@@ -75,7 +75,7 @@ test('native bootstrap streams small values and reads only the committed invento
 
 test('browser bootstrap subscribes to committed inventory revisions and reconciles each advance', async () => {
   const h=harness({native:false});h.entries.theme={revision:2,value:true};const cleanup=await h.bootstrap();
-  assert.equal(h.calls[0].command,'ui_preferences_get');assert.equal(h.store.get('theme').revision,2);assert.equal(h.opens.length,7);
+  assert.equal(h.calls[0].command,'ui_preferences_get');assert.equal(h.store.get('theme').revision,2);assert.equal(h.opens.length,OBSERVED_UI_KEYS.length);
   await h.store.save('theme',false);assert.equal(h.calls.at(-1).command,'ui_preferences_save');assert.equal(h.calls.at(-1).expectedRevision,2);
   h.send('theme',{ready:true,revision:'4',value:true});assert.equal(h.store.get('theme').value,true);assert.equal(h.calls.length,2);
   h.entries.remembered={revision:2,value:{components:[],forgotten:{}}};
@@ -95,8 +95,8 @@ test('stream loss/error disables only its preference; focus explicitly reopens a
   await assert.rejects(h.store.save('theme',false),/Refresh/);
   h.opens.find(row=>row.topic==='preferences.tray').observer.error('transport ended');assert.equal(h.store.get('tray').ready,false);
   h.entries.theme={revision:2,value:false};h.windowEvents.get('focus')();await turn();
-  assert.equal(h.store.get('theme').ready,true);assert.equal(h.store.get('theme').revision,2);assert.equal(h.opens.length,14);
-  assert.ok(h.opens.slice(0,7).every(row=>row.signal.aborted));
+  assert.equal(h.store.get('theme').ready,true);assert.equal(h.store.get('theme').revision,2);assert.equal(h.opens.length,2*OBSERVED_UI_KEYS.length);
+  assert.ok(h.opens.slice(0,OBSERVED_UI_KEYS.length).every(row=>row.signal.aborted));
   cleanup();
 });
 

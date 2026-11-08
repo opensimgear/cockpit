@@ -5,12 +5,14 @@
   import BackupSettings from './persistence/BackupSettings.svelte';
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
   import ActivitySettings from './activity/ActivitySettings.svelte';
+  import { uiPreference, uiPreferences } from './persistence/ui-preferences';
   import OutputSettings from './OutputSettings.svelte';
   import CompanionListenerSettings from './CompanionListenerSettings.svelte';
   import McpSettings from './McpSettings.svelte';
   import { canvasStyling, setArrowStyle, setCornerRadius, type CanvasArrowStyle } from './canvas-styling';
   import { canvasNavigation, setWheelAction, type CanvasWheelAction } from './canvas-navigation';
   import { diagramPendingPath } from './profile-diagram';
+  const gameProcessEvents = uiPreference('game-process-events');
 
   let { light, onToggleTheme, themeBusy = false }: { light: boolean; onToggleTheme: () => void; themeBusy?: boolean } = $props();
   const tabs = [
@@ -35,6 +37,10 @@
     const button = event.currentTarget as HTMLButtonElement;
     button.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
   }
+  async function setGameProcessEvents(enabled: boolean) {
+    try { await gameProcessEvents.save(enabled); } catch { /* The shared preference store keeps the visible error. */ }
+  }
+  function retryGameProcessEvents() { void uiPreferences.hydrate(['game-process-events']); }
 </script>
 
 <PageHeader title="Settings" eyebrow="MAKE IT YOURS" subtitle="A familiar cockpit, arranged around the way you work."/>
@@ -57,6 +63,15 @@
   </section>
   <ProgressNotificationSettings />
   <ActivitySettings active={selected === 'general'} />
+  <section class="panel preferences-panel game-process-events-settings" aria-label="Game process events">
+    <div class="panel-heading"><h2>Game process detection</h2></div>
+    <div class="preference-row">
+      <div><strong>Use Windows process events</strong><p id="game-process-events-help">Windows may require permission to subscribe to process events. If events are disabled or permission is denied, Cockpit uses one shared check every second to detect game starts and exits. Changes are saved automatically.</p></div>
+      <button class="toggle" class:on={$gameProcessEvents.value} role="switch" aria-label="Use Windows process events" aria-describedby="game-process-events-help" aria-checked={$gameProcessEvents.value} title="Windows permission is required for process events; otherwise Cockpit uses one shared check every second." disabled={!$gameProcessEvents.ready || $gameProcessEvents.busy} onclick={() => { void setGameProcessEvents(!$gameProcessEvents.value); }}><span></span></button>
+    </div>
+    {#if $gameProcessEvents.busy}<div class="preference-row"><p role="status">Saving game process detection settings…</p></div>
+    {:else if !$gameProcessEvents.ready}<div class="preference-row"><p class="settings-error" role="alert">{$gameProcessEvents.error || 'Game process detection settings are unavailable.'}</p><button class="secondary-button" onclick={retryGameProcessEvents}><Icon name="refresh" size={14}/>Retry</button></div>{/if}
+  </section>
   {#if selected === 'general'}<BackupSettings />{/if}
 </div>
 
@@ -114,6 +129,7 @@
   .settings-content > :global(section:first-child){margin-top:0}
   .settings-content:focus{outline:none}
   .arrows-settings,.canvas-settings{margin-top:var(--ui-section-gap)}
+  .game-process-events-settings{margin-top:var(--ui-section-gap)}
   .preference-row p{max-width:560px;line-height: var(--ui-line-height)}
   .style-field,.radius-field{display:grid;gap:8px;flex-shrink:0}
   .style-field{min-width:200px}
@@ -127,5 +143,6 @@
   .preview-line,.preview-head{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   .arrow-preview circle{fill:currentColor}
   .preference-row .storage-error{color:var(--text)}
+  .preference-row .settings-error{color:var(--danger,#e5b19b)}
   @media(max-width:620px){.preference-row{flex-wrap:wrap}.style-field{min-width:min(100%,200px)}.settings-tabs button{padding:12px 13px}}
 </style>

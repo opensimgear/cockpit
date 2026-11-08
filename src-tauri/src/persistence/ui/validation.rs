@@ -19,7 +19,7 @@ pub(crate) fn stale_observations(key:&str,value:&mut Value){
     }
 }
 pub(crate) fn validate(key:&str,value:&Value)->Result<(),String>{match key {
-    "theme"=>ensure(value.is_boolean()),
+    "theme"|"game-process-events"=>ensure(value.is_boolean()),
     "devices-mode"=>ensure(matches!(value.as_str(),Some("list"|"topology"))),
     "canvas-navigation"=>{exact(value,&["wheelAction"],&[])?;ensure(matches!(value["wheelAction"].as_str(),Some("pan"|"zoom")))},
     "canvas-styling"=>{exact(value,&["arrowStyle","cornerRadius"],&[])?;ensure(matches!(value["arrowStyle"].as_str(),Some("smooth"|"orthogonal"))&&value["cornerRadius"].as_f64().is_some_and(|n|n.is_finite()&&(0.0..=100.0).contains(&n)))},

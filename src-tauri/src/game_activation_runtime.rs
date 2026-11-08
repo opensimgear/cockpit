@@ -1,8 +1,39 @@
 //! Independent native game observer. Integration setup/readiness has no bearing
 //! on whether an ordinary hardware profile can match a running executable.
 use super::*;
+use crate::game_discovery::{BackgroundProcesses, ProcessLookup, ProcessLookupError, PROCESS_DISCOVERY_PERIOD};
 use osg_profiles::activation::{GameIdentity, VerifiedGame};
+
+pub(super) struct BackgroundScan {
+    epoch: (u64, u64),
+    started: Instant,
+    rows: BackgroundProcesses,
+}
+
+impl Inner {
+    pub(super) fn read_context_processes(&self, epoch: (u64, u64), games: &[&Value]) -> Vec<ProcessLookup> {
+        if self.platform.shares_background_processes() {
+            self.background_integration_processes(epoch, games)
+        } else {
+            self.platform.integration_processes(games)
+        }
+    }
+
+    fn background_integration_processes(&self, epoch: (u64, u64), games: &[&Value]) -> Vec<ProcessLookup> {
+        let scan = self.background_processes.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(scan) = scan.as_ref().filter(|scan| scan.epoch == epoch &&
+            (self.changes.context_process_live(epoch.0) || scan.started.elapsed() < PROCESS_DISCOVERY_PERIOD * 2))
+        {
+            return scan.rows.integration(games);
+        }
+        games.iter().map(|_| Err(ProcessLookupError::Unavailable("Waiting for the shared game process observation.".into()))).collect()
+    }
+}
+
 impl GamesRuntime {
+    pub(crate) fn process_event_preference_changed(&self) {
+        self.inner.changes.activation_wake.notify();
+    }
     pub(crate) fn try_observed_desktop_process(&self, game_id: &str)
         -> Result<crate::game_activation::CurrentProcessObservation, String> {
         if self.inner.closed.load(Ordering::Acquire) { return Err("The native game observer has stopped.".into()); }
@@ -53,13 +84,15 @@ impl GamesRuntime {
                 #[cfg(windows)]
                 let mut events: Option<crate::xplane::process_events::InventoryEvents> = None;
                 #[cfg(windows)]
-                let mut watched_library = None;
+                let mut watched_scope = None;
                 #[cfg(windows)]
                 let mut restarted_library = None;
                 while !inner.closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
-                    #[cfg(windows)]
                     let library = inner.changes.context_wake.observed();
+                    #[cfg(windows)]
+                    let enabled = inner.process_preferences.as_ref()
+                        .is_some_and(|preferences| preferences.cached("game-process-events") == true);
                     let games = if inner.guard_installation_metadata().is_ok() {
                         inner
                             .settings
@@ -72,31 +105,50 @@ impl GamesRuntime {
                     };
                     #[cfg(windows)]
                     {
-                        let replacement = watched_library != Some(library);
+                        let scope = (library, enabled);
+                        let replacement = watched_scope != Some(scope);
                         // Recover once after live continuity is lost. Initial
                         // permission denial must not become a retry loop.
-                        let restart = !replacement && restarted_library != Some(library)
+                        let restart = enabled && !replacement && restarted_library != Some(library)
                             && events.as_ref().is_some_and(|events| events.failed_after_live());
                         if replacement || restart {
                             if events.as_ref().is_none_or(|events| events.is_finished()) {
-                                events = inner.platform.watch_activation_processes(&games, [wake.clone(), inner.changes.context_process_wake.clone()]);
-                                watched_library = Some(library);
+                                // Advance the context epoch before waking the owner that captures it.
+                                events = enabled.then(|| inner.platform.watch_activation_processes(&games,
+                                    [inner.changes.context_process_wake.clone(), wake.clone()])).flatten();
+                                watched_scope = Some(scope);
                                 restarted_library = restart.then_some(library);
                             } else if let Some(events) = &events {
                                 events.retire();
+                                if replacement { watched_scope = None; }
                             }
                         }
                     }
                     #[cfg(windows)]
-                    let continuity = events.as_ref().and_then(|events| events.continuity());
+                    let continuity = (enabled && watched_scope == Some((library, true)))
+                        .then(|| events.as_ref().and_then(|events| events.continuity())).flatten();
                     #[cfg(not(windows))]
                     let continuity = None;
                     #[cfg(windows)]
-                    inner.changes.set_context_process_scope(library, continuity.clone().filter(|_| watched_library == Some(library)));
+                    inner.changes.set_context_process_scope(library, continuity.clone());
                     let event_owned = continuity.is_some();
-                    inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity);
+                    let epoch = (library, inner.changes.context_process_wake.observed());
+                    let started = Instant::now();
+                    let background = inner.platform.background_processes(&games);
+                    if background.is_some()
+                        && epoch != (inner.changes.context_wake.observed(), inner.changes.context_process_wake.observed())
+                    {
+                        continue;
+                    }
+                    let retry_inventory = background.as_ref().is_some_and(BackgroundProcesses::needs_retry);
+                    inner.activation.observe_with_continuity(inner.platform.as_ref(), &games, continuity, background.as_ref());
+                    if let Some(rows) = background {
+                        *inner.background_processes.lock().unwrap_or_else(|p| p.into_inner()) = Some(BackgroundScan { epoch, started, rows });
+                        inner.changes.context_update_wake.notify();
+                    }
                     if !inner.closed.load(Ordering::Acquire) {
-                        let retry = (!event_owned && games.iter().any(crate::game_activation::process_candidate)).then_some(Duration::from_millis(500));
+                        let retry = (!event_owned || retry_inventory).then_some(PROCESS_DISCOVERY_PERIOD)
+                            .filter(|_| games.iter().any(crate::game_activation::process_candidate));
                         wake.wait_scheduled(observed, retry);
                     }
                 }

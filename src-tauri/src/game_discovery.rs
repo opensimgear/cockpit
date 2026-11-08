@@ -25,6 +25,12 @@ pub(crate) trait Platform: Send + Sync {
     fn integration_setup_supported(&self) -> bool {
         false
     }
+    fn background_processes(&self, _games: &[Value]) -> Option<BackgroundProcesses> {
+        None
+    }
+    fn shares_background_processes(&self) -> bool {
+        false
+    }
     fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value>;
     fn validate(&self, game_id: &str, executable: &str) -> Result<(), String>;
     /// Only create the native process. Unified launch admission must not hold
@@ -48,6 +54,32 @@ pub(crate) trait Platform: Send + Sync {
 }
 
 pub(crate) type ProcessLookup = Result<Option<ProcessIdentity>, ProcessLookupError>;
+
+pub(crate) const PROCESS_DISCOVERY_PERIOD: Duration = Duration::from_secs(1);
+
+pub(crate) struct BackgroundProcesses {
+    activation: BTreeMap<String, Result<Option<ProcessIdentity>, String>>,
+    integration: BTreeMap<String, ([Value; 6], ProcessLookup)>,
+}
+impl BackgroundProcesses {
+    pub(crate) fn activation(&self, games: &[Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+        games.iter().map(|game| self.activation.get(game["id"].as_str().unwrap_or(""))
+            .cloned().unwrap_or_else(|| Err("The game process observation is unavailable.".into()))).collect()
+    }
+    pub(crate) fn integration(&self, games: &[&Value]) -> Vec<ProcessLookup> {
+        games.iter().map(|game| self.integration.get(game["id"].as_str().unwrap_or(""))
+            .filter(|(selection, _)| *selection == process_selection(game))
+            .map(|(_, row)| row.clone())
+            .unwrap_or_else(|| Err(ProcessLookupError::Unavailable("The game process observation is unavailable.".into())))).collect()
+    }
+    pub(crate) fn needs_retry(&self) -> bool {
+        self.integration.values().any(|(_, row)| matches!(row, Err(ProcessLookupError::Unavailable(_))))
+    }
+}
+pub(crate) fn process_selection(game: &Value) -> [Value; 6] {
+    ["id", "provider", "integrationKey", "integrationCompatible", "executable", "processExecutables"]
+        .map(|key| game[key].clone())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ProcessLookupError {

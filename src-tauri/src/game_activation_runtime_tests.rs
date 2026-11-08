@@ -219,10 +219,12 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
     }
     let directory = crate::test_directory();
     let platform = Arc::new(EmptyMonitoring::default());
+    let preferences = crate::persistence::ui::Preferences::new(&directory.path().join("fixture.json"));
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("No integration calls")),
         Paths::in_directory(directory.path()),
         platform.clone(),
+        preferences.clone(),
     );
     assert!(runtime.inner.settings.lock().unwrap().catalogue.is_empty());
     assert!(runtime.activation_observer.lock().unwrap().is_some());
@@ -269,9 +271,12 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
     }
     #[cfg(windows)]
     {
+        assert_eq!(platform.watches.load(Ordering::Acquire), 0, "Default detection must not subscribe to Windows events");
+        preferences.write("game-process-events", 0, json!(true)).unwrap();
+        runtime.process_event_preference_changed();
         let deadline = Instant::now() + Duration::from_secs(3);
-        while platform.scans.load(Ordering::Acquire) < 7 {
-            assert!(Instant::now() < deadline, "Fallback scans stopped after watcher loss");
+        while platform.watches.load(Ordering::Acquire) < 2 {
+            assert!(Instant::now() < deadline, "Opt-in did not start and recover the watcher");
             thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(platform.watches.load(Ordering::Acquire), 2,
@@ -282,6 +287,16 @@ fn native_observer_starts_before_first_discovery_and_monitors_an_integration_fre
             assert!(Instant::now() < deadline, "Library commit did not reset the watcher recovery budget");
             thread::sleep(Duration::from_millis(10));
         }
+        preferences.write("game-process-events", 1, json!(false)).unwrap();
+        runtime.process_event_preference_changed();
+        runtime.inner.changes.mark_library_commit();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let scans = platform.scans.load(Ordering::Acquire);
+        while platform.scans.load(Ordering::Acquire) < scans + 2 {
+            assert!(Instant::now() < deadline, "Fallback scans stopped after opt-out");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(platform.watches.load(Ordering::Acquire), 4);
     }
     runtime.shutdown();
 }

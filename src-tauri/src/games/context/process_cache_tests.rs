@@ -1,4 +1,5 @@
 use super::*;
+use crate::game_discovery::Platform;
 use crate::game_discovery::{ProcessIdentity, ProcessLookupError};
 use serde_json::json;
 use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};

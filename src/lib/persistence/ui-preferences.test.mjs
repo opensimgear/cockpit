@@ -55,6 +55,13 @@ test('preview storage is session memory and cannot silently switch authority aft
 test('typed preference validation rejects unknown fields and malformed values before writes',()=>{
  const styling={arrowStyle:'orthogonal',cornerRadius:0};assert.deepEqual(validateUiValue('canvas-styling',styling),styling);assert.deepEqual(validateUiValue('remembered',{components:[],forgotten:{}}),{components:[],forgotten:{}});
  for(const [key,value] of [['theme','true'],['devices-mode','grid'],['canvas-navigation',{wheelAction:'other'}],['canvas-navigation',{wheelAction:'pan',extra:true}],['canvas-styling',{...styling,cornerRadius:101}],['canvas-styling',{...styling,cornerRadius:NaN}],['canvas-styling',{...styling,collapseParallelWires:false}],['remembered',[]],['remembered',{components:new Array(1025),forgotten:{}}],['remembered',{components:[],forgotten:new Array(1)}]])assert.throws(()=>validateUiValue(key,value),/invalid/);
+ assert.equal(validateUiValue('game-process-events',false),false);assert.equal(validateUiValue('game-process-events',true),true);assert.throws(()=>validateUiValue('game-process-events','true'),/invalid/);
+});
+
+test('game process event opt-in defaults off and persists through the shared revisioned preference store',async()=>{
+ const disk=native(),store=new UiPreferences(disk);assert.equal(store.get('game-process-events').value,false);await store.hydrate();
+ await store.save('game-process-events',true);assert.deepEqual(disk.writes,[{key:'game-process-events',expected:0,value:true}]);
+ const restarted=new UiPreferences(disk);await restarted.hydrate();assert.equal(restarted.get('game-process-events').value,true);assert.equal(restarted.get('game-process-events').revision,1);
 });
 
 test('observations validate canonical safe revisions and isolate unavailable owners without querying',async()=>{

@@ -477,7 +477,7 @@ fn live_inventory_continuity_withdraws_proof_immediately_and_fences_replacement(
 
     let live = Arc::new(ProcessContinuity::default());
     assert!(live.begin());
-    observer.observe_with_continuity(&platform, &[game()], Some(live.clone()));
+    observer.observe_with_continuity(&platform, &[game()], Some(live.clone()), None);
     let first = observer.confirmed_process(&selected, &process).unwrap();
     observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE * 2);
     assert_eq!(observer.snapshot().unwrap(), [first.clone()]);
@@ -492,7 +492,7 @@ fn live_inventory_continuity_withdraws_proof_immediately_and_fences_replacement(
     assert!(observer.confirmed_process(&selected, &process).is_none());
     let replacement = Arc::new(ProcessContinuity::default());
     assert!(replacement.begin());
-    observer.observe_with_continuity(&platform, &[game()], Some(replacement));
+    observer.observe_with_continuity(&platform, &[game()], Some(replacement), None);
     let second = observer.confirmed_process(&selected, &process).unwrap();
     assert_ne!(first.process_session, second.process_session);
 }

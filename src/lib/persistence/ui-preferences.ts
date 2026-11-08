@@ -1,7 +1,7 @@
 /** Revisioned preferences shared by the native and browser service transports. */
-export const UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'remembered', 'tray', 'progress'] as const;
+export const UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'remembered', 'tray', 'progress', 'game-process-events'] as const;
 export type UiKey = typeof UI_KEYS[number];
-export const OBSERVED_UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'tray', 'progress', 'remembered'] as const;
+export const OBSERVED_UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'tray', 'progress', 'remembered', 'game-process-events'] as const;
 export type UiValues = {
   theme: boolean;
   'devices-mode': 'list' | 'topology';
@@ -10,6 +10,7 @@ export type UiValues = {
   remembered: { components: unknown[]; forgotten: Record<string, unknown> } | null;
   tray: { closeToTray: boolean; minimizeToTray: boolean };
   progress: { delivery: 'system' | 'window'; position: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' };
+  'game-process-events': boolean;
 };
 export type UiEntry<K extends UiKey = UiKey> = { revision: number; value: UiValues[K]; ready: boolean; busy: boolean; error: string };
 export type UiSnapshot = { entries: Record<UiKey, { revision: number; value: unknown }> };
@@ -22,6 +23,7 @@ const defaults: UiValues = {
   theme: false, 'devices-mode': 'list', 'canvas-navigation': { wheelAction: 'pan' },
   'canvas-styling': { arrowStyle: 'smooth', cornerRadius: 24 }, remembered: null,
   tray: { closeToTray: false, minimizeToTray: false }, progress: { delivery: 'system', position: 'bottom-right' },
+  'game-process-events': false,
 };
 const revision = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const wireRevision = (value: unknown): value is string =>
@@ -40,6 +42,7 @@ export function validateUiValue<K extends UiKey>(key: K, value: unknown): UiValu
     case 'remembered': valid = value === null || exact(value, ['components', 'forgotten']) && Array.isArray(value.components) && value.components.length <= 1024 && object(value.forgotten) && Object.keys(value.forgotten).length <= 4096; break;
     case 'tray': valid = exact(value, ['closeToTray', 'minimizeToTray']) && typeof value.closeToTray === 'boolean' && typeof value.minimizeToTray === 'boolean'; break;
     case 'progress': valid = exact(value, ['delivery', 'position']) && ['system', 'window'].includes(String(value.delivery)) && ['bottom-right', 'bottom-left', 'top-right', 'top-left'].includes(String(value.position)); break;
+    case 'game-process-events': valid = typeof value === 'boolean'; break;
   }
   if (!valid) throw Error(`Saved ${key} preferences are invalid. Preserve the SQLite record and refresh.`);
   return structuredClone(value) as UiValues[K];

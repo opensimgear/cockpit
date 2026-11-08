@@ -109,7 +109,9 @@ pub(super) fn maintenance_delay(inner: &Inner, process_live: bool, serviced_at: 
     }
     drop(settings);
     if configured.is_empty() { return None; }
-    if !process_live { return Some(Duration::from_millis(500)); }
+    if !process_live && !inner.platform.shares_background_processes() {
+        return Some(crate::game_discovery::PROCESS_DISCOVERY_PERIOD);
+    }
     let now = Instant::now();
     let setup = needs_setup_maintenance.then(|| {
         inner.context_setup_check.lock().unwrap_or_else(|p| p.into_inner())

@@ -14,6 +14,7 @@ const browserUrl = process.env.OSG_GAME_PROCESS_BOUNDARY_BROWSER_URL;
 const transport = browserUrl ? 'browser-dev' : 'native';
 const gatewayPath = browserUrl ? '/api/gateway/' : '/gateway_request';
 const enabled = process.platform === 'win32' && (browserUrl || process.env.OSG_GAME_PROCESS_BOUNDARY_NATIVE === '1');
+const qualifyPreference = process.env.OSG_GAME_PROCESS_PREFERENCE_ACCEPTANCE === '1';
 const execute = promisify(execFile);
 const binding = '__osgProcessBoundaryReport';
 
@@ -40,6 +41,15 @@ test(`${transport} Windows game process boundaries reach the Active game header 
   const transitions = {stream:[],header:[]}, reads = [];
   const request = value => page.evaluate(`import('/src/lib/gateway.ts')
     .then(({gatewayRequest}) => gatewayRequest(${JSON.stringify(value)}))`);
+  const processPreference = async () => (await request({command:'ui_preferences_get',key:'game-process-events'})).uiPreferences;
+  const navigate = view => until(() => page.evaluate(`(() => {
+    const label = ${JSON.stringify(view)};
+    const button = [...document.querySelectorAll('nav[aria-label="Main navigation"] button, button.sidebar-link')]
+      .find(node => node.title === label || node.textContent.trim() === label);
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`));
   const start = async path => {
     child = spawn(path, {windowsHide:true,stdio:'ignore'});
     await once(child,'spawn');
@@ -70,6 +80,22 @@ test(`${transport} Windows game process boundaries reach the Active game header 
     gameId = games.addedGameId;
     assert.ok(gameId);
     assert.equal(games.catalogue.find(game => game.id === gameId)?.name,name);
+    if (qualifyPreference) {
+      assert.equal((await processPreference()).value,false,'Use an isolated Cockpit with the default preference');
+      await navigate('Settings');
+      const selector = JSON.stringify('[role="switch"][aria-label="Use Windows process events"]');
+      for (const enabled of [true,false]) {
+        await until(() => page.evaluate(`(() => {
+          const control = document.querySelector(${selector});
+          if (!control || control.disabled) return false;
+          control.click();
+          return true;
+        })()`));
+        await until(() => page.evaluate(`document.querySelector(${selector})?.getAttribute('aria-checked') === "${enabled}"`));
+        assert.equal((await processPreference()).value,enabled);
+      }
+      await navigate('Overview');
+    }
     await page.call('Runtime.enable');
     await page.call('Runtime.addBinding',{name:binding});
     await page.call('Network.enable',{maxPostDataSize:65536});
@@ -150,7 +176,7 @@ test(`${transport} Windows game process boundaries reach the Active game header 
     assert.deepEqual(transitions.stream.map(item=>item.running),transitions.header.map(item=>item.running));
     assert.equal(transitions.stream.length,21,'Expected only the authored process and catalogue boundaries');
     assert.deepEqual(reads,[],'Process transitions must arrive without repeated game state or page queries');
-    const evidence = {transport,wrongPathIgnored:true,reads,times,replacementBoundary,headerTransitions:20,streamTransitions:20};
+    const evidence = {transport,wrongPathIgnored:true,preferenceToggle:qualifyPreference,reads,times,replacementBoundary,headerTransitions:20,streamTransitions:20};
     await writeFile(resolve(root,'evidence.json'), JSON.stringify(evidence,null,2) + '\n');
     console.log(JSON.stringify(evidence));
   } finally {
@@ -159,6 +185,11 @@ test(`${transport} Windows game process boundaries reach the Active game header 
       await stop();
       await page.evaluate('window.__osgProcessBoundary?.close(); delete window.__osgProcessBoundary');
       if (gameId) await request({command:'game_remove',gameId});
+      if (qualifyPreference) {
+        const preference = await processPreference();
+        if (preference.value) await request({command:'ui_preferences_save',key:'game-process-events',
+          expectedRevision:preference.revision,value:false});
+      }
     } finally { page.close(); }
   }
 });

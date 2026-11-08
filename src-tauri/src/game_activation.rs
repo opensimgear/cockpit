@@ -179,7 +179,7 @@ impl Observer {
     }
     #[cfg(test)]
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
-        self.observe_with_continuity(platform, games, None);
+        self.observe_with_continuity(platform, games, None, None);
     }
 
     pub(crate) fn observe_with_continuity(
@@ -187,6 +187,7 @@ impl Observer {
         platform: &dyn Platform,
         games: &[Value],
         continuity: Option<Arc<ProcessContinuity>>,
+        background: Option<&crate::game_discovery::BackgroundProcesses>,
     ) {
         // Capture one process inventory for the whole registered catalogue.
         // Reject duplicates before discovery so one cycle cannot satisfy the
@@ -217,7 +218,7 @@ impl Observer {
         let monitored = games.iter().zip(&identities)
             .filter(|(_, (_, identity))| matches!(identity, Ok(Some(_))))
             .map(|(game, _)| game.clone()).collect::<Vec<_>>();
-        let observations = platform.find_many(&monitored);
+        let observations = background.map_or_else(|| platform.find_many(&monitored), |rows| rows.activation(&monitored));
         let complete = observations.len() == monitored.len();
         let mut observations = observations.into_iter();
         let scans = identities.into_iter().map(|(id, result)| {

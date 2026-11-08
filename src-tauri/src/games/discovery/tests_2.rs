@@ -113,3 +113,38 @@ fn removed_and_unavailable_selected_installations_never_change_the_launch_target
         assert!(results[1].is_err());
         assert_eq!(results[0], results[2]);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_and_integration_share_one_background_capture() {
+        let path = std::env::current_exe().unwrap();
+        let game = json!({"id":"first","installed":true,"processMonitoringSupported":true,"executable":path});
+        let invalid = json!({"id":"invalid","installed":true,"processMonitoringSupported":true});
+        let mut calls = 0;
+        let rows = capture_background_processes(&[game.clone(), invalid.clone()], |paths| {
+            calls += 1;
+            native::inventory(paths)
+        });
+        let activation = rows.activation(std::slice::from_ref(&game));
+        let integration = rows.integration(&[&game, &invalid]);
+        assert_eq!(calls, 1);
+        assert_eq!(activation[0].as_ref().unwrap().as_ref().unwrap().pid, std::process::id());
+        assert_eq!(activation[0].as_ref().unwrap(), integration[0].as_ref().unwrap());
+        assert!(matches!(integration[1], Err(ProcessLookupError::Unavailable(_))));
+        let mut replacement = game;
+        replacement["executable"] = json!("replacement.exe");
+        assert!(matches!(rows.integration(&[&replacement])[0], Err(ProcessLookupError::Unavailable(_))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn background_integration_capture_survives_the_activation_catalogue_limit() {
+        let game = json!({"id":"dcs","installed":true,"processMonitoringSupported":true,
+            "integrationKey":"dcs","provider":"dcs-bios","integrationCompatible":true,
+            "executable":std::env::current_exe().unwrap()});
+        let mut games = vec![Value::Null; osg_profiles::activation::MAX_GAMES];
+        games.push(game.clone());
+        let rows = capture_background_processes(&games, native::inventory);
+        assert!(rows.activation.is_empty());
+        assert_eq!(rows.integration(&[&game])[0].as_ref().unwrap().as_ref().unwrap().pid, std::process::id());
+    }

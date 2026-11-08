@@ -1,5 +1,5 @@
 //! A process inventory is reusable only inside the exact live event scope.
-use crate::game_discovery::{Platform, ProcessLookup, ProcessLookupError};
+use crate::game_discovery::{process_selection, ProcessLookup, ProcessLookupError};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -14,24 +14,24 @@ pub(in crate::games) struct Snapshot {
     rows: Vec<ProcessLookup>,
 }
 
-fn selection(game: &Value) -> [Value; 6] {
-    ["id", "provider", "integrationKey", "integrationCompatible", "executable", "processExecutables"]
-        .map(|key| game[key].clone())
-}
-
 impl Snapshot {
     pub(super) fn process(&self, game: &Value, epoch: (u64, u64)) -> Option<ProcessLookup> {
         if self.epoch != epoch || game["processMonitoringSupported"] != true { return None; }
-        let selected = selection(game);
+        let selected = process_selection(game);
         let index = self.selection.iter().position(|entry| *entry == selected)?;
         self.rows.get(index).cloned()
     }
 }
 
 impl Cache {
-    pub(super) fn read(&mut self, platform: &dyn Platform, games: &[&Value], epoch: Option<(u64, u64)>) -> Vec<ProcessLookup> {
+    #[cfg(test)]
+    pub(super) fn read(&mut self, platform: &dyn crate::game_discovery::Platform, games: &[&Value], epoch: Option<(u64, u64)>) -> Vec<ProcessLookup> {
+        self.read_using(games, epoch, |games| platform.integration_processes(games))
+    }
+    pub(super) fn read_using(&mut self, games: &[&Value], epoch: Option<(u64, u64)>,
+        capture: impl FnOnce(&[&Value]) -> Vec<ProcessLookup>) -> Vec<ProcessLookup> {
         let epoch = epoch.filter(|_| games.iter().all(|game| game["processMonitoringSupported"] == true));
-        let selection: Vec<_> = games.iter().map(|game| selection(game)).collect();
+        let selection: Vec<_> = games.iter().map(|game| process_selection(game)).collect();
         if let Some(snapshot) = self.snapshot.as_ref().filter(|snapshot|
             Some(snapshot.epoch) == epoch && snapshot.selection == selection
                 && snapshot.rows.iter().all(|row| !matches!(row, Err(ProcessLookupError::Unavailable(_))))
@@ -39,7 +39,7 @@ impl Cache {
         {
             return snapshot.rows.clone();
         }
-        let rows = platform.integration_processes(games);
+        let rows = capture(games);
         self.snapshot = epoch.filter(|_| rows.len() == games.len())
             .map(|epoch| Arc::new(Snapshot { epoch, selection, rows: rows.clone() }));
         rows

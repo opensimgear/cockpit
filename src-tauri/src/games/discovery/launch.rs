@@ -229,6 +229,12 @@ impl Platform for NativePlatform {
     fn integration_setup_supported(&self) -> bool {
         cfg!(windows)
     }
+    fn background_processes(&self, games: &[Value]) -> Option<BackgroundProcesses> {
+        cfg!(windows).then(|| capture_background_processes(games, native::inventory))
+    }
+    fn shares_background_processes(&self) -> bool {
+        cfg!(windows)
+    }
     fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value> {
         let mut roots=native::roots();
         if !crate::game_library::installed_clients().iter().any(|(id,_)|*id=="steam") {roots.steam.clear();}
@@ -293,4 +299,32 @@ impl Platform for NativePlatform {
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
         native::alive(identity)
     }
+}
+
+fn capture_background_processes(
+    games: &[Value],
+    scan: impl FnOnce(&[String]) -> Result<ProcessInventory, String>,
+) -> BackgroundProcesses {
+    let mut rows = BackgroundProcesses { activation: BTreeMap::new(), integration: BTreeMap::new() };
+    let activation_supported = games.len() <= osg_profiles::activation::MAX_GAMES;
+    let monitored = games.iter().filter(|game| crate::game_activation::process_candidate(game)
+        && (activation_supported || integration_key(game).is_some()))
+        .cloned().collect::<Vec<_>>();
+    let paths = activation_process_paths(&monitored);
+    let inventory = if paths.is_empty() { Ok(ProcessInventory::default()) } else { scan(&paths) };
+    let inspect = |paths: &[String]| {
+        inventory.as_ref().map_err(|error| ProcessLookupError::Unavailable(error.clone()))?
+            .inspect(paths, false)
+    };
+    for game in &monitored {
+        let Some(id) = game["id"].as_str() else { continue; };
+        if activation_supported {
+            let activation = find_game_process(game, false, |paths| inspect(paths).map_err(|error| error.to_string()));
+            rows.activation.insert(id.to_owned(), activation);
+        }
+        let integration = process_paths(game).map_err(ProcessLookupError::Unavailable)
+            .and_then(|paths| inspect(&paths));
+        rows.integration.insert(id.to_owned(), (process_selection(game), integration));
+    }
+    rows
 }

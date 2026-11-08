@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./canvas-navigation', './canvas-styling', './profile-diagram']);
+const modules = await loadModules(['./canvas-navigation', './canvas-styling', './profile-diagram', './persistence/ui-preferences']);
 const { createCanvasNavigationStore } = modules.get('./canvas-navigation');
 const { createCanvasStylingStore } = modules.get('./canvas-styling');
 const file = new URL('./SettingsPanel.svelte', import.meta.url);
@@ -44,6 +44,15 @@ test('General is initially selected and owns the Canvas mouse-wheel preference',
   assert.match(content, /Hold Ctrl\/⌘ to reverse the action/);
   assert.match(content, /Changes are saved automatically/);
   assert.equal((body.match(/aria-label="Canvas mouse wheel"/g) ?? []).length, 1);
+});
+
+test('General exposes an opt-in persisted Windows process event switch with its permission fallback explained', () => {
+  const content = general(html());
+  assert.match(content, /aria-label="Game process events"/);
+  assert.match(content, /Windows may require permission to subscribe to process events/);
+  assert.match(content, /one shared check every second/);
+  assert.match(content, /Changes are saved automatically/);
+  assert.match(content, /role="switch" aria-label="Use Windows process events"[^>]*aria-checked="false"/);
 });
 
 test('the rendered selection follows the local navigation store across changes', () => {

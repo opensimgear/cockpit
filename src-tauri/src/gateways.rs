@@ -378,7 +378,7 @@ impl GatewayManager {
             game_paths.provider_setup = setup_anchor.with_extension("integration-setup.json");
         }
         #[cfg(not(test))]
-        let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
+        let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform), ui_preferences.clone()));
         #[cfg(test)]
         let games = Arc::new(crate::games::GamesRuntime::test_runtime(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
         let resource_sessions = sessions.clone();
@@ -1046,6 +1046,7 @@ impl GatewayManager {
             let remembered=(command=="ui_preferences_save"&&request["key"]=="remembered").then(||self.ui_preferences.cached("remembered"));
             return match self.ui_preferences.request(&request){Ok(settings)=>{
                 if let Some(before)=remembered {self.activity.remembered_changes(&before,&settings["value"],&request);}
+                if command=="ui_preferences_save"&&request["key"]=="game-process-events" {self.games.process_event_preference_changed();}
                 json!({"ok":true,"state":{"uiPreferences":settings}})
             },Err(error)=>self.error(&error,None)};
         }

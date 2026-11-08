@@ -9,8 +9,8 @@ pub(crate) use streams::OBSERVED_KEYS;
 pub(crate) mod commands;
 pub(crate) mod window_writer;
 pub(crate) use validation::{validate,WindowGeometry};
-pub(crate) const FRONTEND_KEYS:[&str;7]=["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress"];
-pub(crate) const KEYS:[&str;8]=["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","windows"];
+pub(crate) const FRONTEND_KEYS:[&str;8]=["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","game-process-events"];
+pub(crate) const KEYS:[&str;9]=["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","game-process-events","windows"];
 type Observer=Arc<dyn Fn(&str,u64)+Send+Sync>;
 #[derive(Clone,Debug,Serialize)]
 #[serde(rename_all="camelCase")]
@@ -26,7 +26,7 @@ fn location(key:&str)->Result<(&str,&str),String>{
 }
 fn limit(key:&str)->usize{if key=="remembered"{1024*1024}else{8192}}
 fn defaults(key:&str)->Value{match key {
-    "theme"=>json!(false),"devices-mode"=>json!("list"),"canvas-navigation"=>json!({"wheelAction":"pan"}),
+    "theme"|"game-process-events"=>json!(false),"devices-mode"=>json!("list"),"canvas-navigation"=>json!({"wheelAction":"pan"}),
     "canvas-styling"=>json!({"arrowStyle":"smooth","cornerRadius":24}),
     "tray"=>json!({"closeToTray":false,"minimizeToTray":false}),"progress"=>json!({"delivery":"system","position":"bottom-right"}),_=>Value::Null,
 }}

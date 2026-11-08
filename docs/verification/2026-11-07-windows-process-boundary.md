@@ -118,4 +118,5 @@ was unverified. No privilege, audit or channel settings were changed.
 A first `logman` probe hit its system-drive space requirement. The memory-only
 native call isolated the permission result. The existing scoped WMI helper
 remains the Windows event path that requires operator acceptance. The
-decision on keeping the 500 ms discovery fallback remains open in #189.
+decision on the fallback was later recorded in #189 and implemented as a
+[Settings opt-in with one shared one-second check](2026-11-07-game-process-discovery-preference.md).

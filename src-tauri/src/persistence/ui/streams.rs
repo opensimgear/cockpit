@@ -1,8 +1,8 @@
 use super::*;
 
 // Remembered inventory exceeds the change frame budget, so publish its revision.
-pub(crate) const OBSERVED_KEYS: [&str; 7] = [
-    "theme", "devices-mode", "canvas-navigation", "canvas-styling", "tray", "progress", "remembered",
+pub(crate) const OBSERVED_KEYS: [&str; 8] = [
+    "theme", "devices-mode", "canvas-navigation", "canvas-styling", "tray", "progress", "remembered", "game-process-events",
 ];
 
 pub(super) fn payload(key: &str, entry: Result<&Entry, &String>) -> Value {
