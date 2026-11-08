@@ -31,6 +31,7 @@ const CONFIG_ROUTE_CHANGED: &str =
     "The module configuration route changed while awaiting its reply.";
 
 mod reconnect;
+mod layout_recovery;
 
 #[path = "stm32_publication.rs"]
 mod publication;
@@ -1243,50 +1244,25 @@ impl Gateway {
         }
     }
 
-    fn observe_layout(&mut self, target: Option<(&str, &str)>) -> Result<(), String> {
-        let deadline = Instant::now() + self.timing.reconnect;
-        loop {
-            if self.connection.is_none() {
-                self.recover_automatic(deadline)?;
-            }
-            if let Some(error) = self.state["layoutError"].as_str() {
-                return Err(format!("The gateway could not publish its USB controller layout ({error}). Its saved state must be reviewed; the operation was not repeated."));
-            }
-            if self.state["layoutPending"] == false {
-                if target.is_none_or(|(action, id)| self.lifecycle_matches(action, id)) {
-                    self.state["reconnecting"] = json!(false);
-                    return Ok(());
-                }
-                return Err("The gateway returned, but its current controller state does not confirm this change. Review the inventory; the operation was not repeated.".into());
-            }
-            if Instant::now() >= deadline {
-                return Err("The gateway controller update is still pending. Review its inventory before another change; the operation was not repeated.".into());
-            }
-            self.state["reconnecting"] = json!(true);
-            self.sleep(self.timing.poll)?;
-            if let Err(error) = self.exchange(
-                "snapshot",
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(self.timing.command),
-            ) {
-                if self.connection.is_some() {
-                    return Err(error);
-                }
-            }
-        }
-    }
-
     fn automatic_snapshot(&mut self) -> Result<(), String> {
-        let result = self.exchange("snapshot", self.timing.command);
-        if let Err(error) = result {
-            if self.connection.is_some() {
-                return Err(error);
+        let deadline = Instant::now() + self.timing.command;
+        let previous = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Err(PUBLICATION_EVIDENCE_CHANGED.into()); }
+            let fence = self.layout_publication();
+            match self.exchange_guarded("snapshot", remaining, None, None, fence.as_ref()) {
+                Ok(()) if fence.is_none() && self.layout_publication().is_some() => continue,
+                Ok(()) => break fence,
+                Err(error) if error == PUBLICATION_EVIDENCE_CHANGED => continue,
+                Err(error) if self.connection.is_some() => return Err(error),
+                Err(_) => {
+                    self.recover_automatic(Instant::now() + self.timing.reconnect)?;
+                    break None;
+                }
             }
-            self.recover_automatic(Instant::now() + self.timing.reconnect)?;
-        }
+        };
         if self.state["layoutPending"] == true {
-            self.observe_layout(None)?;
+            self.observe_layout(None, previous)?;
         }
         Ok(())
     }
@@ -1332,12 +1308,13 @@ impl Gateway {
             return Err("Profile updates require an enabled, online device.".into());
         }
         // A lost reply is ambiguous. Reconnect and inspect, never repeat the write.
+        let previous = self.layout_publication();
         if let Err(error) = self.exchange(&format!("{action} {id}"), self.timing.command) {
             if self.connection.is_some() {
                 return Err(error);
             }
         }
-        self.observe_layout(Some((action, id)))
+        self.observe_layout(Some((action, id)), previous)
     }
     fn expire_claims(&mut self, client: Option<&str>) {
         self.claims.retain(|_, claim| {

@@ -318,3 +318,6 @@ fn typed_service_uses_the_existing_serial_owner_and_closes_bounded_requests(){
     assert_eq!(service.request(json!({"command":"publication_claim","clientId":"native-publication-test","owner":OWNER}))["ok"],false,"JSON commands have no publication authority");
     service.shutdown();assert!(service.publication(request(PublicationOperation::State)).is_err());
 }
+mod layout_recovery {
+    include!("stm32/layout_recovery_tests.rs");
+}

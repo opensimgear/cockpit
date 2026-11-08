@@ -91,13 +91,18 @@ impl PublicationFeed {
         (state.inventory.clone(), state.current.clone())
     }
 
-    pub(crate) fn watch(&self, wake: &Arc<NativeWake>) {
+    pub(crate) fn watch(&self, wake: &Arc<NativeWake>) -> bool {
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         state.watchers.retain(|watch| watch.strong_count() > 0);
         let wake = Arc::downgrade(wake);
-        if state.watchers.len() < MAX_WATCHERS && !state.watchers.iter().any(|old| old.ptr_eq(&wake)) {
-            state.watchers.push(wake);
+        if state.watchers.iter().any(|old| old.ptr_eq(&wake)) {
+            return true;
         }
+        if state.watchers.len() >= MAX_WATCHERS {
+            return false;
+        }
+        state.watchers.push(wake);
+        true
     }
 
     pub(crate) fn attach(&self) -> Ingress {
