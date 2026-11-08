@@ -21,6 +21,7 @@
   let busy = $state(''), error = $state('');
   let disposed = false;
   let inventoryRequest = 0;
+  let visibilityRequest = 0;
   const nativeApp = isTauri();
   const drivers = $derived(driverSnapshot ?? inventory?.drivers);
   const vjoyDriver = $derived(drivers?.vjoy);
@@ -80,9 +81,15 @@
     }
   }
   async function loadVisibility() {
-    const result = await gatewayRequest({ command: 'controller_visibility_status' });
-    if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
-    if (!disposed) visibility = result.controllers.visibility;
+    const request = ++visibilityRequest;
+    try {
+      const result = await gatewayRequest({ command: 'controller_visibility_status' });
+      if (disposed || request !== visibilityRequest) return;
+      if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
+      visibility = result.controllers.visibility;
+    } catch (reason) {
+      if (!disposed && request === visibilityRequest) throw reason;
+    }
   }
   async function refresh(inspect = false) {
     if (busy) return;
@@ -120,24 +127,41 @@
   }
   onMount(() => {
     const observations = new SharedObservations();
-    const vjoyDemand = visibleObservation(observations, 'system.inventory.vjoy', () => {});
-    vjoyDemand.setVisible(true);
-    const showError = (reason: unknown) => { if (!disposed) error = String(reason); };
-    observations.subscribe('settings.desktop', observeDesktopSettings);
-    observations.subscribe('system.inventory.drivers', state => {
+    const showError = (reason: unknown) => { if (!disposed && !document.hidden) error = String(reason); };
+    const readOnCommit = (
+      topic: string, load: () => Promise<void>, retire: () => void,
+    ) => {
+      let started = false;
+      return visibleObservation(observations, topic, state => {
+        const unavailable = state.status === 'error' || state.status === 'lost';
+        if (state.status === 'ready' || (unavailable && !started)) {
+          started = true;
+          void load().catch(showError);
+        }
+      }, () => {
+        started = false;
+        retire();
+      });
+    };
+    const driversReader = visibleObservation(observations, 'system.inventory.drivers', state => {
       const payload = state.frame?.payload;
       if (state.status === 'ready' && payload && typeof payload === 'object' && 'supported' in payload) {
         driverSnapshot = payload as typeof driverSnapshot;
       }
-    });
-    observations.subscribe('system.inventory', state => {
-      const unavailable = state.status === 'error' || state.status === 'lost';
-      if (state.status === 'ready' || (unavailable && inventoryRequest === 0)) {
-        void loadInventory().catch(showError);
-      }
-    });
-    void loadVisibility().catch(showError);
-    return () => { disposed = true; vjoyDemand.close(); observations.close(); };
+    }, () => { driverSnapshot = undefined; });
+    const readers = [
+      visibleObservation(observations, 'system.inventory.vjoy', () => {}),
+      visibleObservation(observations, 'settings.desktop', observeDesktopSettings, () => { desktop = null; }),
+      driversReader,
+      readOnCommit('system.inventory', loadInventory, () => { inventoryRequest++; inventory = null; }),
+      readOnCommit('controllers.visibility', loadVisibility, () => { visibilityRequest++; visibility = null; }),
+    ];
+    for (const reader of readers) reader.setVisible(true);
+    return () => {
+      disposed = true;
+      for (const reader of readers) reader.close();
+      observations.close();
+    };
   });
 </script>
 

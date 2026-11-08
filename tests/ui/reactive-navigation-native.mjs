@@ -5,6 +5,8 @@ import test from 'node:test';
 import {dirname, resolve, toNamespacedPath} from 'node:path';
 import {browserPage, nativePage, until} from '../../scripts/reactive/cdp.mjs';
 import {checkActivitySettings} from './reactive-navigation/activity-settings.mjs';
+import {checkDeviceSettingsVisibility} from './reactive-navigation/device-settings.mjs';
+import {checkBackupSettings, checkQueuedBackupReopen} from './reactive-navigation/backup-settings.mjs';
 const browserUrl = process.env.OSG_NAVIGATION_BROWSER_URL;
 const transport = browserUrl ? 'browser development' : 'native';
 const browserOpenId = ({ connectionId, requestId }) => JSON.stringify([connectionId, requestId]);
@@ -33,6 +35,8 @@ test(`${transport} main view navigation retires observation readers without dupl
   const abortedOpens = new Map();
   let companionReads = 0;
   let systemInventoryReads = 0;
+  let visibilityReads = 0;
+  let storageReads = 0;
   const navigate = async (view, discard = false) => {
     const label = JSON.stringify(view);
     const selector = view === 'Settings' ? '.sidebar-bottom button' : 'nav[aria-label="Main navigation"] button';
@@ -55,6 +59,8 @@ test(`${transport} main view navigation retires observation readers without dupl
         const body = JSON.parse(params.request.postData);
         if ((body.request ?? body).command === 'companion_status') companionReads++;
         if ((body.request ?? body).command === 'system_inventory') systemInventoryReads++;
+        if ((body.request ?? body).command === 'controller_visibility_status') visibilityReads++;
+        if ((body.request ?? body).command === 'storage_status') storageReads++;
       }
       const operation = endpoints.get(path);
       if (!operation) return;
@@ -267,7 +273,7 @@ test(`${transport} main view navigation retires observation readers without dupl
     await navigate('Settings');
     const clickTab = label => page.evaluate(`Array.from(document.querySelectorAll('[aria-label="Settings sections"] [role="tab"]'))
       .find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
-    const deviceTopics = ['settings.desktop', 'system.inventory', 'system.inventory.drivers', 'system.inventory.vjoy'];
+    const deviceTopics = ['controllers.visibility', 'settings.desktop', 'system.inventory', 'system.inventory.drivers', 'system.inventory.vjoy'];
     const settingsTopics = () => [...active.values()].map(reader => reader.topic)
       .filter(topic => deviceTopics.includes(topic) || topic === 'companion.listener' || topic === 'settings.mcp').sort();
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -287,32 +293,17 @@ test(`${transport} main view navigation retires observation readers without dupl
       assert.ok(await page.evaluate(`document.querySelector('[aria-label="Backups"]')
         ?.textContent.includes('Open the desktop Cockpit to manage backups.')`));
     } else {
-      const previousReader = backupReader();
-      const {storage: before} = await request({command:'storage_status'});
-      assert.ok(before.backups.length < before.maximumBackups, 'The dev Cockpit needs one free backup slot');
-      await clickTab('Devices');
-      await until(() => pending.size === 0 && !backupReader());
-      let backup;
-      try {
-        const {storage: created} = await request({command:'storage_create', expectedRevision:before.revision}, 45_000);
-        backup = created.backup;
-        assert.ok(backup?.id);
-        assert.equal(backupReader(), undefined, 'A hidden backup view must have no active reader');
-        assert.equal(await backupRow(backup.id), false);
-        await clickTab('General');
-        await settled(['storage.backups']);
-        assert.notEqual(backupReader(), previousReader);
-        await until(() => backupRow(backup.id));
-      } finally {
-        if (backup?.id) {
-          const {storage: current} = await request({command:'storage_status'});
-          const {storage: removed} = await request({command:'storage_remove', id:backup.id, expectedRevision:current.revision}, 45_000);
-          assert.equal(removed.filesRemoved, true);
-        }
-      }
-      await until(() => backupRow(backup.id), visible => !visible);
-      await until(() => pending.size === 0 && settingsTopics().length === 0);
+      await checkBackupSettings({
+        page, request, clickTab, backupReader, backupRow, baselines, statusReads: () => storageReads,
+        waitForReader: () => settled(['storage.backups']),
+        waitForRetirement: () => until(() => pending.size === 0 && !backupReader()),
+      });
     }
+    await checkDeviceSettingsVisibility({
+      page, request, clickTab, deviceTopics, settled,
+      retired: () => pending.size === 0 && settingsTopics().length === 0,
+      reads: () => ({inventory:systemInventoryReads, visibility:visibilityReads}),
+    });
     const {desktop} = await request({command:'profile_desktop_status'});
     const desktopReader = () => [...active.values()].find(reader => reader.topic === 'settings.desktop')?.token;
     const readDesktopToggle = () => page.evaluate(`(() => {
@@ -460,6 +451,11 @@ test(`${transport} main view navigation retires observation readers without dupl
       'Every aborted open must have an accepted cancellation for the same request');
     if (browserUrl) console.log(JSON.stringify({ transport, canceledOpens: abortedOpens.size }));
     assert.ok([...baselines.values()].every(count => count === 1));
+    if (!browserUrl && process.env.OSG_NAVIGATION_ISOLATED_DATABASE === '1' && !attemptedGames.size) {
+      stopTrace();
+      await navigate('Settings');
+      await checkQueuedBackupReopen({page, request, clickTab});
+    }
   } finally {
     try {
       await navigate('Overview', true);

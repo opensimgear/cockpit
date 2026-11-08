@@ -26,6 +26,12 @@ criteria have delivered software and outstanding qualification.
 
 ## R7 UI consistency
 
+[Settings Devices and Backups](../verification/2026-11-08-settings-reader-lifetimes.md)
+retire their readers while the document is hidden. Devices reopens on
+current desktop, driver, inventory and visibility baselines on native and
+browser-dev. Native Backups follows the current catalogue on reopen and
+recovers a queued restore after the observation broker has stopped.
+
 The companion and integration port sections share the same tile, filter and
 pager. The tile owns spacing, typography and status styles. Companion authoring
 controls retain concise labels, icons and accessible remove actions. The
