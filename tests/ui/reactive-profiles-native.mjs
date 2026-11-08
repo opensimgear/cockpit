@@ -149,9 +149,12 @@ test(transport+' saves and reopens a real profile editor after background change
   const closed=name+' closed';
   const reopened=await requestProfile(page,{command:'profile_rename',id,name:closed,expectedRevision:changed.document.revision});
   await navigate('Profiles');
+  const activationStarted=performance.now();
   await click('.profiles-workspace button',`Activate ${closed}`);
   activationRequested=true;
-  const firstOwner=await until(currentOwner,owner=>owner?.profileId===id,30000);
+  const firstOwner=await until(currentOwner,owner=>owner?.profileId===id,5000);
+  const activationMs=performance.now()-activationStarted;
+  assert.ok(activationMs<5000,`Output-free activation took ${Math.round(activationMs)} ms`);
   await click('.profiles-workspace button',`Edit ${closed}`);
   await until(editorName,current=>current===closed);
   await until(()=>page.evaluate(`(()=>{
@@ -180,7 +183,7 @@ test(transport+' saves and reopens a real profile editor after background change
   assert.equal(debug.ports.find(port=>port.id==='axis-1').contract.schema.min,0);
   assert.equal(calls.filter(command=>command==='profile_editor_save').length,2);
   assert.deepEqual(calls.filter(command=>['profile_list','profile_status','profile_automatic_status'].includes(command)),[]);
-  console.log(JSON.stringify({transport,uiSaves:2,visibleBackgroundRename:true,currentOnReopen:true,
+  console.log(JSON.stringify({transport,uiSaves:2,activationMs:Math.round(activationMs),visibleBackgroundRename:true,currentOnReopen:true,
    savedControllerRange:true,activeRevisionObserved:true,refreshRequests:0}));
  }catch(error){
   const diagnostics=await page.evaluate(`({

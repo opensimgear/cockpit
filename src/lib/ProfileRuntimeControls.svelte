@@ -27,6 +27,7 @@
   const activeEditor = $derived(!!editor&&native?.owner?.profileId===editor.id);
   const savedChangesPending = $derived(activeEditor&&native?.appliedSnapshot?.revision!==editor?.baseRevision);
   const activating=$derived(view.pending==='apply'&&!!view.activation);
+  const progressId=$derived(view.pending==='apply'?view.activation?.id:undefined);
   const cancelling=$derived(!!view.activation?.cancelling||view.progress?.phase==='cancelling');
   const targetName=$derived(profiles.find(profile=>profile.id===view.activation?.profileId)?.name??'profile');
   const progressPayload=$derived.by(()=>{
@@ -49,9 +50,10 @@
     return()=>{mounted=false;stop();};
   });
   function watchProgress(){
-    const id=view.activation?.id;
-    if(!mounted||!active||!activating||!id)return;
-    return observeProfileActivation((progress,error)=>runtime.observeProgress(id,progress,error));
+    const id=progressId;
+    if(!mounted||!active||!id)return;
+    // The retained snapshot can synchronously update view during subscription.
+    return untrack(()=>observeProfileActivation((progress,error)=>runtime.observeProgress(id,progress,error)));
   }
   $effect(watchProgress);
   function watchStatus(){ if(!mounted||!active)return; return observeProfileRuntime(state=>runtime.observe(state)); }

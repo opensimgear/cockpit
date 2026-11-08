@@ -116,8 +116,17 @@ Each applied the output-free profile, saved an axis-range change, and
 observed the new applied revision and owner generation through the runtime
 stream. Each made two editor saves and zero profile library, runtime status,
 or automatic status refresh requests. The fixture used private databases.
-Browser-dev activation exceeded the original 15-second fixture wait and
-passed with a 30-second bound. Controller latency remains in #199.
+
+Browser-dev activation initially stalled for 17 seconds. In separate traces
+the native request took 84 ms and Edge received HTTP headers in 70 ms. A
+renderer CPU profile traced the stall to the inline progress effect. Each
+progress snapshot replaced the controller view and reran the effect, whose
+new subscription immediately replayed the same snapshot. The subscription
+now follows the activation ID and isolates synchronous delivery from effect
+tracking. The running fixture saw the applied owner 112 ms after clicking
+Activate in browser-dev and 177 ms in the native WebView. It now asserts a
+five-second bound for this output-free fixture. Physical controller
+capture-to-preview and capture-to-output latency remain in #199.
 
 The controller inventory fixture verifies an exact-source metadata rename and
 restore through the native and browser-dev transports. Two inventory readers
