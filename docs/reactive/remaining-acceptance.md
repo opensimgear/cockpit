@@ -52,6 +52,9 @@ Cockpit session.
 The [Companions roster](../verification/2026-11-08-companion-roster-visibility.md)
 retires its passive status demand while hidden and discards delayed replies.
 Both clients reopened on the committed listener state and offered pairing.
+The [pairing expiry fixture](../verification/2026-11-08-companion-pairing-visibility.md)
+also verifies that an expired link cannot renew while the view is hidden or
+while the reopened view is waiting for its current roster.
 
 The [Companion panel editor](../verification/2026-11-08-panel-assignment-reopen.md)
 reconciles committed assignments on both clients and retains local checkbox

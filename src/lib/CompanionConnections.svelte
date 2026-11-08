@@ -23,10 +23,12 @@
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
   let disposed = false;
   let mounted = $state(false);
+  let shown = $state(false);
+  let rosterCurrent = $state(false);
   let pairingOpen = $state(false);
   let browserOfferAttempted=$state(false);
   $effect(()=>{
-    if(active && pairingOpen && kind==='browser' && hostState.listener?.enabled && !pairing && !busy && !browserOfferAttempted){
+    if(active && shown && rosterCurrent && pairingOpen && kind==='browser' && hostState.listener?.enabled && !pairing && !busy && !browserOfferAttempted){
       browserOfferAttempted=true;void action(offer);
     }
   });
@@ -112,6 +114,7 @@
   async function refresh() {
     const epoch = statusEpoch;
     if (!currentStatus(epoch)) return;
+    rosterCurrent = false;
     if (reading || settingsSaving) { refreshQueued = true; return; }
     refreshQueued = false;
     reading = true;
@@ -127,6 +130,7 @@
       if (pairingOpen && newPairingConnected(kind,baseline,hostState)) {
         pairingOpen=false; pairing=undefined; kind=''; notify('Companion paired and saved.');
       }
+      if (!refreshQueued) rosterCurrent = true;
     } catch (error) { if (currentStatus(epoch)) notify(String(error),'error'); }
     finally {
       reading = false;
@@ -136,9 +140,10 @@
   $effect(() => {
     if (!active || !mounted) return;
     const observations = companionObservations();
-    const retire = () => { statusEpoch++; refreshQueued = false; };
+    const retire = () => { statusEpoch++; refreshQueued = false; rosterCurrent = false; };
     const readers = ['companion.presence', 'companion.listener'].map(topic => visibleObservation(observations, topic, state => {
       if (state.status === 'ready') untrack(() => { void refresh(); });
+      else rosterCurrent = false;
       if (state.status === 'error' && state.error) notify(state.error, 'error');
     }, retire));
     readers.forEach(reader => reader.setVisible(true));
@@ -168,8 +173,10 @@
   }
   async function offer() {
     const result=await send('companion_pair_offer',{kind});
+    const ttl = result.pairing?.ttlMs ?? 0;
+    expires = Date.now() + ttl;
+    secondsLeft = Math.ceil(ttl / 1000);
     pairing=result.pairing;
-    expires=Date.now()+(pairing?.ttlMs??0); secondsLeft=Math.ceil((pairing?.ttlMs??0)/1000);
   }
   async function remove(client: Record<string,unknown>) {
     if (!window.confirm('Remove '+(text(client,'name') || 'this companion')+'? It must pair again to reconnect.')) return;
@@ -210,12 +217,22 @@
   }
   function backToCompanions() { showMain(); }
   $effect(() => {
-    if (!active || !mounted || !pairing) return;
-    const countdown = setInterval(() => {
-      secondsLeft=Math.max(0,Math.ceil((expires-Date.now())/1000));
-      if (!secondsLeft && pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}
-    },1000);
-    return () => clearInterval(countdown);
+    if (!active || !shown || !pairing) return;
+    const offer = pairing;
+    const deadline = expires;
+    let timer: number | undefined;
+    function tick() {
+      if (disposed || !active || document.hidden || pairing !== offer) return;
+      const remaining = Math.max(0, deadline - Date.now());
+      secondsLeft = Math.ceil(remaining / 1000);
+      if (remaining > 0) timer = window.setTimeout(tick, remaining % 1000 || 1000);
+      else {
+        pairing = undefined;
+        if (kind === 'browser') browserOfferAttempted = false;
+      }
+    }
+    untrack(tick);
+    return () => clearTimeout(timer);
   });
   async function receiveFlash(status: NonNullable<CompanionHostState['usb']>) {
     if (!updating || disposed) return;
@@ -256,8 +273,11 @@
     });
   });
   onMount(() => {
+    const visibility = () => { shown = !document.hidden; };
+    document.addEventListener('visibilitychange', visibility);
+    visibility();
     mounted=true;
-    return () => {void settingsAutosave.flush();disposed=true;if(updateOpen && !updating && !finishingFlash && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
+    return () => {document.removeEventListener('visibilitychange', visibility);void settingsAutosave.flush();disposed=true;if(updateOpen && !updating && !finishingFlash && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
   });
 </script>
 

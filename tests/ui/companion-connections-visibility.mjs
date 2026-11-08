@@ -31,7 +31,8 @@ test(`${transport} production companion roster suspends passive status reads whi
     const result=await response.json();if(!response.ok||!result.ok)throw Error(result.error);return result.state;
   })()`);
   let initial,enabledByFixture=false,listenerRevision;
-  let statusReads=0,oldResponse;
+  const shortOfferMs=2500;
+  let statusReads=0,oldResponse,offerRequests=0,pauseReveal=false,revealResponse,traceError;
   let stopTrace=()=>{};
   const hidden=value=>page.evaluate(`(()=>{if(${value})Object.defineProperty(document,'hidden',{configurable:true,value:true});else delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));})()`);
   const nav=async label=>{
@@ -45,6 +46,19 @@ test(`${transport} production companion roster suspends passive status reads whi
     const port=await privateLoopbackPort();
     await page.call('Network.enable',{maxPostDataSize:65536});
     await page.call('Fetch.enable',{patterns:[{urlPattern:'*gateway_request',requestStage:'Response'},{urlPattern:'*/api/gateway/',requestStage:'Response'}]});
+    const shortenFirstOffer=async params=>{
+      const response=await page.call('Fetch.getResponseBody',{requestId:params.requestId});
+      const payload=JSON.parse(response.base64Encoded?Buffer.from(response.body,'base64').toString('utf8'):response.body);
+      assert.equal(payload.ok,true);
+      assert.ok(payload.state.companions.pairing.browserUrl);
+      // Change only the portal's presentation deadline. The native host still owns the real offer.
+      payload.state.companions.pairing.ttlMs=shortOfferMs;
+      await page.call('Fetch.fulfillRequest',{
+        requestId:params.requestId,responseCode:params.responseStatusCode,
+        responseHeaders:params.responseHeaders.filter(header=>header.name.toLowerCase()!=='content-length'),
+        body:Buffer.from(JSON.stringify(payload)).toString('base64'),
+      });
+    };
     stopTrace=page.listen(({method,params})=>{
       if(method!=='Fetch.requestPaused')return;
       const path=new URL(params.request.url).pathname;
@@ -54,6 +68,11 @@ test(`${transport} production companion roster suspends passive status reads whi
         if(command==='companion_status'){
           statusReads++;
           if(!oldResponse){oldResponse=params;return;}
+          if(pauseReveal&&!revealResponse){revealResponse=params;return;}
+        }
+        if(command==='companion_pair_offer'&&++offerRequests===1){
+          void shortenFirstOffer(params).catch(error=>{traceError=error;});
+          return;
         }
       }
       void page.call('Fetch.continueResponse',{requestId:params.requestId}).catch(()=>{});
@@ -101,10 +120,30 @@ test(`${transport} production companion roster suspends passive status reads whi
     await page.evaluate(`document.querySelector('.companions button.primary-button')?.click()`);
     await until(()=>page.evaluate(`!!document.querySelector('[aria-label="Pair companion"]')`));
     await page.evaluate(`([...document.querySelectorAll('[aria-label="Pair companion"] label')].find(label=>label.textContent.includes('Browser'))?.querySelector('input')?.click())`);
-    await until(()=>page.evaluate(`!!document.querySelector('[aria-label="Browser pairing link"]')`),Boolean,15000);
-    console.log(JSON.stringify({transport,companionConnectionsHiddenStatusReads:0,retiredReplyIgnored:true,revealReads,browserPairingAvailable:true}));
+    const pairingLink=()=>page.evaluate(`document.querySelector('[aria-label="Browser pairing link"]')?.value`);
+    const firstLink=await until(()=>{if(traceError)throw traceError;return pairingLink();});
+    await hidden(true);
+    const readsBeforeExpiry=statusReads;
+    await delay(shortOfferMs+750);
+    assert.equal(offerRequests,1,'An expired offer must not cause a replacement while hidden');
+    assert.equal(statusReads,readsBeforeExpiry,'Hidden pairing must not read the roster');
+
+    pauseReveal=true;
+    await hidden(false);
+    await until(()=>revealResponse);
+    await until(pairingLink,value=>!value);
+    await delay(300);
+    assert.equal(offerRequests,1,'A replacement must wait for the current roster');
+    pauseReveal=false;
+    await page.call('Fetch.continueResponse',{requestId:revealResponse.requestId});
+    revealResponse=undefined;
+    await until(pairingLink,value=>Boolean(value)&&value!==firstLink);
+    assert.equal(offerRequests,2,'Reopen must create one fresh browser link');
+    console.log(JSON.stringify({transport,companionConnectionsHiddenStatusReads:0,retiredReplyIgnored:true,revealReads,hiddenPairingOffers:0,freshPairingOffersAfterRoster:1}));
   }finally{
     try{
+      pauseReveal=false;
+      if(revealResponse)await page.call('Fetch.continueResponse',{requestId:revealResponse.requestId}).catch(()=>{});
       await hidden(false);
       if(await page.evaluate(`!!document.querySelector('[aria-label="Pair companion"]')`)){
         await page.evaluate(`([...document.querySelectorAll('[aria-label="Pair companion"] button')].find(button=>button.textContent.includes('Cancel')))?.click()`);

@@ -2,11 +2,7 @@ import ts from 'typescript';
 import { parse } from 'svelte/compiler';
 
 // Each entry identifies a reviewed call site by its callback and delay.
-const intervals = new Map([
-  ['src/lib/CompanionConnections.svelte', [
-    "()=>{secondsLeft=Math.max(0,Math.ceil((expires-Date.now())/1000));if(!secondsLeft&&pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}},1000",
-  ]],
-]);
+const intervals = new Map();
 
 const timeouts = new Map([
   // Connection retries and protocol deadlines.
@@ -32,8 +28,8 @@ const timeouts = new Map([
     '()=>{now=performance.now();},Math.max(0,Math.ceil(deadline-performance.now()))',
   ]],
   ['packages/widget-compiler/src/compiler.ts', ['resolve,0']],
-  // User-initiated firmware workflow deadlines.
-  ['src/lib/CompanionConnections.svelte', ['resolve,1500']],
+  // Visible pairing countdown and the user-initiated firmware settle deadline.
+  ['src/lib/CompanionConnections.svelte', ['tick,remaining%1000||1000','resolve,1500']],
   // Debounce, dismissal, resource disposal and explicit operation deadlines.
   ['src/lib/activity/ActivityPanel.svelte', ['()=>settledSearch=value,250']],
   ['src/lib/companion-settings.ts', ['()=>{timer=undefined;void start();},Math.max(0,due-Date.now())']],
