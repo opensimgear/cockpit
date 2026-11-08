@@ -6,8 +6,12 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {fileURLToPath} from 'node:url';
 
 const artifacts=resolve('.research/profile-progress-notifications-native');
+const execute=promisify(execFile);
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const targets=async()=>(await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222'}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
 async function until(read,label,timeout=10_000){const end=Date.now()+timeout;while(Date.now()<end){const value=await read();if(value)return value;await delay(100);}throw Error(label);}
@@ -47,6 +51,7 @@ test('native progress uses system delivery or fallback, preserves controls and r
  const screenshot=async name=>{const value=await child.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(resolve(artifacts,name),Buffer.from(value.data,'base64'));};
  const childWindow=async()=>connect(await until(async()=>(await targets()).find(target=>target.type==='page'&&target.url.includes('profile-activation-window')),'Native fallback window is unavailable'));
  try{
+  await until(()=>main.evaluate(`typeof window.__TAURI_INTERNALS__?.invoke==='function'`),'Native Cockpit gateway is unavailable');
   original=await invoke('profile_progress_settings_get');evidence.originalSettings=original;
   await until(async()=>{const reply=await invoke('gateway_request',{request:{command:'profile_activation_current',clientId:'notification-delivery-probe'}});assert.equal(reply.ok,true,reply.error);return !reply.state.profileActivation;},'A real profile operation must finish before presentation probes');
 
@@ -124,15 +129,63 @@ test('native progress uses system delivery or fallback, preserves controls and r
   }
   evidence.checks.push('Configured Cockpit windows support actual Cancel intent, noncancellable cleanup and stale-operation protection without native focus');
   evidence.checks.push('Settings reposition an already visible notification at all four corners with exact physical dimensions');
+
+  if(process.env.OSG_PROGRESS_NOTIFICATIONS_BACKGROUND==='1'){
+   const processId=Number(process.env.OSG_PROGRESS_NOTIFICATIONS_PROCESS_ID);
+   assert.ok(Number.isSafeInteger(processId)&&processId>0,'Use the process ID of the isolated native fixture');
+   const visibility=async action=>{
+    const script=fileURLToPath(new URL('./native-progress-visibility.ps1',import.meta.url));
+    const {stdout}=await execute('powershell.exe',['-NoProfile','-NonInteractive','-File',script,'-ProcessId',String(processId),'-Action',action],{windowsHide:true,timeout:10_000});
+    const handle=stdout.trim();assert.match(handle,/^[1-9]\d*$/);return handle;
+   };
+   assert.equal(await invoke('profile_activation_window_close',{operationId:operation}),true);
+   child.close();child=undefined;operation=undefined;
+   await until(async()=>!(await targets()).some(target=>target.url.includes('profile-activation-window')),'Previous progress window was not retired');
+   operation=`background-probe-${randomUUID()}`;
+   const preparing={...manual,operationId:operation,message:'Preparing background progress'};
+   await invoke('profile_activation_window_open',{progress:preparing});
+   child=await childWindow();
+   const view=()=>child.evaluate(`({message:document.querySelector('.progress-message')?.textContent,
+    cancel:document.querySelector('button')?.textContent,visibility:document.visibilityState})`);
+   const before=await until(async()=>{const state=await view();return state.message===preparing.message&&state.cancel==='Cancel'&&state;},'Cancellable progress did not render');
+
+   const handle=await visibility('hide');
+   const hiddenDocument=await child.evaluate('document.visibilityState');
+   const background={...preparing,phase:'deactivating',canCancel:false,message:'Cleanup committed while hidden'};
+   assert.equal(await invoke('profile_activation_window_update',{progress:background}),true);
+   const committed=await invoke('profile_activation_window_state');
+   assert.equal(committed.progress.operationId,operation);
+   assert.equal(committed.progress.message,background.message);
+   assert.equal(await visibility('reveal'),handle,'The same Windows popup must reveal the committed progress');
+   const revealed=await until(async()=>{const state=await view();return state.message===background.message&&!state.cancel&&state;},'Revealed window retained stale progress or Cancel');
+
+   assert.equal(await visibility('hide'),handle);
+   assert.equal(await invoke('profile_activation_window_close',{operationId:operation}),true);
+   const retired=operation;
+   operation=undefined;
+   child.close();child=undefined;
+   await until(async()=>!(await targets()).some(target=>target.url.includes('profile-activation-window')),'Progress completed while hidden but the popup survived');
+   assert.equal(await invoke('profile_activation_window_state'),null);
+
+   operation=`replacement-probe-${randomUUID()}`;
+   const replacement={...preparing,operationId:operation,message:'Only the replacement operation is shown'};
+   await invoke('profile_activation_window_open',{progress:replacement});
+   assert.equal(await invoke('profile_activation_window_update',{progress:{...background,operationId:retired}}),false);
+   assert.equal(await invoke('profile_activation_window_close',{operationId:retired}),false);
+   child=await childWindow();
+   const current=await until(async()=>{const state=await view();return state.message===replacement.message&&state.cancel==='Cancel'&&state;},'A retired operation affected the new popup');
+   evidence.background={windowsVisibilityConfirmed:true,before,hiddenDocument,committed:committed.progress,revealed,completedWhileHidden:true,current};
+   evidence.checks.push('Windows popup hide and reveal shows the latest cleanup, hidden completion retires the popup, and stale commands preserve its replacement');
+  }
  }catch(error){evidence.error=String(error);throw error;}
  finally{
   try{
    if(operation)await cleanup('Close display probe',async()=>{assert.equal(await invoke('profile_activation_window_close',{operationId:operation}),true);});
    await cleanup('Dispose parent observer',()=>main.evaluate('window.__popupAdapter?.dispose();delete window.__popupAdapter;delete window.__popupCancelCount;'));
    if(original)await cleanup('Restore notification preferences',async()=>{assert.deepEqual(await invoke('profile_progress_settings_save',{settings:original}),original);assert.deepEqual(await invoke('profile_progress_settings_get'),original);});
-   await cleanup('Verify display probe closed',async()=>{evidence.final=await invoke('profile_activation_window_state');assert.equal(evidence.final,null);});
+   if(original)await cleanup('Verify display probe closed',async()=>{evidence.final=await invoke('profile_activation_window_state');assert.equal(evidence.final,null);});
    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
   }finally{child?.close();main.close();}
-  assert.deepEqual(cleanupErrors,[]);
  }
+ assert.deepEqual(cleanupErrors,[]);
 });
