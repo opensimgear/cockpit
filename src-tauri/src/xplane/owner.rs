@@ -106,7 +106,6 @@ struct Owner {
     stop: CancellationToken,
     _worker: JoinHandle<()>,
     address: std::net::SocketAddr,
-    process_scope: String,
     monitor: Option<std::sync::Weak<process_events::Monitor>>,
 }
 impl Owner {
@@ -186,7 +185,6 @@ impl Owner {
             stop,
             _worker: worker,
             address,
-            process_scope: connection["processIdentity"].to_string(),
             monitor: monitor_view,
         })
     }
@@ -232,8 +230,6 @@ impl Drop for Owner {
         self.shared.journal.close();
     }
 }
-
-static OWNERS: OnceLock<Mutex<BTreeMap<String, Weak<Owner>>>> = OnceLock::new();
 
 #[cfg(test)]
 mod tests;

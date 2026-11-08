@@ -2,6 +2,9 @@ use super::*;
 use osg_streams::{Delivery, LossReason, NativeWake, NativeWatch};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+type ProcessOwners = Arc<Mutex<BTreeMap<String, Weak<Owner>>>>;
+static OWNERS: OnceLock<Mutex<BTreeMap<String, ProcessOwners>>> = OnceLock::new();
+
 pub(crate) struct Source {
     owner: Arc<Owner>,
     lease: Arc<Lease>,
@@ -46,15 +49,26 @@ impl Source {
         crate::game_discovery::ProcessIdentity::parse(&connection["processIdentity"])?;
         let key = connection.to_string();
         let scope = connection["processIdentity"].to_string();
-        let mut registry = OWNERS
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let process_owners = {
+            let mut owners = OWNERS
+                .get_or_init(Default::default)
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            owners.retain(|_, process| {
+                // Only the registry can hand out a new reference. A group
+                // with no other references cannot be locked by an opener.
+                Arc::strong_count(process) > 1 || process.lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .values().any(|owner| owner.strong_count() > 0)
+            });
+            owners.entry(scope).or_default().clone()
+        };
+        let mut registry = process_owners.lock().unwrap_or_else(|p| p.into_inner());
         registry.retain(|_, owner| owner.strong_count() > 0);
         for (_, owner) in registry.iter().filter(|(other_key, _)| *other_key != &key) {
             if owner
                 .upgrade()
-                .is_some_and(|owner| owner.process_scope == scope && owner.shared.error().is_none())
+                .is_some_and(|owner| owner.shared.error().is_none())
             {
                 return Err("X-Plane acquisition belongs to a different captured setup. Retire that reader before activating the replacement.".into());
             }
@@ -274,3 +288,7 @@ impl Source {
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "scope_tests.rs"]
+mod scope_tests;

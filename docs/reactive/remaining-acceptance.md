@@ -99,6 +99,12 @@ applicable check, test and build targets.
 
 ## R3 adapter evidence
 
+[X-Plane owner setup](../verification/2026-11-08-xplane-owner-scope.md)
+uses a lock per exact process. A slow catalogue open can no longer hold
+another X-Plane process's acquisition. Same-process setup still shares its
+owner or rejects a competing configuration. Assetto owner-open contention
+and end-to-end simulator qualification remain open.
+
 [Timed DCS reads under a held receipt](../verification/2026-11-07-dcs-telemetry-backpressure.md#observation-driven-read-timing)
 matched every authored value on native and browser-dev. [Watched catalogue reuse](../verification/2026-11-07-dcs-telemetry-backpressure.md#reuse-the-watched-dcs-catalogue)
 removed the request-time rebuild for unchanged catalogues. Both clients
