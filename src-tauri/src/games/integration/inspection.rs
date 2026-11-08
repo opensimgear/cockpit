@@ -99,8 +99,6 @@ impl Inner {
                 .as_str()
                 .ok_or("Choose the Assetto executable.")?;
             self.fingerprints
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
                 .inspect(Path::new(executable), telemetry_game, false)
         })();
         match inspected {

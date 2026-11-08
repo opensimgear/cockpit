@@ -224,6 +224,9 @@ publishing. [Setup watch owners](../verification/2026-11-08-setup-watch-owners.m
 now handle native watch registration, background setup and aircraft catalogue
 baselines independently by integration. Provider changes and explicit setup
 commands still require exclusive admission.
+[Assetto fingerprint slots and setup job readiness](../verification/2026-11-08-assetto-fingerprint-lanes.md)
+keep executable checks independent across variants and withhold cached
+source proof only for the provider with an active setup job.
 
 ### Queued DCS commands during an unavailable lookup
 

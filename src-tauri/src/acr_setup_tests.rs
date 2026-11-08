@@ -809,7 +809,7 @@ fn passive_fingerprint_cache_reuses_hashes_and_invalidates_every_metadata_identi
     let path = scratch.executable();
     let reads = std::cell::Cell::new(0);
     let mut hash = |path: &Path, game| { reads.set(reads.get() + 1); fingerprint_for_game(path, game) };
-    let mut cache = FingerprintCache::default();
+    let cache = FingerprintCache::default();
     let first = cache.inspect_with(&path, Game::Rally, false, &mut hash).unwrap();
     for _ in 0..10 { assert_eq!(cache.inspect_with(&path, Game::Rally, false, &mut hash).unwrap(), first); }
     assert_eq!(reads.get(), 1);
@@ -830,12 +830,12 @@ fn passive_fingerprint_cache_reuses_hashes_and_invalidates_every_metadata_identi
     assert_eq!(reads.get(), 5);
     fs::remove_file(&copy).unwrap();
     assert!(cache.inspect_with(&copy, Game::Rally, false, &mut hash).is_err());
-    assert!(cache.entries.is_empty());
+    assert!(cache.slot(Game::Rally).lock().unwrap().is_none());
 }
 #[test]
 fn explicit_verification_bypasses_unchanged_metadata_and_cache_stays_bounded_by_game() {
     let scratch = Scratch::new();
-    let mut cache = FingerprintCache::default();
+    let cache = FingerprintCache::default();
     for (game, name) in [(Game::Corsa,"acs.exe"),(Game::Competizione,"AC2-Win64-Shipping.exe"),(Game::Evo,"AssettoCorsaEVO.exe"),(Game::Rally,"acr.exe")] {
         let path = scratch.0.join(name);
         fs::write(&path, b"original").unwrap();
@@ -847,7 +847,9 @@ fn explicit_verification_bypasses_unchanged_metadata_and_cache_stays_bounded_by_
         // tool preserved the previous executable's size and modification time.
         assert_ne!(cache.inspect(&path, game, true).unwrap()["fingerprint"], first["fingerprint"]);
     }
-    assert_eq!(cache.entries.len(), 4);
+    for game in [Game::Corsa, Game::Competizione, Game::Evo, Game::Rally] {
+        assert!(cache.slot(game).lock().unwrap().is_some());
+    }
 }
 #[test]
 fn runtime_resolution_never_substitutes_an_unrelated_rally_executable_for_corsa_or_evo() {

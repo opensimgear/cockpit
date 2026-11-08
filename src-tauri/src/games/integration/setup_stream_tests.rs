@@ -152,3 +152,39 @@ fn background_baselines_are_independent_and_a_retired_scope_cannot_publish() {
     assert!(!views.source.contains_key(&source_scope(&first, "dcs")));
     assert!(views.source.contains_key(&source_scope(&sibling, "x-plane-12")));
 }
+
+#[test]
+fn a_setup_job_withholds_only_its_provider_readiness() {
+    let root = crate::test_directory();
+    let runtime = GameIntegrationSetup::new(root.path().join("setup.json"), false);
+    let game = |id: &str, provider: &str| json!({
+        "id": id, "provider": provider, "integrationKey": id, "integrationCompatible": true,
+    });
+    let dcs = game("dcs", "dcs-bios");
+    let mut alternate = dcs.clone();
+    alternate["installPath"] = json!("alternate");
+    let rally = game("assetto-corsa-rally", "assetto-corsa-rally");
+    let ready = json!({"state":"ready","verified":true});
+    for game in [&dcs, &alternate, &rally] {
+        let record = runtime.inner.provider_snapshot(game["id"].as_str().unwrap()).0;
+        runtime.inner.publish_setup(game, &record, ready.clone());
+    }
+    let rally_revision = runtime.vehicle_setup_revision(&rally);
+    assert!(!rally_revision.is_empty());
+
+    runtime.inner.busy.store(true, Ordering::Release);
+    let run = runtime.inner.publish_start(&dcs, json!({"state":"setting-up"}));
+    let mut catalogue = [dcs.clone(), alternate, rally.clone()];
+    runtime.decorate_source(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["state"], "setting-up");
+    assert_eq!(catalogue[1]["integrationSetup"]["state"], "setting-up");
+    assert!(runtime.vehicle_setup_revision(&catalogue[1]).is_empty());
+    assert_eq!(catalogue[2]["integrationSetup"]["state"], "ready");
+    assert_eq!(runtime.vehicle_setup_revision(&rally), rally_revision);
+
+    let record = runtime.inner.provider_snapshot("dcs").0;
+    runtime.inner.publish_setup(&dcs, &record, ready.clone());
+    runtime.inner.finish_job(&run, &ready);
+    runtime.inner.busy.store(false, Ordering::Release);
+    assert!(!runtime.vehicle_setup_revision(&dcs).is_empty());
+}

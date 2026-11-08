@@ -28,7 +28,7 @@ struct Inner {
     watched_setup: Mutex<std::collections::BTreeSet<String>>,
     watched_setup_waiting: AtomicBool,
     views: Mutex<setup_cache::SetupViews>,
-    fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
+    fingerprints: crate::acr_setup::FingerprintCache,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
     ac_cars_publication: Mutex<Option<Arc<car_publication::Publication>>>,
     #[cfg(test)]
@@ -145,7 +145,7 @@ impl GameIntegrationSetup {
                 dcs_catalogue_watch: Mutex::default(),
                 watched_setup: Default::default(),
                 watched_setup_waiting: AtomicBool::new(false),
-                fingerprints: Mutex::new(Default::default()),
+                fingerprints: Default::default(),
                 cancel: AtomicBool::new(false),
                 assetto_setup_wake: Mutex::new(None),
                 busy: AtomicBool::new(false),
@@ -200,8 +200,6 @@ impl GameIntegrationSetup {
         let identity = self
             .inner
             .fingerprints
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
             .inspect(Path::new(executable), dialect, force_hash)?;
         let saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
         let record = &saved["games"][id];
@@ -332,8 +330,8 @@ impl GameIntegrationSetup {
         if id == "dcs" {
             let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
             self.invalidate_dcs_catalogue(&mut cache);
-        } else {
-            self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
+        } else if let Ok(game) = crate::game_telemetry::Game::from_id(id) {
+            self.inner.fingerprints.invalidate(game);
         }
         self.refresh_scoped(std::slice::from_ref(game), current)
     }

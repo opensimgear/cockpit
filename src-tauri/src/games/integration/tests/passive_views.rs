@@ -13,7 +13,7 @@ fn cold_decoration_is_memory_only_and_does_not_enter_admission_or_inspection() {
     let scratch = Scratch::new();
     let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"), true));
     let admission = runtime.admission.write().unwrap();
-    let fingerprints = runtime.inner.fingerprints.lock().unwrap();
+    let fingerprints = runtime.inner.fingerprints.hold_for_test(crate::game_telemetry::Game::Rally);
     let states = runtime.inner.states.lock().unwrap();
     let reader = runtime.clone();
     let (completed, received) = mpsc::channel();
@@ -205,10 +205,10 @@ fn display_budget_does_not_control_authoritative_source_readiness() {
     runtime.decorate_source(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "ready");
     assert!(catalogue[0]["integrationSetup"]["providerSetupRevision"].is_string());
-    runtime.inner.busy.store(true, Ordering::Release);
+    let run = runtime.inner.publish_start(&bound, json!({"state":"setting-up"}));
     runtime.decorate_source(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "setting-up");
-    runtime.inner.busy.store(false, Ordering::Release);
+    runtime.inner.finish_job(&run, &json!({"state":"ready"}));
 }
 
 #[test]

@@ -4,7 +4,7 @@ This page classifies the 86 current scan entries in game, DCS-BIOS, DCS ownship,
 
 | Snapshot site | Category | Actual owner, trigger, period or deadline, and remaining behavior |
 | --- | --- | --- |
-| `src-tauri/src/acr_setup.rs:680` | Event wait with operation deadline | Assetto setup probe waits for a source publication or cancellation through `NativeWake`; the existing `PROBE_MS` bound still ends the probe. This is the event-driven replacement for the historical repeated sample wait. |
+| `src-tauri/src/acr_setup.rs:710` | Event wait with operation deadline | Assetto setup probe waits for a source publication or cancellation through `NativeWake`; the existing `PROBE_MS` bound still ends the probe. This is the event-driven replacement for the historical repeated sample wait. |
 | `src-tauri/src/dcs_bios.rs:1579,1624` | Test socket deadline | UDP transport tests set one-second receive timeouts for loopback peers; these are fixture bounds, not production polling. |
 | `src-tauri/src/dcs_bios/transport.rs:251` | Socket readiness | DCS-BIOS receiver awaits UDP `recv_from` or cancellation. Idle receive is readiness-driven with no timer. |
 | `src-tauri/src/dcs_bios/transport_client.rs:32,38` | Consumer wait / deadline | A DCS-BIOS subscriber waits on the committed-frame condition variable, indefinitely or until its caller's absolute timeout; publication and subscriber interruption notify it. |
@@ -27,9 +27,9 @@ This page classifies the 86 current scan entries in game, DCS-BIOS, DCS ownship,
 | `src-tauri/src/games/discovery/windows.rs:44` | Native API declaration | Declares `WaitForSingleObject`; the call sites below use a zero-millisecond timeout for immediate process-state checks, not blocking waits. |
 | `src-tauri/src/games/discovery/windows.rs:150,186` | Nonblocking process check | Windows game discovery checks exact process handles with zero timeout while building and validating process identity. The shared background owner can enumerate once per second when native process notifications are unavailable. |
 | `src-tauri/src/games/integration/catalogues.rs:63` | Test publication barrier | Catalogue tests pause publication for up to five seconds to verify cache isolation and reject reads crossed by source invalidation. |
-| `src-tauri/src/games/integration/provision.rs:208,241` | Test-only command barriers | Provisioning tests hold native-probe and catalogue-publication boundaries for up to 15 and 5 seconds respectively. Production probe completion is owned by the probe and cancellation/deadline path. |
+| `src-tauri/src/games/integration/provision.rs:206,239` | Test-only command barriers | Provisioning tests hold native-probe and catalogue-publication boundaries for up to 15 and 5 seconds respectively. Production probe completion is owned by the probe and cancellation/deadline path. |
 | `src-tauri/src/games/integration/settings.rs:26` | Test publication barrier | Settings test pauses a commit for up to five seconds; production persistence publishes after the writer gate completes. |
-| `src-tauri/src/games/integration/setup_cache.rs:221` | Test publication barrier | Setup-cache fixture waits up to five seconds at inspection to test publication races; no production polling. |
+| `src-tauri/src/games/integration/setup_cache.rs:227` | Test publication barrier | Setup-cache fixture waits up to five seconds at inspection to test publication races; no production polling. |
 | `src-tauri/src/games/metadata/network.rs:58` | Retry backoff | Wikidata metadata worker sleeps for at most 50 ms or the remaining request budget after a failed lookup. This is intentional bounded network retry, not simulator acquisition. |
 | `src-tauri/src/games/prepared_sources/mod.rs:58` | Request completion condition | Artwork preparation caller waits until its requested generation is handled or source closes; the worker notifies on completion. |
 | `src-tauri/src/games/prepared_sources/mod.rs:122` | Change-driven worker | Local artwork owner waits for file-watch/source changes or shutdown. Failed watch setup is retried on a later real change, not by a timer. |

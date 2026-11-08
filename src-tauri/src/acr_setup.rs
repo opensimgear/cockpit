@@ -7,10 +7,10 @@ use crate::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
@@ -111,34 +111,64 @@ impl ExecutableStamp {
         Ok(Self { path, bytes:metadata.len(), modified:metadata.modified().map_err(|error|format!("Cannot inspect game executable modification time: {error}"))?, created:metadata.created().ok() })
     }
 }
-/// Passive status may reuse a content hash only while the current executable's
-/// identity and metadata match. One retained entry per dialect bounds this to
-/// four records. Explicit setup/check and new profile preparation bypass reuse.
+/// Passive status may reuse a hash while the executable metadata matches.
+/// Each dialect owns its one retained entry and serializes its own inspection.
 #[derive(Default)]
 pub(crate) struct FingerprintCache {
-    entries: BTreeMap<&'static str, (ExecutableStamp, Value)>,
+    corsa: Mutex<Option<(ExecutableStamp, Value)>>,
+    competizione: Mutex<Option<(ExecutableStamp, Value)>>,
+    evo: Mutex<Option<(ExecutableStamp, Value)>>,
+    rally: Mutex<Option<(ExecutableStamp, Value)>>,
 }
+
 impl FingerprintCache {
-    pub(crate) fn invalidate(&mut self, id: &str) { self.entries.remove(id); }
-    pub(crate) fn inspect(&mut self, executable: &Path, game: Game, force_hash: bool) -> Result<Value, String> {
+    fn slot(&self, game: Game) -> &Mutex<Option<(ExecutableStamp, Value)>> {
+        match game {
+            Game::Corsa => &self.corsa,
+            Game::Competizione => &self.competizione,
+            Game::Evo => &self.evo,
+            Game::Rally => &self.rally,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_for_test(&self, game: Game) -> impl Drop + '_ {
+        self.slot(game).lock().unwrap()
+    }
+
+    pub(crate) fn invalidate(&self, game: Game) {
+        *self.slot(game).lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    pub(crate) fn inspect(&self, executable: &Path, game: Game, force_hash: bool) -> Result<Value, String> {
         self.inspect_with(executable, game, force_hash, fingerprint_for_game)
     }
-    fn inspect_with(&mut self, executable: &Path, game: Game, force_hash: bool, mut hash: impl FnMut(&Path, Game) -> Result<Value, String>) -> Result<Value, String> {
+
+    fn inspect_with(
+        &self, executable: &Path, game: Game, force_hash: bool,
+        hash: impl FnOnce(&Path, Game) -> Result<Value, String>,
+    ) -> Result<Value, String> {
+        let mut entry = self.slot(game).lock().unwrap_or_else(|p| p.into_inner());
         let stamp = match ExecutableStamp::read(executable, game) {
             Ok(stamp) => stamp,
-            Err(error) => { self.entries.remove(game.id()); return Err(error); }
+            Err(error) => {
+                *entry = None;
+                return Err(error);
+            }
         };
         if !force_hash {
-            if let Some((known, value)) = self.entries.get(game.id()) {
-                if *known == stamp { return Ok(value.clone()); }
+            if let Some((known, value)) = entry.as_ref() {
+                if *known == stamp {
+                    return Ok(value.clone());
+                }
             }
         }
-        self.entries.remove(game.id());
+        *entry = None;
         let value = hash(&stamp.path, game)?;
         if ExecutableStamp::read(executable, game)? != stamp {
             return Err("The Assetto executable changed during inspection. Recheck its updated build.".into());
         }
-        self.entries.insert(game.id(), (stamp, value.clone()));
+        *entry = Some((stamp, value.clone()));
         Ok(value)
     }
 }

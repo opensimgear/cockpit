@@ -158,8 +158,6 @@ impl GameIntegrationSetup {
             let result: Result<Value, String> = (|| {
                 let identity = inner
                     .fingerprints
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .inspect(&executable, telemetry_game, true)?;
                 if inner.cancel.load(Ordering::Acquire) {
                     return Err("Assetto telemetry check was cancelled.".into());

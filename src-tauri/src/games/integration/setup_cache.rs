@@ -43,7 +43,9 @@ impl GameIntegrationSetup {
     pub(crate) fn vehicle_setup_revision(&self, game: &Value) -> String {
         let Some(id) = crate::game_discovery::integration_binding(game) else { return String::new(); };
         let (status, unavailable, revision) = self.inner.source_setup(game, id);
-        if unavailable || !status.is_some_and(|status| status["state"] == "ready") {
+        if unavailable || self.inner.setup_job_active(id)
+            || !status.is_some_and(|status| status["state"] == "ready")
+        {
             return String::new();
         }
         revision
@@ -161,10 +163,14 @@ impl Inner {
         (status, views.unavailable_watches.get(id) == Some(&key), revision)
     }
 
+    fn setup_job_active(&self, id: &str) -> bool {
+        self.job.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+            .is_some_and(|(key, _)| key.strip_prefix("setup:") == Some(id))
+    }
+
     pub(super) fn cached_source_setup(&self, game: &Value, id: &str) -> Value {
         let (captured, unavailable, revision) = self.source_setup(game, id);
-        // Source readiness is conservatively withheld throughout any worker.
-        if self.busy.load(Ordering::Acquire) {
+        if self.setup_job_active(id) {
             return json!({"state":"setting-up","verified":false,"providerSetupRevision":revision});
         }
         let mut status = captured.unwrap_or_else(|| json!({"state":"checking","verified":false}));

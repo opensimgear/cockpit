@@ -353,7 +353,7 @@ fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
         .unwrap();
     wait_setup(&runtime);
     // Pause a real passive inspection after it has captured saved settings.
-    let fingerprints = runtime.inner.fingerprints.lock().unwrap();
+    let fingerprints = runtime.inner.fingerprints.hold_for_test(crate::game_telemetry::Game::Corsa);
     let refreshed = runtime.clone();
     let refreshing_game = game.clone();
     let refresh = std::thread::spawn(move || refreshed.refresh(&[refreshing_game]));
@@ -426,4 +426,31 @@ fn assetto_setup_cancellation_wakes_a_parked_probe() {
     runtime.inner.cancel().unwrap();
     assert_eq!(finished.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
     worker.join().unwrap();
+}
+
+#[test]
+fn another_assetto_variant_can_refresh_and_validate_while_a_fingerprint_is_blocked() {
+    let scratch = Scratch::new();
+    let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"), true));
+    let rally = acr_game(&scratch);
+    acr_record(&runtime, &rally, true);
+    let blocked = runtime.inner.fingerprints.hold_for_test(crate::game_telemetry::Game::Corsa);
+    let (finished, outcome) = std::sync::mpsc::channel();
+    let worker = {
+        let runtime = runtime.clone();
+        std::thread::spawn(move || {
+            let result = runtime.validate_native_build(&rally, true);
+            let refreshed = runtime.refresh_background_scope(std::slice::from_ref(&rally), || true);
+            let mut catalogue = [rally];
+            runtime.decorate_source(&mut catalogue);
+            let _ = finished.send((result, refreshed, catalogue[0]["integrationSetup"]["state"].clone()));
+        })
+    };
+    let result = outcome.recv_timeout(std::time::Duration::from_secs(2));
+    drop(blocked);
+    worker.join().unwrap();
+    let (validated, refreshed, state) = result.expect("Rally must finish while the Corsa fingerprint is held");
+    validated.unwrap();
+    assert!(refreshed);
+    assert_eq!(state, "ready");
 }
