@@ -123,7 +123,7 @@ impl Validation {
                 if let Some(observed) = result? {
                     // A delayed consumer can receive a new proof before it
                     // processes the gap between two non-overlapping proofs.
-                    continuity_lost = self.retry_at.is_some() && self.verified
+                    continuity_lost = self.verified
                         .is_some_and(|began| observed > began + self.policy.fresh);
                     self.verified = Some(observed);
                     self.retry_at = None;

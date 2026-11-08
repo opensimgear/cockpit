@@ -161,6 +161,31 @@ fn recovery_after_expiry_cannot_hide_a_gap_from_a_delayed_poll() {
 }
 
 #[test]
+fn delayed_successful_probes_preserve_only_overlapping_continuity() {
+    for (mut validation, fresh) in [(Validation::default(), FRESH),
+        (Validation::catalogue(), Duration::from_millis(250))]
+    {
+        let (requests, incoming) = mpsc::channel();
+        let (completed, results) = mpsc::channel();
+        let began = Instant::now();
+        validation.seed(began);
+        validation.worker = Some(Worker { requests, results, cancelled: Arc::new(AtomicBool::new(false)),
+            pending: true, wake: Default::default() });
+
+        let contiguous = began + fresh;
+        completed.send(Ok(Some(contiguous))).unwrap();
+        assert!(validation.poll_at(contiguous).unwrap());
+        assert!(validation.poll_at(contiguous + validation.policy.refresh).unwrap());
+        incoming.try_recv().unwrap();
+
+        let recovered = contiguous + fresh + Duration::from_nanos(1);
+        completed.send(Ok(Some(recovered))).unwrap();
+        assert!(!validation.poll_at(recovered).unwrap());
+        assert!(validation.poll_at(recovered).unwrap());
+    }
+}
+
+#[test]
 fn pending_withdraws_once_and_resumes_only_with_a_fresh_baseline() {
     use crate::profile_session_games::{Reader, Reason};
     let (mut source, _, _folder) = crate::profile_session_games::test_baseline_reader();
@@ -203,7 +228,7 @@ fn blocked_catalogue_has_its_own_250ms_horizon_while_process_observations_contin
     });
     // Advance policy time deterministically; the catalogue worker stays blocked
     // throughout independent, successful native process observations.
-    for milliseconds in [125, 150, 200, 249] {
+    for milliseconds in [25, 50, 75, 100, 125, 150, 200, 249] {
         let now = began + Duration::from_millis(milliseconds);
         process.poll_with_at(Some(&mut catalogue), now).unwrap();
         if milliseconds == 125 { observed.recv_timeout(Duration::from_secs(2)).unwrap(); }

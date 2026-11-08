@@ -113,6 +113,11 @@ applicable check, test and build targets.
 
 ## R3 adapter evidence
 
+[Active telemetry proof continuity](../verification/2026-11-08-active-telemetry-proof-continuity.md)
+withdraws game branches when a successful process or catalogue capture starts
+after the previous proof expires. Recovery retains the exact reader and takes
+a fresh baseline. A delayed successful capture cannot conceal an expired proof.
+
 [X-Plane owner setup](../verification/2026-11-08-xplane-owner-scope.md)
 uses a lock per exact process. A slow catalogue open can no longer hold
 another X-Plane process's acquisition. Same-process setup still shares its
