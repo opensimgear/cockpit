@@ -40,7 +40,7 @@ fn endpoint_fixture(key: &str, capture: Arc<Capture>) -> (Arc<Fleet>, Arc<FakeIn
     fleet.state.lock().unwrap().slots.insert(key.into(),Slot{port:PortInfo{path:"COM8".into(),serial_number:Some("00112233445566778899aabb".into()),
         vendor_id:None,product_id:None,manufacturer:None,friendly_name:None},present:true,automatic:false,ambiguous:false,
         suppressed:false,service:Some(fake.clone()),cached:fake.snapshot(),retiring_service:None,
-        busy:Arc::new(AtomicBool::new(false)),closing:Arc::new(AtomicBool::new(false))});
+        busy:Arc::new(AtomicBool::new(false)),closing:Arc::new(AtomicBool::new(false)),reconciliation:Reconciliation::Idle});
     (fleet,fake)
 }
 #[derive(Default)]

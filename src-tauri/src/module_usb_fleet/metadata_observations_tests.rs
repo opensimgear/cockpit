@@ -57,7 +57,7 @@ fn fake(generation:u64)->Arc<Fake> {
 fn insert(fleet:&Fleet,key:&str,service:Arc<Fake>) {
     fleet.state.lock().unwrap().slots.insert(key.into(),Slot {port:port(),present:true,automatic:false,
         ambiguous:false,suppressed:false,cached:service.snapshot(),service:Some(service),retiring_service:None,
-        busy:Arc::new(AtomicBool::new(false)),closing:Arc::new(AtomicBool::new(false))});
+        busy:Arc::new(AtomicBool::new(false)),closing:Arc::new(AtomicBool::new(false)),reconciliation:Reconciliation::Idle});
 }
 fn fixture()->(Arc<Fleet>,Arc<Fake>) {
     let service=fake(1);let create=service.clone();

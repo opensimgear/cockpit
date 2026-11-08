@@ -65,6 +65,23 @@ struct Slot {
     retiring_service: Option<Arc<dyn Endpoint>>,
     busy: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
+    reconciliation: Reconciliation,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reconciliation { Idle, Pending, PortLost }
+type Retiring = (Arc<dyn Endpoint>, Arc<AtomicBool>);
+impl Slot {
+    fn owns(&self, service: &Arc<dyn Endpoint>) -> bool {
+        self.service.as_ref().is_some_and(|current| Arc::ptr_eq(current, service))
+    }
+
+    fn retire(&mut self) -> Option<Retiring> {
+        let service = self.service.take()?;
+        self.cached = offline(service.snapshot());
+        self.retiring_service = Some(service.clone());
+        self.closing.store(true, Ordering::Release);
+        Some((service, self.closing.clone()))
+    }
 }
 struct State {
     slots: BTreeMap<String, Slot>,
@@ -119,7 +136,7 @@ impl Fleet {
     pub(crate) fn input_capture(&self,key:&str)->Result<Arc<module_usb::stream::Capture>,String>{
         let service={let state=self.state.lock().unwrap_or_else(|p|p.into_inner());
             let slot=state.slots.get(key).ok_or("Unknown USB input endpoint.")?;
-            if slot.ambiguous||slot.closing.load(Ordering::Acquire){return Err("USB input endpoint is ambiguous or closing.".into());}
+            if !slot.present||slot.ambiguous||slot.reconciliation==Reconciliation::PortLost||slot.closing.load(Ordering::Acquire){return Err("USB input endpoint is absent, ambiguous or closing.".into());}
             slot.service.clone().ok_or("The USB input endpoint is not connected.")?};
         service.input_capture().ok_or_else(||"Native USB input capture is not ready.".into())
     }
@@ -253,12 +270,13 @@ impl Fleet {
                 if !observed.contains_key(key) {
                     slot.present = false;
                     slot.suppressed = false;
-                    if let Some(service) = slot.service.take() {
-                        let snapshot = service.snapshot();
-                        slot.retiring_service = Some(service.clone());
-                        slot.cached = offline(snapshot);
-                        slot.closing.store(true, Ordering::Release);
-                        retired.push((service, slot.closing.clone()));
+                    // A configuration commit can itself remove the interface.
+                    // Withdraw presence immediately but let the admitted worker
+                    // finish readback without granting a second worker authority.
+                    if slot.reconciliation == Reconciliation::Idle {
+                        retired.extend(slot.retire());
+                    } else {
+                        slot.reconciliation = Reconciliation::PortLost;
                     }
                 }
             }
@@ -297,6 +315,7 @@ impl Fleet {
                     retiring_service: None,
                     busy: Arc::new(AtomicBool::new(false)),
                     closing: Arc::new(AtomicBool::new(false)),
+                    reconciliation: Reconciliation::Idle,
                 });
                 slot.port = port;
                 slot.present = true;
@@ -344,12 +363,7 @@ impl Fleet {
                 }
             }
         }
-        for (service, closing) in retired {
-            std::thread::spawn(move || {
-                service.shutdown();
-                closing.store(false, Ordering::Release);
-            });
-        }
+        for service in retired { retire_service(service); }
         for (key,service, busy, request) in jobs {
             let reset = busy.clone();
             let wakes=self.input_wakes.clone();
@@ -490,7 +504,7 @@ impl Fleet {
                 "The native USB route changed before dispatch; acquire a fresh baseline.".into(),
             );
         }
-        let result = service.request(operation);
+        let result = self.dispatch(key, &service, operation);
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(slot) = state.slots.get_mut(key).filter(|slot| {
             slot.service
@@ -693,7 +707,7 @@ impl Fleet {
                 }
             }
         };
-        let result = service.request(operation);
+        let result = self.dispatch(&key, &service, operation);
         if result.is_ok() {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             if command == "module_usb_connect" {
@@ -716,6 +730,40 @@ impl Fleet {
         self.notify_input_wakes(&key);
         result?;
         self.response(&key)
+    }
+    fn dispatch(&self, key: &str, service: &Arc<dyn Endpoint>, operation: UsbRequest) -> Result<UsbSnapshot, String> {
+        let UsbRequest::ConfigChange { route, change: ConfigChange::Apply { .. } | ConfigChange::Save, .. } = &operation else {
+            return service.request(operation);
+        };
+        let prior_generation = route.connection_generation;
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let slot = state.slots.get_mut(key)
+                .filter(|slot| slot.owns(service) && slot.present && !slot.ambiguous)
+                .ok_or("The USB endpoint changed before configuration could start.")?;
+            slot.reconciliation = Reconciliation::Pending;
+        }
+        let result = service.request(operation);
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let topology_known = state.diagnostic.is_none();
+        let Some(slot) = state.slots.get_mut(key).filter(|slot| slot.owns(service)) else {
+            return result.and(Err("The USB worker retired during configuration reconciliation.".into()));
+        };
+        let fresh = result.as_ref().ok().and_then(|snapshot| snapshot.route.as_ref())
+            .is_some_and(|route| route.connection_generation > prior_generation);
+        let stale = slot.reconciliation == Reconciliation::PortLost && !fresh;
+        slot.reconciliation = Reconciliation::Idle;
+        let moved = result.as_ref().ok().and_then(|snapshot| snapshot.port.as_deref())
+            .is_some_and(|path| alias_path(path) != alias_path(&slot.port.path));
+        let admissible = topology_known && slot.present && !slot.ambiguous && !moved && !stale;
+        let retire = if moved || stale || (topology_known && !slot.present) { slot.retire() } else { None };
+        drop(state);
+        if let Some(retire) = retire { retire_service(retire); }
+        result.and_then(|snapshot| {
+            if admissible { Ok(snapshot) } else {
+                Err("The write was confirmed but its USB endpoint changed. Use the current endpoint before making another change.".into())
+            }
+        })
     }
     fn endpoint(&self, key: &str, command: &str) -> Result<(Arc<dyn Endpoint>, Busy), String> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -805,6 +853,12 @@ impl Drop for Fleet {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+fn retire_service((service, closing): Retiring) {
+    std::thread::spawn(move || {
+        service.shutdown();
+        closing.store(false, Ordering::Release);
+    });
 }
 fn notify_input_wakes_registry(wakes:&Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>,key:&str){
     let notifications={let mut all=wakes.lock().unwrap_or_else(|p|p.into_inner());
@@ -926,6 +980,7 @@ fn snapshot_projection(key: &str, slot: &Slot, diagnostic: Option<&str>,metadata
     let admissible = slot.present
         && diagnostic.is_none()
         && !slot.ambiguous
+        && slot.reconciliation != Reconciliation::PortLost
         && !slot.closing.load(Ordering::Acquire);
     let current = cached.unwrap_or_else(|| slot
         .service

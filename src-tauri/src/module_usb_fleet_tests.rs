@@ -1,4 +1,6 @@
 use super::*;
+#[path = "module_usb_fleet/reconciliation_tests.rs"]
+mod reconciliation;
 #[test]
 fn fleet_cached_endpoint_activity_outlives_disconnected_or_replaced_slot_workers(){
     let(fleet,_,_)=fixture(vec![],false);assert!(!fleet.output_activity());
@@ -37,6 +39,12 @@ struct Fake {
             std::sync::mpsc::Receiver<()>,
         )>,
     >,
+    hold_config_change: Mutex<
+        Option<(
+            std::sync::mpsc::SyncSender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
     hold_shutdown: Mutex<
         Option<(
             std::sync::mpsc::SyncSender<()>,
@@ -49,6 +57,16 @@ impl Endpoint for Fake {
         self.snapshot.lock().unwrap().clone()
     }
     fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String> {
+        let mut reconnected = false;
+        if matches!(&request, UsbRequest::ConfigChange { .. }) {
+            if let Some((entered, resume)) = self.hold_config_change.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                resume
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| "fixture request timeout")?;
+                reconnected = true;
+            }
+        }
         if matches!(&request, UsbRequest::Refresh) {
             if let Some((entered, resume)) = self.hold_refresh.lock().unwrap().take() {
                 entered.send(()).unwrap();
@@ -188,6 +206,12 @@ impl Endpoint for Fake {
                 }
                 calls.push("events-read".into());
             }
+        }
+        if reconnected {
+            let route = snapshot.route.as_mut().unwrap();
+            route.connection_generation += 1;
+            route.configuration_generation += 1;
+            snapshot.claimed_by = None;
         }
         Ok(snapshot.clone())
     }
