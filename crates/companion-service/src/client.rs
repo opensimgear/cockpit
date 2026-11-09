@@ -148,6 +148,8 @@ struct Shared {
     presence_wake: Arc<osg_streams::NativeWake>,
     cancel: AtomicBool,
     running: AtomicBool,
+    network_access: AtomicBool,
+    network_access_update: Mutex<()>,
     epoch: AtomicU64,
     ui_tick: AtomicU64,
     feedback_resync: AtomicU64,
@@ -168,6 +170,15 @@ impl ClientRuntime {
     /// The adapter reads/writes plaintext only inside native code and must protect
     /// persisted bytes itself; never supply web/localStorage or a plaintext file.
     pub fn with_storage(data_dir: PathBuf, storage: Arc<dyn StateStorage>) -> Result<Self, String> {
+        Self::with_storage_network_access(data_dir, storage, true)
+    }
+
+    /// Mobile shells supply their observed LAN permission before presence starts.
+    pub fn with_storage_network_access(
+        data_dir: PathBuf,
+        storage: Arc<dyn StateStorage>,
+        network_access: bool,
+    ) -> Result<Self, String> {
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
         let availability = storage.available();
         let loaded = if availability.is_ok() {
@@ -210,6 +221,8 @@ impl ClientRuntime {
                 presence_wake: Arc::new(osg_streams::NativeWake::default()),
                 cancel: AtomicBool::new(false),
                 running: AtomicBool::new(false),
+                network_access: AtomicBool::new(network_access),
+                network_access_update: Mutex::new(()),
                 epoch: AtomicU64::new(0),
                 ui_tick: AtomicU64::new(0),
                 feedback_resync: AtomicU64::new(0),
@@ -260,10 +273,29 @@ impl ClientRuntime {
         self.shared.status_wake.notify();
         self.shared.presence_wake.notify();
     }
+    pub fn set_network_access(&self, allowed: bool) {
+        // A grant must wait for a preceding revocation to retire its I/O scopes.
+        let _update = self.shared.network_access_update.lock().unwrap_or_else(|poison| poison.into_inner());
+        if self.shared.network_access.swap(allowed, Ordering::SeqCst) != allowed {
+            if allowed {
+                self.shared.presence_wake.notify();
+            } else {
+                self.invalidate("Companion lost Local Network access");
+            }
+        }
+    }
+
+    pub fn requires_network_access(command: &str) -> bool {
+        matches!(command, "discover" | "pair-start" | "pair-code-start" | "connect" | "refresh-assignments")
+    }
+
     pub fn command(&self, request: Value) -> Result<Value, String> {
         let command = request["type"]
             .as_str()
             .ok_or("Missing companion client command")?;
+        if Self::requires_network_access(command) {
+            check_network_access(&self.shared)?;
+        }
         if matches!(
             command,
             "pair-start" | "pair-code-start" | "connect" | "refresh-assignments" | "storage-status"
@@ -548,6 +580,7 @@ impl ClientRuntime {
         selected_epoch: Option<u64>,
         work: impl FnOnce(Arc<Shared>, u64) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
+        check_network_access(&self.shared)?;
         if self
             .shared
             .running
@@ -780,7 +813,15 @@ fn current(shared: &Shared, epoch: u64) -> bool {
     !shared.cancel.load(Ordering::SeqCst) && shared.epoch.load(Ordering::SeqCst) == epoch
 }
 fn io_scope(shared: &Shared, epoch: u64) -> Result<IoScope, String> {
+    check_network_access(shared)?;
     shared.io.scope(epoch, || shared.epoch.load(Ordering::SeqCst))
+}
+fn check_network_access(shared: &Shared) -> Result<(), String> {
+    if shared.network_access.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        Err("Allow Local Network access to connect to Cockpit".into())
+    }
 }
 fn receive_event(socket: &mut Socket, first: Option<tungstenite::Message>, budget: Duration) -> Result<Value, String> {
     let deadline = Instant::now() + budget;

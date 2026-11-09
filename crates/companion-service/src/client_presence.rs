@@ -66,7 +66,10 @@ impl Presence {
 }
 
 fn idle_credential<'a>(shared: &Shared, state: &'a State) -> Option<&'a SavedCredential> {
-    if state.status.authentication_available && !shared.running.load(Ordering::SeqCst) {
+    if state.status.authentication_available
+        && shared.network_access.load(Ordering::SeqCst)
+        && !shared.running.load(Ordering::SeqCst)
+    {
         state.credential.as_ref()
     } else {
         None
@@ -159,6 +162,9 @@ mod tests {
         assert!(idle_credential(&client.shared, &state).is_none());
         state.status.authentication_available = true;
         assert!(idle_credential(&client.shared, &state).is_some());
+        client.shared.network_access.store(false, Ordering::SeqCst);
+        assert!(idle_credential(&client.shared, &state).is_none());
+        client.shared.network_access.store(true, Ordering::SeqCst);
         client.shared.running.store(true, Ordering::SeqCst);
         assert!(idle_credential(&client.shared, &state).is_none());
     }

@@ -43,6 +43,39 @@ impl StateStorage for Memory {
 }
 
 #[test]
+fn local_network_denial_parks_new_work_and_revocation_retires_existing_io() {
+    let directory = tempfile::tempdir().unwrap();
+    let client = ClientRuntime::with_storage_network_access(
+        directory.path().to_owned(),
+        Arc::new(Memory),
+        false,
+    ).unwrap();
+
+    for command in ["discover", "pair-start", "pair-code-start", "connect", "refresh-assignments"] {
+        let error = client.command(json!({"type":command})).unwrap_err();
+        assert!(error.contains("Local Network"), "{command}: {error}");
+    }
+    assert!(client.command(json!({"type":"status"})).is_ok());
+    assert!(client.command(json!({"type":"forget"})).is_ok());
+    assert!(io_scope(&client.shared, client.status().epoch).is_err());
+
+    let wake = client.shared.presence_wake.observed();
+    client.set_network_access(true);
+    assert_ne!(client.shared.presence_wake.observed(), wake);
+    let scope = io_scope(&client.shared, client.status().epoch).unwrap();
+    client.set_network_access(false);
+    assert!(scope.is_closed());
+    assert!(io_scope(&client.shared, client.status().epoch).is_err());
+
+    let epoch = client.status().epoch;
+    client.set_network_access(false);
+    assert_eq!(client.status().epoch, epoch);
+    client.set_network_access(true);
+    assert!(scope.is_closed(), "Grant must not reuse revoked I/O");
+    assert!(io_scope(&client.shared, client.status().epoch).is_ok());
+}
+
+#[test]
 fn a_credential_selection_captured_before_forget_cannot_start_later() {
     let directory=tempfile::tempdir().unwrap();
     let client=ClientRuntime::with_storage(directory.path().to_owned(),Arc::new(Memory)).unwrap();

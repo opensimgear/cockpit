@@ -25,6 +25,11 @@ mod android {
     struct Response{data:String}
     #[derive(Deserialize)]
     struct DiscoveryToken { token: String }
+    #[derive(Deserialize)]
+    pub struct LocalNetworkAccess {
+        pub allowed: bool,
+        pub prompted: bool,
+    }
     struct DiscoveryLease<'a, R: Runtime> {
         plugin: &'a PluginHandle<R>,
         token: String,
@@ -40,6 +45,16 @@ mod android {
         fn call<T:serde::de::DeserializeOwned>(&self,command:&str,payload:serde_json::Value)->Result<T,String>{
             self.0.run_mobile_plugin(command,payload).map_err(|_|"Android protection is unavailable, locked or corrupt. Unlock the device or Forget host and pair again.".into())
         }
+        pub fn local_network_allowed(&self) -> bool {
+            self.0.run_mobile_plugin::<LocalNetworkAccess>("localNetworkStatus", json!({}))
+                .is_ok_and(|access| access.allowed)
+        }
+
+        pub fn request_local_network(&self) -> Result<LocalNetworkAccess, String> {
+            self.0.run_mobile_plugin("requestLocalNetwork", json!({}))
+                .map_err(|error| format!("Android Local Network permission could not be checked: {error}"))
+        }
+
         pub fn with_discovery(
             &self,
             discover: impl FnOnce() -> Result<serde_json::Value, String>,
@@ -69,7 +84,7 @@ mod android {
     }
 }
 #[cfg(target_os="android")]
-pub use android::{init,PlatformStore};
+pub use android::{init, LocalNetworkAccess, PlatformStore};
 #[cfg(test)]
 mod tests {
     use super::*;

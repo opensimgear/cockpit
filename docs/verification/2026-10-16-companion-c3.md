@@ -96,6 +96,36 @@ Windows multicast and short-code pairing fixture passed.
 
 Android SDK/JDK compilation, signed-device Wi-Fi discovery and lock
 release on pause remain in [#55](https://github.com/opensimgear/cockpit/issues/55).
-Builds targeting API 37 still need a runtime Local Network permission
-path for discovery and WSS.
-[Android Local Network permission](https://developer.android.com/privacy-and-security/local-network-permission)
+
+## Android Local Network permission — 9 November 2026
+
+The current Android template targets API 37. On Android 17 and later,
+the app requests Local Network access when the operator selects
+discovery, pairing, Connect or assignment refresh. A permission grant
+asks the operator to select the action again so a request started
+before the system dialog cannot resume later.
+[Tauri Android template](https://v2.tauri.app/blog/tauri-2.12/)
+[Android Local Network requirements](https://developer.android.com/privacy-and-security/local-network-permission)
+
+Startup and Activity resume observe permission silently. The native
+client parks passive presence and rejects new LAN work while access is
+denied. Revocation retires existing I/O scopes and disarms the session.
+A later grant wakes passive presence and requires fresh I/O scopes.
+Status, offline cache and Forget remain available.
+
+All 246 Windows companion tests passed, including the new denial,
+revocation and regrant regression. The opt-in multicast pairing test
+and five mobile build helper tests passed. The locked Android dependency
+graph resolved and the permission declaration parsed. LLVM measured
+95.30% lines and 90.44% functions for the client and 92.42% lines and
+100% functions for presence. This build did not instrument branches.
+Local outputs are under `.research/reactive/android-local-network/`.
+
+The rebuilt Windows probe passed pairing, presence, TLS cancellation
+and Forget against the running dev Cockpit at `f993800a`. The trace is
+`.research/reactive/companion-client-io-native/1794216279235/evidence.json`,
+SHA-256 `0448e9a8f46eda6d90b2cbcdf40e2ced786d669a2495a4ecaa9aa1348958650b`.
+
+Android compilation, the system dialog, denial, regrant and signed
+device behavior remain in [#55](https://github.com/opensimgear/cockpit/issues/55)
+and [#199](https://github.com/opensimgear/cockpit/issues/199).

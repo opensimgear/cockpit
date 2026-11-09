@@ -1,13 +1,17 @@
 package org.opensimgear.companion.platform
 
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.appcompat.app.AppCompatActivity
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
@@ -27,15 +31,21 @@ class StoreArgs { lateinit var data: String }
 @InvokeArg
 class DiscoveryArgs { lateinit var token: String }
 
+private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
+private const val LOCAL_NETWORK_ALIAS = "localNetwork"
+private const val LOCAL_NETWORK_API = 37
+
 /** Cryptography with a non-exportable Android Keystore key; SQLite owns ciphertext.
  * Native Rust is the only caller; this plugin grants no webview commands.
  */
-@TauriPlugin
+@TauriPlugin(permissions = [Permission(strings = [LOCAL_NETWORK_PERMISSION], alias = LOCAL_NETWORK_ALIAS)])
 class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity) {
     private val alias = "org.opensimgear.companion.credential.v1"
     private val aad = "OpenSimGear companion credential v1".toByteArray(Charsets.UTF_8)
     private val maxBytes = 65536
     private val discovery = WifiDiscoveryLease(activity.applicationContext.getSystemService(WifiManager::class.java))
+    // Permission requests and callbacks are owned by the Activity's UI thread.
+    private var localNetworkRequest: Invoke? = null
     private val worker = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
         ArrayBlockingQueue<Runnable>(8), ThreadPoolExecutor.AbortPolicy())
 
@@ -102,8 +112,51 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
     @Command
     fun unseal(invoke: Invoke) = transform(invoke, false)
 
+    private fun localNetworkAllowed(): Boolean =
+        Build.VERSION.SDK_INT < LOCAL_NETWORK_API ||
+            activity.applicationInfo.targetSdkVersion < LOCAL_NETWORK_API ||
+            activity.checkSelfPermission(LOCAL_NETWORK_PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+    private fun localNetworkResult(prompted: Boolean): JSObject =
+        JSObject().put("allowed", localNetworkAllowed()).put("prompted", prompted)
+
+    @Command
+    fun localNetworkStatus(invoke: Invoke) {
+        invoke.resolve(localNetworkResult(false))
+    }
+
+    @Command
+    fun requestLocalNetwork(invoke: Invoke) = activity.runOnUiThread {
+        when {
+            localNetworkAllowed() -> invoke.resolve(localNetworkResult(false))
+            localNetworkRequest != null -> invoke.reject("A Local Network request is already open")
+            activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus() ->
+                invoke.reject("Open Companion before requesting Local Network access")
+            else -> {
+                localNetworkRequest = invoke
+                try {
+                    requestPermissionForAlias(LOCAL_NETWORK_ALIAS, invoke, "localNetworkPermissionResult")
+                } catch (_: Exception) {
+                    localNetworkRequest = null
+                    invoke.reject("Android could not request Local Network access")
+                }
+            }
+        }
+    }
+
+    @PermissionCallback
+    fun localNetworkPermissionResult(invoke: Invoke) {
+        if (localNetworkRequest !== invoke) return
+        localNetworkRequest = null
+        invoke.resolve(localNetworkResult(true))
+    }
+
     @Command
     fun beginDiscovery(invoke: Invoke) {
+        if (!localNetworkAllowed()) {
+            invoke.reject("Allow Local Network access before starting discovery")
+            return
+        }
         try { invoke.resolve(JSObject().put("token", discovery.begin())) }
         catch (error: Exception) { invoke.reject(error.message ?: "Android Wi-Fi discovery is unavailable") }
     }
@@ -118,5 +171,10 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
 
     override fun onPause(activity: AppCompatActivity) = discovery.setForeground(false)
     override fun onResume(activity: AppCompatActivity) = discovery.setForeground(true)
-    override fun onDestroy(activity: AppCompatActivity) = discovery.setForeground(false)
+    override fun onDestroy(activity: AppCompatActivity) {
+        discovery.setForeground(false)
+        val pending = localNetworkRequest
+        localNetworkRequest = null
+        pending?.reject("Companion closed before Local Network access was confirmed")
+    }
 }
