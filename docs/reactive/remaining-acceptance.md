@@ -39,10 +39,10 @@ and macOS LaunchAgent delivery remain in #199.
 
 The #198 timing evidence now includes the
 [minimum host input lease margins during the 30-minute dual-rate soak](../verification/2026-11-09-dual-rate-recheck.md#sustained-host-input-lease-margin).
-The [short dual-rate fixture](../verification/2026-11-09-dual-rate-recheck.md#debug-input-capture-to-reducer)
-also measures debug capture to the end of the accepted reducer batch.
-Sustained capture-to-reducer timing, other acquisition paths and the
-remaining lease boundaries are still open.
+The [30-minute debug capture-to-reducer fixture](../verification/2026-11-09-dual-rate-recheck.md#sustained-debug-capture-to-reducer-measurement)
+matched every frame on both lanes and measured capture to the end of
+the accepted reducer batch. Other acquisition paths and the remaining
+lease boundaries are still open.
 
 ## R7 UI consistency
 

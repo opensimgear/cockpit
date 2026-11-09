@@ -297,5 +297,26 @@ The full Windows suite passed 2,490 tests with 18 existing ignores.
 The debug controller, native profile host and debug gateway also met
 the 71% line and function floors in the full run.
 
-The 30-minute measurement for this segment, other acquisition paths and
-physical controller-to-preview and controller-to-vJoy timing remain open.
+### Sustained debug capture-to-reducer measurement
+
+The same executable passed the 1,800-second fixture. The two source
+schedules overlapped for 1,799,999.94 ms. The reducer diagnostic matched
+every captured frame on both lanes.
+
+| Source | Actual offer / dispatch / queue admission rate | Measured captures | Capture-to-batch-end p50 / p95 / p99 | Maximum | Offer-to-Raw-Input p50 / p95 / p99 | Peak pending frames / batch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 kHz | 1,000.00 / 1,000.00 / 1,000.00 Hz | 1,800,001 | 1.2 / 1.6 / 1.8 ms | 19.351 ms | 3.0 / 6.6 / 10.1 ms | 27 / 8 |
+| 125 Hz | 125.00 / 125.00 / 125.00 Hz | 225,001 | 1.1 / 1.6 / 1.8 ms | 19.883 ms | 3.2 / 7.1 / 10.5 ms | 25 / 5 |
+
+The receiver matched the full ordered vJoy trace. Both Stop releases
+arrived after 36.93 ms and the slot returned to free. The profile owner
+stayed active and both panel sessions stayed armed through 911 health
+checks, 60 inventory reads and 60 discovery scans. Each panel retained
+at least 1,233 ms on its 1,500 ms host lease. No timing budget misses or
+cleanup errors were recorded.
+
+The local evidence is
+`.research/dcs-physics-native/1794194023251/evidence.json`, SHA-256
+`f31c1a0fd3d3b866558591a1befbd2e67db19a3d4333c906bb87f67f29470254`.
+Other acquisition and lease paths, physical controller-to-preview and
+controller-to-vJoy timing, and real simulator confirmation remain open.
