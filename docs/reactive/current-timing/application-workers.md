@@ -40,7 +40,7 @@
 | `src-tauri/src/profile_session_action_host.rs:88` | Operation deadline | Wait for exact physical action acquisition, binding or cleanup evidence until the operation deadline. |
 | `src-tauri/src/profile_session_actions.rs:810` | Lease and binding deadlines | Physical action dispatch wakes for bind, work, Stop or the current lease renewal and bind deadlines. |
 | `src-tauri/src/profile_session_companion_host.rs:417` | Operation deadline | Wait for producer changes or the panel preparation deadline while activation separately renews held outputs. |
-| `src-tauri/src/profile_session_host.rs:304` | Operation deadline | Wait for exact native panel baseline publication until the activation deadline. |
+| `src-tauri/src/profile_session_host.rs:303` | Operation deadline | Wait for exact native panel baseline publication until the activation deadline. |
 | `src-tauri/src/profile_session_launch_host.rs:190` | Operation deadline | Wait for provider notification, validation or baseline deadline. Sources without a wake can retain a bounded fallback. |
 | `src-tauri/src/profile_session_panels_inputs.rs:266` | Fixture | Bounded wait used by the synchronous panel test Start helper; live activation uses the independently woken baseline path. |
 | `src-tauri/src/profile_session_panels_inputs/can_stream.rs:205` | Source wake and expiry | Wait for exact gateway CAN delivery or the original capture freshness deadline. |
@@ -51,9 +51,9 @@
 | `src-tauri/src/profile_session_publication_host.rs:232` | Operation deadline | Wait for panel resource publication and exact route binding until its deadline. |
 | `src-tauri/src/profile_session_visibility_host.rs:58` | Operation deadline | Wait for visibility activation or restoration progress while retaining the caller's deadline. |
 | `src-tauri/src/profile_session/activation_heartbeat.rs:40` | Lease deadline | Keep the prepared virtual feeder neutral while activation work runs. Wait for the existing renewal deadline, feeder fault, admission cancellation, work completion or phase expiry. Prepared desktop scopes have no registration to renew. |
-| `src-tauri/src/profile_session/activation_heartbeat.rs:236` | Operation deadline | Wait for acquired source and output readiness until the current activation deadline. |
+| `src-tauri/src/profile_session/activation_heartbeat.rs:238` | Operation deadline | Wait for acquired source and output readiness until the current activation deadline. |
 | `src-tauri/src/profile_session/companion_feedback.rs:126` | Contention retry | The independent presentation worker gives one still-current panel update a single retry after a 2 ms Hub-lock backoff. Mapping and safety maintenance continue separately. |
-| `src-tauri/src/profile_session/game_publication.rs:164` | Operation deadline | Wait for a returning reader's exact baseline or its deadline. The reader selects a bounded fallback if it cannot notify. |
+| `src-tauri/src/profile_session/game_publication.rs:197` | Operation deadline | Wait for a returning reader's exact baseline or its deadline. The reader selects a bounded fallback if it cannot notify. |
 | `src-tauri/src/profile_system_notification.rs:326` | Operation recovery | Recheck a missing Windows toast update for at most 50 ms on its worker so an in-flight dismissal can arrive. |
 | `src-tauri/src/system_inventory.rs:66` | Source wake | Wait for committed topology, output or exact optional driver file invalidation. |
 | `src-tauri/src/system_inventory.rs:323,329,354,362` | Fixture | Bound inventory commit and slow-provider isolation checks. |
