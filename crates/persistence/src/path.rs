@@ -16,7 +16,7 @@ fn require_file(path: &Path) -> Result<(), String> {
     inspect_path(path, Missing::Reject)
 }
 
-fn check_sidecars_with(
+pub(crate) fn check_sidecars_with(
     database: &Path,
     revalidate: impl Fn() -> Result<(), String>,
 ) -> Result<(), String> {

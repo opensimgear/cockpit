@@ -384,3 +384,48 @@ a second script helper. It passed using the existing local helper.
 Evidence is under `.research/c193-reconnect/native-key-pair/`.
 The dev executable SHA-256 is
 `929670b574560c10eee0571f82327a8f7a29e0f9615121bd5e9c46d2f6253896`.
+
+### Exact Windows path checks on local WAL storage
+
+The live evidence connection now checks an ordinary verified local WAL
+path with a single no-reparse native open. It compares the opened file's
+volume and file ID with the SQLite connection's retained Windows handle.
+The path is checked at the same read and write boundaries as before.
+Sidecar validation and FULL synchronization remain part of that path.
+Rollback databases and unusual paths use the existing checks. A probe
+using `GetFileAttributesW` separately for every ancestor produced no
+meaningful improvement and was discarded.
+[Windows object attributes](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wudfwdm/ns-wudfwdm-_object_attributes)
+· [Windows file IDs](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)
+· [SQLite file control](https://www.sqlite.org/c3ref/c_fcntl_begin_atomic_write.html)
+
+Two native trials matched all 803 candidate keyboard transitions and
+proved clean Stop. Timings run from authenticated WSS admission to
+successful `SendInput` return.
+
+| Run | Sustained idle p50 / p95 / p99 | Sustained Profiles p50 / p95 / p99 | First idle / Profiles p95 |
+| --- | ---: | ---: | ---: |
+| Same-session baseline | 3.96 / 6.44 / 7.10 ms | 3.09 / 4.39 / 4.86 ms | 5.787 / 4.708 ms |
+| Candidate 1 | 2.32 / 3.24 / 4.20 ms | 3.08 / 4.55 / 5.44 ms | 5.071 / 4.151 ms |
+| Candidate 2 | 3.01 / 4.62 / 5.20 ms | 3.15 / 4.46 / 5.07 ms | 5.030 / 3.707 ms |
+
+Sustained pre-enqueue intent p95 fell from 2.67–2.72 ms to
+1.65–1.77 ms. Pre-enqueue evidence verification p95 fell from
+0.95–0.96 ms to 0.35–0.40 ms. All four sustained candidate phases met
+the keyboard budget. First idle dispatch and mixed pointer qualification
+remain open. This workload excludes physical input, vJoy and preview.
+
+The candidate passed portal/MCP backup and full restart restore on
+WAL/FULL and paired-key crash recovery. All 205 Windows desktop-output
+tests and 73 persistence tests passed, with one existing persistence
+ignore. The tests rejected an equal-content
+replacement file, a junction that resolved to the same file, and a
+directory at the rollback sidecar path. LLVM measured 95.95% lines and
+92.31% functions in the new Windows path module and 98.97% lines and
+100% functions in the live evidence module. These checks detect path
+changes at each verification point. They do not make external namespace
+changes atomic with SQLite commit.
+
+Evidence is under `.research/c193-reconnect/verified-wal-path/`.
+The dev executable SHA-256 is
+`69f274fa6795682b90f34604b0c1c91bebb3b8893c08289a69ffa9ccf5a4ab81`.

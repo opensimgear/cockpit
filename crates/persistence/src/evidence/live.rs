@@ -5,11 +5,15 @@ use crate::{failure, Change, Database, PayloadCheck, APPLICATION_ID, BUSY_TIMEOU
 use rusqlite::{params, Connection, TransactionBehavior};
 use std::{path::Path, time::Duration};
 
+#[cfg(windows)]
+mod windows_path;
+
 const READ_BUSY: Duration = Duration::from_millis(5);
 
 pub(super) struct LiveEvidence {
     connection: Connection,
     schema_version: i64,
+    storage: LivePath,
 }
 impl LiveEvidence {
     pub(super) fn open(database: &Database) -> Result<Self, String> {
@@ -23,17 +27,26 @@ impl LiveEvidence {
             .pragma_query_value(None, "schema_version", |row| row.get(0))
             .map_err(failure)?;
         tx.commit().map_err(failure)?;
+        let storage = LivePath {
+            #[cfg(windows)]
+            verified: if database.journal_mode() == "wal" {
+                windows_path::VerifiedPath::open(&connection, database.path())?
+            } else {
+                None
+            },
+        };
         Ok(Self {
             connection,
             schema_version,
+            storage,
         })
     }
     pub(super) fn verify(&self, evidence: &Evidence) -> Result<(), String> {
         let path = evidence.database.path();
-        storage_path(&self.connection, path)?;
+        self.storage.check(&self.connection, path)?;
         self.verify_record(evidence)?;
         // Also fence a path replacement concurrent with the statement.
-        storage_path(&self.connection, path)
+        self.storage.check(&self.connection, path)
     }
     fn verify_record(&self, evidence: &Evidence) -> Result<(), String> {
         // One SELECT supplies an atomic epoch/revision/payload snapshot. BLOB
@@ -61,7 +74,7 @@ impl LiveEvidence {
         prior: PayloadCheck<'_>,
     ) -> Result<Vec<u64>, String> {
         let path = evidence.database.path();
-        storage_path(&self.connection, path)?;
+        self.storage.check(&self.connection, path)?;
         // Preserve the fast failure when an exclusive writer blocks reads.
         self.verify_record(evidence)?;
         self.connection
@@ -82,7 +95,7 @@ impl LiveEvidence {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failure)?;
         let path = database.path();
-        storage_path(&tx, path)?;
+        self.storage.check(&tx, path)?;
         // The checked open pinned the layout and FULL synchronous mode on
         // this connection. Reject any later identity, schema or journal change
         // under the same writer lock as the record comparison.
@@ -107,39 +120,50 @@ impl LiveEvidence {
             }
         }
         let revisions = database.apply_exact(&tx, &[change], &[], &[prior])?;
-        storage_path(&tx, path)?;
+        self.storage.check(&tx, path)?;
         tx.commit().map_err(failure)?;
-        storage_path(&self.connection, path)?;
+        self.storage.check(&self.connection, path)?;
         Ok(revisions)
     }
 }
 
-fn storage_path(_connection: &Connection, path: &Path) -> Result<(), String> {
-    // Require a regular database leaf using the same no-follow inspection
-    // that validates its type. Inspect sidecars before using the live handle.
-    crate::path::check_live_path(path)?;
-    #[cfg(unix)]
-    {
-        let mut moved: std::ffi::c_int = 0;
-        // SAFETY: the retained connection owns a live SQLite handle; main
-        // is NUL terminated and HAS_MOVED writes exactly one c_int. The
-        // pinned bundled Unix VFS implements this using its open file's
-        // device/inode, rejecting even an equal-byte/equal-epoch replacement.
-        let result = unsafe {
-            rusqlite::ffi::sqlite3_file_control(
-                _connection.handle(),
-                c"main".as_ptr(),
-                rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
-                (&mut moved as *mut std::ffi::c_int).cast(),
-            )
-        };
-        if result != rusqlite::ffi::SQLITE_OK || moved != 0 {
-            return Err("Recovery evidence storage was removed or replaced.".into());
+struct LivePath {
+    #[cfg(windows)]
+    verified: Option<windows_path::VerifiedPath>,
+}
+
+impl LivePath {
+    fn check(&self, _connection: &Connection, path: &Path) -> Result<(), String> {
+        #[cfg(windows)]
+        if let Some(verified) = &self.verified {
+            return verified.check(path);
         }
+        // Require a regular database leaf using the same no-follow inspection
+        // that validates its type. Inspect sidecars before using the live handle.
+        crate::path::check_live_path(path)?;
+        #[cfg(unix)]
+        {
+            let mut moved: std::ffi::c_int = 0;
+            // SAFETY: the retained connection owns a live SQLite handle; main
+            // is NUL terminated and HAS_MOVED writes exactly one c_int. The
+            // pinned bundled Unix VFS implements this using its open file's
+            // device/inode, rejecting even an equal-byte/equal-epoch replacement.
+            let result = unsafe {
+                rusqlite::ffi::sqlite3_file_control(
+                    _connection.handle(),
+                    c"main".as_ptr(),
+                    rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+                    (&mut moved as *mut std::ffi::c_int).cast(),
+                )
+            };
+            if result != rusqlite::ffi::SQLITE_OK || moved != 0 {
+                return Err("Recovery evidence storage was removed or replaced.".into());
+            }
+        }
+        // The pinned Windows SQLite VFS opens the main file with READ|WRITE
+        // sharing only: its lifetime handle denies deletion/rename/replacement.
+        Ok(())
     }
-    // The pinned Windows SQLite VFS opens the main file with READ|WRITE
-    // sharing only: its lifetime handle denies deletion/rename/replacement.
-    Ok(())
 }
 
 #[cfg(test)]
