@@ -1,6 +1,18 @@
 //! Ordered journal, native acknowledgement and owner projection transaction.
 use super::*;
 
+#[derive(Default)]
+pub(super) struct DeferredJournal {
+    outcome: Option<(Request, Ack)>,
+    pub(super) failure: Option<String>,
+}
+
+pub(super) enum JournalMode<'a> {
+    Immediate,
+    Defer(&'a mut DeferredJournal),
+    Carry(&'a mut DeferredJournal),
+}
+
 impl Coordinator {
     pub(super) fn send(
         &mut self,
@@ -19,6 +31,39 @@ impl Coordinator {
         possible: Vec<Control>,
         commit: impl FnOnce(&mut Self, &Ack) -> Result<bool, String>,
     ) -> Result<Ack, String> {
+        self.send_with_journal(command, deadline_us, possible, commit, JournalMode::Immediate)
+    }
+
+    pub(super) fn finish_deferred_journal(&mut self, deferred: &mut DeferredJournal) -> Result<(), String> {
+        if deferred.outcome.is_none() {
+            return Ok(());
+        }
+        let result = self.persist();
+        self.finish_deferred_outcome(deferred, &result);
+        result
+    }
+
+    fn finish_deferred_outcome(&mut self, deferred: &mut DeferredJournal, result: &Result<(), String>) {
+        if let Some((request, ack)) = deferred.outcome.take() {
+            if let Err(error) = result {
+                deferred.failure = Some(error.clone());
+                self.snapshot.uncertain = true;
+                self.snapshot.cleanup_complete = false;
+                self.snapshot.phase = "faulted".into();
+                self.snapshot.error = Some(error.clone());
+            }
+            self.audit_outcome(&request, Some(&ack), if result.is_err() { 3 } else { 0 });
+        }
+    }
+
+    pub(super) fn send_with_journal(
+        &mut self,
+        command: Command,
+        deadline_us: Option<Counter>,
+        possible: Vec<Control>,
+        commit: impl FnOnce(&mut Self, &Ack) -> Result<bool, String>,
+        mut journal: JournalMode<'_>,
+    ) -> Result<Ack, String> {
         if self.terminal_stopped {
             return Err("Desktop worker is stopped; acquire a fresh coordinator before activation or recovery.".into());
         }
@@ -28,10 +73,6 @@ impl Coordinator {
                     .into(),
             );
         }
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .ok_or("Desktop channel sequence exhausted.")?;
         // Relative motion cannot acquire or release a held control and is never
         // replayed. Its operation counter is volatile, so successful pointer
         // updates need no recovery-evidence transaction on the lease path.
@@ -48,12 +89,26 @@ impl Coordinator {
             if matches!(delivery.intent, Intent::Held { .. } | Intent::Cleanup))
             && possible.iter().all(|control| self.snapshot.held.contains(control));
         let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
+        let prepares_intent = changes_ledger && !release_only_delivery;
+        let merging = prepares_intent && matches!(&journal, JournalMode::Carry(deferred) if deferred.outcome.is_some());
+        if let JournalMode::Carry(deferred) = &mut journal {
+            // A release, collision or expired delivery may need no new intent.
+            // In that case the preceding receipt still needs its own write.
+            if !prepares_intent {
+                self.finish_deferred_journal(deferred)?;
+            }
+        }
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Desktop channel sequence exhausted.")?;
         let mut request = Request {
             sequence: Counter(self.sequence),
             deadline_us,
             admission: self.request_admission(&command),
             command,
         };
+        let mut merged_issue = None;
         if let Some(channel) = self.channel.audit_id() {
             let (operation, command, run) = match &request.command {
                 Command::Activate { run, .. } => (0, 1, Some(run)),
@@ -66,8 +121,12 @@ impl Coordinator {
                 Command::Stop => (0, 7, None),
             };
             let run_alias = run.and_then(|run| crate::audit::alias(crate::audit::AliasKind::Run, run.session.as_bytes())).unwrap_or(0);
-            crate::audit::record(crate::audit::Kind::RequestIssued,
-                &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
+            let fields = [channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)];
+            if merging {
+                merged_issue = crate::audit::stamp().map(|stamp| (stamp, fields));
+            } else {
+                crate::audit::record(crate::audit::Kind::RequestIssued, &fields);
+            }
         }
         if pointer || release_only_arm || release_only_delivery {
             if let Err(error) = self.verify_current_evidence() {
@@ -75,14 +134,35 @@ impl Coordinator {
                 return Err(error);
             }
         }
-        if changes_ledger && !release_only_delivery {
+        if prepares_intent {
             if !self.snapshot.uncertain {
                 self.snapshot.possible_held = self.snapshot.held.clone();
             }
             self.snapshot.possible_held.extend(possible);
             self.snapshot.in_flight = Some(request.clone());
-            if let Err(error) = self.persist() {
-                self.audit_outcome(&request, None, 1);
+            let result = self.persist();
+            if let JournalMode::Carry(deferred) = &mut journal {
+                if let Some((prior, _)) = &deferred.outcome {
+                    if result.is_ok() {
+                        if let Some((stamp, fields)) = merged_issue {
+                            crate::audit::record_at(stamp, crate::audit::Kind::RequestIssued, &fields);
+                        }
+                        if let Some(channel) = self.channel.audit_id() {
+                            crate::audit::record(crate::audit::Kind::JournalMerged,
+                                &[channel, prior.sequence.0, request.sequence.0]);
+                        }
+                    } else {
+                        // The new sequence never reached the helper. A terminal
+                        // Stop must still use the next sequence it expects.
+                        self.sequence -= 1;
+                    }
+                }
+                self.finish_deferred_outcome(deferred, &result);
+            }
+            if let Err(error) = result {
+                if !merging {
+                    self.audit_outcome(&request, None, 1);
+                }
                 return Err(error);
             }
         }
@@ -216,6 +296,12 @@ impl Coordinator {
                     self.snapshot.in_flight = None;
                     self.snapshot.possible_held = ack.held.clone();
                     if changes_ledger || metadata_changed || owners_changed || reconciled_changed {
+                        if let JournalMode::Defer(deferred) = journal {
+                            if ack.attempted > 0 && !ack.skipped && !ack.scope_rejected && !ack.collision {
+                                deferred.outcome = Some((request, ack.clone()));
+                                return Ok(ack);
+                            }
+                        }
                         if let Err(error) = self.persist() {
                             self.snapshot.uncertain = true;
                             self.snapshot.cleanup_complete = false;

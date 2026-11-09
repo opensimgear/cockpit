@@ -38,6 +38,7 @@ pub(super) struct Completion {
     pub error: Option<String>,
 }
 struct Job {
+    key_holds: std::collections::BTreeSet<Counter>,
     admission: Option<ScopeAdmission>,
     deliveries: Vec<Delivery>,
     prearm: Option<(String, Token)>,
@@ -289,9 +290,9 @@ impl Output {
     }
     #[cfg(test)]
     fn dispatch(&self, deliveries: Vec<Delivery>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
-        self.dispatch_prepared(deliveries, None, source_now, audit_shadow, admission)
+        self.dispatch_prepared(deliveries, None, source_now, audit_shadow, admission, Default::default())
     }
-    pub(super) fn dispatch_prepared(&self, deliveries: Vec<Delivery>, prearm: Option<(String, Token)>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>) -> Result<(), String> {
+    pub(super) fn dispatch_prepared(&self, deliveries: Vec<Delivery>, prearm: Option<(String, Token)>, source_now: u64, audit_shadow: u64, admission: Option<ScopeAdmission>, key_holds: std::collections::BTreeSet<Counter>) -> Result<(), String> {
         let admitted = Instant::now();
         // Validate before serializing: the count bound also bounds serialization work.
         let bounds = if deliveries.len() > DELIVERY_LIMIT {
@@ -318,7 +319,7 @@ impl Output {
         }
         state.busy = true;
         state.busy_shadow = audit_shadow;
-        state.job = Some(Job { deliveries, prearm, source_now, admitted, epoch: state.epoch, audit_shadow, admission });
+        state.job = Some(Job { deliveries, prearm, source_now, admitted, epoch: state.epoch, audit_shadow, admission, key_holds });
         drop(state);
         self.drive();
         Ok(())

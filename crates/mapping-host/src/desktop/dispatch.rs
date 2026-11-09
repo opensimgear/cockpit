@@ -56,7 +56,15 @@ impl Desktop {
                     })
             } else { None };
             if pending.is_empty() && prearm.is_none() { return Ok(()); }
-            self.output.dispatch_prepared(pending, prearm, now, self.audit_shadow, self.shadow_admission)?;
+            let key_holds = if pending.len() > 1 {
+                pending.iter().filter(|delivery| {
+                    matches!(self.scheduler.action(&delivery.action_id),
+                        Some(osg_mapping::desktop::Action::KeyHold { .. }))
+                }).map(|delivery| delivery.operation_id).collect()
+            } else {
+                BTreeSet::new()
+            };
+            self.output.dispatch_prepared(pending, prearm, now, self.audit_shadow, self.shadow_admission, key_holds)?;
             // Recording completes inline; the native owner completes by wake.
             if self.output.asynchronous() { return Ok(()); }
         }

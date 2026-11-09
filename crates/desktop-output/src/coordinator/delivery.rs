@@ -1,7 +1,12 @@
 //! Projections begin after reconciling any worker-owned release receipts.
 use super::*;
+use super::transaction::{DeferredJournal, JournalMode};
 
 impl Coordinator {
+    pub fn is_key_acquisition(delivery: &Delivery) -> bool {
+        matches!(&delivery.intent, Intent::Held { controls }
+            if matches!(controls.as_slice(), [Control::Key { .. }]))
+    }
     pub fn arm(&mut self, producer: Token, action_id: String) -> Result<(), String> {
         self.arm_checked(producer, action_id).map(|_| ())
     }
@@ -33,7 +38,40 @@ impl Coordinator {
     }
 
     pub fn submit(&mut self, delivery: Delivery, source_now_us: u64) -> Result<Ack, String> {
-        self.submit_inner(delivery, source_now_us, None)
+        self.submit_inner(delivery, source_now_us, None, JournalMode::Immediate)
+    }
+
+    /// An already queued key acquisition may share the previous receipt's
+    /// durable write. The caller checks that it still has authority after the
+    /// first ACK. Each request keeps its own native scope gate and ACK.
+    pub fn submit_key_pair(
+        &mut self,
+        first: Delivery,
+        source_now_us: u64,
+        next: impl FnOnce(&Ack) -> Option<(Delivery, u64)>,
+    ) -> Result<(Ack, Result<Option<Ack>, String>), String> {
+        let mut deferred = DeferredJournal::default();
+        let mode = if Self::is_key_acquisition(&first) {
+            JournalMode::Defer(&mut deferred)
+        } else {
+            JournalMode::Immediate
+        };
+        let first = self.submit_inner(first, source_now_us, None, mode)?;
+        let second = match next(&first) {
+            Some((delivery, now)) if Self::is_key_acquisition(&delivery) => self
+                .submit_inner(delivery, now, None, JournalMode::Carry(&mut deferred))
+                .map(Some),
+            Some((delivery, now)) => {
+                self.finish_deferred_journal(&mut deferred)?;
+                self.submit(delivery, now).map(Some)
+            }
+            None => Ok(None),
+        };
+        self.finish_deferred_journal(&mut deferred)?;
+        if let Some(error) = deferred.failure {
+            return Err(error);
+        }
+        Ok((first, second))
     }
 
     /// The original scheduler still supplies its ordinary up. The native guard
@@ -45,11 +83,11 @@ impl Coordinator {
             return Err("A desktop release guard requires nonempty Held input and 1–60000 ms dwell.".into());
         }
         self.check_guard_capacity(&delivery)?;
-        self.submit_inner(delivery, source_now_us, Some(release_after_us))
+        self.submit_inner(delivery, source_now_us, Some(release_after_us), JournalMode::Immediate)
     }
 
     fn submit_inner(&mut self, delivery: Delivery, source_now_us: u64,
-        release_after_us: Option<Counter>) -> Result<Ack, String> {
+        release_after_us: Option<Counter>, journal: JournalMode<'_>) -> Result<Ack, String> {
         let revision = self.projection_revision;
         let expired = delivery.deadline_us.is_some_and(|d| source_now_us >= d.0)
             && !matches!(delivery.intent, Intent::Cleanup);
@@ -78,7 +116,7 @@ impl Coordinator {
                 possible.extend(controls.iter().cloned());
             }
         }
-        self.send_with_commit(command, deadline_us, possible, |coordinator, ack| {
+        self.send_with_journal(command, deadline_us, possible, |coordinator, ack| {
             // Earlier guards may have expired before this ACK, including during
             // unrelated pointer traffic. Never restore a pre-ACK owner clone.
             if ack.scope_rejected {
@@ -95,7 +133,7 @@ impl Coordinator {
             }
             coordinator.reducer = next;
             Ok(coordinator.update_owners())
-        })
+        }, journal)
     }
 
     pub fn renew(&mut self, run: RunToken) -> Result<(), String> {

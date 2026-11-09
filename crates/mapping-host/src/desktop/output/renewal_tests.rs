@@ -63,7 +63,7 @@ fn queued_neutral_arm_waits_for_outstanding_lease_authorization() {
     output.drive();
     let admission = output.child_scope().map(|receipt| receipt.admission);
     let producer = Token { run: run(), node_id: "source".into(), dependencies: vec![] };
-    output.dispatch_prepared(vec![], Some(("key".into(), producer)), 10, 0, admission).unwrap();
+    output.dispatch_prepared(vec![], Some(("key".into(), producer)), 10, 0, admission, Default::default()).unwrap();
     assert_eq!(wakes.load(Ordering::SeqCst), 1);
     assert!(output.shared.lock().job.is_some());
     assert!(output.snapshot().owners.is_empty());

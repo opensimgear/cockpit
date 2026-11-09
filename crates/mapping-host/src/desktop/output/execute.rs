@@ -113,13 +113,35 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                 }
             } else {
                 let delivery = group.pop().expect("one delivery");
-                let ack = if let Some(release_after_us) = guarded_duration(&delivery, tap_durations) {
-                    output.submit_guarded(delivery.clone(), source_now(&job), release_after_us)?
+                let guard = guarded_duration(&delivery, tap_durations);
+                let paired = job.key_holds.contains(&delivery.operation_id)
+                    && Coordinator::is_key_acquisition(&delivery)
+                    && pending.front().is_some_and(|next| {
+                        job.key_holds.contains(&next.operation_id)
+                            && Coordinator::is_key_acquisition(next)
+                            && armed.get(&next.action_id) == Some(&next.producer)
+                    });
+                let (ack, second) = if paired {
+                    output.submit_key_pair(delivery.clone(), source_now(&job), |ack| {
+                        let next = pending.front()?;
+                        if ack.skipped || ack.scope_rejected
+                            || reason(shared, &job, armed, &cancelled, next).is_some() {
+                            return None;
+                        }
+                        Some((next.clone(), source_now(&job)))
+                    })?
+                } else if let Some(release_after_us) = guard {
+                    (output.submit_guarded(delivery.clone(), source_now(&job), release_after_us)?, Ok(None))
                 } else {
-                    output.submit(delivery.clone(), source_now(&job))?
+                    (output.submit(delivery.clone(), source_now(&job))?, Ok(None))
                 };
                 rejected |= ack.scope_rejected;
                 record(&mut completion, &mut cancelled, delivery, ack);
+                if let Some(ack) = second? {
+                    rejected |= ack.scope_rejected;
+                    let delivery = pending.pop_front().expect("the paired delivery is still queued");
+                    record(&mut completion, &mut cancelled, delivery, ack);
+                }
             }
         }
         Ok(())

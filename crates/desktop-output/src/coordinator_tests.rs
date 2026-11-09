@@ -428,6 +428,8 @@ fn stale_evidence_and_exclusive_lifetime_owner_prevent_helper_dispatch(){
 mod lifecycle;
 #[path="coordinator/arm_journal_tests.rs"]
 mod arm_journal;
+#[path = "coordinator/key_pair_tests.rs"]
+mod key_pair;
 #[path="coordinator/delivery_commit_tests.rs"]
 mod delivery_commit;
 

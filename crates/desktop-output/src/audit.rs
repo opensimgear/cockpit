@@ -106,6 +106,8 @@ pub enum Kind {
     /// store ready/write start/write end/complete. Successes only; journal
     /// failures invalidate the collector independently. No user data is logged.
     JournalPersist,
+    /// channel, prior receipt request sequence, newly prepared request sequence
+    JournalMerged,
     /// queue kind, normalized reason, depth
     QueueFault,
     /// source, provider, subscription, normalized reason
