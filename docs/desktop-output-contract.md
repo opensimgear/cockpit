@@ -87,6 +87,16 @@ The [actual ACR scope evidence](verification/2026-10-18-desktop-game-native.json
 
 The [staged package worker evidence](verification/2026-10-18-desktop-package-worker.json) uses the existing development packaging script to copy the unchanged executable, then starts its private worker from the staged directory three times with empty stdin. Each emits only its bounded hello and exits on EOF; sequential startup proves the session lock is released. No protocol commands are sent and no input is requested. This covers staged development startup, not installer/upgrade or packaged input qualification. Reproduce with `scripts/desktop-package-worker.ps1 -Executable src-tauri/target/debug/osg-cockpit.exe -OutputDirectory .research/<new-probe-directory>`.
 
-The [whole development app interruption evidence](verification/2026-10-18-desktop-crash-native.json) terminates the exact private worker and application tree while the receiver holds KeyA. Ordinary restart exposes RecoveryNeeded without sending input or starting a worker. Explicit recovery releases exactly the recorded KeyA once and leaves the session stopped with a clean journal. The test runs only with both `OSG_DESKTOP_CRASH_NATIVE=1` and `OSG_DESKTOP_NATIVE_INJECT=1`.
+The [whole development app interruption test](verification/2026-11-09-desktop-worker-loss.md#whole-app-interruption-with-sqlite) terminates the exact private worker and application tree while the receiver holds KeyA. Ordinary restart exposes Recovery needed without sending input or starting a worker. Explicit recovery releases the recorded KeyA once and leaves the session stopped with a clean journal.
+
+To run `pnpm desktop:crash:native` on Windows, start a dedicated dev Cockpit on
+an interactive desktop with its CDP port enabled. Use a fresh directory under
+`.research` for `OSG_DESKTOP_CRASH_ARTIFACTS`. Put the private Cockpit
+executable (`OSG_DESKTOP_NATIVE_APP`), its `OSG_SQLITE_DATABASE` and
+`WEBVIEW2_USER_DATA_FOLDER` inside that directory. Set all four to absolute
+paths. Run the fixture with the same Cockpit environment and CDP endpoint
+(`OSG_NATIVE_CDP_URL`), including both `OSG_DESKTOP_CRASH_NATIVE=1` and
+`OSG_DESKTOP_NATIVE_INJECT=1`. The fixture restarts that private executable.
+`OSG_DESKTOP_RECEIVER` can point to a separately built `native_receiver.exe`.
 
 Still unverified: ordinary versus higher-integrity target acceptance, physical-key overlap, real controller/panel delivery, actual unplug/publication replacement, sleep/wake and lock/unlock, installed package input/deployment, sustained loaded-system latency and representative game behavior. The [qualification record](verification/2026-10-18-desktop-output.md) separates actual running-Cockpit companion acceptance from these remaining J2/J4/J6 checks; production enablement remains closed.

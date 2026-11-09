@@ -31,3 +31,36 @@ The parent audit checkpoint was complete and valid through sequence 238.
 This qualifies the held-key recovery case in #193 and #198. The strict
 desktop timing and mixed pointer gates remain open. Physical controller
 preview and output qualification are tracked separately in #199.
+
+## Whole-app interruption with SQLite
+
+The whole-app fixture now reads the current SQLite recovery record by its
+exact owner key. Its read-only evidence bridge stays outside the app tree,
+so it can inspect the row after termination and before restart. The bridge
+checks the database path and Cockpit process identity before and after restart.
+
+On Windows, the isolated dev Cockpit built from `d2eeb7da` sent KeyA down from
+an authenticated WSS button to the exact foreground receiver. The fixture
+terminated the private input worker, the app, and their verified descendants
+without graceful cleanup. Revision 8 and its payload survived the interruption
+and ordinary restart. The new app reported Recovery needed, with no owner or
+applied snapshot, and started no input worker. The receiver still had only
+the original down edge.
+
+Explicit Recover delivered exactly one KeyA up and advanced the row to
+revision 14. The journal retained the original owner and application scope
+and cleared its held, possible-held and in-flight state. The profile finished
+stopped. The fixture removed its test profile and pairing, restored the
+output and listener settings, and closed the receiver with no cleanup errors.
+
+The successful run covered 99.14% of the JavaScript fixture's lines, 70.59%
+of branches and 72.73% of functions. Two preflight runs aborted before Apply.
+The first receiver could not acquire foreground. The second exposed a string
+versus integer HWND comparison in the fixture, which was corrected before the
+successful run. No latency or physical input was measured in this scenario.
+
+Local evidence is in `.research/c193-reconnect/crash-sqlite/run-40856/`.
+The executable SHA-256 is
+`787824c23889b119d5feee75d2b729d1d140ae7e0acfc075be1ea108674ca2c9`.
+The `evidence.json` SHA-256 is
+`73d0ddf02a04a948b44a0b4fd5e4d5563989b48de59a1f9d6befa46eab5011bc`.
