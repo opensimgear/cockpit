@@ -54,3 +54,20 @@ The Windows dev comparison reused the 48-command dual-rate workload and the rece
 The candidate delivered all 96 commands in order. The runs verified no replay after Stop and reapply, a free vJoy slot, no fixture budget misses and zero cleanup errors. Capture-to-reducer attribution for these command effects, actual DCS effects and physical controller timing remain open.
 
 The candidate SHA-256 is `d452dd8ef5126feb889a37fe9c4725549b45cd1dc01f13ae30b7932c9d6726c3`. The run evidence is `.research/dcs-physics-native/1794225804632/evidence.json` and `.research/dcs-physics-native/1794225880308/evidence.json`, SHA-256 `f58a1b448e344c9b6933b78e03c6982bfac95d92e104877a4853aede92ab3e21` and `71447142067e696da71f69610ff81777d96258920ec1807470a84efd140a55f1`, respectively.
+
+## Matched command capture and reducer timing
+
+An isolated diagnostic Windows dev build of `cc68085b` recorded the direct-source observations of the two authored DCS actions. Each observation had to match the capture timestamp, source port and sequence in the same reducer batch. The trace recorded the generation of the matched frame. The analysis then paired the ordered action sequences and command texts with the private UDP receipts. Every command used one validation attempt.
+
+The capture mark is where Cockpit stamped the authored debug input or captured the browser-panel update on the host. The reducer mark bounds completion of the accepted batch. The transport mark is immediately before the socket send, and the final mark is the receiver's callback on the Windows monotonic clock. The input offer and browser clock bracket are recorded separately. Each table entry is p50 / p95 / p99 in milliseconds.
+
+| Trial and source | Capture cadence | Capture to reducer batch end | Effect drain to transport | Transport to UDP callback | Capture to UDP callback |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1, debug controller | 180.24 / 187.04 / 188.22 | 1.74 / 2.28 / 2.45 | 5.11 / 6.09 / 6.44 | 0.07 / 0.10 / 0.24 | 6.93 / 8.47 / 8.77 |
+| 1, browser panel | 180.10 / 184.35 / 186.55 | 1.49 / 3.29 / 3.35 | 3.63 / 4.56 / 5.05 | 0.06 / 0.07 / 0.10 | 5.44 / 7.24 / 7.90 |
+| 2, debug controller | 180.15 / 183.74 / 185.82 | 1.76 / 2.28 / 2.29 | 5.21 / 6.12 / 6.48 | 0.07 / 0.23 / 3.17 | 7.16 / 8.90 / 10.20 |
+| 2, browser panel | 180.28 / 184.29 / 186.37 | 1.54 / 4.10 / 4.34 | 3.91 / 5.32 / 5.52 | 0.07 / 0.08 / 0.08 | 5.66 / 8.57 / 8.66 |
+
+All 96 receipts matched. In each trial, the independent vJoy load offered 4,801 and 601 frames at measured rates of about 1,000 and 125 Hz over 4.8 seconds of overlap. Peak pending frames were 17 and 15 in the first trial and 17 and 11 in the second. The command fixture waited for each receipt before issuing the next command. Both runs recorded zero fixture budget misses, no replay, a free vJoy slot and no cleanup errors. Command lease margins, physical controller acquisition, display presentation and simulator effects require their separate evidence.
+
+The diagnostic executable SHA-256 is `d0b75a798d158ef4c9e769fe5b2b08306d42c35cc30a5ded6104b15dbde57405`. Under `.research/c193-reconnect/dcs-native-stage-timing`, the paired reports `capture-stages-1.json` and `capture-stages-2.json` have SHA-256 `52bac746217678c199623abc9b464f61526bcd73e66d260126f0a4abbdd03bec` and `a1535604b4ea7702825dc046cc947ac84406ec885164834c1d0b3c3c2c0d4c44`. They record per-edge stages and the hashes of the underlying native logs and complete workload evidence.
