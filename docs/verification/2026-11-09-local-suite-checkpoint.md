@@ -188,3 +188,28 @@ Artifacts and logs are under `.research/c193-reconnect/r9-linux-e0dcdced/`.
 | Native gateway service | `68d9237c2e359b32630434ae53659e6ffe32ca47e8422b829e6602256e29934b` |
 | Instrumented gateway integration binary | `6526fb65b8e42b43ea24505fb8ef9616bcdc5109a27e5a4514191d0158259673` |
 | Full test log | `ca8e0dbc0950f35cf8b3049800952e31e31685ecd3495b1518bd3c9e53b99a22` |
+
+## Linux native suite after debug ingress and acquisition guards
+
+The clean `b1a368be1ca1b6db33780941152078211701c7e8` export passed
+2,426 Ubuntu WSL2 library tests with nine existing ignores. The suite
+used the locked offline dependencies and a private D-Bus session and
+keyring. The debug ingress, inactive editor save and repeated native
+reader acquisition regressions passed. The gateway framing test and
+real gateway integration also passed.
+
+The instrumented gateway integration exercised the full editor payload,
+correlated replies and clean process exit. It reached 97.27% line,
+75.00% function and 95.15% region coverage. Native Linux hardware,
+desktop presentation, and the signed mobile shells remain separate
+qualification.
+
+Artifacts are under `.research/c193-reconnect/r9-linux-b1a368be/`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Exact source archive | `9958778662d17a2bfc9a67e25292b26532b5aeabbdf1f8197c590a3edeff0e51` |
+| Library test binary | `1134b26495afe09aa3c32e4caa2f8f1bfe2ea7cfb931081e64f461d1a860e6d4` |
+| Native gateway service | `c37ab93012a0f65c12188386150dbc006ea5dc24d2f20f0b719762518ad26277` |
+| Instrumented gateway integration binary | `4af4cbbdcaec749b93b924157c99f12ab15f2c99c10d39406fc22f53c7419a3f` |
+| Full test log | `9e5e360918df86fd488c00caeb78e0a68ff5dea0edbe955d11752c18a690c9ba` |
