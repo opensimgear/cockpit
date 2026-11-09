@@ -64,3 +64,50 @@ exact receiver recorded down, up, down, up. The evidence SHA-256 is
 The default-concurrency Windows native run passed 2,485 tests and failed
 one DCS capture-isolation test. The same case passed in isolation. A full
 rerun with eight test threads passed 2,486 tests with 18 existing ignores.
+
+
+## Paired KeyHold releases
+
+The coordinator also combines the receipts of two adjacent, already queued
+KeyHold releases. It verifies the original durable held set again before
+dispatching the second release. That record covers both holds until one
+write commits the two validated receipts. A stale journal blocks the
+second release before IPC. Failed final persistence retains the previous
+recovery set, and the helper can still accept terminal Stop.
+
+After the press optimization, the prior traces contained 52 waits over
+5 ms where both requests were releases and the second was already bound
+before the first request issued. Four new runs delivered all 1,616 marked
+edges and proved clean Stop. Baselines included the press optimization.
+
+| Run | Build | Steady idle p50 / p95 / p99 | Steady Profiles p50 / p95 / p99 | Release pairs sharing one write |
+| --- | --- | ---: | ---: | ---: |
+| A1 | Press pairing | 6.28 / 10.12 / 14.06 ms | 6.27 / 11.04 / 14.13 ms | 0 |
+| B1 | Press and release pairing | 4.60 / 10.43 / 12.47 ms | 4.00 / 6.01 / 9.69 ms | 49 |
+| B2 | Press and release pairing | 4.92 / 12.56 / 19.13 ms | 5.01 / 12.84 / 13.97 ms | 81 |
+| A2 | Press pairing | 6.02 / 10.70 / 14.43 ms | 4.34 / 5.53 / 8.58 ms | 0 |
+
+All 130 release pairs had two distinct helper acknowledgements and one
+durable write after the second acknowledgement. For the steady baseline
+release edges bound before the preceding release issued and overlapping
+its final write, median binding-to-request wait was 4.98 ms and 4.91 ms
+(88 and 44 samples). For the steady candidate release edges that used a
+combined write, it was 1.43 ms and 1.51 ms (46 and 77 samples). Total
+latency tails varied. The strict timing and mixed pointer gates remain open.
+
+The Windows desktop-output, mapping-host and portable desktop suites
+passed 202, 181 and 34 tests. Changed executable modules measured at
+least 87.35% LLVM lines and 85.00% functions. Branch instrumentation was
+unavailable. The traces and coverage reports are under
+`.research/c193-release-pair/`. The candidate SHA-256 is
+`ef83154df9a1b6b6e0342261eb04320129789618a003ad42ac037a2c6bc9fcae`.
+
+Abrupt helper loss passed on the release-pair candidate. The receiver
+recorded one explicit recovery release and a new press and release
+after re-Apply and neutral input. The evidence SHA-256 is
+`3ecf3bc354981bcdb4de004f5cbe53adf2f7ebeeca84d384343bdabf960ed429`.
+
+The Windows suite at eight threads passed 2,485 tests and failed the DCS
+capture-isolation assertion also seen on the press-only build. The exact
+case passed in isolation. The four-thread full rerun passed 2,486 tests,
+with 18 existing ignores.

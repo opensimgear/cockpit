@@ -21,7 +21,7 @@ SCHEMA = dict(SourceCapture=8, SourceResult=3, SourceBound=8, NativeEnqueue=12,
     DeliveryBound=6, DeliveryDropped=5, ChannelOpened=2, ChannelExited=5, RequestIssued=6,
     RequestQueued=3, RequestDequeued=3, SubmitReturned=6, WorkerOutcome=6,
     ParentOutcome=7, QueueFault=3, NativeGap=4, Marker=2, Fault=1,
-    JournalPersist=9, JournalMerged=3)
+    JournalPersist=9, JournalMerged=3, JournalReleasesMerged=3)
 ERROR_COUNTERS = ("queueDrops", "capDrops", "aliasFailures", "qpcFailures", "invalidFields",
     "serializationErrors", "ioErrors", "flushTimeouts", "evidenceFaults", "afterFinish")
 COUNTERS = ("attempted", "enqueued", "written", *ERROR_COUNTERS, "queueHighWater",

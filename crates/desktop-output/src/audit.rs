@@ -108,6 +108,8 @@ pub enum Kind {
     JournalPersist,
     /// channel, prior receipt request sequence, newly prepared request sequence
     JournalMerged,
+    /// channel, first released request sequence, second released request sequence
+    JournalReleasesMerged,
     /// queue kind, normalized reason, depth
     QueueFault,
     /// source, provider, subscription, normalized reason

@@ -56,6 +56,21 @@ impl Coordinator {
         }
     }
 
+    fn finish_merged_journal(
+        &mut self,
+        deferred: &mut DeferredJournal,
+        sequence: Counter,
+        kind: crate::audit::Kind,
+        result: &Result<(), String>,
+    ) {
+        if result.is_ok() {
+            if let (Some(channel), Some((prior, _))) = (self.channel.audit_id(), &deferred.outcome) {
+                crate::audit::record(kind, &[channel, prior.sequence.0, sequence.0]);
+            }
+        }
+        self.finish_deferred_outcome(deferred, result);
+    }
+
     pub(super) fn send_with_journal(
         &mut self,
         command: Command,
@@ -90,11 +105,19 @@ impl Coordinator {
             && possible.iter().all(|control| self.snapshot.held.contains(control));
         let changes_ledger = !pointer && !release_only_arm && !matches!(command, Command::Renew { .. });
         let prepares_intent = changes_ledger && !release_only_delivery;
-        let merging = prepares_intent && matches!(&journal, JournalMode::Carry(deferred) if deferred.outcome.is_some());
+        let pending_receipt = match &journal {
+            JournalMode::Carry(deferred) => deferred.outcome.as_ref().map(|(prior, _)| prior),
+            _ => None,
+        };
+        let is_release = |command: &Command| matches!(command,
+            Command::Deliver { delivery } if Self::is_key_release(delivery));
+        // The original durable record already covers both key holds. The
+        // second release may verify that record and dispatch before it changes.
+        let merge_releases = release_only_delivery && is_release(&command)
+            && pending_receipt.is_some_and(|prior| is_release(&prior.command));
+        let merging = merge_releases || (prepares_intent && pending_receipt.is_some());
         if let JournalMode::Carry(deferred) = &mut journal {
-            // A release, collision or expired delivery may need no new intent.
-            // In that case the preceding receipt still needs its own write.
-            if !prepares_intent {
+            if !merging {
                 self.finish_deferred_journal(deferred)?;
             }
         }
@@ -130,8 +153,18 @@ impl Coordinator {
         }
         if pointer || release_only_arm || release_only_delivery {
             if let Err(error) = self.verify_current_evidence() {
-                self.audit_outcome(&request, None, 1);
+                if merge_releases {
+                    // No request or audit issue used the reserved sequence.
+                    self.sequence -= 1;
+                } else {
+                    self.audit_outcome(&request, None, 1);
+                }
                 return Err(error);
+            }
+            if merge_releases {
+                if let Some((stamp, fields)) = merged_issue.take() {
+                    crate::audit::record_at(stamp, crate::audit::Kind::RequestIssued, &fields);
+                }
             }
         }
         if prepares_intent {
@@ -142,22 +175,18 @@ impl Coordinator {
             self.snapshot.in_flight = Some(request.clone());
             let result = self.persist();
             if let JournalMode::Carry(deferred) = &mut journal {
-                if let Some((prior, _)) = &deferred.outcome {
+                if merging {
                     if result.is_ok() {
-                        if let Some((stamp, fields)) = merged_issue {
+                        if let Some((stamp, fields)) = merged_issue.take() {
                             crate::audit::record_at(stamp, crate::audit::Kind::RequestIssued, &fields);
-                        }
-                        if let Some(channel) = self.channel.audit_id() {
-                            crate::audit::record(crate::audit::Kind::JournalMerged,
-                                &[channel, prior.sequence.0, request.sequence.0]);
                         }
                     } else {
                         // The new sequence never reached the helper. A terminal
                         // Stop must still use the next sequence it expects.
                         self.sequence -= 1;
                     }
+                    self.finish_merged_journal(deferred, request.sequence, crate::audit::Kind::JournalMerged, &result);
                 }
-                self.finish_deferred_outcome(deferred, &result);
             }
             if let Err(error) = result {
                 if !merging {
@@ -296,13 +325,20 @@ impl Coordinator {
                     self.snapshot.in_flight = None;
                     self.snapshot.possible_held = ack.held.clone();
                     if changes_ledger || metadata_changed || owners_changed || reconciled_changed {
-                        if let JournalMode::Defer(deferred) = journal {
+                        if let JournalMode::Defer(deferred) = &mut journal {
                             if ack.attempted > 0 && !ack.skipped && !ack.scope_rejected && !ack.collision {
                                 deferred.outcome = Some((request, ack.clone()));
                                 return Ok(ack);
                             }
                         }
-                        if let Err(error) = self.persist() {
+                        let result = self.persist();
+                        if merge_releases {
+                            if let JournalMode::Carry(deferred) = &mut journal {
+                                self.finish_merged_journal(deferred, request.sequence,
+                                    crate::audit::Kind::JournalReleasesMerged, &result);
+                            }
+                        }
+                        if let Err(error) = result {
                             self.snapshot.uncertain = true;
                             self.snapshot.cleanup_complete = false;
                             self.snapshot.phase = "faulted".into();

@@ -91,3 +91,67 @@ fn expired_next_edge_sees_the_first_receipt_already_committed() {
     assert_eq!(receipts[1].held, vec![key()]);
     assert!(receipts[1].in_flight.is_none());
 }
+
+fn releases(coordinator: &mut Coordinator, seen: &Mutex<Vec<Snapshot>>, second: Delivery) -> (Delivery, Delivery) {
+    let first = delivery();
+    coordinator.submit(first.clone(), 0).unwrap();
+    coordinator.submit(second.clone(), 0).unwrap();
+    seen.lock().unwrap().clear();
+    let release = |delivery: Delivery, operation| Delivery {
+        operation_id: Counter(operation),
+        sequence: Counter(2),
+        intent: Intent::Held { controls: vec![] },
+        ..delivery
+    };
+    (release(first, 3), release(second, 4))
+}
+
+#[test]
+fn two_releases_keep_old_durable_holds_until_the_combined_receipts_commit() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    let (first, second) = releases(&mut coordinator, &seen, second);
+    let before = coordinator.persist_attempts.get();
+    let (first_ack, second_ack) = coordinator.submit_key_pair(first, 0, |_| Some((second, 0))).unwrap();
+    assert_eq!(first_ack.attempted, 1);
+    assert_eq!(second_ack.unwrap().unwrap().attempted, 1);
+    assert_eq!(coordinator.persist_attempts.get() - before, 1);
+    let receipts = seen.lock().unwrap();
+    assert_eq!(receipts.len(), 2);
+    for receipt in receipts.iter() {
+        assert_eq!(receipt.held, vec![key(), Control::Key { key: Key(5) }]);
+        assert!(receipt.in_flight.is_none());
+    }
+    let durable = Coordinator::inspect_journal(coordinator.journal.as_ref().unwrap()).unwrap();
+    assert!(durable.held.is_empty() && durable.possible_held.is_empty());
+}
+
+#[test]
+fn failed_release_receipt_commit_preserves_the_original_recovery_set() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    let (first, second) = releases(&mut coordinator, &seen, second);
+    let before = coordinator.persist_attempts.get();
+    coordinator.fail_persist_at.set(Some(before + 1));
+    assert!(coordinator.submit_key_pair(first, 0, |_| Some((second, 0))).is_err());
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(coordinator.snapshot().uncertain);
+    let durable = Coordinator::inspect_journal(coordinator.journal.as_ref().unwrap()).unwrap();
+    assert_eq!(durable.held, vec![key(), Control::Key { key: Key(5) }]);
+    coordinator.stop_all().unwrap();
+    assert!(coordinator.snapshot().cleanup_complete);
+}
+
+#[test]
+fn external_journal_change_blocks_the_second_release_before_ipc() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    let (first, second) = releases(&mut coordinator, &seen, second);
+    let path = coordinator.journal.clone().unwrap();
+    let durable = sql_read(&path).unwrap();
+    let before = coordinator.sequence;
+    assert!(coordinator.submit_key_pair(first, 0, |_| {
+        sql_write(&path, &durable).unwrap();
+        Some((second, 0))
+    }).is_err());
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(coordinator.sequence, before + 1);
+    assert_eq!(sql_read(&path).unwrap(), durable);
+}

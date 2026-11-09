@@ -3,9 +3,18 @@ use super::*;
 use super::transaction::{DeferredJournal, JournalMode};
 
 impl Coordinator {
-    pub fn is_key_acquisition(delivery: &Delivery) -> bool {
+    fn is_key_acquisition(delivery: &Delivery) -> bool {
         matches!(&delivery.intent, Intent::Held { controls }
             if matches!(controls.as_slice(), [Control::Key { .. }]))
+    }
+
+    pub(super) fn is_key_release(delivery: &Delivery) -> bool {
+        matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty())
+    }
+
+    pub fn can_share_key_journal(first: &Delivery, second: &Delivery) -> bool {
+        (Self::is_key_acquisition(first) && Self::is_key_acquisition(second))
+            || (Self::is_key_release(first) && Self::is_key_release(second))
     }
     pub fn arm(&mut self, producer: Token, action_id: String) -> Result<(), String> {
         self.arm_checked(producer, action_id).map(|_| ())
@@ -41,9 +50,8 @@ impl Coordinator {
         self.submit_inner(delivery, source_now_us, None, JournalMode::Immediate)
     }
 
-    /// An already queued key acquisition may share the previous receipt's
-    /// durable write. The caller checks that it still has authority after the
-    /// first ACK. Each request keeps its own native scope gate and ACK.
+    /// An already queued KeyHold edge may share the previous receipt's durable
+    /// write. Each request retains its own scope gate and ACK.
     pub fn submit_key_pair(
         &mut self,
         first: Delivery,
@@ -51,14 +59,18 @@ impl Coordinator {
         next: impl FnOnce(&Ack) -> Option<(Delivery, u64)>,
     ) -> Result<(Ack, Result<Option<Ack>, String>), String> {
         let mut deferred = DeferredJournal::default();
-        let mode = if Self::is_key_acquisition(&first) {
+        let acquire = Self::is_key_acquisition(&first);
+        let release = Self::is_key_release(&first);
+        let mode = if acquire || release {
             JournalMode::Defer(&mut deferred)
         } else {
             JournalMode::Immediate
         };
         let first = self.submit_inner(first, source_now_us, None, mode)?;
         let second = match next(&first) {
-            Some((delivery, now)) if Self::is_key_acquisition(&delivery) => self
+            Some((delivery, now))
+                if (acquire && Self::is_key_acquisition(&delivery))
+                    || (release && Self::is_key_release(&delivery)) => self
                 .submit_inner(delivery, now, None, JournalMode::Carry(&mut deferred))
                 .map(Some),
             Some((delivery, now)) => {

@@ -115,10 +115,9 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                 let delivery = group.pop().expect("one delivery");
                 let guard = guarded_duration(&delivery, tap_durations);
                 let paired = job.key_holds.contains(&delivery.operation_id)
-                    && Coordinator::is_key_acquisition(&delivery)
                     && pending.front().is_some_and(|next| {
                         job.key_holds.contains(&next.operation_id)
-                            && Coordinator::is_key_acquisition(next)
+                            && Coordinator::can_share_key_journal(&delivery, next)
                             && armed.get(&next.action_id) == Some(&next.producer)
                     });
                 let (ack, second) = if paired {
