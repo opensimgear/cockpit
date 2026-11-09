@@ -23,6 +23,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Guard reactive frontend timer ownership
+        run: |
+          node --test scripts/reactive/ui-timers.test.mjs
+          node scripts/reactive/audit.mjs --committed --check-ui-timers
       - name: Resolve last successful CI baseline
         id: baseline
         env:

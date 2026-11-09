@@ -19,6 +19,29 @@ test('fast CI runs affected Nx check, test and build targets', () => {
   assert.match(ci, /baseline\.mjs/);
 });
 
+test('fast CI checks frontend timer ownership before affected selection', () => {
+  const { steps } = workflowData('ci.yml').jobs.frontend;
+  const install = steps.findIndex(({ run }) => run === 'pnpm install --frozen-lockfile');
+  const index = steps.findIndex(({ name }) => name === 'Guard reactive frontend timer ownership');
+  assert.ok(install >= 0 && index > install);
+  assert.ok(index < steps.findIndex(({ id }) => id === 'baseline'));
+  assert.equal(steps[index].if, undefined);
+  assert.deepEqual(steps[index].run.trim().split('\n'), [
+    'node --test scripts/reactive/ui-timers.test.mjs',
+    'node scripts/reactive/audit.mjs --committed --check-ui-timers',
+  ]);
+});
+
+test('native workflows run the complete desktop suite containing the acquisition guards', () => {
+  const native = workflowData('ci-native.yml').jobs;
+  const windows = workflowData('cockpit-windows-release.yml').jobs.windows;
+  for (const [name, job] of [['native', native.native], ['controllers', native.controllers], ['windows', windows]]) {
+    assert.ok(job.steps.some(({ run }) =>
+      run?.split('\n').some(line => line.trim() === 'cargo test --locked --manifest-path src-tauri/Cargo.toml')),
+    `${name} must run the full native desktop suite`);
+  }
+});
+
 test('native reusable workflow retains every previous native CI job', () => {
   const native = workflowData('ci-native.yml');
   assert.deepEqual(Object.keys(native.jobs), [

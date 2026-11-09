@@ -23,6 +23,14 @@ site requires a corresponding matrix update.
 verifies the original 247 historical entries. Both committed checks read their
 disposition tables from the same revision as the inventory they verify.
 
+The fast Cockpit workflow runs the frontend timer tests and
+`node scripts/reactive/audit.mjs --committed --check-ui-timers` before
+affected-project selection. Run the same commands locally. The daily
+native and Windows package workflows run the full native desktop suite,
+which includes the shared source and repeated acquisition regressions.
+The four-repository inventory check runs locally with the sibling firmware
+checkouts.
+
 ## Acquisition and publication without a named timer call
 
 The scanner matches named scheduling and readiness primitives. The source
