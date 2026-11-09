@@ -99,11 +99,11 @@ impl LiveEvidence {
         // The checked open pinned the layout and FULL synchronous mode on
         // this connection. Reject any later identity, schema or journal change
         // under the same writer lock as the record comparison.
-        let (application, schema, journal): (i64, i64, String) = tx.query_row(
+        let (application, schema, journal): (i64, i64, String) = tx.prepare_cached(
             "SELECT (SELECT application_id FROM pragma_application_id),
              (SELECT schema_version FROM pragma_schema_version), (SELECT journal_mode FROM pragma_journal_mode)",
-            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).map_err(failure)?;
+        ).map_err(failure)?.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(failure)?;
         if application != APPLICATION_ID || schema != self.schema_version || journal != database.journal_mode() {
             return Err(
                 "Recovery evidence database layout or journal mode changed externally.".into(),
@@ -119,7 +119,26 @@ impl LiveEvidence {
                 return Err("Cannot protect SQLite database.".into());
             }
         }
-        let revisions = database.apply_exact(&tx, &[change], &[], &[prior])?;
+        let revisions = if change.expected_revision == 0 {
+            database.apply_exact(&tx, &[change], &[], &[prior])?
+        } else {
+            database.verify_epoch(&tx)?;
+            let next = crate::next_revision(change.expected_revision)?;
+            // The retained record already has a domain. Compare its revision
+            // and bytes in the UPDATE under the same writer lock.
+            let updated = tx.prepare_cached(
+                "UPDATE records SET revision=?3,payload=?4
+                 WHERE domain=?1 AND key=?2 AND revision=?5 AND payload IS ?6
+                   AND EXISTS (SELECT 1 FROM domains WHERE name=?1)",
+            ).map_err(failure)?.execute(params![
+                change.domain, change.key, next as i64, change.payload,
+                change.expected_revision as i64, prior.expected_payload,
+            ]).map_err(failure)?;
+            if updated != 1 {
+                return Err("Recovery evidence changed externally; preserving it.".into());
+            }
+            vec![next]
+        };
         self.storage.check(&tx, path)?;
         tx.commit().map_err(failure)?;
         self.storage.check(&self.connection, path)?;

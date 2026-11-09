@@ -133,9 +133,49 @@ fn payload_edits_and_tombstones_are_rejected_without_holding_a_snapshot() {
         }])
         .unwrap();
     assert!(evidence.verify().is_err());
-    let tombstone = Evidence::open_live(&directory.path().join("run.json"), "live", 32).unwrap();
+    let mut tombstone = Evidence::open_live(&directory.path().join("run.json"), "live", 32).unwrap();
     assert!(tombstone.payload().is_none());
     tombstone.verify().unwrap();
+    tombstone.write(b"restored").unwrap();
+    tombstone.verify().unwrap();
+    assert_eq!(tombstone.payload(), Some(b"restored".as_slice()));
+}
+
+#[test]
+fn existing_record_update_checks_exact_revision_and_payload_inside_the_writer() {
+    let (_directory, evidence) = store();
+    let writer = evidence.database.connection().unwrap();
+    let mut live = evidence.live.as_ref().unwrap().lock().unwrap();
+    for (revision, payload) in [(1_i64, b"edited".as_slice()), (2, b"intent")] {
+        // Exercise changes committed after the live writer's read preflight.
+        writer
+            .execute(
+                "UPDATE records SET revision=?1,payload=?2 WHERE domain='live'",
+                params![revision, payload],
+            )
+            .unwrap();
+        let prior = PayloadCheck {
+            domain: "live",
+            key: &evidence.key,
+            expected_revision: evidence.revision,
+            expected_payload: evidence.payload(),
+        };
+        let change = Change {
+            domain: prior.domain,
+            key: prior.key,
+            expected_revision: prior.expected_revision,
+            payload: Some(b"replacement"),
+        };
+        assert!(live
+            .commit(&evidence.database, change, prior)
+            .unwrap_err()
+            .contains("changed externally"));
+        let record = evidence.database.read("live", &evidence.key).unwrap().unwrap();
+        assert_eq!(
+            (record.revision, record.payload.as_slice()),
+            (revision as u64, payload),
+        );
+    }
 }
 
 #[test]

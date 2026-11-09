@@ -485,8 +485,8 @@ The slowest first-idle edge shared one paired request with the other
 key down. Its 0.380 ms queue interval included 0.304 ms inside the
 companion read, 0.016 ms before the worker poll began and 0.002 ms
 acquiring the runtime mutex. The paired request spent 1.792 ms writing
-the recovery intent, including 1.678 ms in commit. The helper then took
-2.139 ms from request dequeue to `SendInput` return. That interval
+the recovery intent, including 1.678 ms inside the live evidence write.
+The helper then took 2.139 ms from request dequeue to `SendInput` return. That interval
 includes helper preparation and the native call. The slowest sustained
 queue samples overlapped work in the previous profile poll.
 

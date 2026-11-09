@@ -297,11 +297,7 @@ impl Database {
                     "Persistence revision conflict. Reload current settings before saving.".into(),
                 );
             }
-            let next = change
-                .expected_revision
-                .checked_add(1)
-                .filter(|v| *v <= i64::MAX as u64)
-                .ok_or("Persistence revision exhausted.")?;
+            let next = next_revision(change.expected_revision)?;
             tx.execute(
                 "INSERT INTO domains(name) VALUES(?1) ON CONFLICT DO NOTHING",
                 [change.domain],
@@ -372,6 +368,13 @@ impl Database {
         }
         Ok(())
     }
+}
+
+fn next_revision(revision: u64) -> Result<u64, String> {
+    revision
+        .checked_add(1)
+        .filter(|next| *next <= i64::MAX as u64)
+        .ok_or_else(|| "Persistence revision exhausted.".into())
 }
 
 fn revision(connection: &Connection, domain: &str, key: &str) -> Result<u64, String> {
