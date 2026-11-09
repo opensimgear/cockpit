@@ -175,16 +175,28 @@ fn newly_seen_vehicle_notifies_once_and_identical_fresh_capture_is_quiet() {
         decoder: game_telemetry::Session::new(1500).unwrap(),
     });
     let before = changes.wake.observed();
+    let mut original: Option<Arc<Capture>> = None;
     for index in 0..2 {
         let candidates = tracker.poll_candidates();
         let mut poll = tracker.begin_polls(candidates).pop().unwrap().read();
         assert_eq!(poll.capture_changed, index == 0);
-        let (_, capture) = poll.result.take().unwrap().unwrap();
+        let (_, mut capture) = poll.result.take().unwrap().unwrap();
+        if let Some(first) = &original {
+            // A later host projection of the same packet is not new evidence.
+            capture.at = first.at + Duration::from_millis(1);
+        }
         poll.result = Some(Ok((Some("car".into()), capture)));
         let previous = changes.wake.observed();
         tracker.apply_poll(poll);
-        if index == 0 { assert_ne!(changes.wake.observed(), before); }
-        else { assert_eq!(changes.wake.observed(), previous); }
+        let retained = tracker.entries["assetto-corsa"].telemetry.as_ref().unwrap();
+        if let Some(first) = &original {
+            assert!(Arc::ptr_eq(retained, first));
+            assert_eq!(retained.at, first.at);
+            assert_eq!(changes.wake.observed(), previous);
+        } else {
+            original = Some(Arc::clone(retained));
+            assert_ne!(changes.wake.observed(), before);
+        }
     }
     assert_eq!(tracker.seen["assetto-corsa"].len(), 1);
 }

@@ -43,3 +43,33 @@ withholding unverified telemetry. [Exact-process exit](2026-11-08-active-game-pr
 and [blocked or late native reads](2026-11-08-telemetry-inventory-order.md)
 have separate software evidence. Granted Windows access, permission changes
 during real sessions and actual simulator effects remain in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+## Retain identical captures on 2026-11-09
+
+A duplicate vehicle poll now keeps the existing capture and its original
+freshness deadline. It still reinstalls the detached reader and applies the
+current-vehicle projection. A changed capture publishes through the same
+observer path. The regression supplies a later host projection of identical
+packet evidence and verifies the original capture identity and timestamp,
+with no new wake.
+
+The eight-thread Windows suite passed 2,486 tests with 18 existing ignores.
+It included the DCS capture-isolation test that intermittently failed in
+prior full runs. The focused polling suite passed 17 tests. LLVM measured
+95.72% lines and 100% functions for the changed module. Branch
+instrumentation was unavailable.
+
+The running Cockpit fixture passed on both Windows desktop and browser-dev.
+Counter-only BIOS renewals retained values, independent BIOS and ownship
+expiry withdrew their own values, and fresh baselines recovered them.
+Process exit withdrew both sources. Both runs finished with no cleanup
+errors.
+
+| Transport | Evidence directory under `.research/dcs-physics-native` | Binary SHA-256 |
+| --- | --- | --- |
+| Windows desktop | `1794189456938` | `a20c52e32ebfdf0b0e5e063616527647d3c02fb6015e135618789ec4866cf482` |
+| Browser-dev | `1794189551702` | `f6bcf03804f4132c67d6958244ef2894666df3ca2e0d79a8ba526b46a2d9e7fd` |
+
+Native suite and coverage artifacts are under
+`.research/dcs-retained-observation/`. Actual simulator acceptance remains
+in #199.

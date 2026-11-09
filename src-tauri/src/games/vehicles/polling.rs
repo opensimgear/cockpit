@@ -288,11 +288,9 @@ impl Tracker {
                     self.publish_visible(&id);
                     return;
                 }
-                let capture = Arc::new(capture);
-                if !poll.capture_changed {
-                    entry.published_capture = Some(Arc::downgrade(&capture));
+                if poll.capture_changed {
+                    entry.telemetry = Some(Arc::new(capture));
                 }
-                entry.telemetry = Some(capture);
                 entry.current = current.and_then(|value| vehicle(&entry.integration, &value));
                 if let Some(value) = &entry.current {
                     if self.seen.contains_key(&poll.id) || self.seen.len() < 512 {
