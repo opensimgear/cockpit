@@ -44,9 +44,10 @@ matched every frame on both lanes and measured capture to the end of
 the accepted reducer batch. Other acquisition paths and the remaining
 lease boundaries are still open.
 
-The [local suite checkpoint](../verification/2026-11-09-local-suite-checkpoint.md)
-records the #198 local test and coverage results and the unavailable platform
-and hardware checks. The integrated acceptance and CI gates remain open.
+The [dated evidence index](../verification/2026-11-09-reactive-evidence-index.md)
+records app, firmware and profile identities, scoped workloads, results and
+trace hashes. The parent evidence-record criterion is separate from the
+55 subissue criteria. Integrated acceptance and CI remain open.
 
 ## R7 UI consistency
 

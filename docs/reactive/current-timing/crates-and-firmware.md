@@ -1,6 +1,6 @@
 # Current timing sites: crates and firmware
 
-This section covers 132 sites in shared crates and the sibling firmware trees. The [current matrix](README.md) records the source revisions. The last column records the actual wake or deadline and whether work is retained, replaced, or sampled.
+This section covers 144 sites in shared crates and the sibling firmware trees. The [current matrix](README.md) records the source revisions. The last column records the actual wake or deadline and whether work is retained, replaced, or sampled.
 
 See [acquisition](../acquisition.md) for broader ownership and migration context. “Unresolved sampling” is reserved for active repeated observation without a retained source wake.
 
@@ -18,11 +18,11 @@ See [acquisition](../acquisition.md) for broader ownership and migration context
 | `crates/companion-serial/src/native_duplex/windows.rs:40,76,88` | Native serial readiness | `WaitForMultipleObjects` blocks on the operation and completion handles; read waits are indefinite and writes use the operation deadline. Native handle signaling replaces timed polling. |
 | `crates/companion-serial/src/read_pump.rs:110` | Serial read-pump retry schedule | A test sends a fake byte chunk and waits for the pump's native wake generation to change, bounded by a 2 s deadline. This verifies event delivery; it is not the production pump's timing policy. |
 | `crates/companion-service/src/client_feedback.rs:66` | Feedback transport retry | After a feedback-reader failure, the scope waits up to 250 ms before retrying; scope cancellation/change wakes it sooner. This is failure recovery, not state acquisition. |
-| `crates/companion-service/src/client_presence.rs:103` | Presence state wait | The worker waits indefinitely for a presence generation change or cancellation; retained notifications replace polling. |
-| `crates/companion-service/src/client_presence.rs:136` | Presence reconnect backoff | A disconnected presence client waits up to the scheduled reconnect delay, interrupted by presence/cancellation changes. The reconnect schedule is retained as a deadline. |
-| `crates/companion-service/src/client.rs:914` | Address resolution deadline | The resolver worker runs address resolution in a detached thread. The caller waits at most 2 s for its result. Channel delivery or timeout bounds the resolution. |
-| `crates/companion-service/src/client.rs:1383` | Client retry and expiry schedule | The client waits for the earliest scheduled request retry/expiry or a retained wake. No periodic status query is performed by this wait. |
-| `crates/companion-service/src/client.rs:1417` | Client reply deadline | The request receiver waits until its correlated response arrives or the request's absolute deadline expires. Channel delivery replaces repeated reads. |
+| `crates/companion-service/src/client_presence.rs:106` | Presence state wait | The worker waits indefinitely for a presence generation change or cancellation; retained notifications replace polling. |
+| `crates/companion-service/src/client_presence.rs:139` | Presence reconnect backoff | A disconnected presence client waits up to the scheduled reconnect delay, interrupted by presence/cancellation changes. The reconnect schedule is retained as a deadline. |
+| `crates/companion-service/src/client.rs:955` | Address resolution deadline | The resolver worker runs address resolution in a detached thread. The caller waits at most 2 s for its result. Channel delivery or timeout bounds the resolution. |
+| `crates/companion-service/src/client.rs:1424` | Client retry and expiry schedule | The client waits for the earliest scheduled request retry/expiry or a retained wake. No periodic status query is performed by this wait. |
+| `crates/companion-service/src/discovery.rs:97` | Requested discovery deadline | Outside iOS, one explicitly requested mDNS browse waits for resolved services, search stop or the original browse deadline. iOS uses system Bonjour callbacks. |
 | `crates/companion-service/src/client/io.rs:160` | Client I/O cancellation wait | The I/O owner waits for its wake or the supplied operation timeout; scope changes and shutdown signal the wake. This is bounded operation coordination. |
 | `crates/companion-service/src/feedback_socket.rs:28,81` | Feedback socket state wait | Both waits block until retained socket/presence state changes or the owner is cancelled; no periodic status sampling is required. |
 | `crates/companion-service/src/server/deadline_io.rs:30,31,43,52` | Timeout adapter declarations | These are the `set_read_timeout` wrapper declaration and its blocking-transport/deadline forwarding calls. The caller's timeout bounds a read; event transports return without setting a blocking timeout. These lines declare/configure timing and do not create a periodic loop. |
@@ -69,11 +69,12 @@ See [acquisition](../acquisition.md) for broader ownership and migration context
 | `crates/desktop-output/src/windows/focus/native.rs:184` | Inline test receive deadline | A test waits at most 100 ms for a simulated focus-worker response. |
 | `crates/desktop-output/src/windows/focus/native.rs:452` | Windows message wait | `GetMessageW` blocks until a native window message or thread quit arrives; OS delivery is the wake source. |
 | `crates/desktop-output/src/windows/focus/registry.rs:29,35` | Focus lifetime completion | Both registry paths wait for the exact focus lifetime's completion or its deadline; the lifetime condition variable provides the wake. |
-| `crates/desktop-output/src/worker/scopes.rs:73` | Deadline calculation | `guards.wait(now)` computes the next lease deadline without blocking. It is a deadline calculation, not a timed wait or polling site. |
+| `crates/desktop-output/src/worker/scopes.rs:74` | Deadline calculation | `guards.wait(now)` computes the next lease deadline without blocking. It is a deadline calculation, not a timed wait or polling site. |
 | `crates/desktop-output/src/worker/serve.rs:127` | Inline test completion bound | A test waits at most 50 ms for a fixture completion notification; timeout drives its test fallback only. |
 | `crates/desktop-output/src/worker/wait.rs:93` | Windows native wake wait | The worker blocks on its registered handles with `WaitForMultipleObjects`; native signaling wakes it. |
 | `crates/desktop-output/src/worker/wait.rs:145,146` | Worker notification wait | The worker blocks on pending native notifications, optionally bounded by the nearest computed operation/lease deadline. Notifications or expiry trigger service. |
-| `crates/desktop-output/src/worker/wait.rs:175` | Inline test pacing | The test worker sleeps 10 ms to exercise a bounded fixture sequence; this is not the production worker's wake policy. |
+| `crates/desktop-output/src/worker/wait.rs:197,199` | Fixture deadlines | A Windows test proves an early signal survives parking, then exercises the one-millisecond deadline. |
+| `crates/desktop-output/src/worker/wait.rs:213` | Inline test pacing | The test worker sleeps 10 ms before notifying the waiter. |
 | `crates/logic/src/replay.rs:27` | Inline test pacing | Replay tests pause 1 ms to let a fake worker advance; this is test-only. |
 | `crates/logic/src/typed_worker.rs:62,171` | Child join | The worker joins its owned child after exit/stop; process completion triggers return. |
 | `crates/logic/src/typed_worker.rs:94` | Inline test receive deadline | A test waits up to 2 s for a fake typed-worker result. |
@@ -91,7 +92,7 @@ See [acquisition](../acquisition.md) for broader ownership and migration context
 | `crates/persistence/src/path/journal.rs:12` | Journal metadata retry | Path validation retries only transient Windows journal metadata errors, waiting 1, 2, then 4 ms between leaf rechecks. Live evidence requires the database file to pass a no-follow open again after each wait. |
 | `crates/streams/src/journal.rs:272,279,309` | Retained stream journal wait | Consumers block until the journal advances; the timeout variant is bounded by the caller's receive deadline. Commits signal the condition variable, replacing polling. |
 | `crates/streams/src/native/receive.rs:66,74,99` | Native stream receive wait | The receiver blocks until native input is committed; `recv_timeout` and the conditional wait honor only the caller's deadline. Stream notification replaces periodic reads. |
-| `crates/streams/src/wake.rs:64,70,76` | Scheduled worker wake | The worker parks until its generation changes or the supplied deadline; the scheduled wait retains the next due time and wakes on notification. |
+| `crates/streams/src/wake.rs:74,80,86` | Scheduled worker wake | The worker parks until its generation changes or the supplied deadline; the scheduled wait retains the next due time and wakes on notification. |
 | `crates/virtual-controller/src/inspection.rs:239` | Fake backend timing | The generated Python inspection fixture sleeps for configured startup/query durations to simulate slow backend responses. |
 | `crates/virtual-controller/src/supervisor.rs:185,284` | Virtual controller operation deadline | Actor replies are received until the request's remaining deadline; reply delivery or expiry ends the wait. |
 | `crates/virtual-controller/src/supervisor.rs:304` | Inline test pacing | A test delays 5 ms between fake supervisor steps; this is fixture timing only. |

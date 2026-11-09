@@ -11,8 +11,8 @@
 | `src-tauri/src/desktop/progress/geometry.rs:101` | Operation deadline | Wait up to two seconds for native popup geometry work on the window thread. |
 | `src-tauri/src/desktop/progress/mod.rs:245` | Operation deadline | Wait up to two seconds for the current popup operation on the window thread. |
 | `src-tauri/src/firmware_releases.rs:440,443` | Fixture | Bound start and status barriers while testing firmware release work. |
-| `src-tauri/src/persistence/backup/startup.rs:96` | Operation deadline | Give an explicit restore-restart acknowledgement 500 ms before calling the native restart callback. |
-| `src-tauri/src/persistence/backup/startup.rs:143` | Fixture | Bound the isolated restart callback test's wait for completion. |
+| `src-tauri/src/persistence/backup/startup.rs:99` | Operation deadline | Give an explicit restore-restart acknowledgement 500 ms before calling the native restart callback. |
+| `src-tauri/src/persistence/backup/startup.rs:145` | Fixture | Bound the isolated restart callback test's wait for completion. |
 | `src-tauri/src/persistence/ui/window_writer.rs:71` | Source wake | Park the persistence writer until queued geometry or shutdown. |
 | `src-tauri/src/persistence/ui/window_writer.rs:90` | Persistence retry | Retry a busy save after 250 ms if there is no newer queued geometry and the bounded retry count permits it. |
 | `src-tauri/src/persistence/ui/window_writer.rs:104` | Operation deadline | Wait for an explicit flush to complete within its budget. |
