@@ -326,19 +326,20 @@ fn failed_release_final_commit_leaves_old_evidence_for_recovery() {
 }
 
 #[test]
-fn stale_evidence_blocks_release_dispatch() {
-    let (_dir, mut coordinator, state) = harness();
-    arm_and_hold(&mut coordinator, "key", "action", vec![key(4)]);
-    let path = coordinator.journal.clone().unwrap();
-    let mut external = coordinator.snapshot();
-    external.phase = "externally changed".into();
-    sql_write(&path, &serde_json::to_vec(&external).unwrap()).unwrap();
-    let dispatches = state.lock().unwrap().dispatched.len();
+fn stale_evidence_blocks_release_and_acquisition_dispatch() {
+    for next in [release("key", "action", 2), held("key", "action", 2, vec![key(4), key(5)])] {
+        let (_dir, mut coordinator, state) = harness();
+        arm_and_hold(&mut coordinator, "key", "action", vec![key(4)]);
+        let path = coordinator.journal.clone().unwrap();
+        let mut external = coordinator.snapshot();
+        external.phase = "externally changed".into();
+        let external = serde_json::to_vec(&external).unwrap();
+        sql_write(&path, &external).unwrap();
+        let dispatches = state.lock().unwrap().dispatched.len();
 
-    assert!(coordinator
-        .submit(release("key", "action", 2), 0)
-        .unwrap_err()
-        .contains("changed externally"));
+        assert!(coordinator.submit(next, 0).unwrap_err().contains("changed externally"));
 
-    assert_eq!(state.lock().unwrap().dispatched.len(), dispatches);
+        assert_eq!(state.lock().unwrap().dispatched.len(), dispatches);
+        assert_eq!(sql_read(&path).unwrap(), external);
+    }
 }

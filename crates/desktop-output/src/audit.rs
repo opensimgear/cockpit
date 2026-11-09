@@ -102,8 +102,8 @@ pub enum Kind {
     WorkerOutcome,
     /// channel, request sequence, operation, flags, attempted, confirmed, error
     ParentOutcome,
-    /// channel, current request sequence, QPC at begin/serialized/directory
-    /// ready/temp created/written/synced/replaced. Successes only; journal
+    /// channel, request sequence, QPC at begin/serialized/bounds checked/
+    /// store ready/write start/write end/complete. Successes only; journal
     /// failures invalidate the collector independently. No user data is logged.
     JournalPersist,
     /// queue kind, normalized reason, depth

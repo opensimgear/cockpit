@@ -250,8 +250,11 @@ impl Coordinator {
                 return Err("Desktop recovery storage identity changed.".into());
             }
             mark(&mut audit_times);
-            store.evidence.verify()?;
-            mark(&mut audit_times);
+            // Evidence::write verifies the live record and compares its exact
+            // revision and payload again in the committing transaction.
+            if let Some((_, times)) = &mut audit_times {
+                times.push(times[3]); // No separate verification stage.
+            }
             store.evidence.write(&bytes)?;
             mark(&mut audit_times);
             mark(&mut audit_times);

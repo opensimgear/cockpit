@@ -58,3 +58,40 @@ run.
 Mixed pointer delivery, the desktop timing targets and abrupt worker
 loss remain open in #193 and #198. Controller capture and preview timing
 remain in #199.
+
+## One live verification per journal commit
+
+The desktop coordinator now calls `Evidence::write` directly after it
+checks the journal's storage identity. The write verifies the live prior
+record, then compares its exact revision and payload again inside the
+durable transaction. The write still completes before the coordinator
+issues a key acquisition to the native worker. Commands that do not
+write a new intent retain their separate pre-dispatch verification.
+
+The stale-evidence regression covers acquisition as well as release.
+Each case rejects dispatch and preserves the external bytes exactly.
+All 195 desktop-output tests and 29 module line-coverage gates passed.
+The journal module measured 78.99% production lines and 77.27% LLVM
+functions. Branch instrumentation was unavailable.
+
+The uninstrumented comparison used the same two WSS peers and six-second
+steady phases in four disposable Windows Cockpit runs. All 1,616 marked
+key transitions arrived in order. Both phase workers stopped cleanly in
+each run. The offline QPC analyzer validated the trace in every case.
+
+| Run order | Build | Steady idle p95 / p99 | Steady Profiles p95 / p99 | Recovery intent p95 during Profiles |
+| --- | --- | ---: | ---: | ---: |
+| A1 | Baseline | 17.76 / 19.08 ms | 16.09 / 17.58 ms | 5.00 ms |
+| B1 | Single verification | 15.91 / 18.47 ms | 14.52 / 15.40 ms | 4.51 ms |
+| B2 | Single verification | 14.81 / 15.76 ms | 15.03 / 33.14 ms | 4.55 ms |
+| A2 | Baseline | 16.88 / 20.55 ms | 16.84 / 20.44 ms | 5.29 ms |
+
+The removed verification took 0.94–0.99 ms p95 in the baseline steady
+phases. The candidate had lower steady p95 in both comparisons. First
+presses and p99 varied. The strict desktop timing targets remain open.
+
+The baseline executable SHA-256 is the value recorded above. The
+candidate SHA-256 is
+`127e911aef3329eb842336146071f633ca4f764a0cec9844d63a5bc643750cf9`.
+The native manifest, audit files and stage summaries for all four runs
+are in `.research/reactive/r4-desktop-timing/journal-ab-57742634/`.
