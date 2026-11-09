@@ -6,10 +6,14 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {loadModules} from './test-module-loader.mjs';
 import {createHash,webcrypto} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 const gameMetadata=(await loadModules(['./games'])).get('./games');
 
-const source = await readFile(new URL('./gateway.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const filename = fileURLToPath(new URL('./gateway.ts', import.meta.url));
+const source = await readFile(filename, 'utf8');
+const compiled = ts.transpileModule(source, { fileName: filename, compilerOptions: {
+  module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, inlineSourceMap: true, inlineSources: true,
+} }).outputText;
 const first = 'stm32:00112233445566778899aabb';
 const second = 'stm32:00112233445566778899aacc';
 const state = { gatewayId: first, backend: 'stm32', running: false, needsReconnect: false, connected: true, modules: [] };
@@ -104,7 +108,7 @@ test('activity search and writes have an independent ordered lane while inventor
   assert.equal(api.calls.at(-1).args.request.command,'activity_query');
 });
 
-function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
+function transport({ desktop = true, result = { ok: true, state }, invokeResults, fetchResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};
   vm.runInNewContext(compiled, {
@@ -125,9 +129,10 @@ function transport({ desktop = true, result = { ok: true, state }, invokeResults
     crypto: { randomUUID: () => 'test-client-uuid', subtle:webcrypto.subtle }, AbortSignal, TextEncoder,
     fetch: async (url, options) => {
       calls.push({ kind: 'fetch', url, options });
-      return { ok: responseOK, headers: { get: () => contentType }, json: async () => result };
+      return { ok: responseOK, headers: { get: () => contentType },
+        json: async () => fetchResults ? fetchResults(JSON.parse(options.body)) : result };
     },
-  });
+  }, { filename });
   return { ...exported, calls };
 }
 
@@ -302,6 +307,38 @@ test('Stop bypasses an editor Save while queued saves still persist without disp
   pending.resolve();await Promise.all([active,queued,cancelled]);
   assert.deepEqual(api.calls.filter(call=>call.args.request.command==='profile_editor_save').map(call=>call.args.request.document.id),['active','inactive']);
 });
+
+for (const desktop of [true, false]) {
+  test(`ordered debug inputs and status bypass a pending editor save in ${desktop ? 'native' : 'browser-dev'}`, async () => {
+    const saving = deferred(), firstInput = deferred();
+    const respond = async request => {
+      if (request.command === 'profile_editor_save') await saving.promise;
+      if (request.sequence === '1') await firstInput.promise;
+      return { ok: true, state };
+    };
+    const api = transport({ desktop, invokeResults: (_name, request) => respond(request), fetchResults: respond });
+    const send = sequence => api.gatewayRequest({ command: 'profile_debug_controller_input', sequence });
+    const commands = () => api.calls.map(call => {
+      const request = desktop ? call.args.request : JSON.parse(call.options.body);
+      return request.sequence ?? request.command;
+    });
+    const save = api.gatewayRequest({ command: 'profile_editor_save' });
+    const press = send('1'), release = send('2');
+    const status = api.gatewayRequest({ command: 'profile_debug_controller_status' });
+    try {
+      await tick();
+      assert.deepEqual(commands(), ['profile_editor_save', '1']);
+      firstInput.resolve();
+      await tick();
+      assert.deepEqual(commands(), ['profile_editor_save', '1', '2', 'profile_debug_controller_status']);
+      await Promise.all([press, release, status]);
+    } finally {
+      firstInput.resolve();
+      saving.resolve();
+      await Promise.all([save, press, release, status]);
+    }
+  });
+}
 
 test('capturing a draft application leaves pending Apply and learning requests eligible for native admission',async()=>{
   const pending=deferred(),api=transport({invokeResults:async(_name,request)=>{

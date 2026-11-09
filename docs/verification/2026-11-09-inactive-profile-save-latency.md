@@ -98,3 +98,70 @@ timing and trace tests passed.
 | `20537682-ff54-409b-a24f-0baa2263470e` | `eebf855174e9c59446a0ea40cfc1b8b3bd4abf541c796b44f3905ebcb4d07f84` |
 | `d7962d68-aa4f-464c-87d7-0eac152a18cc` | `fa99a336b1720660e1261024c210794fb80f34879622276b52d039a5f228c784` |
 | `2bf33cc8-fbe9-4fcf-b809-ef44b94887eb` | `9369abb270ec94d3fda5496288a5d860a55a3ad6c66cfecda6a17e51ae84c682` |
+
+## Foreground preview during inactive saves
+
+The native save fix cleared admission for the 1 kHz and 125 Hz background
+lanes. A second test exposed a separate wait in the WebView. The shared
+frontend gateway serialized debug input behind profile authoring requests
+before submitting it to Cockpit. It now gives debug input and status their
+own ordered queue. The Debug controller inspector uses the typed gateway
+directly.
+
+Each run sent 64 authored button transitions through the frontend gateway
+with the preview visible. Of these, 16 were submitted between the start
+and acknowledgement of an inactive save. Each save advanced the draft
+by one revision.
+The preview stayed open and the applied owner stayed the same. Native
+trials also admitted 9,601 fast and 1,201 peer offers across 9.6 seconds.
+The clock bracket places every measured preview frame within that load.
+The browser-dev trial used the real gateway service with the preview and
+saves as the workload.
+
+| Trial | Save samples to DOM p50 / p95 | Save samples to next frame p50 / p95 | Save samples to vJoy upper p50 / p95 | Frames before save acknowledgement |
+| --- | ---: | ---: | ---: | ---: |
+| Before both fixes | 54.3 / 76.7 ms | 57.3 / 86.0 ms | 49.43 / 73.02 ms | 0 of 16 |
+| Native fix only | 67.3 / 73.3 ms | 73.4 / 83.2 ms | 63.61 / 69.01 ms | 0 of 16 |
+| Native and frontend fixes, run 1 | 5.8 / 6.3 ms | 14.6 / 21.6 ms | 1.58 / 1.98 ms | 16 of 16 |
+| Native and frontend fixes, run 2 | 5.8 / 6.4 ms | 15.4 / 22.4 ms | 1.65 / 2.24 ms | 16 of 16 |
+| Final frontend | 5.9 / 8.1 ms | 15.8 / 21.7 ms | 1.62 / 2.50 ms | 16 of 16 |
+| Browser-dev, both fixes | 5.5 / 6.3 ms | 5.6 / 20.2 ms | 1.81 / 2.12 ms | 16 of 16 |
+
+With 16 samples, p95 and p99 both report the maximum. Every run paired
+all 64 preview edges with their exact Windows vJoy Raw Input receipts.
+The preview retired and reopened with current state, issued zero
+runtime-inspection requests and retired on navigation. Stop freed the
+slot. This measures the next browser frame opportunity for authored input.
+Physical controller capture and display scanout remain in #199.
+
+The original 7.2-second workload ended before the last baseline frame.
+The reruns extended both the background and receiver windows and required
+full overlap. The first run with only the native fix failed its vJoy
+budget as shown above. The frontend queue regressions passed for native
+IPC and browser-dev HTTP, including ordered press, release and status.
+All 158 transport tests passed. Gateway coverage measured 100% lines,
+96.72% branches and 89.29% functions. Cockpit and browser companion
+Svelte checks reported zero errors or warnings. The widget and checked
+fixture commands also passed when run directly.
+
+The older full authoring fixture stopped during setup. A focused running
+Cockpit test opened the real Debug inspector from a private saved profile,
+pressed and released its Button 1 and verified both native states. Stop
+then caused the previous owner to be rejected.
+
+The native executable is the final build above. The browser gateway
+service SHA-256 is
+`a7164c3d58fe28a90c5707d82c9b2f4fd82247141f32565c8241534340ce96e8`.
+The Raw Input probe SHA-256 is
+`6ea93864c16d2897aedc150df5addf45fd65a3dcd89a0f40773a779c88f35e9e`.
+The logs are under `.research/c193-reconnect/dcs-native-stage-timing/`.
+
+| Trial log | SHA-256 |
+| --- | --- |
+| `preview-save-full-baseline.log` | `aa42af8df4e16056fb892b2a44bf69a77433dadae8ae5f2687516abc329937e0` |
+| `preview-save-full-candidate-1.log` | `d6f827ce291ff4f17e9d9ad69780f625f47a881497ca421044895307b593c2ce` |
+| `preview-save-full-gateway-1.log` | `026d003e0a0fd6767741288c08ccb6608cc75e6c3f944245d1b6c1762753ba87` |
+| `preview-save-full-gateway-2.log` | `0baa875459dc74c20cddb74056eb3533ec8f43255023691f704a7f46b50b86aa` |
+| `preview-save-exact-final.log` | `5402f2b0b6f64d05b26d1ffcde46cfdc1b64abb3282fc8106fbecb9db56c9889` |
+| `preview-save-browser-dev.log` | `a4eaeecba3c69a12f925fddeedfe9c6256deb584e85721216242cc22fe4a3bb2` |
+| `preview-save-debug-control-focused.log` | `90b908359e6c850849519e886883949940f47b6c2c9a1c91adb4c2bc1ca50b17` |

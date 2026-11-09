@@ -1,7 +1,7 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import DebugControllerControls from './DebugControllerControls.svelte';
-  import {debugControllerLayout,debugControllerPorts,createDebugControllerClient,type DebugControllerClient,type DebugControllerChange,type DebugControllerLayout,type DebugControllerRequest} from './profile-debug-controller';
+  import {debugControllerLayout,debugControllerPorts,createDebugControllerClient,type DebugControllerClient,type DebugControllerChange,type DebugControllerLayout} from './profile-debug-controller';
   import type {NativeProfileOwner} from './profile-runtime';
   import {profileOwnersEqual} from './profile-inspection';
   import {observeProfileRuntime} from './profile-read-models/shared';
@@ -46,8 +46,7 @@
     // Read every identity field so changing the inspected resource fences the old stream.
     const id=resource.id,currentProfile=profileId,currentRevision=revision,visible=active,readOnly=disabled;
     if(!mounted||!shown||!visible||readOnly){untrack(()=>client)?.close();client=null;values={};ready=false;interacting=false;return;}
-    const sendRequest=(request:DebugControllerRequest)=>gatewayRequest(request as never);
-    const next=createDebugControllerClient(sendRequest,id,error=>{if(untrack(()=>client===next)){ready=false;liveError=error instanceof Error?error.message:'Debug input update failed.';}});
+    const next=createDebugControllerClient(gatewayRequest,id,error=>{if(untrack(()=>client===next)){ready=false;liveError=error instanceof Error?error.message:'Debug input update failed.';}});
     untrack(()=>client)?.close();client=next;values={};ready=false;liveError=applyHint;
     let disposed=false,refreshing=false,pending=false,streamReady=false;
     let owner:DeepReadonly<NativeProfileOwner>|null=null;
