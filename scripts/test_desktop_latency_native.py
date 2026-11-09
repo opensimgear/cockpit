@@ -15,6 +15,42 @@ spec.loader.exec_module(workload)
 
 
 class NativeWorkloadContractTests(unittest.TestCase):
+    def test_keyboard_diagnostic_builds_only_key_routes(self):
+        detail = {"resource": {"id": "peer"}, "ports": [{"contractHash": "button-contract",
+            "descriptor": {"id": workload.BUTTON, "contract": {"delivery": "state", "schema": {"type": "boolean"}}}}]}
+        with patch.object(workload, "current_companion_resource", return_value=detail):
+            document, assignments = workload.profile_for(object(), ["a", "b"], {"publicationHash": "fixture"}, keys_only=True)
+        self.assertEqual(document["processingNodes"], [])
+        self.assertEqual([row["id"] for row in document["bindings"]], ["key-a", "key-b"])
+        self.assertEqual([row["action"]["kind"] for row in document["desktopOutputs"][0]["actions"]], ["key-hold", "key-hold"])
+        self.assertEqual([[port["profilePortId"] for port in row["ports"]] for row in assignments], [["button"], ["button"]])
+
+    def test_keyboard_focus_requires_fresh_exact_window_without_cursor_positioning(self):
+        identity = {"pid": 42, "created": "123", "executable": "native_receiver.exe"}
+        prior = {"identity": identity, "focusRequests": 3}
+        foreign = {**prior, "focusRequests": 4, "focusAfter": "100", "foregroundWindow": "200"}
+        ready = {**foreign, "foregroundWindow": "100", "clientCursor": {"inside": False}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receiver.json"
+
+            def wait(predicate, message, **_kwargs):
+                if message.startswith("No complete"):
+                    return predicate()
+                self.assertEqual(path.with_suffix(".focus").read_text(), "focus")
+                self.assertIsNone(predicate())
+                return predicate()
+
+            class Service:
+                def profiles(self, _command):
+                    return {"profileSession": {"state": "stopped", "owner": None}}
+
+            with (patch.object(workload.mapping, "wait_for", side_effect=wait),
+                  patch.object(workload.native, "receiver", side_effect=[prior, foreign, ready]),
+                  patch.object(workload.native, "desktop_status", return_value={"recentApplication": identity})):
+                result = workload.ownership.position_receiver(Service(), path, identity, keyboard_window="100")
+        self.assertEqual(result["focusRequests"], 4)
+        self.assertFalse(result["clientCursor"]["inside"])
+
     def test_pointer_proof_requires_marked_message_in_exact_foreground_without_capture(self):
         outcomes = [{"delivery": {"operationId": str(index), "actionId": action, "intent": {"kind": "pointer"}},
             "acknowledgement": {"ok": True, "uncertain": False, "skipped": False, "attempted": 1, "confirmed": 1}}

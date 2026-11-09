@@ -117,7 +117,7 @@ def current_companion_resource(service, instance):
     return detail if detail and all(port["current"] for port in detail["ports"]) else None
 
 
-def profile_for(service, instances, publication):
+def profile_for(service, instances, publication, keys_only=False):
     document = mapping.blank("Native desktop latency " + uuid.uuid4().hex[:8])
     assignments = []
     boolean = dict(delivery="state", schema=dict(type="boolean"), freshnessMs=1000, fallback=False)
@@ -127,32 +127,36 @@ def profile_for(service, instances, publication):
         logical = "a" if index == 0 else "b"
         source = "panel-" + logical
         detail = mapping.wait_for(lambda: current_companion_resource(service, instance), "No current native companion ports")
+        inputs = [("button", BUTTON)] if keys_only else [("button", BUTTON), ("axis", AXIS)]
         observed = {name: next(port for port in detail["ports"] if port["descriptor"]["id"] == physical)
-            for name, physical in (("button", BUTTON), ("axis", AXIS))}
-        axis_boundary(observed["axis"]["descriptor"]["contract"])
+            for name, physical in inputs}
         document["resources"].append(dict(id=source, name="Real WSS " + logical.upper(), kind="companion", required=False,
             ports=[mapping.port(name, port["descriptor"]["contract"], "output") for name, port in observed.items()]))
         document["companionAssignments"].append(dict(resourceId=source, publicationHash=publication["publicationHash"]))
         assignments.append(dict(resourceId=source, sourceId=detail["resource"]["id"], ports=[dict(profilePortId=name,
             observedPortId=port["descriptor"]["id"], expectedContractHash=port["contractHash"]) for name, port in observed.items()]))
+        key = "key-" + logical
+        outputs.append(mapping.port(key, boolean, "input"))
+        actions.append(dict(portId=key, action=dict(kind="key-hold", key=KEYS[index][0])))
+        document["bindings"].append(dict(id=key, **{"from":dict(nodeId=source, portId="button"), "to":dict(nodeId="desktop", portId=key)}))
+        if keys_only:
+            continue
+        axis_boundary(observed["axis"]["descriptor"]["contract"])
         normalizer = "normalize-" + logical
         document["processingNodes"].append(dict(id=normalizer, name="Explicit raw axis normalization " + logical,
             operation=dict(kind="scale", factor=AXIS_FACTOR, offset=AXIS_OFFSET),
             inputs=[mapping.port("in", observed["axis"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", number, "output")]))
-        for action, contract in (("key-" + logical, boolean), ("pointer-" + logical, number)):
-            outputs.append(mapping.port(action, contract, "input"))
-        actions.extend([dict(portId="key-" + logical, action=dict(kind="key-hold", key=KEYS[index][0])),
-            dict(portId="pointer-" + logical, action=dict(kind="pointer", axis="x" if index == 0 else "y", speed=40, curve=1))])
+        outputs.append(mapping.port("pointer-" + logical, number, "input"))
+        actions.append(dict(portId="pointer-" + logical, action=dict(kind="pointer", axis="x" if index == 0 else "y", speed=40, curve=1)))
         for identity, start_node, start_port, end_node, end_port in [
-            ("key-" + logical, source, "button", "desktop", "key-" + logical),
             ("axis-" + logical, source, "axis", normalizer, "in"),
             ("pointer-" + logical, normalizer, "out", "desktop", "pointer-" + logical)]:
             document["bindings"].append(dict(id=identity, **{"from":dict(nodeId=start_node, portId=start_port), "to":dict(nodeId=end_node, portId=end_port)}))
-    document["desktopOutputs"] = [dict(id="desktop", name="Immediate KeyA/KeyB and pointer load", required=True, ports=outputs, actions=actions)]
+    document["desktopOutputs"] = [dict(id="desktop", name="Immediate KeyA/KeyB" if keys_only else "Immediate KeyA/KeyB and pointer load", required=True, ports=outputs, actions=actions)]
     return document, assignments
 
 
-def workload(peer, index, gate, abort, results, errors, seconds=SECONDS):
+def workload(peer, index, gate, abort, results, errors, seconds=SECONDS, keys_only=False):
     record = dict(companionId=peer.name, logicalSource="panel-" + ("a" if index == 0 else "b"),
         buttonPort="button", physicalButton=BUTTON, axisPort="axis", physicalAxis=AXIS,
         keyHid=KEYS[index][0], scanCode=KEYS[index][1], actionId="key-" + ("a" if index == 0 else "b"),
@@ -169,12 +173,13 @@ def workload(peer, index, gate, abort, results, errors, seconds=SECONDS):
             # Encode the original signed waveform into the supported compiled
             # unipolar wire domain; the graph restores signed pointer load.
             axis = round(0.65 * math.sin((tick + 1) * math.pi / 40), 6)
-            changes = [dict(controlId=AXIS, value=axis_wire(axis))]
+            changes = [] if keys_only else [dict(controlId=AXIS, value=axis_wire(axis))]
             desired = (tick // 4) % 2 == 0
             if desired != pressed:
                 changes.append(dict(controlId=BUTTON, value=desired))
-            sequence = send(peer, changes)
-            record["frames"].append(dict(wireSequence=sequence, changes=changes))
+            if changes:
+                sequence = send(peer, changes)
+                record["frames"].append(dict(wireSequence=sequence, changes=changes))
             if desired != pressed:
                 record["keyChanges"].append(dict(wireSequence=sequence, down=desired))
                 pressed = desired
@@ -183,7 +188,7 @@ def workload(peer, index, gate, abort, results, errors, seconds=SECONDS):
             if time.perf_counter() > due:
                 record["schedulerLateIntervals"] += 1
                 due = time.perf_counter() + 1 / RATE  # No catch-up burst.
-        record.update(inputFrames=len(record["frames"]), axisChanges=len(record["frames"]),
+        record.update(inputFrames=len(record["frames"]), axisChanges=0 if keys_only else len(record["frames"]),
             expectedImmediateKeyChanges=len(record["keyChanges"]), finalPressed=pressed,
             workloadElapsedSeconds=time.perf_counter() - started)
     except BaseException as error:
@@ -288,13 +293,14 @@ def warmup_keys(service, receiver_path, peers):
         pointerBaseline=dict(observation_start=len(report["observations"]), operation_baseline=str(max(operations, default=0))))
 
 
-def neutral_owners(service):
+def neutral_owners(service, keys_only=False):
     runtime = native.desktop_status(service)["runtime"]
     backend = runtime["backend"]
     if runtime["state"] != "active" or runtime["waitingNeutral"] or backend["inFlight"] is not None:
         return None
     owners = [owner for owner in backend["owners"] if not owner["controls"]]
-    return owners if {owner["actionId"] for owner in owners} >= {"key-a", "key-b", "pointer-a", "pointer-b"} else None
+    expected = {"key-a", "key-b"} if keys_only else {"key-a", "key-b", "pointer-a", "pointer-b"}
+    return owners if {owner["actionId"] for owner in owners} >= expected else None
 
 
 def coherent_sources(service, configurations, peers):
@@ -318,6 +324,7 @@ def main():
     for field in ("bridge", "output", "app-sha256", "audit-directory", "audit-run"):
         parser.add_argument("--" + field, required=True, type=Path if field in ("output", "audit-directory") else str)
     parser.add_argument("--inject", action="store_true")
+    parser.add_argument("--keys-only", action="store_true")
     args = parser.parse_args()
     assert args.inject and os.environ.get("OSG_DESKTOP_LATENCY_NATIVE") == os.environ.get("OSG_DESKTOP_NATIVE_INJECT") == "1", "Two explicit native latency opt-ins are required"
     assert len(args.app_sha256) == 64 and all(char in "0123456789abcdef" for char in args.app_sha256)
@@ -334,7 +341,7 @@ def main():
     peers, assigned, saved = [], set(), None
     receiver_paths = []
     apply_attempted = False
-    evidence = dict(schemaVersion=1, actualNativeCockpit=True, actualWssPeers=2, injected=False, productionQualified=False,
+    evidence = dict(schemaVersion=1, actualNativeCockpit=True, actualWssPeers=2, injected=False, productionQualified=False, keysOnly=args.keys_only,
         nativeExecutableSha256=args.app_sha256, auditDirectory=str(args.audit_directory), auditRun=args.audit_run,
         measurement="Native audit host ingress to successful SendInput uses QPC; Python times describe workload only. Receiver/game timing is separate; this harness computes no percentiles.",
         phases=[], latencyPercentiles=None, checks=[])
@@ -352,7 +359,10 @@ def main():
             companion.operator(service, "companion_assign", companionId=instance, instanceId=instance, publicationHash=publication["publicationHash"])
             assigned.add(instance)
             peer.open(instance, publication)
-        document, assignments = profile_for(service, instances, publication)
+        document, assignments = profile_for(service, instances, publication, args.keys_only)
+        neutral = [dict(controlId=BUTTON, value=False)]
+        if not args.keys_only:
+            neutral.append(dict(controlId=AXIS, value=AXIS_NEUTRAL))
         saved = mapping.save(service, document, assignments)
         compilation = mapping.state(service, "profile_compile", "profileCompilation", document=saved, assignments=assignments)
         assert compilation["readiness"] != "invalid" and compilation["requirements"] == dict(desktopInput=True, virtualDevices=False, visibility=False), compilation
@@ -361,16 +371,17 @@ def main():
             publication=dict(publicationHash=publication["publicationHash"], fixture="scripts/fixtures/compiled-flight-publication.json",
                 schemaVersion=4, format="compiled-raster-v1"),
             axisBoundaries={resource["id"]: axis_boundary(next(port["contract"] for port in resource["ports"] if port["id"] == "axis"))
-                for resource in saved["resources"]})
+                for resource in saved["resources"]} if not args.keys_only else {})
         for index, phase_name in enumerate(("idle", "ui-load")):
-            phase = dict(name=phase_name, durationTargetSeconds=SECONDS, requestedAxisRateHzPerPeer=RATE)
+            phase = dict(name=phase_name, durationTargetSeconds=SECONDS, requestedAxisRateHzPerPeer=0 if args.keys_only else RATE)
             evidence["phases"].append(phase)
             target = control(service, "latency_receiver_begin", phase=phase_name)
             receiver_path, identity = Path(target["file"]), target["identity"]
             receiver_paths.append(receiver_path)
             phase["receiverIdentity"] = identity
-            phase["initialForeground"] = mapping.wait_for(lambda: identity if native.desktop_status(service).get("recentApplication") == identity else None,
-                "Native foreground observer did not capture the exact receiver process")
+            phase["initialForeground"] = (ownership.position_receiver(service, receiver_path, identity, keyboard_window=target["window"])
+                if args.keys_only else mapping.wait_for(lambda: identity if native.desktop_status(service).get("recentApplication") == identity else None,
+                    "Native foreground observer did not capture the exact receiver process"))
             saved, captured, compilation = capture_profile_scope(service, saved, assignments, identity)
             phase["exactCapturedApplication"] = captured
             phase.update(profile=saved, compilation=compilation)
@@ -380,30 +391,35 @@ def main():
             # The publication's source fallback is raw zero. Establish the
             # signed neutral before Apply, then repeat it after its focus gate.
             for peer in peers:
-                send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
+                send(peer, neutral)
             apply_attempted = True
             owner = mapping.apply(service, saved)
             phase["owner"] = owner
-            phase["afterApplyPositioning"] = ownership.position_receiver(service, receiver_path, identity, pointer_target=True)
+            phase["afterApplyPositioning"] = ownership.position_receiver(service, receiver_path, identity,
+                pointer_target=not args.keys_only, keyboard_window=target["window"] if args.keys_only else None)
             journal_scope = native.desktop_status(service)["runtime"]["backend"]["journalScope"]
             assert journal_scope == dict(kind="application", identity=identity), journal_scope
             phase["exactAppliedApplicationScope"] = journal_scope
             for peer in peers:
-                send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
-            phase["neutralOwnersBeforePress"] = mapping.wait_for(lambda: neutral_owners(service),
+                send(peer, neutral)
+            phase["neutralOwnersBeforePress"] = mapping.wait_for(lambda: neutral_owners(service, args.keys_only),
                 "Fresh neutral controls did not establish empty native owners for the desktop routes")
             phase["warmupStartMarker"] = marker(service, 5 + index * 2)
             phase["warmup"] = warmup_keys(service, receiver_path, peers)
             phase["warmupEndMarker"] = marker(service, 6 + index * 2)
             phase["nativeSources"] = coherent_sources(service, configurations, peers)
             phase["uiBefore"] = control(service, "latency_ui_load", enabled=index == 1, profileName=saved["name"])
-            phase["pointerTargetBeforeWorkload"] = native.receiver(receiver_path).get("pointerTarget")
-            target = phase["pointerTargetBeforeWorkload"]
-            assert target and target["exactReceiver"] and target["foregroundCapture"] == "0", target
+            report = native.receiver(receiver_path)
+            if args.keys_only:
+                assert report["foregroundWindow"] == target["window"], report
+            else:
+                phase["pointerTargetBeforeWorkload"] = report.get("pointerTarget")
+                pointer = phase["pointerTargetBeforeWorkload"]
+                assert pointer and pointer["exactReceiver"] and pointer["foregroundCapture"] == "0", pointer
             phase["startMarker"] = marker(service, 1 + index * 2)
             gate, abort = threading.Barrier(3), threading.Event()
             results, errors = [None, None], []
-            threads = [threading.Thread(target=workload, args=(peer, position, gate, abort, results, errors), daemon=True)
+            threads = [threading.Thread(target=workload, args=(peer, position, gate, abort, results, errors), kwargs=dict(keys_only=args.keys_only), daemon=True)
                 for position, peer in enumerate(peers)]
             for thread in threads: thread.start()
             gate.wait(timeout=5)
@@ -416,7 +432,8 @@ def main():
             phase["sources"] = results
             assert all(record["expectedImmediateKeyChanges"] >= 40 for record in results), "Insufficient immediate key samples"
             phase["settled"] = settle_keys(service, receiver_path, results,
-                receiver_prefix=phase["warmup"]["receiverKeyPrefix"], pointer_baseline=phase["warmup"]["pointerBaseline"])
+                receiver_prefix=phase["warmup"]["receiverKeyPrefix"],
+                pointer_baseline=None if args.keys_only else phase["warmup"]["pointerBaseline"])
             phase["endMarker"] = marker(service, 2 + index * 2)
             phase["uiAfter"] = control(service, "latency_ui_load", enabled=False, profileName=saved["name"])
             if index == 1:
@@ -425,17 +442,19 @@ def main():
                 assert ui["targetProfileVisible"] and ui["profileName"] == saved["name"], ui
                 assert ui["navigationChanges"] >= 20, ui
             # Cleanup input is deliberately outside the phase marker interval.
-            for peer in peers: send(peer, [dict(controlId=BUTTON, value=False), dict(controlId=AXIS, value=AXIS_NEUTRAL)])
+            for peer in peers: send(peer, neutral)
             mapping.wait_for(lambda: native.desktop_status(service)["runtime"]["backend"]["held"] == [], "Neutral cleanup retained native keys")
             service.profiles("profile_stop")
             phase["stopProof"] = native.stopped_ownership(service, True)
             phase["auditCheckpoint"] = audit_checkpoint(service)
             phase["receiverAfterStop"] = native.receiver(receiver_path)
             assert len(phase["receiverAfterStop"].get("observations", [])) < 4096
+            if args.keys_only:
+                assert not any(event["message"] == 512 and event.get("injectedMarker") for event in phase["receiverAfterStop"]["observations"])
             if index == 0:
                 companion.wait_native_companions(service, configurations, peers, previous=phase["nativeSources"])
         evidence["injected"] = True
-        evidence["checks"] = ["Two independent authenticated real WSS sources drove immediate distinct KeyA/KeyB holds and explicit normalized pointer processing load",
+        evidence["checks"] = ["Two authenticated WSS sources drove immediate KeyA/KeyB holds" + ("" if args.keys_only else " with normalized pointer load"),
             "Idle and real Svelte Profiles navigation phases retain exact accepted source sequences and changed-key receiver/native ownership counts between native audit markers",
             "The UI-load phase observes at least 20 transitions between native Overview and Profiles without shifting OS foreground to the WebView",
             "Every phase uses a fresh receiver, exact native scope and explicit Apply, followed by neutral cleanup, clean Stop and an acknowledged bounded audit checkpoint"]

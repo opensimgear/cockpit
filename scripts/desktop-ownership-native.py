@@ -190,8 +190,9 @@ def producer_pins(owner, sources, instances):
         stable={})
 
 
-def position_receiver(service, path, identity, *, pointer_target=False):
-    """Obtain a fresh receiver ACK and prove native focus before any mouse hold."""
+def position_receiver(service, path, identity, *, pointer_target=False, keyboard_window=None):
+    """Obtain a fresh receiver ACK and prove its native foreground identity."""
+    assert not (pointer_target and keyboard_window)
     def unheld(status):
         if status.get("runtime") is None:
             run = service.profiles("profile_status")["profileSession"]
@@ -206,7 +207,8 @@ def position_receiver(service, path, identity, *, pointer_target=False):
     previous_requests = prior.get("focusRequests", 0)
     marker = path.with_suffix(".focus")
     temporary = path.with_suffix(".focus-request.tmp")
-    temporary.write_text("focus-and-position-pointer" if pointer_target else "focus-and-center")
+    request = "focus" if keyboard_window else "focus-and-position-pointer" if pointer_target else "focus-and-center"
+    temporary.write_text(request)
     temporary.replace(marker)
 
     def positioned():
@@ -225,12 +227,14 @@ def position_receiver(service, path, identity, *, pointer_target=False):
         pointer_ready = not pointer_target or (target.get("exactReceiver") is True and target.get("foregroundCapture") == "0")
         exact_foreground = (recent.get("pid") == identity["pid"] and recent.get("created") == identity["created"]
             and os.path.normcase(recent.get("executable", "")) == os.path.normcase(identity["executable"]))
-        if acknowledged and cursor.get("inside") is True and exact_foreground and pointer_ready:
+        position_ready = (report.get("foregroundWindow") == report.get("focusAfter") == keyboard_window
+            if keyboard_window else cursor.get("inside") is True)
+        if acknowledged and position_ready and exact_foreground and pointer_ready:
             return dict(previousFocusRequests=previous_requests, focusRequests=report["focusRequests"],
                 clientCursor=cursor, recentApplication=recent, focusMethod=report.get("focusMethod"),
                 focusBefore=report.get("focusBefore"), focusAfter=report.get("focusAfter"), pointerTarget=target or None)
         return None
-    return mapping.wait_for(positioned, "Fresh receiver focus-and-center ACK, inside cursor and exact native foreground identity were not established", seconds=8)
+    return mapping.wait_for(positioned, "Fresh receiver focus ACK and exact native foreground or pointer target were not established", seconds=8)
 
 
 def send(peer, value):

@@ -66,13 +66,13 @@ async function launchReceiver(file) {
    child.stdout.on('data', chunk => {
     output += chunk;
     if (output.includes('\n')) {
-     try { const value = JSON.parse(output.split('\n')[0]); assert.ok(value.identity); clearTimeout(timer); resolve(value); }
+     try { const value = JSON.parse(output.split('\n')[0]); assert.ok(value.identity); assert.match(value.window, /^[1-9][0-9]*$/); clearTimeout(timer); resolve(value); }
      catch (error) { clearTimeout(timer); reject(error); }
     }
    });
   });
  } catch (error) { child.kill(); throw error; }
- return {child, file, identity: ready.identity};
+ return {child, file, identity: ready.identity, window: ready.window};
 }
 
 async function closeReceiver(target) {
@@ -146,6 +146,7 @@ async function uiLoad(page, start, profileName) {
 test('real native desktop audit under two-source input and Svelte UI load', {skip: !enabled, timeout: 300_000}, async () => {
  assert.equal(process.platform, 'win32');
  const auditDirectory = process.env.OSG_DESKTOP_AUDIT_DIR, auditRun = process.env.OSG_DESKTOP_AUDIT_RUN;
+ const keysOnly = process.env.OSG_DESKTOP_LATENCY_KEYS_ONLY === '1';
  assert.ok(auditDirectory && auditRun && /^[A-Za-z0-9_-]{1,64}$/.test(auditRun), 'Use the audit directory/run supplied to the running app at startup');
  const executable = resolve(process.env.OSG_DESKTOP_NATIVE_APP ?? 'src-tauri/target/debug/osg-cockpit.exe');
  const appHash = createHash('sha256').update(await readFile(executable)).digest('hex');
@@ -175,7 +176,7 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
       await stopped(page, commands.some(item => item.command === 'profile_apply'));
       if (target) await closeReceiver(target);
       target = await launchReceiver(resolve(artifacts, `receiver-${request.phase}.json`)); receivers.push(target);
-      result = {ok: true, state: {latency: {file: target.file, identity: target.identity}}};
+      result = {ok: true, state: {latency: {file: target.file, identity: target.identity, window: target.window}}};
      } else if (request.command === 'latency_ui_load') {
       assert.equal(typeof request.enabled, 'boolean');
       result = {ok: true, state: {latency: await uiLoad(page, request.enabled, request.profileName)}};
@@ -198,7 +199,8 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
    pythonChild = spawn(process.env.OSG_PYTHON ?? 'python', ['scripts/desktop-latency-native.py', '--inject',
     '--bridge', `http://127.0.0.1:${server.address().port}/native`, '--output', resolve(artifacts, 'evidence.json'),
-    '--app-sha256', appHash, '--audit-directory', resolve(auditDirectory), '--audit-run', auditRun], {
+    '--app-sha256', appHash, '--audit-directory', resolve(auditDirectory), '--audit-run', auditRun,
+    ...(keysOnly ? ['--keys-only'] : [])], {
      cwd: root, windowsHide: true, timeout: 180_000, env: {...process.env, OSG_NATIVE_BRIDGE_TOKEN: token}, stdio: ['ignore', 'pipe', 'pipe']});
    let output = '';
    pythonChild.stdout.on('data', bytes => { output += bytes; }); pythonChild.stderr.on('data', bytes => { output += bytes; });
@@ -206,6 +208,7 @@ test('real native desktop audit under two-source input and Svelte UI load', {ski
    await writeFile(resolve(artifacts, 'run.log'), output); assert.equal(code, 0, output);
    const evidence = JSON.parse(await readFile(resolve(artifacts, 'evidence.json'), 'utf8'));
    assert.equal(evidence.nativeExecutableSha256, appHash); assert.equal(evidence.productionQualified, false);
+   assert.equal(evidence.keysOnly, keysOnly);
    assert.equal(evidence.phases.length, 2); assert.equal(evidence.injected, true); assert.deepEqual(evidence.cleanupErrors, []);
    const files = [];
    for (const name of await readdir(auditDirectory)) if (name.startsWith(`audit-${auditRun}-`) && name.endsWith('.jsonl')) {
