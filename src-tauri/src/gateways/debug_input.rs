@@ -13,6 +13,15 @@ impl GatewayManager {
             .profile_metadata()?
             .qualify_input_leases(identities)
     }
+
+    pub(crate) fn qualify_virtual_lease(&self, mut request: Value) -> Result<Value, String> {
+        if std::env::var("OSG_REACTIVE_QUALIFICATION").as_deref() != Ok("1") {
+            return Err("Desktop qualification is disabled.".into());
+        }
+        let owner = serde_json::from_value(request["owner"].take()).map_err(|error| error.to_string())?;
+        let lease = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).virtual_lease_evidence(&owner)?;
+        Ok(json!({"owner":owner,"lease":lease}))
+    }
 }
 
 impl GatewayManager {

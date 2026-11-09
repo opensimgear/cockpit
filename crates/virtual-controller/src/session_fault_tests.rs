@@ -29,6 +29,13 @@ fn delayed_acknowledgement_does_not_postpone_the_next_lease_renewal() {
     assert!(due <= Instant::now());
     assert_eq!(session.renewal_deadline(), Some(due));
     assert!(renewals.lock().unwrap().is_empty(), "queries must not renew");
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    {
+        let evidence = session.lease_evidence().unwrap();
+        assert_eq!(evidence.renewals, 0);
+        assert_eq!(evidence.max_gap_us, evidence.age_at_read_us);
+        assert!(renewals.lock().unwrap().is_empty(), "lease evidence must not renew");
+    }
     session.keep_alive().unwrap();
     let first_received = renewals.lock().unwrap()[0];
     assert!(session.renewed <= first_received);
@@ -36,11 +43,29 @@ fn delayed_acknowledgement_does_not_postpone_the_next_lease_renewal() {
     assert!(delayed_deadline <= Instant::now(), "deadline remains due after delayed ACK");
     assert!(delayed_deadline <= first_received + std::time::Duration::from_micros(RENEW_US));
     assert_eq!(session.renewal_deadline(), Some(delayed_deadline));
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    {
+        let evidence = session.lease_evidence().unwrap();
+        assert_eq!(evidence.renewals, 1);
+        assert!(evidence.max_gap_us >= RENEW_US + 100_000);
+        assert!(evidence.max_gap_us >= evidence.age_at_read_us);
+        assert_eq!(evidence.minimum_margin_us, evidence.lease_us.saturating_sub(evidence.max_gap_us));
+    }
     session.keep_alive().unwrap();
     assert_eq!(renewals.lock().unwrap().len(), 2,
         "The ACK delay already consumed the renewal interval");
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    {
+        session.renewed -= std::time::Duration::from_micros(crate::feeder::LEASE_US);
+        let evidence = session.lease_evidence().unwrap();
+        assert_eq!(evidence.minimum_margin_us, 0);
+        assert!(evidence.age_at_read_us >= evidence.lease_us);
+        assert_eq!(renewals.lock().unwrap().len(), 2);
+    }
     session.stop().unwrap();
     assert_eq!(session.renewal_deadline(), None);
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    assert!(session.lease_evidence().is_err());
 }
 
 #[test]

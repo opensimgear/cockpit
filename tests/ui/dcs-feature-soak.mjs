@@ -276,6 +276,16 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
         assert.ok(lease.gapAtReadMs >= 0 && lease.gapAtReadMs <= lease.maxGapMs);
       });
       evidence.inputLeases = inputLeases;
+      const virtualLeaseRequest = {command:'qualification_virtual_lease', clientId:fixtureClientId, owner};
+      const virtualLease = await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',
+        {request:${JSON.stringify(virtualLeaseRequest)}})`);
+      assert.deepEqual(virtualLease.owner, owner);
+      const lease = virtualLease.lease;
+      assert.ok(Number.isSafeInteger(lease.renewals) && lease.renewals > 0);
+      assert.ok(Number.isSafeInteger(lease.minimumMarginUs) && lease.minimumMarginUs > 0);
+      assert.equal(lease.minimumMarginUs, lease.leaseUs - lease.maxGapUs);
+      assert.ok(lease.ageAtReadUs >= 0 && lease.ageAtReadUs <= lease.maxGapUs);
+      evidence.virtualLease = virtualLease;
     }
     evidence.elapsedMs = Math.round(performance.now() - start);
     traffic.stop();

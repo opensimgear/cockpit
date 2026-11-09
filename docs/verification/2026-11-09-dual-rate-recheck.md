@@ -257,6 +257,68 @@ These margins cover the two host leases for loopback WSS panel input
 under authored DCS traffic. Other lease boundaries and real LAN,
 controller and simulator checks remain open.
 
+### 30-minute run after the debug ingress change
+
+Windows dev Cockpit at `2f175ef0` passed the 1,800-second software workload
+with two loopback panels and fast and stalled subscribers. Both sources
+kept the same profile owner across 564 health checks, 60 inventory reads,
+and 60 discovery scans. The two input lanes overlapped for 1,799,999.98 ms.
+
+| Native offer rate | Exact offers | Capture to reducer batch end p50 / p95 / p99 | Offer to Raw Input p50 / p95 / p99 | Peak pending frames |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 Hz | 1,800,001 | 1.0 / 1.7 / 2.2 ms | 1.3 / 2.0 / 2.5 ms | 23 |
+| 125 Hz | 225,001 | 1.0 / 1.6 / 2.1 ms | 1.5 / 2.2 / 2.7 ms | 22 |
+
+Each panel accepted 7,113 input lease renewals. Both had a 268 ms longest
+gap and at least 1,232 ms of margin on the 1,500 ms lease. UDP-to-canvas
+p50 / p95 / p99 was 4.65 / 21.61 / 43.30 ms on panel 1 and 6.20 / 33.85 /
+44.72 ms on panel 2. The clock uncertainty was 0.28 ms or less.
+
+Raw Input matched all offers and both releases. Both releases arrived
+40.95 ms after Stop and the slot returned to free. The held native
+subscriber resumed on acknowledgement. The fast MCP subscriber received
+retirement and the unread MCP response closed. Across 60 memory samples,
+Cockpit private bytes rose from 68.0 MB in the first sample to 84.6 MB in
+the last. Both panel heaps were smaller in the last sample. The fixture
+recorded no timing misses or cleanup errors.
+
+This run uses authored input and loopback panels. The actual simulator,
+physical controls, display scanout and operator soak remain in #199.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `debug-ingress-candidate/osg-cockpit.exe` | `db4b6a2204507162d4829f3a23c1d55c0477a1a24e0a474f79d6d805b4baa1d1` |
+| `debug-ingress-soak/RawInputProbe.exe` | `488c5f8f4f1ad01b1f19bcf03f802e9c040bfdb1232855a3c9b80aabb5013710` |
+| `.research/dcs-physics-native/1794246229162/evidence.json` | `f5181c3fc87b14a2d0d509443978bcc28cd376481ed15b7f90f59f8bd75ac2d5` |
+
+### vJoy feeder lease margin
+
+The qualification build keeps the longest interval from a successful
+lease message's send to the next successful renewal acknowledgement.
+Both timestamps use the parent monotonic clock. The feeder receives the
+previous message after its send and the next renewal before its reply,
+so the recorded interval is an upper bound for the gap between feeder
+receipts. The measurement also includes the age of the last send at
+read time. The fixture reads the exact active owner's bound once before
+Stop without renewing its lease.
+
+In the 15-second dual-rate workload, the bound on the largest renewal
+gap was 62.781 ms, leaving at least 187.219 ms on the 250 ms feeder lease.
+The feeder acknowledged 916 renewals from Apply to the read. Both panel
+input leases retained at least 1,233 ms of margin. Raw Input received all
+16,886 offered edges and both releases, the slot returned to free, and
+cleanup passed. Fast-lane offer-to-receipt was 1.3 / 2.1 / 2.6 ms at
+p50 / p95 / p99.
+
+All 113 virtual-controller library tests passed with the configured Python
+worker. The session module reached 90.45% line and 75.56% function
+coverage. LLVM emitted no branch counters.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `virtual-lease-candidate/osg-cockpit.exe` | `e21ae9c5c789edc6fbeee1a56283e13ed4d893919875a2ecbe2a14d4c3ce9b2f` |
+| `.research/dcs-physics-native/1794248187962/evidence.json` | `45f7e9f296967d808896e873a5e7ddb8f38991ff8f07003edbb8930f5852c386` |
+
 ## Debug input capture to reducer
 
 The opt-in Windows dev fixture matches each of its two authored streams

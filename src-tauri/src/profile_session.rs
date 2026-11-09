@@ -166,6 +166,10 @@ pub(crate) trait Host: Send {
     fn desktop_readiness(&self) -> osg_mapping_host::desktop::Readiness { Default::default() }
     fn publish_debug_inputs(&mut self, _owner: &RunOwner) {}
     fn revoke_debug_inputs(&mut self) {}
+    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+    fn virtual_lease_evidence(&mut self, _owner: &RunOwner) -> Result<osg_virtual_controller::session::LeaseEvidence, String> {
+        Err("The profile host has no virtual feeder lease to measure.".into())
+    }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String>;
@@ -360,6 +364,11 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)
             && self.status.owner.as_ref() == Some(owner)
+    }
+    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+    pub(crate) fn virtual_lease_evidence(&mut self, owner: &RunOwner) -> Result<osg_virtual_controller::session::LeaseEvidence, String> {
+        if !self.validates(owner) { return Err("The requested virtual feeder owner expired.".into()); }
+        self.host.virtual_lease_evidence(owner)
     }
     pub(crate) fn vehicle_change(&self) -> Option<(RunOwner,String)> {
         let owner=self.status.owner.as_ref().filter(|_|matches!(self.status.state,State::Running|State::Degraded))?;

@@ -5,6 +5,9 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
 
+[features]
+reactive-qualification = []
+
 [dependencies]
 osg-persistence = { path = "../persistence" }
 osg-mapping = { path = "../mapping" }

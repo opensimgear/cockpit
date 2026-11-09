@@ -1091,6 +1091,11 @@ impl Host for NativeProfileHost {
         }
     }
     fn revoke_debug_inputs(&mut self) { self.debug_ingress.revoke(); }
+    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+    fn virtual_lease_evidence(&mut self, owner: &RunOwner) -> Result<osg_virtual_controller::session::LeaseEvidence, String> {
+        self.fence(owner)?;
+        self.run(owner)?.output.as_mut().ok_or("The applied profile has no virtual feeder.")?.lease_evidence()
+    }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
         self.debug_ingress.pause(&run.owner);
         if let Some(signal) = &self.sample_signal { signal.retire(&run.owner); }

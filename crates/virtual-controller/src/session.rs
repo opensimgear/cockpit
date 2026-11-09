@@ -81,6 +81,8 @@ pub struct Session {
     cursor: Counter,
     renewal: u64,
     renewed: Instant,
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    max_lease_gap: std::time::Duration,
     recovery_required: bool,
     journal: Option<Store>,
 }
@@ -150,6 +152,8 @@ impl Session {
             cursor,
             renewal: 0,
             renewed: started,
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            max_lease_gap: Default::default(),
             recovery_required: false,
         })
     }
@@ -195,6 +199,8 @@ impl Session {
             cursor: Counter(0),
             renewal: 0,
             renewed: Instant::now(),
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            max_lease_gap: Default::default(),
             recovery_required: true,
             journal: Some(store),
         };
@@ -221,6 +227,24 @@ impl Session {
         }
         Some(self.renewed + std::time::Duration::from_micros(RENEW_US))
     }
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    pub fn lease_evidence(&mut self) -> Result<LeaseEvidence, String> {
+        if self.recovery_required || !self.worker.as_mut().is_some_and(|worker| worker.alive()) {
+            return Err("The virtual feeder has no live lease to measure.".into());
+        }
+        let age = self.renewed.elapsed();
+        let ceil_us = |duration: std::time::Duration| {
+            u64::try_from(duration.as_nanos().div_ceil(1000)).unwrap_or(u64::MAX)
+        };
+        let max_gap_us = ceil_us(self.max_lease_gap.max(age));
+        Ok(LeaseEvidence {
+            renewals: self.renewal,
+            lease_us: crate::feeder::LEASE_US,
+            max_gap_us,
+            age_at_read_us: ceil_us(age),
+            minimum_margin_us: crate::feeder::LEASE_US.saturating_sub(max_gap_us),
+        })
+    }
     pub fn recovery_required(&self) -> bool {
         self.recovery_required
     }
@@ -246,6 +270,12 @@ impl Session {
             token: self.token.clone(),
             sequence: Counter(next),
         })?;
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        {
+            // Previous receipt is no earlier than its send, and current
+            // receipt is no later than this successful acknowledgement.
+            self.max_lease_gap = self.max_lease_gap.max(self.renewed.elapsed());
+        }
         self.renewal = next;
         // The child lease starts on receipt, not when its acknowledgement is
         // consumed. A delayed acknowledgement must not postpone the next renewal.
@@ -424,6 +454,17 @@ impl Session {
         self.recovery_required = false;
         Ok(())
     }
+}
+
+#[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaseEvidence {
+    pub renewals: u64,
+    pub lease_us: u64,
+    pub max_gap_us: u64,
+    pub age_at_read_us: u64,
+    pub minimum_margin_us: u64,
 }
 impl Drop for Session {
     fn drop(&mut self) {
