@@ -19,7 +19,7 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
       observation.samplePorts([{portId:'button-1',value:true},{portId:'button-2',value:true}]).then(samples=>{
         observation.drainFast();
         return samples;
-      }),litCanvases(offsets),commandBurst?.(startNs)]);
+      }),litCanvases(offsets),commandBurst?.(startNs,durationMs)]);
     const [rows,inspectorPresentation,mcpSamples,canvases,dcsCommands]=settled.map(result=>{
       if(result.status==='rejected')throw result.reason;
       return result.value;

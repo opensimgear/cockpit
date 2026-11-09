@@ -1,19 +1,85 @@
 import assert from 'node:assert/strict';
 import {createSocket} from 'node:dgram';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
+import {canonicalWidget} from '../../packages/widget-runtime/src/artifact.ts';
+import {compiledPanelCapabilityProjection,verifyCompiledPanelPublication} from '../../packages/widget-runtime/src/panel.ts';
+import {alignClock} from './dcs-panel-presentation-timing.mjs';
+import {intervals,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
 const debug='native-command-debug';
 const state={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
 const event={delivery:'event',schema:{type:'boolean'}};
 const port=(id,direction,contract)=>({id,name:id,direction,contract});
+const extendedPairs=24;
+const pairIntervalMs=180;
+const nodeMs=ns=>Number(ns)/1e6;
+const digest=value=>createHash('sha256').update(value).digest('hex');
+
+export async function commandPanelPublication(original) {
+  const document=JSON.parse(original.canonicalDocument);
+  const widget=document.presentation.widgets.find(widget=>widget.id==='probe');
+  const entry=document.presentation.artifacts.find(entry=>entry.hash===widget.artifactHash);
+  const {artifact}=entry, {behavior,resources}=artifact;
+  const region=behavior.regions.find(region=>region.id==='interaction');
+  behavior.events.push({id:'release'});
+  region.transitions.push({id:'release',event:'release',from:'ready',
+    actions:[{type:'emit',port:'button',value:{literal:false}}]});
+  artifact.hitRegions.find(region=>region.id==='press').events={press:'activate',release:'release',cancel:'release'};
+  artifact.behaviorHash=digest(canonicalWidget(behavior));
+  for(let attempt=0;attempt<8;attempt++) {
+    const manifestBytes=Buffer.byteLength(canonicalWidget(artifact));
+    const delta=manifestBytes-resources.manifestBytes;
+    if(delta===0)break;
+    resources.manifestBytes=manifestBytes;
+    resources.residentBytes+=delta*4;
+    resources.activeCandidateBytes=resources.residentBytes*2;
+  }
+  const previousHash=entry.hash;
+  entry.hash=digest(canonicalWidget(artifact));
+  for(const widget of document.presentation.widgets) {
+    if(widget.artifactHash===previousHash)widget.artifactHash=entry.hash;
+  }
+  const canonicalDocument=canonicalWidget(document), assets=original.assets;
+  const publicationHash='sha256:'+digest(canonicalDocument);
+  const capabilityFingerprint='sha256:'+digest(canonicalWidget(compiledPanelCapabilityProjection(document)));
+  await verifyCompiledPanelPublication({document,assets,publicationHash,capabilityFingerprint});
+  return {canonicalDocument,assets,publicationHash,capabilityFingerprint};
+}
+
+async function waitUntil(target) {
+  let remaining=target-process.hrtime.bigint();
+  while(remaining>0n) {
+    await delay(Math.max(1,nodeMs(remaining)));
+    remaining=target-process.hrtime.bigint();
+  }
+}
+
+function sendPanelKey(button,type) {
+  return button.evaluate((element,type)=>{
+    const atMs=performance.now();
+    element.dispatchEvent(new KeyboardEvent(type,{key:'Enter',bubbles:true,cancelable:true}));
+    return atMs;
+  },type);
+}
+
+function summarizeSource(samples,clock) {
+  const offers=samples.map(sample=>sample.offeredAtMs);
+  const arrivalDelta=samples.map(sample=>nodeMs(sample.receivedAtNs)-sample.offeredAtMs);
+  if(clock)assert.ok(arrivalDelta.every(delta=>delta+clock.high>=0),'Command receipt precedes browser activation');
+  return {samples,offerIntervalsMs:samples.length>1?summarizeMilliseconds(intervals(offers)):null,
+    receiptLatencyMs:{
+      lower:summarizeMilliseconds(arrivalDelta.map(delta=>clock?Math.max(0,delta+clock.low):delta)),
+      upper:summarizeMilliseconds(arrivalDelta.map(delta=>delta+(clock?.high??0))),
+    }};
+}
 
 // The real DCS-BIOS command sender writes only to this private UDP receiver.
 export function nativeDcsCommands(cdp,request) {
-  const socket=createSocket('udp4'), datagrams=[], expected=[];
+  const socket=createSocket('udp4'), datagrams=[], expected=[], sent=[];
   let bound=false, ran=false, observedResource;
   socket.on('message',message=>{
-    if(datagrams.length<16)datagrams.push({text:message.toString('utf8'),atNs:String(process.hrtime.bigint())});
+    if(datagrams.length<=2*extendedPairs)datagrams.push({text:message.toString('utf8'),atNs:String(process.hrtime.bigint())});
   });
 
   return {
@@ -99,35 +165,53 @@ export function nativeDcsCommands(cdp,request) {
       }
     },
 
-    async run(owner,start,pressPanel) {
+    async run(owner,start,durationMs,page) {
       assert.equal(bound,true);
       assert.deepEqual(datagrams,[],'One-shot commands must stay quiet at baseline');
-      const at=async offset=>{
-        const target=start+BigInt(offset)*1_000_000n;
-        let remaining=target-process.hrtime.bigint();
-        while(remaining>0n){
-          await delay(Math.max(1,Number(remaining)/1e6));
-          remaining=target-process.hrtime.bigint();
+      assert.notEqual(expected[0],expected[1],'The two sources need distinct command receipts');
+      const button=page.getByRole('button',{name:'probe: press',exact:true});
+      const initial=await alignClock(page), streamId=randomUUID();
+      const debugSamples=[], panelSamples=[];
+      const pairs=Math.min(extendedPairs,Math.floor(durationMs/pairIntervalMs));
+      assert.ok(pairs>0,'The mixed workload needs room for a command pair');
+      const deadline=start+BigInt(durationMs)*1_000_000n;
+      let sequence=0;
+      const debugInput=value=>request({command:'profile_debug_controller_input',owner,nodeId:debug,
+        streamId,sequence:String(++sequence),changes:[{portId:'button-1',value}]});
+      const receipt=async (source,offeredAtMs)=>{
+        const index=sent.length;
+        sent.push(expected[source]);
+        while(datagrams.length<=index&&process.hrtime.bigint()<deadline)await delay(2);
+        assert.equal(datagrams[index]?.text,expected[source],`Missing or out-of-order DCS command at index ${index}`);
+        assert.equal(datagrams.length,index+1,'A command must have exactly one receipt');
+        return {offeredAtMs,receivedAtNs:datagrams[index].atNs,text:datagrams[index].text};
+      };
+      try {
+        for(let index=0;index<pairs;index++) {
+          const pairStart=start+BigInt(index*pairIntervalMs)*1_000_000n;
+          await waitUntil(pairStart+25_000_000n);
+          const debugAtMs=nodeMs(process.hrtime.bigint());
+          await debugInput(true);
+          debugSamples.push(await receipt(0,debugAtMs));
+          await debugInput(false);
+          await waitUntil(pairStart+65_000_000n);
+          const panelAtMs=await sendPanelKey(button,'keydown');
+          try {panelSamples.push(await receipt(1,panelAtMs));}
+          finally {await sendPanelKey(button,'keyup');}
         }
-        return String(process.hrtime.bigint());
-      };
-      const debugPress=async()=>{
-        const sentAt=await at(25);
-        await request({command:'profile_debug_controller_input',owner,nodeId:debug,
-          streamId:randomUUID(),sequence:'1',changes:[{portId:'button-1',value:true}]});
-        return sentAt;
-      };
-      const panelPress=async()=>{const sentAt=await at(60);await pressPanel();return sentAt;};
-      const [debugAtNs,panelAtNs]=await Promise.all([debugPress(),panelPress()]);
-      while(datagrams.length<expected.length&&process.hrtime.bigint()<start+190_000_000n)await delay(2);
-      if (datagrams.length!==expected.length) {
+        assert.deepEqual(datagrams.map(packet=>packet.text),sent,'Both authored controls must reach the private receiver once per press');
+      } catch(error) {
         const inspection=(await request({command:'profile_resources_inspect',resourceId:observedResource,offset:0,limit:1})).profileResources;
         console.error('DCS command receiver inventory', JSON.stringify(inspection.resource?.connections));
         console.error('DCS command receiver diagnostics', await cdp.evaluate('window.__dcsCommandTrace.reasons'));
+        throw error;
       }
-      assert.deepEqual(datagrams.map(packet=>packet.text),expected,'Both authored controls must reach the private receiver once');
+      const final=await alignClock(page);
+      const clock={low:Math.max(initial.low,final.low),high:Math.min(initial.high,final.high)};
+      assert.ok(clock.high>=clock.low,'Browser clock alignment changed during the command samples');
       ran=true;
-      return {debugAtNs,panelAtNs,datagrams:datagrams.map(packet=>({...packet}))};
+      return {initial,final,clock,debug:summarizeSource(debugSamples),panel:summarizeSource(panelSamples,clock),
+        datagrams:datagrams.map(packet=>({...packet}))};
     },
 
     async close() {
@@ -135,7 +219,7 @@ export function nativeDcsCommands(cdp,request) {
       bound=false;
       await new Promise(resolve=>socket.close(resolve));
       await cdp.evaluate('window.__dcsCommandTrace?.close(); delete window.__dcsCommandTrace');
-      if(ran)assert.deepEqual(datagrams.map(packet=>packet.text),expected,'Stop and reapply must not replay one-shot commands');
+      if(ran)assert.deepEqual(datagrams.map(packet=>packet.text),sent,'Stop and reapply must not replay one-shot commands');
     },
   };
 }

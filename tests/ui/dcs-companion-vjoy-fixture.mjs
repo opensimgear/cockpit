@@ -14,7 +14,7 @@ import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentatio
 import {airborneChannel,withInspectorPresentation} from './dcs-inspector-presentation.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
-import {nativeDcsCommands} from './dcs-native-command-fixture.mjs';
+import {commandPanelPublication,nativeDcsCommands} from './dcs-native-command-fixture.mjs';
 import {runDcsSoak} from './dcs-feature-soak.mjs';
 import {startDualRateSoak} from './dcs-dual-rate-soak.mjs';
 import {installSoakPanel} from './dcs-soak-panel.mjs';
@@ -109,8 +109,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   }
 
   async function publishPanel() {
-    const bytes=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
-    const publication=JSON.parse(bytes);
+    const original=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
+    const publication=commands?await commandPanelPublication(JSON.parse(original)):JSON.parse(original);
+    const bytes=commands?Buffer.from(JSON.stringify(publication)):original;
     const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
     for(let offset=0;offset<bytes.length;offset+=8192){
       await companion('companion_publish_chunk',{uploadId,offset,bytes:[...bytes.subarray(offset,offset+8192)]});
@@ -391,7 +392,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     await startProbe();
     if(browserUrl)return browserBurst(owner,setAirborne);
     if(nativeRates){
-      const commandBurst=commands&&(start=>commands.run(owner,start,()=>page.getByRole('button',{name:'probe: press',exact:true}).click()));
+      const commandBurst=commands&&((start,durationMs)=>commands.run(owner,start,durationMs,page));
       const run=createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst});
       const readScope=()=>({active:previewActive.get(inspectorSubscription)==='games.telemetry',inspectorReads,unscopedInspectorReads,previewError});
       const result=inspectorTiming?await withInspectorPresentation(cdp,submitOwnship,readScope,show=>run(owner,setAirborne,show))
@@ -495,5 +496,4 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   }
   return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close,openCommands:()=>commands?.open()};
 }
-
 export {combinedTimingMisses} from './vjoy-rate-transport.mjs';

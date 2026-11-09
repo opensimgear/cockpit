@@ -365,3 +365,56 @@ SHA-256 `f52c21e03f3010aa4d184302bfa15f7f4a1a0b53c9d7e94a848e5da6ec238ca4`.
 The workload used authored telemetry, debug sources and loopback panels.
 Display scanout, physical controller motion, LAN presentation and
 simulator-confirmed commands remain separate acceptance.
+
+## Repeated DCS command receipt under dual-rate load
+
+The running Windows dev Cockpit routed 24 authored debug presses and 24
+activations from a paired browser panel to two distinct DCS-BIOS fixed-step
+commands. The private UDP receiver recorded all 48 datagrams in order.
+Neither neutral input nor Stop and reapply produced a further datagram.
+The vJoy receiver matched both independent input lanes and both Stop releases.
+Their measured rates were 1,000.02 and 125.00 Hz, peak pending frames were
+18 and 13, and the slot returned to free. The fast MCP observer received
+610 updates while the other reader stayed unread for 12.22 seconds.
+
+The debug clock starts immediately before the gateway submission. The panel
+clock starts at the browser's key-down handler boundary. The panel clock
+bracket was 0.43 ms wide, and its upper bound is included below. Receipt is
+the Node callback for the actual UDP datagram.
+
+| Authored input | Exact datagrams | Offer interval p50 / p95 / p99 | Offer or activation to UDP receipt upper p50 / p95 / p99 |
+| --- | ---: | ---: | ---: |
+| Debug gateway | 24 | 179.94 / 185.49 / 187.02 ms | 22.84 / 32.70 / 95.28 ms |
+| Compiled browser panel | 24 | 180.50 / 188.80 / 247.90 ms | 17.60 / 21.82 / 91.45 ms |
+
+With 24 samples per source, p99 is the maximum. Both end-to-end measurements
+exceeded the numerical 20 ms p95 and 50 ms p99 targets. These intervals also
+include client submission or browser dispatch and the UDP listener callback.
+Native capture-to-destination attribution and actual simulator confirmation
+remain open. The separate authored input-to-vJoy paths stayed within their
+receipt targets during the same 4,799.88 ms overlap.
+
+Two initial runs exposed the timing panel's activation-only behavior. The
+first timestamped key-down while the original widget emitted on activation.
+The second delivered the first activation but found the button still held on
+the next. The command fixture derives a validated momentary widget from the
+existing publication. Key-down emits true, and release or cancellation emits
+false. The panel and native profiles still use the normal compiled input and
+command paths. The derived publication SHA-256 is
+`e2540f7a88accf814d098097f7d66849a006eb14e6f91f3254f3750d8dac0aed`.
+
+All three changed fixture modules met the line, branch and function floors.
+The command fixture reached 96.44% lines, 92.73% branches and 97.22% functions.
+The 35 widget runtime tests and their coverage gates passed, as did the
+dual-rate trace decoder test. The existing 192 ms burst also passed with one
+exact receipt per command source. Both runs freed the vJoy slot and reported
+zero cleanup errors.
+
+The dev executable is from `ec7348da`, SHA-256
+`42797065eaf7cf2a185168af58808904690cf896517157524e93eb51a067857a`.
+The Raw Input probe matches the hash in the previous section. The authored
+profile is `7f727ed0-97a0-41a5-a22e-7d258bccfa8a`, revision 2. The trace
+is `.research/dcs-physics-native/1794222465459/evidence.json`, SHA-256
+`085b0a5341f713c09facf42cb5ec6a4c5d52f4462f56a0a2d1697b9876fc9a4f`.
+The short trace is `.research/dcs-physics-native/1794222587311/evidence.json`,
+SHA-256 `2e6888dd0c3ac60981f8d3787d78852a5cb1153ed0030023bca140b16e70abc6`.
