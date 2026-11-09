@@ -101,3 +101,52 @@ The fixture stopped before Apply, sent zero input, and closed the receiver
 with no cleanup errors. This run produced no mixed latency samples.
 Its logs are under
 `.research/c193-reconnect/required-journal-leaf/mixed-current-04348dd2/`.
+
+## Live WAL/FULL comparison
+
+Four alternating Windows dev Cockpit runs compared the current DELETE/FULL
+build with an isolated WAL/FULL build. The candidate kept the existing path
+checks and exact durable intent and receipt writes. Its SQLite connector
+accepted only the disposable experiment tree. All connections to those
+disposable databases used WAL. The SQLite file headers confirmed the
+expected mode in each run.
+
+The same two authenticated WSS sources drove two exact receive-only key
+targets, first with the UI idle and then while navigating between Overview
+and Profiles. The native QPC analyzer joined source admission to successful
+`SendInput` return. All 1,614 first-dispatch and sustained key transitions
+matched the audit and receiver counts, with clean Stop in every run.
+
+| Run | Journal | Sustained idle p50 / p95 / p99 | Sustained Profiles p50 / p95 / p99 |
+| --- | --- | ---: | ---: |
+| A1 | DELETE | 4.64 / 9.87 / 10.68 ms | 4.48 / 9.22 / 10.16 ms |
+| B1 | WAL | 3.83 / 7.43 / 8.12 ms | 3.80 / 7.23 / 7.89 ms |
+| B2 | WAL | 3.60 / 7.29 / 7.95 ms | 3.65 / 6.98 / 7.55 ms |
+| A2 | DELETE | 4.52 / 10.14 / 18.61 ms | 4.70 / 9.70 / 10.53 ms |
+
+Under Profiles load, the durable intent segment fell from 4.00–4.14 ms
+p95 to 2.56–2.71 ms. The measured overlap with the preceding request's
+receipt write fell from 3.76–3.79 ms p95 to 2.38–2.40 ms. The candidate
+met the sustained p99 budget in both phases but stayed above 5 ms p95.
+
+The separate whole-app crash fixture passed on the same candidate. The
+read-only observer found the exact held-key journal at revision 8 before
+termination, while the app was down, and after restart. Explicit Recover
+advanced it to revision 14 and produced the only KeyA up. The receiver
+recorded one down and one up, and cleanup was clean. An earlier launch
+through a second executable path failed the worker identity check before
+termination. Stop cleared its held key. The successful run used one
+executable path throughout.
+
+This experiment establishes that storage can reduce both the current
+intent delay and the next request's wait. Production integration still
+needs a local-only storage design that preserves backup and restore
+fencing, exact identity, redirected configuration support and sidecar
+validation. Mixed pointer and physical-controller latency remain separate
+qualification steps.
+
+Local build, audits and crash evidence are under
+`.research/c193-reconnect/wal-live/`. The candidate executable SHA-256 is
+`87a61b594652d5e2b91f75b3d1a714bd8a1c72fe4d5cadb2072752661fe0d840`.
+The successful crash `evidence.json` SHA-256 is
+`799237517b50a7265a2c5aa143e0029f83cd30be938cace6091fd90c07e8297b`.
