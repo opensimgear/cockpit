@@ -1,4 +1,5 @@
 use super::*;
+use crate::dcs_profile::TelemetryCatalogue;
 use std::{fs, path::Path, thread, time::{Duration, Instant}};
 
 fn copy_catalogue(path: &Path) {

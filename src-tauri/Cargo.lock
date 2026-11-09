@@ -3521,6 +3521,7 @@ dependencies = [
  "osg-streams",
  "osg-virtual-controller",
  "quick-xml",
+ "ring",
  "rmcp",
  "serde",
  "serde_json",

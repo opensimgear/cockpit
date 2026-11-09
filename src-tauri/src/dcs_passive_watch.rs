@@ -1,5 +1,5 @@
 //! Exact file notifications for DCS catalogue baselines.
-use super::{DcsCatalogueGuard, TelemetryCatalogue, SOURCE_CHANGED};
+use super::{DcsCatalogueGuard, SOURCE_CHANGED};
 use crate::games::ExactFileWatch;
 use osg_streams::NativeWake;
 use std::sync::{
@@ -26,10 +26,8 @@ impl CatalogueWatch {
         let Ok(watch) = Self::register(guard) else { return Ok(None); };
         // A previously prepared decoder needs a new baseline after the
         // notification handles are armed. An event during that read retires it.
-        let confirmed = TelemetryCatalogue::load(&guard.path, &guard.module)?;
-        if confirmed.revision != guard.revision || confirmed.files != guard.files {
-            return Err(SOURCE_CHANGED.into());
-        }
+        guard.files.validate_metadata()?;
+        guard.validate_content()?;
         watch.check()?;
         Ok(Some(watch))
     }
@@ -46,7 +44,7 @@ impl CatalogueWatch {
                 }
             }
         }))?;
-        let paths = guard.files.iter().map(|(path, _)| path.clone()).collect::<Vec<_>>();
+        let paths = guard.files.paths().cloned().collect::<Vec<_>>();
         owner.replace(&paths)?;
         Ok(Self { _owner: owner, state })
     }

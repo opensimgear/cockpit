@@ -132,6 +132,10 @@ impl Network {
     }
 }
 pub(crate) fn read_json(path: &Path, max: u64) -> Result<Value, String> {
+    let bytes = read_document(path, max)?;
+    parse_json(path, &bytes)
+}
+pub(super) fn read_document(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     let file = fs::File::open(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(max + 1)
@@ -143,7 +147,10 @@ pub(crate) fn read_json(path: &Path, max: u64) -> Result<Value, String> {
             path.display()
         ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| format!("{} is not valid JSON.", path.display()))
+    Ok(bytes)
+}
+pub(super) fn parse_json(path: &Path, bytes: &[u8]) -> Result<Value, String> {
+    serde_json::from_slice(bytes).map_err(|_| format!("{} is not valid JSON.", path.display()))
 }
 impl Config {
     pub fn parse(value: &Value) -> Result<Self, String> {

@@ -9,7 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 const INVALID: &str = "Invalid DCS-BIOS panel profile.";
@@ -21,29 +21,9 @@ mod aircraft;
 pub(crate) use aircraft::{aircraft_aliases, resolve_aircraft_module};
 #[path = "dcs_passive_watch.rs"]
 pub(crate) mod passive_watch;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CatalogueFile {
-    length: u64,
-    modified: Option<SystemTime>,
-    created: Option<SystemTime>,
-}
-
-fn catalogue_file(path: &Path) -> Result<Option<CatalogueFile>, String> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("DCS source catalogues must be regular files, not symbolic links.".into());
-    }
-    Ok(Some(CatalogueFile {
-        length: metadata.len(),
-        modified: metadata.modified().ok(),
-        created: metadata.created().ok(),
-    }))
-}
+#[path = "dcs_profile/catalogue_files.rs"]
+mod catalogue_files;
+use catalogue_files::{catalogue_file, CatalogueFiles};
 struct TelemetryCatalogue {
     path: PathBuf,
     module: String,
@@ -51,7 +31,7 @@ struct TelemetryCatalogue {
     common: Option<Value>,
     metadata: Catalogue,
     revision: String,
-    files: Vec<(PathBuf, Option<CatalogueFile>)>,
+    files: CatalogueFiles,
     all_aircraft_names: HashSet<String>,
 }
 impl TelemetryCatalogue {
@@ -62,21 +42,14 @@ impl TelemetryCatalogue {
                     .into(),
             );
         }
-        let mut files = Vec::new();
+        let mut files = CatalogueFiles::default();
         let mut documents = BTreeMap::new();
         let mut read = |name: &str, optional: bool| -> Result<Option<Value>, String> {
-            let file = path.join(name);
-            let before = catalogue_file(&file)?;
-            files.push((file.clone(), before.clone()));
-            if before.is_none() && optional {
-                return Ok(None);
+            let value = files.read(path.join(name), optional)?;
+            if let Some(value) = &value {
+                documents.insert(name.to_owned(), value.clone());
             }
-            let value = dcs_bios::read_json(&file, dcs_bios::MAX_DOCUMENT)?;
-            if catalogue_file(&file)? != before {
-                return Err(SOURCE_CHANGED.into());
-            }
-            documents.insert(name.to_owned(), value.clone());
-            Ok(Some(value))
+            Ok(value)
         };
         let shared = module == "CommonData";
         let selected = if shared { json!({}) } else { read(&format!("{module}.json"), false)?.unwrap() };
@@ -148,11 +121,7 @@ impl TelemetryCatalogue {
                 }
             }
         }
-        for (file, before) in &files {
-            if catalogue_file(file)? != *before {
-                return Err(SOURCE_CHANGED.into());
-            }
-        }
+        files.validate_metadata()?;
         let revision = format!(
             "sha256:{:x}",
             Sha256::digest(
@@ -194,7 +163,7 @@ pub(crate) struct DcsCatalogueGuard {
     path: PathBuf,
     module: String,
     revision: String,
-    files: Vec<(PathBuf, Option<CatalogueFile>)>,
+    files: CatalogueFiles,
     checked: Instant,
     full_checked: Arc<Mutex<Instant>>,
 }
@@ -211,25 +180,29 @@ impl DcsCatalogueGuard {
         if !force && now.duration_since(self.checked) < Duration::from_millis(250) {
             return Ok(());
         }
-        for (path, captured) in &self.files {
-            if catalogue_file(path)? != *captured {
-                return Err(SOURCE_CHANGED.into());
-            }
-        }
+        self.files.validate_metadata()?;
         // The command lane and passive validator hold the same immutable
         // capture. Share completed content proofs without locking during I/O.
         if check_content {
             let full_checked = *self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
             if now.saturating_duration_since(full_checked) >= Duration::from_secs(2) {
-                if TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision {
-                    return Err(SOURCE_CHANGED.into());
-                }
+                self.validate_content()?;
                 let mut checked = self.full_checked.lock().unwrap_or_else(|error| error.into_inner());
                 *checked = (*checked).max(now);
             }
         }
         self.checked = now;
         Ok(())
+    }
+    fn validate_content(&self) -> Result<(), String> {
+        // The exposed revision uses parsed documents. Keep accepting equivalent
+        // encodings when a write preserves the captured file metadata.
+        if !self.files.matches_bytes()?
+            && TelemetryCatalogue::load(&self.path, &self.module)?.revision != self.revision
+        {
+            return Err(SOURCE_CHANGED.into());
+        }
+        self.files.validate_metadata()
     }
 }
 fn text(value: &Value, max: usize, empty: bool) -> Option<&str> {
