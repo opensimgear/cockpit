@@ -2,6 +2,7 @@
 //! independently of activation; slow native preparation never delays Stop.
 use super::*;
 use crate::profile_session::{Candidate, RunOwner, State};
+use std::sync::PoisonError;
 
 fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
     document.eligibility.game_ids.first().filter(|id|osg_profiles::activation::valid_game_id(id)).cloned()
@@ -11,7 +12,20 @@ fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
 #[path = "profile_resources/save_tests.rs"]
 mod resource_tests;
 
+#[cfg(test)]
+#[path = "profile_editor_admission_tests.rs"]
+mod admission_tests;
+
 impl GatewayManager {
+    fn active_editor_owner(&self, request: &Value) -> Option<RunOwner> {
+        let session = self.profile_session.lock().unwrap_or_else(PoisonError::into_inner);
+        let status = session.status();
+        status.owner.as_ref().filter(|owner| {
+            matches!(status.state, State::Running | State::Degraded)
+                && request["document"]["id"] == owner.profile_id
+        }).cloned()
+    }
+
     /// UI and MCP writes share the same retained-inventory check. Offline
     /// resources are valid configuration; deleted or mismatched identities are not.
     pub(super) fn validate_profile_save_request(&self, request: &Value) -> Result<(), String> {
@@ -19,13 +33,13 @@ impl GatewayManager {
             osg_profiles::ProfileDocument::parse_draft(&serde_json::to_vec(value).map_err(|error|error.to_string())?)?
         } else {
             let id=request["id"].as_str().ok_or("Choose a saved profile.")?;
-            self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(id)?.0
+            self.profiles.lock().unwrap_or_else(PoisonError::into_inner).compile_source(id)?.0
         };
         let assignments = if let Some(value) = request.get("assignments") {
             serde_json::from_value::<Vec<osg_profiles::store::LocalAssignment>>(value.clone())
                 .map_err(|error| format!("Invalid local assignments: {error}"))?
         } else {
-            self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&document.id)?.1
+            self.profiles.lock().unwrap_or_else(PoisonError::into_inner).compile_source(&document.id)?.1
         };
         self.profile_resources.validate_profile_save(&document, &assignments)
     }
@@ -39,26 +53,29 @@ impl GatewayManager {
         if normalized["document"] != request["document"] {
             return Err("Companion panel references changed since this draft was prepared. Refresh the panel metadata and prepare this change again.".into());
         }
-        let mut response = Self::activity_profile_mutation(&mut self.profiles.lock().unwrap_or_else(|p|p.into_inner()),request)?;
+        let mut response = Self::activity_profile_mutation(&mut self.profiles.lock().unwrap_or_else(PoisonError::into_inner),request)?;
         self.decorate_profile_session(&mut response);
         response["saveApplication"] = json!({"state":"saved","error":null});
         Ok(response)
     }
 
     pub(super) fn save_profile_editor(&self, request: &Value, arrival: Option<u64>) -> Result<Value, String> {
-        // Capture the run and commit storage under the same admission guard. A
-        // later Stop or replacement owner must never be rearmed by Save.
+        // A shared guard keeps the target inactive through persistence while
+        // admitting debug input for the current run. Recheck an active target
+        // after switching to the exclusive guard used for replacement.
         let (mut response, owner, candidate) = {
-            let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            let admission = self.profile_admission.read().unwrap_or_else(PoisonError::into_inner);
+            let (_shared, _exclusive, owner) = if self.active_editor_owner(request).is_some() {
+                drop(admission);
+                let exclusive = self.profile_admission.write().unwrap_or_else(PoisonError::into_inner);
+                (None, Some(exclusive), self.active_editor_owner(request))
+            } else {
+                (Some(admission), None, None)
+            };
             let normalized=self.normalize_editor_panels(request)?;
             let request=&normalized;
             self.validate_profile_save_request(request)?;
-            let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
-            let owner = status.owner.filter(|owner| {
-                matches!(status.state, State::Running | State::Degraded)
-                    && request["document"]["id"] == owner.profile_id
-            });
-            let mut profiles = self.profiles.lock().unwrap_or_else(|p|p.into_inner());
+            let mut profiles = self.profiles.lock().unwrap_or_else(PoisonError::into_inner);
             // Capture both revisions under the actual persistence lock, before
             // slow preparation yields to newer saves and emergency controls.
             let response = Self::activity_profile_mutation(&mut profiles,request)?;
@@ -94,7 +111,7 @@ impl GatewayManager {
             return Err("The saved profile is not eligible for its active game context.".into());
         }
         if candidate.read_only { return Err("Repair profile storage before applying its saved changes.".into()); }
-        self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).check_apply()?;
+        self.profile_session.lock().unwrap_or_else(PoisonError::into_inner).check_apply()?;
         let activation_id = self.start_native_profile_activation(
             &candidate.document.id, epoch, "saved-changes", candidate.game_id.as_deref(),
         )?;
@@ -103,20 +120,20 @@ impl GatewayManager {
             // The outgoing native run keeps receiving health renewals throughout
             // slow read-only preparation. Emergency controls hold neither lock.
             candidate.stage = Some(self.prepare_profile_at(&candidate, epoch)?);
-            let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
-            let _game = self.game_admission.read().unwrap_or_else(|p|p.into_inner());
+            let _admission = self.profile_admission.write().unwrap_or_else(PoisonError::into_inner);
+            let _game = self.game_admission.read().unwrap_or_else(PoisonError::into_inner);
             if self.closed.load(Ordering::Acquire) || self.profile_admission_epoch.load(Ordering::Acquire) != epoch {
                 return Err("Applying the saved changes was cancelled by deactivation, recovery or a newer profile control.".into());
             }
             self.guard_retired_recovery()?;
-            let (document, assignments, read_only, virtual_slots) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_virtual_source(&previous.profile_id)?;
+            let (document, assignments, read_only, virtual_slots) = self.profiles.lock().unwrap_or_else(PoisonError::into_inner).compile_virtual_source(&previous.profile_id)?;
             let game_id=saved_game_context(&document);
             let saved = Candidate { virtual_slots, document, assignments, read_only, game_id,
                 launch_preparation: false, admission_epoch: Some(epoch), stage: None };
             candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
             // Health can retire a run without an operator epoch change. Check its
             // exact owner under the same coordinator lock that performs takeover.
-            let mut coordinator = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+            let mut coordinator = self.profile_session.lock().unwrap_or_else(PoisonError::into_inner);
             if coordinator.status().owner.as_ref() != Some(previous) {
                 return Err("The active profile changed while these saved changes were preparing.".into());
             }
