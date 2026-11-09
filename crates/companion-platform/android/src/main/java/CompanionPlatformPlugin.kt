@@ -1,9 +1,11 @@
 package org.opensimgear.companion.platform
 
 import android.app.Activity
+import android.net.wifi.WifiManager
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.appcompat.app.AppCompatActivity
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -22,6 +24,9 @@ import javax.crypto.spec.GCMParameterSpec
 @InvokeArg
 class StoreArgs { lateinit var data: String }
 
+@InvokeArg
+class DiscoveryArgs { lateinit var token: String }
+
 /** Cryptography with a non-exportable Android Keystore key; SQLite owns ciphertext.
  * Native Rust is the only caller; this plugin grants no webview commands.
  */
@@ -30,6 +35,7 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
     private val alias = "org.opensimgear.companion.credential.v1"
     private val aad = "OpenSimGear companion credential v1".toByteArray(Charsets.UTF_8)
     private val maxBytes = 65536
+    private val discovery = WifiDiscoveryLease(activity.applicationContext.getSystemService(WifiManager::class.java))
     private val worker = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
         ArrayBlockingQueue<Runnable>(8), ThreadPoolExecutor.AbortPolicy())
 
@@ -95,4 +101,22 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
     fun seal(invoke: Invoke) = transform(invoke, true)
     @Command
     fun unseal(invoke: Invoke) = transform(invoke, false)
+
+    @Command
+    fun beginDiscovery(invoke: Invoke) {
+        try { invoke.resolve(JSObject().put("token", discovery.begin())) }
+        catch (error: Exception) { invoke.reject(error.message ?: "Android Wi-Fi discovery is unavailable") }
+    }
+
+    @Command
+    fun finishDiscovery(invoke: Invoke) {
+        try {
+            discovery.finish(invoke.parseArgs(DiscoveryArgs::class.java).token)
+            invoke.resolve(JSObject())
+        } catch (_: Exception) { invoke.reject("Could not finish Android Wi-Fi discovery") }
+    }
+
+    override fun onPause(activity: AppCompatActivity) = discovery.setForeground(false)
+    override fun onResume(activity: AppCompatActivity) = discovery.setForeground(true)
+    override fun onDestroy(activity: AppCompatActivity) = discovery.setForeground(false)
 }

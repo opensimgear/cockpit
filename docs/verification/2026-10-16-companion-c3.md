@@ -75,3 +75,27 @@ Linking the iOS app and checking Local Network denial and regrant,
 discovery, and pairing on a signed device remain in
 [#56](https://github.com/opensimgear/cockpit/issues/56) and the operator
 follow-up [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+## Android Wi-Fi discovery lease — 9 November 2026
+
+The Android shell acquires a Wi-Fi multicast lock for an explicit
+nearby-host request, with the manifest's normal multicast permission.
+Rust releases the matching lock on completion. Activity pause or
+destruction releases it early, and a four-second one-shot deadline
+retires an abandoned bridge call. A second request cannot acquire the
+lock while the first holds it. A late finish cannot release another
+request's lock.
+[Android multicast lock reference](https://developer.android.com/reference/android/net/wifi/WifiManager.MulticastLock)
+
+The Android dependency graph resolved from the locked manifests and the
+portable Rust platform codec test passed with full coverage of its
+Windows-compiled code. The manifest parsed and contains the multicast
+permission. The packaging helpers passed 11 of 12 tests on Windows.
+The simulator tarball test needs POSIX executable mode bits. The native
+Windows multicast and short-code pairing fixture passed.
+
+Android SDK/JDK compilation, signed-device Wi-Fi discovery and lock
+release on pause remain in [#55](https://github.com/opensimgear/cockpit/issues/55).
+Builds targeting API 37 still need a runtime Local Network permission
+path for discovery and WSS.
+[Android Local Network permission](https://developer.android.com/privacy-and-security/local-network-permission)

@@ -2,6 +2,12 @@
 
 This Tauri plugin supplies the Android Keystore `NativeSealer` adapter to the standalone Companion. Rust calls it directly through `PluginHandle`; no plugin command is granted to JavaScript. It accepts only bounded plaintext/ciphertext bytes and a fixed key alias, never arbitrary aliases or filesystem paths.
 
+Android's explicit nearby-host scan also uses this bridge. A Wi-Fi multicast
+lock covers the native discovery request and releases when it finishes or
+the Activity pauses. A four-second expiry covers an abandoned bridge call.
+The token scopes release to the request that acquired the lock.
+[Android multicast lock reference](https://developer.android.com/reference/android/net/wifi/WifiManager.MulticastLock)
+
 Android's non-exportable AES-256-GCM key seals the existing authenticated envelope. The shared native store writes only ciphertext into the Companion application's SQLite namespace; the plugin has no preferences/file read, write or delete authority. A bounded serial worker performs Keystore operations off the UI thread. The Rust bridge validates response/base64/size budgets and the app initializes it asynchronously to avoid blocking mobile callback dispatch.
 
 Key loss, corruption and provider errors fail closed with explicit recovery. The SQLite owner verifies existing ciphertext before any key-creating probe or seal, and Forget commits a revisioned tombstone. Protection keys remain external. No plaintext fallback or automatic re-pair is attempted. Desktop DPAPI/Secret Service/Keychain and native iOS Keychain adapters live in `companion-service`.

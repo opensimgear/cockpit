@@ -1,4 +1,4 @@
-//! Native Android Keystore cryptography. SQLite owns all durable ciphertext.
+//! Native Android Keystore cryptography and scoped Wi-Fi discovery.
 use base64::{engine::general_purpose::STANDARD,Engine};
 pub const MAX_CREDENTIAL_BYTES:usize=65_536;
 const MAX_CIPHER_BYTES:usize=MAX_CREDENTIAL_BYTES+29;
@@ -23,9 +23,31 @@ mod android {
     impl<R:Runtime> Clone for PlatformStore<R>{fn clone(&self)->Self{Self(self.0.clone())}}
     #[derive(Deserialize)]
     struct Response{data:String}
+    #[derive(Deserialize)]
+    struct DiscoveryToken { token: String }
+    struct DiscoveryLease<'a, R: Runtime> {
+        plugin: &'a PluginHandle<R>,
+        token: String,
+    }
+    impl<R: Runtime> Drop for DiscoveryLease<'_, R> {
+        fn drop(&mut self) {
+            let _: Result<serde_json::Value, _> = self.plugin.run_mobile_plugin(
+                "finishDiscovery", json!({"token": &self.token}),
+            );
+        }
+    }
     impl<R:Runtime> PlatformStore<R>{
         fn call<T:serde::de::DeserializeOwned>(&self,command:&str,payload:serde_json::Value)->Result<T,String>{
             self.0.run_mobile_plugin(command,payload).map_err(|_|"Android protection is unavailable, locked or corrupt. Unlock the device or Forget host and pair again.".into())
+        }
+        pub fn with_discovery(
+            &self,
+            discover: impl FnOnce() -> Result<serde_json::Value, String>,
+        ) -> Result<serde_json::Value, String> {
+            let DiscoveryToken { token } = self.0.run_mobile_plugin("beginDiscovery", json!({}))
+                .map_err(|error| format!("Android discovery could not start: {error}"))?;
+            let _lease = DiscoveryLease { plugin: &self.0, token };
+            discover()
         }
     }
     impl<R:Runtime> NativeSealer for PlatformStore<R>{

@@ -1,2 +1,3 @@
 -keep class org.opensimgear.companion.platform.StoreArgs { *; }
+-keep class org.opensimgear.companion.platform.DiscoveryArgs { *; }
 -keep class org.opensimgear.companion.platform.CompanionPlatformPlugin { *; }

@@ -41,6 +41,7 @@ fn companion_lifecycle(state: tauri::State<'_, Lifecycle>) -> LifecycleSnapshot 
 
 #[tauri::command]
 async fn companion_client_request(
+    _app: tauri::AppHandle,
     state: tauri::State<'_, ClientBridge>,
     events: tauri::State<'_, StatusEvents>,
     request: Value,
@@ -53,7 +54,14 @@ async fn companion_client_request(
             "assignments":[],"feedback":[]}));
     }
     let client = state.client()?;
-    tauri::async_runtime::spawn_blocking(move || client.command(request))
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "android")]
+        if request["type"] == "discover" {
+            let platform = _app.state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>();
+            return platform.with_discovery(|| client.command(request));
+        }
+        client.command(request)
+    })
         .await
         .map_err(|error| error.to_string())?
 }
