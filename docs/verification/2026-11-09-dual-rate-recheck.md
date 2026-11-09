@@ -320,3 +320,48 @@ The local evidence is
 `f31c1a0fd3d3b866558591a1befbd2e67db19a3d4333c906bb87f67f29470254`.
 Other acquisition and lease paths, physical controller-to-preview and
 controller-to-vJoy timing, and real simulator confirmation remain open.
+
+## Visible inspector during native dual-rate input
+
+The running Windows Cockpit displayed the DCS airborne value in Debug
+during 4,799.97 ms of overlapping 1 kHz and 125 Hz debug input. The fixture
+confirmed the row was in the WebView viewport, then sent 17 alternating
+UDP updates, waiting 100 ms after each observed render opportunity before
+sending the next. It matched all 17 values in packet order. A DOM mutation
+observer and the next animation frame recorded timestamps in the WebView.
+The host clock bracket contributed ±0.11 ms uncertainty, included in the
+upper bounds below. All measurements were within the dual-rate window.
+
+| Segment | Samples | Upper-bound p50 / p95 / p99 |
+| --- | ---: | ---: |
+| Authored UDP submission to visible inspector DOM | 17 | 19.85 / 22.70 / 22.70 ms |
+| Authored UDP submission to next inspector render opportunity | 17 | 22.55 / 32.29 / 32.29 ms |
+| 1 kHz native offer to vJoy Raw Input receipt | 4,801 | 3.70 / 7.65 / 10.25 ms |
+| 125 Hz native offer to vJoy Raw Input receipt | 601 | 3.53 / 8.13 / 10.65 ms |
+
+One native inspector observation scoped all 164 reads of the selected
+row. Both panels painted during the overlap and the fast MCP subscriber
+advanced during the burst. The fixture recorded 945 fast updates and
+retirement at Stop. The Windows receiver matched every offered edge and
+both Stop releases, at 33.30 ms after submission. The two pending-frame
+peaks were 11 and 10, and the vJoy slot returned to free. One debug
+control and one panel control reached the private DCS BIOS command
+receiver in order during the overlap. The run had zero timing budget
+misses and zero cleanup errors.
+
+Run the existing native fixture with the extended-rate flags above,
+`OSG_DCS_INSPECTOR_PRESENTATION=1` and `OSG_DCS_COMMANDS_NATIVE=1`.
+The native fixture passed with Node coverage enabled. All four changed
+test modules exceeded 71% for lines, branches and functions. The inspector
+probe measured 97.12% lines, 88.89% branches and 100% functions. The focused
+dual-rate trace decoder test and syntax checks passed.
+
+The Windows dev executable at `f993800a` has SHA-256
+`69f274fa6795682b90f34604b0c1c91bebb3b8893c08289a69ffa9ccf5a4ab81`.
+The receiver has SHA-256
+`13146c17b591fc5d8d6acb2fb29163235bee726af57a154477a706cc5bd1ba0a`.
+The trace is `.research/dcs-physics-native/1794213529018/evidence.json`,
+SHA-256 `f52c21e03f3010aa4d184302bfa15f7f4a1a0b53c9d7e94a848e5da6ec238ca4`.
+The workload used authored telemetry, debug sources and loopback panels.
+Display scanout, physical controller motion, LAN presentation and
+simulator-confirmed commands remain separate acceptance.

@@ -6,7 +6,7 @@ const durationMs = extendedNativeRates ? 4800 : 192;
 
 export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst}) {
   const milliseconds = (value) => Number(BigInt(value)-probeStart)/1e6;
-  return async function run(owner,setAirborne) {
+  return async function run(owner,setAirborne,showAirborne) {
     const offsets=await paintOffsets(), startNs=process.hrtime.bigint()+150_000_000n;
     const request={command:'qualification_debug_burst',owner,nodes:lanes.map(lane=>lane.nodeId),startNs:String(startNs),durationMs};
     const invoke=cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify(request)}})`)
@@ -14,12 +14,16 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
         assert.equal(reply.ok,true,`qualification_debug_burst: ${reply.error}`);
         return reply.state.qualificationBurst;
       });
-    const [rows,,mcpSamples,canvases,dcsCommands]=await Promise.all([invoke,
-      (async()=>{await delay(Number(startNs-process.hrtime.bigint())/1e6+10);setAirborne(true);})(),
+    const settled=await Promise.allSettled([invoke,
+      (async()=>{await delay(Number(startNs-process.hrtime.bigint())/1e6+10);return showAirborne();})(),
       observation.samplePorts([{portId:'button-1',value:true},{portId:'button-2',value:true}]).then(samples=>{
         observation.drainFast();
         return samples;
       }),litCanvases(offsets),commandBurst?.(startNs)]);
+    const [rows,inspectorPresentation,mcpSamples,canvases,dcsCommands]=settled.map(result=>{
+      if(result.status==='rejected')throw result.reason;
+      return result.value;
+    });
     if(extendedNativeRates)assert.ok(observation.fastUpdates()>0,'The fast MCP reader must progress under both rates');
     assert.equal(rows.length,lanes.length);
     const submissions=rows.map((lane,index)=>{
@@ -35,6 +39,12 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
     const overlapStart=Math.max(...submissions.map(rows=>rows[0].offerAtMs));
     const overlapEnd=Math.min(...submissions.map(rows=>rows.at(-1).offerAtMs));
     assert.ok(overlapEnd-overlapStart>=durationMs*0.94,'Both native source schedules must overlap');
+    if(inspectorPresentation){
+      const probeMs=Number(probeStart)/1e6;
+      assert.ok(inspectorPresentation.samples[0].submittedMs-probeMs>=overlapStart
+        &&inspectorPresentation.renderedThroughMs-probeMs<=overlapEnd,
+      'Every measured inspector transition must render during the native-rate overlap');
+    }
     for(const panel of canvases)assert.ok(panel.earliestMs>=overlapStart&&panel.latestMs<=overlapEnd,
       `Panel ${panel.panel} must paint during native-rate overlap`);
     for(const packet of dcsCommands?.datagrams??[]){
@@ -57,6 +67,6 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
         dispatchIntervalsMs:summarizeMilliseconds(intervals(dispatch)),
         completionIntervalsMs:summarizeMilliseconds(intervals(admitted))};
     });
-    return {submissions,evidence,mcpSamples,overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases,dcsCommands};
+    return {submissions,evidence,mcpSamples,overlapMs:overlapEnd-overlapStart,overlapStart,overlapEnd,canvases,dcsCommands,inspectorPresentation};
   };
 }

@@ -11,6 +11,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
+import {airborneChannel,withInspectorPresentation} from './dcs-inspector-presentation.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
 import {nativeDcsCommands} from './dcs-native-command-fixture.mjs';
@@ -22,8 +23,9 @@ import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} f
 const panelNode = 'combined-browser-panel';
 const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
-
 export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false, seconds=0}={}) {
+  const inspectorTiming=process.env.OSG_DCS_INSPECTOR_PRESENTATION==='1';
+  if(inspectorTiming)assert.ok(nativeRates&&extendedNativeRates&&!seconds,'Inspector timing requires the extended native dual-rate burst');
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
@@ -190,6 +192,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   const expected=Array.from({length:65},(_,index)=>index%2===0);
   const streamId=randomUUID();
   let sequence=0, closedPreviewAt, stopTrace, previewReads=0, previewOpens=0, previewError;
+  let inspectorSubscription, inspectorReads=0, unscopedInspectorReads=0;
   const previewPending=new Map(), previewActive=new Map(), previewRetired=new Set();
   async function sendDebug(owner,value) {
     const sent=String(++sequence);
@@ -224,7 +227,12 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
         const unsubscribe=browserUrl?'/api/observe/unsubscribe':'/observation_unsubscribe';
         if(![gateway,subscribe,unsubscribe].includes(path))return;
         const body=JSON.parse(params.request.postData);
-        if(path===gateway&&['game_telemetry_inspect','profile_runtime_inspect'].includes((body.request??body).command))previewReads++;
+        const request=body.request??body;
+        if(path===gateway&&['game_telemetry_inspect','profile_runtime_inspect'].includes(request.command))previewReads++;
+        if(path===gateway&&request.command==='game_telemetry_inspect'&&request.gameId==='dcs'&&request.search===airborneChannel){
+          inspectorReads++;
+          if(request.observationId!==inspectorSubscription)unscopedInspectorReads++;
+        }
         const browserKey=JSON.stringify([body.connectionId,body.requestId]);
         if(path===subscribe&&/^(games\.telemetry$|profiles\.samples\.|controllers\.input\.)/.test(body.topic)){
           previewOpens++;
@@ -260,8 +268,8 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       const inspector=await cdp.evaluate(`document.querySelector('.game-telemetry')?.innerText.slice(0,500)`);
       throw new Error(`Inspector did not open. Topics: ${[...previewActive.values()]}. View: ${inspector}`,{cause:error});
     });
+    inspectorSubscription=[...previewActive].find(([,topic])=>topic==='games.telemetry')[0];
   }
-
   async function withPreviewsClosed(owner,setAirborne) {
     await cdp.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Overview"]').click()`);
     await until(async()=>{
@@ -377,14 +385,17 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       authoredTransitions:nativeSubmissions.length,actualHz};
   }
 
-  async function burst(owner, {setAirborne,setPaused}) {
+  async function burst(owner, {setAirborne,setPaused,submitOwnship}) {
     await page.getByText('Connected · panel active',{exact:true}).waitFor();
     await waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false);
     await startProbe();
     if(browserUrl)return browserBurst(owner,setAirborne);
     if(nativeRates){
       const commandBurst=commands&&(start=>commands.run(owner,start,()=>page.getByRole('button',{name:'probe: press',exact:true}).click()));
-      const result=await createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst})(owner,setAirborne);
+      const run=createNativeRateBurst({cdp,observation,lanes:dualRateLanes,delay,paintOffsets,litCanvases,panels,samples,waitLamp,probeStart,commandBurst});
+      const readScope=()=>({active:previewActive.get(inspectorSubscription)==='games.telemetry',inspectorReads,unscopedInspectorReads,previewError});
+      const result=inspectorTiming?await withInspectorPresentation(cdp,submitOwnship,readScope,show=>run(owner,setAirborne,show))
+        :await run(owner,setAirborne,()=>setAirborne(true));
       const {submissions,evidence:nativeRateEvidence,...load}=result;
       dualSubmissions=submissions;
       return {...load,nativeRateEvidence,submissionTimestamp:'source offer'};

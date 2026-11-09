@@ -345,8 +345,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
       if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship);
       const before = (await readers()).fast;
-      const [, burst] = await Promise.all([sleep(1250), dualRateSoak ? null : combined?.burst(owner, {
-        setAirborne,
+      const [, burst] = await Promise.all([sleep(1250), dualRateSoak ? null : combined?.burst(owner, {setAirborne, submitOwnship,
         setPaused(paused) { mode = paused ? 'paused' : 'live'; },
       })]);
       if (burst) evidence.phases.combined = burst;
