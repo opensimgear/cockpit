@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {until} from '../../scripts/reactive/cdp.mjs';
 
 const channel = 'flight.ownship.inAir';
+
+async function sharedDcsEndpoints() {
+  const ports = [5010, 7781];
+  const {stdout} = await promisify(execFile)('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    `$ErrorActionPreference='Stop'; $endpoints=@(Get-NetUDPEndpoint -LocalPort ${ports.join(',')} |
+      Select-Object LocalPort,LocalAddress,OwningProcess); ConvertTo-Json -InputObject $endpoints -Compress`,
+  ], {timeout:5000, windowsHide:true});
+  const endpoints = JSON.parse(stdout);
+  assert.deepEqual(endpoints.map(row => row.LocalPort).sort((a,b) => a-b), ports,
+    'Profile, inspector and panels must share one receive endpoint per DCS source');
+  assert.equal(new Set(endpoints.map(row => row.OwningProcess)).size, 1,
+    'Both endpoints must belong to the same Cockpit host');
+  return endpoints;
+}
 
 // Run the same source, Cockpit observation and browser panel lifecycle through
 // native IPC or browser-dev HTTP. Only the first panel is replaced.
@@ -101,6 +118,7 @@ export async function verifyDcsTransportLifecycle(cdp, panels, submitOwnship) {
     assert.ok(BigInt(replacement.first.revision) >= BigInt(changed.frame.revision));
     const fresh = await waitValue(replacement.id, false, '0');
     const newPanel = await matching(reopening, 0, false);
+    const acquisition = await sharedDcsEndpoints();
     assert.notEqual(newPanel.sessionId, originalPanel.sessionId);
     assert.equal(newPanel.publicationHash, originalPanel.publicationHash);
     const reopenedRows = await lamp(reopening);
@@ -130,7 +148,7 @@ export async function verifyDcsTransportLifecycle(cdp, panels, submitOwnship) {
     await submitOwnship(false);
     await Promise.all([matching(reopening, restored[0].length, false), matching(peer, restored[1].length, false)]);
     return {first, baseline, changed, replacement, fresh, next, originalPanel, panelBaseline, newPanel, peerDelta,
-      firstChange, offlineChange, nextChange, oldScopeRejected:true};
+      firstChange, offlineChange, nextChange, acquisition, oldScopeRejected:true};
   } finally {
     await cdp.evaluate('window.__dcsLifecycle.close(); delete window.__dcsLifecycle');
   }

@@ -374,3 +374,28 @@ Cockpit, enable `OSG_DCS_PHYSICS_NATIVE=1`, `OSG_DCS_COMBINED_MCP=1` and
 Run `node --experimental-test-coverage --test tests/ui/dcs-physics-native.mjs`
 against the isolated dev session with the private DCS seed. The physical
 panel, signed mobile and actual simulator checks remain separate.
+
+### Single DCS receive endpoint per source
+
+The lifecycle fixture also checks the Windows UDP endpoint table while
+the active profile, reopened scoped telemetry reader and two browser
+panels consume the authored game. Native Cockpit and browser-dev each
+owned exactly one DCS-BIOS endpoint on UDP 5010 and one ownship endpoint
+on UDP 7781. Both endpoints belonged to the same process within each run.
+Both runs matched all 220 Raw Input edges and completed cleanup.
+The lifecycle helper reached 100% line, 90% branch and 96% function
+coverage in both runs.
+
+The native regression attempts to acquire the same prepared profile
+reader twice. The first attempt opens the source. The second returns
+the already-acquired error before the transport factory can run again.
+All eight focused acquisition checks, 147 related native tests, 477
+profile-session tests and five frontend timer-guard tests passed. The
+profile-session run had two existing ignores. The instrumented native
+reader reached 78.85% line and 80.00% function coverage, with no LLVM
+branch counters.
+
+| Local trace | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794250759513/evidence.json` | `d07a25e2a162f9bdefacba5b59d227f47de82f4138363c31e7ba8d3334d57255` |
+| `.research/dcs-physics-native/1794250834269/evidence.json` | `85b0680eafe47eb839b82349f6b8809f39edcf64271cb0555f5a606f8808b086` |

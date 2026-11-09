@@ -784,6 +784,10 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
             })
             .unwrap();
         assert_eq!(calls, vec![(42, "acr.exe".to_owned())]);
+        let replay = reader.acquire_with_acr(&games, |_, _| {
+            panic!("An acquired reader must not open a second native source")
+        });
+        assert!(replay.unwrap_err().contains("already acquired"));
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
         assert!(reader.baseline_wait_until(deadline) < deadline,
             "the authored transport has no notification watch and must still be serviced");
