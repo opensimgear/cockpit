@@ -111,3 +111,47 @@ line coverage. The refreshed audit report confirmed exact counts and
 retained the strict 5 ms p95 and 10 ms p99 failure. The local report is
 `.research/c193-reconnect/mixed-qualification-56876/attribution-32104/maintained-analysis.json`,
 SHA-256 `7acff2f745f848dfd350551f64bd60d737c9f0db812acb47f25814b09a4148ea`.
+
+### A press that arrives during the prior dispatch
+
+The worker can take one additional FIFO head while the current job's last
+single-key hold acquisition is in flight. It closes admission at the first
+validated ACK and never waits for the next press. A current, already armed
+press can share the prior receipt write with its own durable intent. Each
+press still has its own source clock, dispatch check and native ACK.
+
+Scheduler cancellation revokes the transferred press even when the producer
+token stays the same. The coordinator checks the permit again after the
+durable intent write. A skipped ACK for a revoked press cannot cancel a new
+press queued after a fresh baseline. The scheduler's replay records the
+single-head transfer in FIFO order.
+
+Both Windows runs used two authenticated WSS sources, the same receiver and
+the same Svelte navigation fixture. The baseline matched 394 marked edges
+and the candidate matched 392, including the first edges. Both runs proved
+clean Stop for both phases.
+
+| Build | Measured phase | Matched | Admission to native p50 / p95 / p99 | Edges overlapping the preceding receipt | Merged acquisitions |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Baseline | Idle | 198 | 4.74 / 11.34 / 14.21 ms | 10 | 44 |
+| Candidate | Idle | 196 | 4.74 / 10.19 / 13.75 ms | 3 | 49 |
+| Baseline | UI load | 196 | 4.82 / 10.59 / 14.73 ms | 13 | 43 |
+| Candidate | UI load | 196 | 4.91 / 10.49 / 11.71 ms | 6 | 49 |
+
+Six candidate merges in the loaded phase joined a press that bound after
+the preceding request issued. The baseline had none. Current intent writes
+still took 4.34 ms p95 at idle and 4.38 ms under load on the candidate.
+The strict timing gate and mixed pointer qualification remain open.
+Physical controller preview and virtual receipt require separate measurements.
+
+The candidate executable SHA-256 is
+`4c8c8944ad450b7e5c0a3372988e68f5413547aef624129fc2880d9b26534e2c`.
+The baseline and receiver hashes are listed above. Local reports and
+externally acknowledged checkpoints are under
+`.research/c193-reconnect/late-press/{baseline-1,candidate-1}/`.
+
+All 209 mapping, 183 mapping-host and 202 desktop-output tests passed
+locally. The desktop-output suite used the bundled Python for its Windows
+child-process check. Changed production modules had at least 87.69% line
+coverage and 77.78% function coverage. The candidate also passed the running
+helper-loss fixture, which recovered the exact held key and verified cleanup.

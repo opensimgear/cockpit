@@ -247,3 +247,5 @@ mod threaded_tests;
 mod focus_tests;
 #[path = "child_tests.rs"]
 mod child_tests;
+#[path = "late_press_tests.rs"]
+mod late_press_tests;

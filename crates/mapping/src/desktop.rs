@@ -13,6 +13,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod dispatch_head;
+pub use dispatch_head::DispatchPermit;
+
 pub const MAX_ACTIONS: usize = 256;
 pub const MAX_TAPS: usize = 32;
 pub const MAX_DELIVERIES: usize = 4096;
@@ -280,6 +283,7 @@ pub enum Command {
         reason: String,
     },
     Drain,
+    DrainOne { operation_id: Counter },
     Stop,
     Fault {
         message: String,
@@ -344,6 +348,11 @@ impl Trace {
                     deliveries.extend(scheduler.deliveries.drain(..));
                     Ok(())
                 }
+                Command::DrainOne { operation_id } => {
+                    let delivery = scheduler.pop_dispatch_head(*operation_id)?;
+                    deliveries.push(delivery);
+                    Ok(())
+                }
                 Command::Stop => {
                     scheduler.stop();
                     Ok(())
@@ -397,6 +406,7 @@ pub struct Scheduler {
     active: bool,
     sequence: u64,
     deliveries: VecDeque<Delivery>,
+    dispatch_head: Option<(String, DispatchPermit)>,
     decisions: VecDeque<Decision>,
     dropped_decisions: u64,
     fault: Option<String>,
@@ -442,6 +452,7 @@ impl Scheduler {
             active: true,
             sequence: 0,
             deliveries: VecDeque::new(),
+            dispatch_head: None,
             decisions: VecDeque::new(),
             dropped_decisions: 0,
             fault: None,
@@ -566,6 +577,7 @@ impl Scheduler {
         Ok(())
     }
     fn cancel(&mut self, id: &str, reason: &str) {
+        self.revoke_dispatch_head(id);
         let old = std::mem::take(self.states.get_mut(id).unwrap());
         // Revocation fences work that was produced but has not left preview yet.
         // Preserve contiguous channel identities while making it cleanup only.

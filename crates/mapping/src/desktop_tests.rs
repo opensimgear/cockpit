@@ -44,6 +44,28 @@ fn accept(s: &mut Scheduler, value: bool, at: u64, baseline: bool) {
 }
 
 #[test]
+fn dispatch_head_requires_exact_identity_and_records_its_fifo_position() {
+    let mut scheduler = scheduler(Action::KeyHold { key: Key(4) });
+    accept(&mut scheduler, false, 0, true);
+    let initial = scheduler.drain();
+    accept(&mut scheduler, true, 1, false);
+    let head = scheduler.pending_deliveries().next().unwrap().clone();
+    accept(&mut scheduler, false, 2, false);
+    let tail_id = scheduler.pending_deliveries().last().unwrap().operation_id;
+    let trace_before = scheduler.trace();
+    assert!(scheduler.take_dispatch_head(tail_id).is_err());
+    assert_eq!(scheduler.trace(), trace_before);
+    let (transferred, permit) = scheduler.take_dispatch_head(head.operation_id).unwrap();
+    assert_eq!(transferred, head);
+    assert!(permit.valid());
+    scheduler.cancel_action("action", "fresh baseline").unwrap();
+    assert!(!permit.valid());
+    let tail = scheduler.drain();
+    assert_eq!(scheduler.trace().replay().unwrap().deliveries,
+        initial.into_iter().chain([head]).chain(tail).collect::<Vec<_>>());
+}
+
+#[test]
 fn physical_keys_reject_text_media_pause_and_unknown_usages() {
     for usage in [4, 0x1d, 0x47, 0x49, 0x65, 0xe0, 0xe7] {
         Key(usage).validate().unwrap();

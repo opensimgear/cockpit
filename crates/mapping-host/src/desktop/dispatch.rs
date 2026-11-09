@@ -1,6 +1,6 @@
 use super::{neutral, Desktop, Outcome, Phase, Scope, Token, OUTCOME_LIMIT};
 use osg_mapping::desktop::{Delivery, Intent};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 fn compact_owner_set(tokens: &BTreeMap<String, Token>, scope: Option<&Scope>) -> bool {
     // Empty native owners still occupy journal space. Leave room for the
@@ -41,10 +41,15 @@ impl Desktop {
 
     pub(super) fn flush_dispatch(&mut self, now: u64) -> Result<(), String> {
         loop {
-            // Applying a completion can cancel queued taps. Never admit the next
-            // ordered batch until those ACK-dependent decisions have run.
+            // Apply ACK-dependent cancellation before dispatching another
+            // batch. Only the worker's terminal KeyHold window can take one
+            // additional head, and that window retains its own ACK barrier.
             self.collect_completion()?;
-            if self.output.busy() { return Ok(()); }
+            if self.output.busy() {
+                return self.output.enqueue_late_press(
+                    &mut self.scheduler, now, self.audit_shadow, self.shadow_admission,
+                );
+            }
             let pending = self.scheduler.drain();
             let prearm = if pending.is_empty() {
                 // Yield to the profile worker between neutral preparations so
@@ -56,14 +61,10 @@ impl Desktop {
                     })
             } else { None };
             if pending.is_empty() && prearm.is_none() { return Ok(()); }
-            let key_holds = if pending.len() > 1 {
-                pending.iter().filter(|delivery| {
-                    matches!(self.scheduler.action(&delivery.action_id),
-                        Some(osg_mapping::desktop::Action::KeyHold { .. }))
-                }).map(|delivery| delivery.operation_id).collect()
-            } else {
-                BTreeSet::new()
-            };
+            let key_holds = pending.iter().filter(|delivery| {
+                matches!(self.scheduler.action(&delivery.action_id),
+                    Some(osg_mapping::desktop::Action::KeyHold { .. }))
+            }).map(|delivery| delivery.operation_id).collect();
             self.output.dispatch_prepared(pending, prearm, now, self.audit_shadow, self.shadow_admission, key_holds)?;
             // Recording completes inline; the native owner completes by wake.
             if self.output.asynchronous() { return Ok(()); }
@@ -71,11 +72,13 @@ impl Desktop {
     }
 
     pub(super) fn collect_completion(&mut self) -> Result<(), String> {
-        let Some(completion) = self.output.take_completion() else { return Ok(()); };
-        for (delivery, reason) in completion.dropped { self.audit_drop_for(&delivery, reason, completion.audit_shadow); }
-        let mut cancelled = BTreeSet::new();
-        for (delivery, acknowledgement) in completion.outcomes {
-            self.record_outcome(delivery, acknowledgement, &mut cancelled)?;
+        let Some(mut completion) = self.output.take_completion() else { return Ok(()); };
+        for (delivery, reason) in std::mem::take(&mut completion.dropped) {
+            self.audit_drop_for(&delivery, reason, completion.audit_shadow);
+        }
+        for (delivery, acknowledgement) in std::mem::take(&mut completion.outcomes) {
+            let cancellation_current = completion.cancellation_current(delivery.operation_id);
+            self.record_outcome(delivery, acknowledgement, cancellation_current)?;
         }
         if let Some(error) = completion.error {
             self.last_error = Some(error.clone());
@@ -88,7 +91,7 @@ impl Desktop {
         &mut self,
         delivery: Delivery,
         acknowledgement: osg_desktop_output::protocol::Ack,
-        cancelled: &mut BTreeSet<String>,
+        cancellation_current: bool,
     ) -> Result<(), String> {
         if acknowledgement.collision || acknowledgement.skipped && !acknowledgement.scope_rejected {
             if self.diagnostics.len() == 32 {
@@ -101,6 +104,7 @@ impl Desktop {
             });
         }
         if acknowledgement.skipped && !acknowledgement.scope_rejected
+            && cancellation_current
             && self.scheduler.active()
             && self.output.current(&delivery)
             && matches!(&delivery.intent, Intent::Held { controls } if !controls.is_empty())
@@ -109,7 +113,6 @@ impl Desktop {
                 &delivery.action_id,
                 "Submission deadline expired; queued taps cancelled.",
             )?;
-            cancelled.insert(delivery.action_id.clone());
         }
         if self.outcomes.len() == OUTCOME_LIMIT {
             self.outcomes.pop_front();

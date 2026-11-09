@@ -37,7 +37,10 @@ impl Owner {
         // A panic may have interrupted execute before it returned a completion.
         if state.busy && state.completion.is_none() {
             state.job = None;
-            state.completion = Some(Completion { audit_shadow: state.busy_shadow, outcomes: vec![], dropped: vec![], error: Some(error) });
+            let mut completion = Completion::new(state.busy_shadow);
+            completion.error = Some(error);
+            state.late_press.retire(&mut completion);
+            state.completion = Some(completion);
         }
         state.snapshot.uncertain = true;
         state.snapshot.cleanup_complete = false;
@@ -103,11 +106,16 @@ impl Owner {
                     self.armed_admission = job.admission;
                 }
                 let mut completion = execute::execute(&mut self.output, &self.shared, &mut self.armed, &self.tap_durations, job);
-                self.shared.lock().executing_admission = None;
-                // A concurrent admission failure also terminates this ticket.
-                if completion.error.is_none() { completion.error = self.shared.lock().fault.clone(); }
-                let error = completion.error.clone();
-                self.shared.lock().completion = Some(completion);
+                let error = {
+                    let mut state = self.shared.lock();
+                    state.executing_admission = None;
+                    state.late_press.retire(&mut completion);
+                    // A concurrent admission failure also terminates this ticket.
+                    if completion.error.is_none() { completion.error = state.fault.clone(); }
+                    let error = completion.error.clone();
+                    state.completion = Some(completion);
+                    error
+                };
                 if let Some(error) = error { self.fail(error); }
             }
             Work::Stop(reply) => {
@@ -116,7 +124,10 @@ impl Owner {
                 // Complete an accepted but unstarted data ticket without replay.
                 let mut state = self.shared.lock();
                 if let Some(job) = state.job.take() {
-                    state.completion = Some(Completion { audit_shadow: job.audit_shadow, outcomes: vec![], dropped: job.deliveries.into_iter().map(|d| (d, 4)).collect(), error: state.fault.clone() });
+                    let mut completion = Completion::new(job.audit_shadow);
+                    completion.dropped = job.deliveries.into_iter().map(|delivery| (delivery, 4)).collect();
+                    completion.error = state.fault.clone();
+                    state.completion = Some(completion);
                 }
                 drop(state);
                 let result = self.output.stop_all().and_then(|_| self.output.retire_stopped_journal());

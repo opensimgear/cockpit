@@ -1,4 +1,4 @@
-use super::{Completion, Job, Shared};
+use super::{Completion, Job, Shared, late_press};
 use osg_desktop_output::{protocol::{Command, Request, ScopeAdmission, FRAME_LIMIT, MAX_BATCH}, Coordinator};
 use osg_mapping::{desktop::{Delivery, Intent}, engine::{Counter, typed::Token}};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -52,9 +52,24 @@ fn record(completion: &mut Completion, cancelled: &mut BTreeSet<String>, deliver
     }
     completion.outcomes.push((delivery, ack));
 }
+
+fn submit_late_press(
+    output: &mut Coordinator, shared: &Shared, job: &Job, armed: &mut BTreeMap<String, Token>,
+    cancelled: &BTreeSet<String>, press: &late_press::Press, rejected: bool,
+) -> Result<Option<osg_desktop_output::protocol::Ack>, String> {
+    let delivery = &press.delivery;
+    if rejected || !press.valid() || reason(shared, job, armed, cancelled, delivery).is_some() {
+        return Ok(None);
+    }
+    if armed.get(&delivery.action_id) != Some(&delivery.producer)
+        && !arm(output, armed, delivery.action_id.clone(), delivery.producer.clone())? {
+        return Ok(None);
+    }
+    Ok(Some(output.submit(delivery.clone(), press.source_now())?))
+}
 pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTreeMap<String, Token>, tap_durations: &BTreeMap<String, Counter>, mut job: Job) -> Completion {
     output.set_admission(job.admission);
-    let mut completion = Completion { audit_shadow: job.audit_shadow, outcomes: vec![], dropped: vec![], error: None };
+    let mut completion = Completion::new(job.audit_shadow);
     if let Some((id, producer)) = job.prearm {
         let permitted = Shared::can_arm(&shared.lock(), &id, &producer, job.admission);
         if permitted && armed.get(&id) != Some(&producer) {
@@ -120,7 +135,23 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                             && Coordinator::can_share_key_journal(&delivery, next)
                             && armed.get(&next.action_id) == Some(&next.producer)
                     });
-                let (ack, second) = if paired {
+                let accepts_late = pending.is_empty() && guard.is_none()
+                    && job.key_holds.contains(&delivery.operation_id) && late_press::single_key_press(&delivery);
+                if accepts_late { shared.open_late_press(&job, &delivery); }
+                let mut late = None;
+                let (ack, second) = if accepts_late {
+                    output.submit_key_pair(delivery.clone(), source_now(&job), |ack| {
+                        late = shared.take_late_press();
+                        let press = late.as_ref()?;
+                        let next = &press.delivery;
+                        if ack.skipped || ack.scope_rejected || !press.valid()
+                            || armed.get(&next.action_id) != Some(&next.producer)
+                            || reason(shared, &job, armed, &cancelled, next).is_some() {
+                            return None;
+                        }
+                        Some((next.clone(), press.source_now()))
+                    })?
+                } else if paired {
                     output.submit_key_pair(delivery.clone(), source_now(&job), |ack| {
                         let next = pending.front()?;
                         if ack.skipped || ack.scope_rejected
@@ -136,7 +167,17 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                 };
                 rejected |= ack.scope_rejected;
                 record(&mut completion, &mut cancelled, delivery, ack);
-                if let Some(ack) = second? {
+                if let Some(press) = late {
+                    let acknowledgement = match second? {
+                        Some(ack) => Some(ack),
+                        None => submit_late_press(output, shared, &job, armed, &cancelled, &press, rejected)?,
+                    };
+                    if let Some(ack) = acknowledgement {
+                        record(&mut completion, &mut cancelled, press.delivery, ack);
+                    } else {
+                        completion.dropped.push((press.delivery, 4));
+                    }
+                } else if let Some(ack) = second? {
                     rejected |= ack.scope_rejected;
                     let delivery = pending.pop_front().expect("the paired delivery is still queued");
                     record(&mut completion, &mut cancelled, delivery, ack);

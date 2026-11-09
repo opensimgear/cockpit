@@ -1,6 +1,6 @@
 //! A single ordered owner of desktop IPC. Controller calls only touch memory.
 use osg_desktop_output::{protocol::{Ack, Command, Request, ScopeAdmission, ScopeReceipt}, Coordinator, Scope, Snapshot};
-use osg_mapping::{desktop::Delivery, engine::{Counter, RunToken, typed::Token}};
+use osg_mapping::{desktop::{Delivery, DispatchPermit}, engine::{Counter, RunToken, typed::Token}};
 use std::{collections::BTreeMap, sync::{Arc, Condvar, Mutex, MutexGuard, mpsc}, time::Instant};
 
 #[path = "output/execute.rs"]
@@ -9,6 +9,8 @@ mod execute;
 mod worker;
 #[path = "output/focus.rs"]
 mod focus;
+#[path = "output/late_press.rs"]
+mod late_press;
 pub(super) use focus::{ScopeNotice, ScopeRevoker};
 use worker::Owner;
 #[cfg(test)]
@@ -36,6 +38,19 @@ pub(super) struct Completion {
     pub outcomes: Vec<(Delivery, Ack)>,
     pub dropped: Vec<(Delivery, u64)>,
     pub error: Option<String>,
+    late_permit: Option<(Counter, DispatchPermit)>,
+}
+
+impl Completion {
+    fn new(audit_shadow: u64) -> Self {
+        Self { audit_shadow, outcomes: vec![], dropped: vec![], error: None, late_permit: None }
+    }
+
+    pub(super) fn cancellation_current(&self, operation: Counter) -> bool {
+        // A skipped ACK can arrive after a same-token fresh baseline revoked
+        // the old press and queued a new one. Only the old press was cancelled.
+        self.late_permit.as_ref().is_none_or(|(id, permit)| *id != operation || permit.valid())
+    }
 }
 struct Job {
     key_holds: std::collections::BTreeSet<Counter>,
@@ -70,6 +85,7 @@ struct State {
     control_active: bool,
     completion: Option<Completion>,
     job: Option<Job>,
+    late_press: late_press::Slot,
     pause: Option<RunToken>,
     stop: Option<Reply>,
     setup: Option<Setup>,
@@ -115,6 +131,7 @@ impl Shared {
                 && state.epoch == state.executing_epoch && focus::permitted(&state)
                 && child::permitted(&state, request.admission)
                 && Self::current(&state, delivery)
+                && state.late_press.permitted(delivery)
         };
         match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => valid(delivery),
@@ -141,6 +158,7 @@ impl Output {
                 epoch: 0, executing_epoch: 0, executing_admission: None, child_run: None,
                 child_scope: None, activation_scope: None, acknowledged_child: None, fault: None, closed: false, shutdown: false,
                 busy: false, busy_shadow: 0, control_active: false, completion: None, job: None,
+                late_press: late_press::Slot::Closed,
                 pause: None, stop: None, setup: None, authorization: None, authorization_id: 0,
                 scope_watch: None,
             }),
