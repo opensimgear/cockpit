@@ -64,6 +64,24 @@ class NativeWorkloadContractTests(unittest.TestCase):
                 report["observations"] = [{**move, field: value}]
                 self.assertIsNone(workload.pointer_load_proof(report, status, 0, 0))
 
+    def test_pointer_proof_counts_both_participants_of_one_confirmed_submission(self):
+        batch = {"dx": -1, "dy": -1, "operationIds": ["11", "12"]}
+        outcomes = [{"delivery": {"operationId": operation, "actionId": action, "intent": {"kind": "pointer"}},
+                     "acknowledgement": {"ok": True, "uncertain": False, "skipped": False, "attempted": count,
+                                         "confirmed": count, "sequence": "5", "pointerBatch": batch}}
+                    for operation, action, count in (("11", "pointer-a", 1), ("12", "pointer-b", 0))]
+        status = {"runtime": {"outcomes": outcomes}}
+        report = {"focusAfter": "10", "observations": [
+            {"message": 512, "injectedMarker": True, "foregroundWindow": "10", "captureWindow": "0"}]}
+        counts = workload.pointer_load_proof(report, status, 0, 10)["recentNativePointerCounts"]
+        self.assertEqual([row["successfulSubmissions"] for row in counts.values()], [1, 1])
+        self.assertEqual([row["nativeEventsConfirmed"] for row in counts.values()], [1, 0])
+        outcomes[1]["acknowledgement"]["sequence"] = "6"
+        with self.assertRaises(AssertionError):
+            workload.pointer_load_proof(report, status, 0, 10)
+        del outcomes[0]
+        self.assertIsNone(workload.pointer_load_proof(report, status, 0, 10))
+
     def test_neutral_owner_check_distinguishes_renewal_from_an_inflight_input(self):
         owners = [{"actionId": action, "controls": []}
             for action in ("key-a", "key-b", "pointer-a", "pointer-b")]
@@ -85,6 +103,28 @@ class NativeWorkloadContractTests(unittest.TestCase):
             self.assertFalse(workload.receiver_injection_observed([path]))
             path.write_text(json.dumps({"observations": [{"injectedMarker": True, "message": 256}]}))
             self.assertTrue(workload.receiver_injection_observed([path]))
+
+    def test_key_settlement_waits_through_a_partial_receiver_write(self):
+        edge = {"injectedMarker": True, "message": 256, "scanCode": 30, "extended": 0}
+        record = {"scanCode": 30, "actionId": "key-a", "keyChanges": [], "finalPressed": False}
+        backend = {"uncertain": False, "error": None, "inFlight": None, "possibleHeld": [], "held": [],
+                   "owners": [{"actionId": "key-a", "controls": []}]}
+        status = {"runtime": {"error": None, "scopeError": None, "state": "active", "waitingNeutral": [],
+                              "backend": backend}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receiver.json"
+            path.write_text('{"identity":', encoding="utf-8")
+
+            def wait(predicate, _message, **_kwargs):
+                self.assertIsNone(predicate())
+                path.write_text(json.dumps({"identity": {"pid": 42}, "observations": [edge]}), encoding="utf-8")
+                return predicate()
+
+            with (patch.object(workload.mapping, "wait_for", side_effect=wait),
+                  patch.object(workload.native, "desktop_status", return_value=status),
+                  patch.object(workload.native, "compact_desktop", return_value={})):
+                result = workload.settle_keys(object(), path, [record], {"30": [edge]})
+        self.assertEqual(result["keyCounts"][0]["warmupEdgesExcluded"], 1)
 
     def test_supported_publication_and_signed_waveform_preserve_exact_neutral(self):
         publication = workload.compiled_publication()

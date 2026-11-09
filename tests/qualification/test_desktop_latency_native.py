@@ -2,10 +2,13 @@
 import copy
 import importlib.util
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('desktop_latency_workload', Path(__file__).resolve().parents[2] / 'scripts/desktop-latency-native.py')
+scripts = Path(__file__).resolve().parents[2] / 'scripts'
+sys.path.insert(0, str(scripts))
+spec = importlib.util.spec_from_file_location('desktop_latency_workload', scripts / 'desktop-latency-native.py')
 latency = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(latency)
 
@@ -106,18 +109,19 @@ class WorkloadTests(unittest.TestCase):
         status = dict(enabled=True, runtime=dict(error=None, scopeError=None, state='active', waitingNeutral=[], backend=dict(
             error=None, uncertain=False, inFlight=None, possibleHeld=[], held=[], owners=[dict(actionId='key-a', controls=[])])))
         observations = [dict(injectedMarker=True, message=message, scanCode=30, extended=0) for message in (256, 257)]
+        report = {'identity': {'pid': 42}, 'observations': observations}
         def once(predicate, *_args, **_kwargs): return predicate()
         with patch.object(latency.native, 'desktop_status', return_value=status), patch.object(latency.mapping, 'wait_for', once):
-            with patch.object(latency.native, 'receiver', return_value={'observations': observations[:-1]}):
+            with patch.object(latency.native, 'receiver', return_value={**report, 'observations': observations[:-1]}):
                 self.assertIsNone(latency.settle_keys(None, None, records))
             held = copy.deepcopy(status)
             held['runtime']['backend']['owners'][0]['controls'] = [dict(kind='key', key=4)]
-            with patch.object(latency.native, 'receiver', return_value={'observations': observations}), \
+            with patch.object(latency.native, 'receiver', return_value=report), \
                  patch.object(latency.native, 'desktop_status', return_value=held):
                 self.assertIsNone(latency.settle_keys(None, None, records))
-            with patch.object(latency.native, 'receiver', return_value={'observations': observations + observations[:1]}):
+            with patch.object(latency.native, 'receiver', return_value={**report, 'observations': observations + observations[:1]}):
                 with self.assertRaises(AssertionError): latency.settle_keys(None, None, records)
-            with patch.object(latency.native, 'receiver', return_value={'observations': observations}):
+            with patch.object(latency.native, 'receiver', return_value=report):
                 self.assertIsNotNone(latency.settle_keys(None, None, records))
 
     def test_exact_warmup_prefix_is_excluded_and_must_still_match(self):
@@ -130,7 +134,7 @@ class WorkloadTests(unittest.TestCase):
         prefix = {'30': events[:2]}
         with patch.object(latency.native, 'desktop_status', return_value=status), \
              patch.object(latency.mapping, 'wait_for', side_effect=lambda predicate, *_args, **_kwargs: predicate()):
-            with patch.object(latency.native, 'receiver', return_value={'observations': events}):
+            with patch.object(latency.native, 'receiver', return_value={'identity': {'pid': 42}, 'observations': events}):
                 value = latency.settle_keys(None, None, records, receiver_prefix=prefix)
                 self.assertEqual(value['keyCounts'], [dict(actionId='key-a', warmupEdgesExcluded=2,
                     expectedChangedEdges=2, observedChangedEdges=2)])

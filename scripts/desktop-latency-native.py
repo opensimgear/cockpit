@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+from desktop_latency_pointer import pointer_load_proof
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("latency_ownership_helpers", ROOT / "scripts/desktop-ownership-native.py")
@@ -201,36 +202,11 @@ def key_edges(report, scan):
         and event["message"] in (256, 257) and event["scanCode"] == scan and event["extended"] == 0]
 
 
-def pointer_load_proof(report, status, observation_start, operation_baseline):
-    operation_baseline = int(operation_baseline)
-    moves = [event for event in report.get("observations", [])[observation_start:]
-        if event.get("injectedMarker") is True and event["message"] == 512
-        and event["foregroundWindow"] == report["focusAfter"] and event["captureWindow"] == "0"]
-    receipts = {action: [] for action in ("pointer-a", "pointer-b")}
-    for outcome in status["runtime"].get("outcomes", []):
-        delivery, ack = outcome["delivery"], outcome["acknowledgement"]
-        assert decimal(delivery["operationId"]), delivery
-        if (int(delivery["operationId"]) <= operation_baseline or delivery["actionId"] not in receipts
-                or delivery["intent"]["kind"] != "pointer" or ack["attempted"] == 0):
-            continue
-        assert ack["ok"] and not ack["uncertain"] and not ack["skipped"] and ack["confirmed"] == ack["attempted"], outcome
-        receipts[delivery["actionId"]].append(outcome)
-    if not moves or not all(receipts.values()):
-        return None
-    return dict(receiverMarkedMouseMoves=len(moves), receiverObservationStart=observation_start,
-        operationBaseline=str(operation_baseline),
-        countBoundary="Native counts cover the bounded recent outcome buffer after warmup, not the whole phase; complete native submissions remain in the audit trace.",
-        recentNativePointerCounts={action: dict(successfulSubmissions=len(values),
-            nativeEventsAttempted=sum(value["acknowledgement"]["attempted"] for value in values),
-            nativeEventsConfirmed=sum(value["acknowledgement"]["confirmed"] for value in values)) for action, values in receipts.items()},
-        recentNativePointerReceipts=receipts)
-
-
 def settle_keys(service, receiver_path, results, receiver_prefix=None, pointer_baseline=None):
     receiver_prefix = receiver_prefix or {}
     def ready():
         report = native.receiver(receiver_path)
-        if "observations" not in report:  # The live snapshot may be between truncate and write.
+        if "identity" not in report:  # The shared reader returns empty observations for a partial write.
             return None
         assert len(report.get("observations", [])) < 4096, "Receiver observation capacity reached"
         status = native.desktop_status(service)
@@ -430,9 +406,14 @@ def main():
             assert not errors, errors
             phase["sources"] = results
             assert all(record["expectedImmediateKeyChanges"] >= 40 for record in results), "Insufficient immediate key samples"
-            phase["settled"] = settle_keys(service, receiver_path, results,
-                receiver_prefix=phase["warmup"]["receiverKeyPrefix"],
-                pointer_baseline=None if args.keys_only else phase["warmup"]["pointerBaseline"])
+            try:
+                phase["settled"] = settle_keys(service, receiver_path, results,
+                    receiver_prefix=phase["warmup"]["receiverKeyPrefix"],
+                    pointer_baseline=None if args.keys_only else phase["warmup"]["pointerBaseline"])
+            except AssertionError:
+                phase["unsettledReceiver"] = native.receiver(receiver_path)
+                phase["unsettledDesktop"] = native.desktop_status(service)
+                raise
             phase["endMarker"] = marker(service, 2 + index * 2)
             phase["uiAfter"] = control(service, "latency_ui_load", enabled=False, profileName=saved["name"])
             if index == 1:

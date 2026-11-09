@@ -107,8 +107,8 @@ The first run missed the strict 10 ms Profiles p99 budget. Request 294
 joined two key edges and spent 14.030 ms in its durable intent write
 before enqueue. The edges took 17.398 and 17.518 ms end to end. The
 same workload passed on the second run, with no slow write of that
-size. Mixed delivery and cleanup pass. Repeatable mixed-load timing
-remains open in #193, and physical input timing remains in #199.
+size. Mixed delivery and cleanup passed. The repeatability check below
+uses the committed build. Physical input timing remains in #199.
 
 All 31 desktop audit and fixture contract tests passed. Local audit,
 receiver and ownership evidence is under
@@ -138,11 +138,52 @@ after warm-up, at a requested 64 writes per second.
 
 The slowest replay write spent 92% of its time in `commit()`. The trace
 measures wall time, so identifying a flush, checkpoint or scheduling delay
-would require lower-level evidence. The guarded mixed-input test still
-needs an unobstructed foreground to trace a recurrence under the original
-workload. [SQLite WAL performance notes](https://sqlite.org/wal.html#performance_considerations)
+would require lower-level evidence. The later guarded runs used the original
+mixed-input workload on an unobstructed desktop. [SQLite WAL performance notes](https://sqlite.org/wal.html#performance_considerations)
 
 The private build, replay CSVs, source and neutral audit are in
 `.research/c193-reconnect/dcs-native-stage-timing/desktop-write-stages/`.
 The private dev executable SHA-256 is
 `4ddd71b8d6c29d2344324418a934aa8091ffb4d5ba753a20d2ee05b2c80b0737`.
+
+### Repeat mixed-load timing on the committed Windows build
+
+Two stock dev runs at `52927823` passed the strict keyboard budget under
+the original two-peer WSS workload. Each peer offered 384–386 pointer
+updates in each six-second phase. The receiver matched every offered key
+edge and marked pointer movement under the exact application scope. The
+audit matched all 774 measured key edges and 16 separate warm-up edges to
+successful Windows `SendInput` returns. Each phase peaked at two queued
+native frames and one outstanding reservation per audit transport.
+
+| Run and phase | Measured key edges | Marked pointer moves | Admission to `SendInput` return p50 / p95 / p99 |
+| --- | ---: | ---: | ---: |
+| 1, idle | 194 | 190 | 2.562 / 3.596 / 3.886 ms |
+| 1, Profiles | 194 | 101 | 3.291 / 4.156 / 5.198 ms |
+| 2, idle | 194 | 97 | 3.339 / 4.581 / 5.365 ms |
+| 2, Profiles | 192 | 96 | 3.424 / 4.439 / 5.439 ms |
+
+The earlier retry read a partially written receiver report as empty.
+The fixture now waits for a complete report. Another retry recorded all
+expected keys and 283 exact pointer moves during Profiles, but its proof
+required a separate native event for each axis. The fixture now matches
+each participant to the first operation of its acknowledged batch. Both
+axes receive delivery credit while the native event is counted once.
+All 46 focused audit and fixture tests passed. The pointer proof reached
+94% line coverage, and the incomplete receiver report branch was exercised.
+
+A separate instrumented idle attempt correlated 169 durable writes. Total
+write p99 was 1.219 ms and the largest write was 2.361 ms. The prior
+14.030 ms write remains recorded above as an observed outlier. These
+desktop timings start at native WSS admission. Physical controller and
+display timing remain in #199.
+
+Local artifacts are in `.research/c193-reconnect/required-journal-leaf/`.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `mixed-batch-fixed-56680/evidence.json` | `bae44f3f788064d96f99e1633c95cf6a38abd8b7cacdec457f2ec867e5daf157` |
+| `mixed-batch-fixed-56680/analysis.json` | `3ee1ad31c7d8d016dfe9bd4e137648ee0147678c8cd8187a4a23fa490517d1e5` |
+| `mixed-batch-repeat-42684/evidence.json` | `e90955ec2fa7274edb7f97bc64507fc7321073ea70f84f6b5fba3848a23c41a5` |
+| `mixed-batch-repeat-42684/analysis.json` | `3d909e9fcc7798829225e739634b934db77736af488448e76437ad696bb7dac6` |
+| `mixed-stages-fixed-38232/journal-write-stages.json` | `7b8f1ad3aecf2e2f71aaff2fce952f6ffb92a9cbe744bc2b90b015df23dabe84` |
