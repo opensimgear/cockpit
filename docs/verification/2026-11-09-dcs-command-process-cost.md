@@ -71,3 +71,18 @@ The capture mark is where Cockpit stamped the authored debug input or captured t
 All 96 receipts matched. In each trial, the independent vJoy load offered 4,801 and 601 frames at measured rates of about 1,000 and 125 Hz over 4.8 seconds of overlap. Peak pending frames were 17 and 15 in the first trial and 17 and 11 in the second. The command fixture waited for each receipt before issuing the next command. Both runs recorded zero fixture budget misses, no replay, a free vJoy slot and no cleanup errors. Command lease margins, physical controller acquisition, display presentation and simulator effects require their separate evidence.
 
 The diagnostic executable SHA-256 is `d0b75a798d158ef4c9e769fe5b2b08306d42c35cc30a5ded6104b15dbde57405`. Under `.research/c193-reconnect/dcs-native-stage-timing`, the paired reports `capture-stages-1.json` and `capture-stages-2.json` have SHA-256 `52bac746217678c199623abc9b464f61526bcd73e66d260126f0a4abbdd03bec` and `a1535604b4ea7702825dc046cc947ac84406ec885164834c1d0b3c3c2c0d4c44`. They record per-edge stages and the hashes of the underlying native logs and complete workload evidence.
+
+## Command deadline and telemetry lease margins
+
+The same diagnostic fixture recorded three existing deadline margins from the native admission callback immediately before socket submission. They are the remaining 100 ms command deadline, the decoded owner's freshness deadline, and the freshness deadline of the reader's last delivered snapshot. All three use the same monotonic clock. The analyzer pairs each measurement with the original source observation, action sequence and UDP receipt.
+
+| Trial and source | Commands | Minimum command deadline remaining | Minimum decoder freshness remaining | Minimum reader freshness remaining |
+| --- | ---: | ---: | ---: | ---: |
+| 1, debug controller | 24 | 97.967 ms | 560.149 ms | 553.490 ms |
+| 1, browser panel | 24 | 95.761 ms | 558.026 ms | 558.026 ms |
+| 2, debug controller | 24 | 97.985 ms | 559.746 ms | 559.746 ms |
+| 2, browser panel | 24 | 93.596 ms | 557.292 ms | 557.292 ms |
+
+Both live Windows dev trials retained the dual-rate vJoy workload and matched all 96 commands in order. The analyzer required positive margins for each individual command, a free vJoy slot, zero fixture budget misses and no cleanup errors. Debug capture to UDP callback p95 was 8.30–8.42 ms. Panel capture to UDP callback p95 was 8.43–10.72 ms. Actual simulator effects and physical input and display timing remain in the separate acceptance follow-up.
+
+The diagnostic executable SHA-256 is `55485a40fb4cf0857daea6d3842cf2d84d60d8e825605441ecf93017558e023a`. The paired reports under `.research/c193-reconnect/dcs-native-stage-timing` are `command-lease-stages-1.json` and `command-lease-stages-2.json`, SHA-256 `9c59af5fc6c2822166ff9503b2f0baa9cb827919c037bd5216283173a2e781b4` and `26c5c64304494840a1f7f1fa76430ea1f5b75bea35846779c470055226910624`. They contain the per-command margins and hashes of the native traces and workload evidence.

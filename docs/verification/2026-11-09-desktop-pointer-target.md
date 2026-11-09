@@ -31,3 +31,13 @@ obstruction and cleanup path were exercised locally. Mixed-load mouse
 receipt and UI-load timing require an unobstructed desktop. This is a test
 environment prerequisite for #193 and #198. Physical controller and preview
 acceptance remain in #199.
+
+## Current desktop preflight
+
+A read-only recheck at Cockpit source `5d05deda` confirmed Windows could
+read the cursor. PickerHost PID 17540 owned both the foreground window
+and the pointer target. The hit-tested window was still HWND 2755484,
+covering the 2560×1440 desktop. The preflight stopped the mixed run before
+launch. It submitted no keyboard or pointer input. The record is
+`.research/c193-reconnect/required-journal-leaf/current-desktop-preflight.json`,
+SHA-256 `19fa0e650bf6d9514aa49e3156a6b65396bbad08dbb5b92b93cdbcac3ae5cb6c`.
