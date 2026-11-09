@@ -13,11 +13,26 @@ APP = ROOT / 'apps/companion'
 
 def android_platform(gradle):
     source = gradle.read_text(encoding='utf-8')
+    declarations = list(re.finditer(r'(?m)^[ \t]*compileSdk\b', source))
+    if len(declarations) != 1:
+        raise ValueError('Expected one generated compileSdk declaration')
+    start = declarations[0].start()
     assignment = re.compile(r'(?m)^(?P<indent>[ \t]*)compileSdk[ \t]*=[ \t]*(?P<major>[0-9]+)[ \t]*$')
-    matches = list(assignment.finditer(source))
-    if len(matches) != 1:
-        raise ValueError('Expected one generated integer compileSdk declaration')
-    match = matches[0]
+    configured = re.compile(
+        r'(?m)^(?P<indent>[ \t]*)compileSdk \{\n'
+        r'(?P=indent)    version = release\((?P<major>[0-9]+)\) \{\n'
+        r'(?P=indent)        minorApiLevel = 0\n'
+        r'(?P=indent)    \}\n(?P=indent)\}$'
+    )
+    match = assignment.match(source, start)
+    existing = configured.match(source, start)
+    if existing:
+        major = int(existing['major'])
+        if not 37 <= major <= 99:
+            raise ValueError('Unsupported generated Android API level')
+        return f'platforms;android-{major}.0'
+    if not match:
+        raise ValueError('Unrecognized generated compileSdk declaration')
     major = int(match['major'])
     if not 21 <= major <= 99:
         raise ValueError('Unsupported generated Android API level')

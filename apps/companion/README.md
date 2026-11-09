@@ -61,9 +61,20 @@ Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/prov
 For private device qualification, build with the explicit `mobile-qualification`
 feature and use a test Cockpit host:
 
+```sh
+pnpm --filter @opensimgear/companion android:init
+platform="$(python3 scripts/companion-mobile-build.py android-platform)"
+sdkmanager "$platform"
+pnpm --filter @opensimgear/companion android:build:dev --features mobile-qualification -- --locked
+```
+
+Run these Android commands from the repository root in a POSIX shell.
+The helper keeps Gradle and the installed SDK package on the same API level.
+It can be rerun after a failed or interrupted build.
+
 ```text
-pnpm --filter @opensimgear/companion android:build:dev --features mobile-qualification
-pnpm --filter @opensimgear/companion ios:build:dev --features mobile-qualification
+pnpm --filter @opensimgear/companion ios:init
+pnpm --filter @opensimgear/companion ios:build:dev --features mobile-qualification -- --locked
 ```
 
 The opt-in only applies to debug builds. It requires the platform's protected

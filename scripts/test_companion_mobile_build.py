@@ -27,6 +27,9 @@ class MobileProjects(unittest.TestCase):
         self.assertIn('version = release(37) {\n            minorApiLevel = 0', source)
         self.assertIn('targetSdk = 37', source)
         self.assertIn('minSdk = 29', source)
+        configured = gradle.read_bytes()
+        self.assertEqual(mobile_build.android_platform(gradle), 'platforms;android-37.0')
+        self.assertEqual(gradle.read_bytes(), configured)
 
     def test_older_sdk_keeps_existing_package_name_and_project(self):
         gradle = self.gradle(36)
@@ -35,7 +38,14 @@ class MobileProjects(unittest.TestCase):
         self.assertEqual(gradle.read_bytes(), before)
 
     def test_changed_or_ambiguous_generator_format_fails_without_writing(self):
-        for content in ['android {}', 'compileSdk = 37\ncompileSdk = 38\n', 'compileSdk = unknown', 'compileSdk = 999']:
+        generated = self.gradle(37)
+        mobile_build.android_platform(generated)
+        configured = generated.read_text(encoding='utf-8')
+        for content in [
+            'android {}', 'compileSdk = 37\ncompileSdk = 38\n', 'compileSdk = unknown', 'compileSdk = 999',
+            configured + '\ncompileSdk = 38\n', configured.replace('minorApiLevel = 0', 'minorApiLevel = 1'),
+            configured.replace('release(37)', 'release(36)'),
+        ]:
             gradle = self.root / 'build.gradle.kts'
             gradle.write_text(content, encoding='utf-8')
             with self.assertRaises(ValueError):
