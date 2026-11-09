@@ -1,9 +1,13 @@
 # Current timing migration matrix
 
-The current scan covers Cockpit `b6ec3289`, device-gateway `dfd83084`,
+The current scan covers Cockpit `4fb90471`, device-gateway `dfd83084`,
 device-template `c5457884` and firmware-common `64025cce`. The five tables
 record each of its 471 sites, including inline fixtures and declarations that
 the scanner finds in production files.
+
+Since `d48c5352`, 47 site references moved in the gateway and profile host.
+The referenced wait calls and their dispositions remain the same. The scan
+still has 471 sites.
 
 - [Portal, browser workers, native companion and ESP32](portal-and-companions.md)
 - [Application and profile workers](application-workers.md)
