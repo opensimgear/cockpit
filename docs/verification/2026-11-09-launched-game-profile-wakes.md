@@ -126,3 +126,35 @@ The private fixture and logs are in
 | --- | --- |
 | `.research/dcs-physics-native/1794242001934/evidence.json` | `12da9e91ce435763841691a597cacc9891c6f8b4f7603b225773a00ff807c8fe` |
 | `.research/dcs-physics-native/1794242109596/evidence.json` | `fa3b5fb0a14d3a55386ebb11cc8233274e2a68191c07954b3148dfa2b4b2788b` |
+
+### Browser gateway replacement with two input lanes
+
+Browser-dev sent two authored streams through the ordinary HTTP gateway
+while two authenticated browser panels rendered the DCS lamp. The 125 Hz
+and 50 Hz lanes overlapped for 14.009 seconds. Both panels withdrew the old
+lit state on exit, received an unlit baseline from the replacement without
+replaying the old value, and painted a deliberate on/off pair under load.
+The profile retained the same owner.
+
+| HTTP target | Measured offer rate | Exact offered edges | Offer to Raw Input p50 / p95 / p99 | Peak pending frames |
+| --- | ---: | ---: | ---: | ---: |
+| 125 Hz | 124.915 Hz | 1,751 | 1.97 / 4.87 / 6.73 ms | 2 |
+| 50 Hz | 49.967 Hz | 701 | 2.11 / 5.06 / 7.21 ms | 2 |
+
+Raw Input matched all 2,452 offered edges and both Stop releases. The
+releases arrived 3.752 ms after the Stop marker, the slot returned to free,
+and cleanup completed. The stop-controlled recorder replaced the short
+warm-up recorder so both captures stayed active through Stop.
+
+The replacement workload met its configured timing checks. The encompassing
+test still failed because its separate short warm-up offered 590.67 Hz
+against a 1,000 Hz HTTP target. These rates describe authored HTTP input
+through Windows Raw Input. Physical preview and controller latency remain
+in #199.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `dcs-browser-replacement/osg-gateway-service.exe` | `822f93b0aa37a2f84402dc45ae6c6d982652e09e1480533273dcd5cd1de227b7` |
+| `.research/dcs-physics-native/1794243040777/evidence.json` | `93e949d6433661a10bb408f7508cf5e2fb7581ce87e465194531597f4e09314d` |
+| `1794243040777/loaded-replacement/browser-rate-raw.json` | `7fd7934a35714087140008c697e164c047417280a2faae6120d903b23972f335` |
+| `1794243040777/loaded-replacement/browser-rate-offers.json` | `a3f3c77e0dd7d5d5a2abc8ef036559fe449c911ba318579741277529e6d09e35` |
