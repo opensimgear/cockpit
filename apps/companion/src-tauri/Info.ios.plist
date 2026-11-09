@@ -5,7 +5,7 @@
     <key>NSCameraUsageDescription</key>
     <string>Scan the pairing QR code displayed by your Cockpit host.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Connect to your explicitly paired OpenSimGear Cockpit host on the local network.</string>
+    <string>Find and connect to your OpenSimGear Cockpit host on the local network.</string>
     <key>NSBonjourServices</key>
     <array><string>_osg-companion._tcp</string></array>
   </dict>

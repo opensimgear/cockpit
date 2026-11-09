@@ -1,16 +1,21 @@
 //! Untrusted LAN discovery for the native companion listener and client.
-use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
+#[cfg(any(not(target_os = "ios"), test))]
+use mdns_sd::ResolvedService;
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use rustls_pki_types::ServerName;
 use serde_json::{json, Value};
-use std::{
-    collections::BTreeMap,
-    net::IpAddr,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, net::IpAddr, time::Duration};
+
+#[cfg(target_os = "ios")]
+mod bonjour;
+#[cfg(any(target_os = "ios", test))]
+mod bonjour_record;
 
 pub const SERVICE_TYPE: &str = "_osg-companion._tcp.local.";
 // A single-byte key leaves room for a 253-byte DNS hostname in one TXT entry.
 const ADVERTISED_HOST: &str = "h";
+const HOST_ID: &str = "hostId";
+const MAX_HINTS: usize = 32;
 
 pub(crate) fn listener_endpoint(host: &str, port: u16) -> String {
     if host.contains(':') {
@@ -45,7 +50,7 @@ fn service_info(host_id: &str, host: &str, port: u16) -> Result<ServiceInfo, mdn
         .map(|ip| ip.to_string())
         .unwrap_or_default();
     let properties = [
-        ("hostId", host_id),
+        (HOST_ID, host_id),
         (ADVERTISED_HOST, host),
         ("version", "1"),
         ("path", "/companion"),
@@ -74,7 +79,16 @@ fn discovered_endpoint(host: Option<&str>, port: u16) -> Option<String> {
     Some(listener_endpoint(host, port))
 }
 
+#[cfg(target_os = "ios")]
 pub fn discover(duration: Duration) -> Result<Value, String> {
+    bonjour::browse(duration)
+}
+
+#[cfg(not(target_os = "ios"))]
+pub fn discover(duration: Duration) -> Result<Value, String> {
+    use mdns_sd::ServiceEvent;
+    use std::time::Instant;
+
     let daemon = ServiceDaemon::new().map_err(discovery_error)?;
     let receiver = daemon.browse(SERVICE_TYPE).map_err(discovery_error)?;
     let deadline = Instant::now() + duration;
@@ -86,7 +100,7 @@ pub fn discover(duration: Duration) -> Result<Value, String> {
                     continue;
                 };
                 hints.insert(info.get_fullname().to_string(), hint);
-                if hints.len() >= 32 {
+                if hints.len() >= MAX_HINTS {
                     break;
                 }
             }
@@ -95,24 +109,46 @@ pub fn discover(duration: Duration) -> Result<Value, String> {
         }
     }
     let _ = daemon.shutdown();
-    Ok(json!({"hints":hints.into_values().collect::<Vec<_>>(),"trusted":false}))
+    Ok(discovery_result(hints))
 }
 
+fn discovery_result(hints: BTreeMap<String, Value>) -> Value {
+    json!({"hints":hints.into_values().collect::<Vec<_>>(),"trusted":false})
+}
+
+#[cfg(any(not(target_os = "ios"), test))]
 fn discovery_hint(info: &ResolvedService) -> Option<Value> {
-    let endpoint =
-        discovered_endpoint(info.get_property_val_str(ADVERTISED_HOST), info.get_port())?;
     let addresses = info
         .get_addresses()
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    pairing_hint(
+        info.get_fullname(),
+        info.get_hostname(),
+        info.get_port(),
+        info.get_property_val_str(ADVERTISED_HOST),
+        info.get_property_val_str(HOST_ID),
+        addresses,
+    )
+}
+
+fn pairing_hint(
+    name: &str,
+    hostname: &str,
+    port: u16,
+    host: Option<&str>,
+    host_id: Option<&str>,
+    addresses: Vec<String>,
+) -> Option<Value> {
+    let endpoint = discovered_endpoint(host, port)?;
     Some(json!({
-        "name": info.get_fullname(),
-        "hostname": info.get_hostname(),
-        "port": info.get_port(),
+        "name": name,
+        "hostname": hostname,
+        "port": port,
         "addresses": addresses,
         "endpoint": endpoint,
-        "hostId": info.get_property_val_str("hostId"),
+        "hostId": host_id,
         "trusted": false,
         "requiresOutOfBandPairing": true,
     }))
@@ -165,6 +201,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "ios"))]
     fn bounded_discovery_returns_only_untrusted_hints() {
         let expected_host = std::env::var("OSG_DISCOVERY_EXPECTED_HOST_ID").ok();
         let duration = if expected_host.is_some() { 1200 } else { 25 };

@@ -3571,6 +3571,7 @@ dependencies = [
  "if-addrs",
  "image",
  "keyring",
+ "libc",
  "mdns-sd",
  "mio",
  "osg-persistence",

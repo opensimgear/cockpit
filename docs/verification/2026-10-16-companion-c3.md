@@ -40,7 +40,38 @@ fixture reported no cleanup errors. Its trace is
 with SHA-256 `daf2b8da9c11a93da1ea8dfd274b2f161b3d403b6353cf6e69e40f94dd33a340`.
 
 Signed Android and iOS installation and actual device discovery remain
-open. The iOS raw multicast client still needs platform work. Apple
-requires a restricted entitlement for raw multicast on iOS and supports
-declared service browsing through Bonjour.
+open.
+
+## iOS discovery through Bonjour — 9 November 2026
+
+The iOS client browses the declared `_osg-companion._tcp` service through
+Bonjour. One connection waits for readiness and resolves the service on
+its reported interface. A bounded set of operations tracks the current
+services and drops a result when its service disappears. The TXT host
+and SRV port produce the exact untrusted pairing endpoint. IP literals
+are included as diagnostic addresses. A Local Network policy denial
+reports where to grant permission before trying again.
+
+Apple requires a restricted entitlement for raw multicast on iOS.
+Browsing the declared service through Bonjour uses the app's Local
+Network permission. The plist describes discovery and connection.
 [Apple local network requirements](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
+
+The Windows companion suite passed 245 tests, including Bonjour TXT
+length, key, endpoint and byte-order tests. The opt-in Windows multicast
+short-code pairing test also passed. LLVM measured 93.21% lines and
+82.35% functions in shared discovery and 100% of both in the TXT decoder.
+This instrumentation did not collect branches. The Bonjour adapter and
+shared code passed a type check against the installed Apple Silicon Darwin
+Rust target in an isolated harness. Artifacts are under
+`.research/reactive/ios-bonjour/`.
+
+The rebuilt Windows client also passed the live dev Cockpit manual
+pairing, presence, TLS cancellation and Forget regression on `f993800a`.
+The trace is `.research/reactive/companion-client-io-native/1794215466772/evidence.json`,
+SHA-256 `882b9e4374e2038e3633b04a374a7c4e170c741bdc4cf5965fab0a729a8db4aa`.
+
+Linking the iOS app and checking Local Network denial and regrant,
+discovery, and pairing on a signed device remain in
+[#56](https://github.com/opensimgear/cockpit/issues/56) and the operator
+follow-up [#199](https://github.com/opensimgear/cockpit/issues/199).
