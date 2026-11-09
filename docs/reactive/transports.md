@@ -18,8 +18,9 @@ Observation delivery has its own subscription, cancellation and receipt controls
 it does not refresh state through a command after a notification.
 
 `osg-streams::Broker` owns the topic registry. Each topic declares its source and
-allowed audiences. A broker admits at most 128 topics, 64 readers overall and 16
-readers per client. Each reader retains at most 256 frames and 512 KiB of encoded
+allowed audiences. A broker admits at most 128 topics and 128 readers overall.
+Native UI and browser clients each have a 64-reader limit, with a 16-reader
+limit for other clients. Each reader retains at most 256 frames and 512 KiB of encoded
 payload. Admission reserves metadata overhead within the 1 MiB snapshot envelope
 ceiling. Changes have a 64 KiB wire ceiling. Counters cross JSON as decimal strings.
 
@@ -54,8 +55,11 @@ After a terminal transport error, new reader demand opens one replacement
 subscription for all listeners still attached to the topic. It discards the
 old token, continuity state and cached payload. Late frames and receipts
 remain fenced to the retired attempt. The default browser transport is
-shared across clients within one browser context. Independent receipt
-requests do not block the multiplexed reader loop.
+shared across clients within one browser context. Each context can open up to
+56 readers, including its portal subscriptions, a 32-node connected path and
+a 16-port inspector page. The 64-slot shared bridge leaves eight slots when
+one context reaches its limit. Independent receipt requests do not block the
+multiplexed reader loop.
 
 The first real producer publishes committed values for `preferences.theme`,
 `preferences.devices-mode`, `preferences.canvas-navigation`,

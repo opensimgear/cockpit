@@ -31,8 +31,10 @@ interface Connection {
   closing: number;
 }
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-// Leave room in the bridge's 64-reader budget for another browser context.
-const MAX_CONTEXT_READERS = 32;
+// A connected path can use 32 readers and the inspector can use 16 more.
+// Allow for portal subscriptions and leave eight of the bridge's 64 slots
+// available to another browser context.
+const MAX_CONTEXT_READERS = 56;
 let sharedBrowserTransport: ObservationTransport | undefined;
 
 /** Defaults share one context connection; injected dependencies create an isolated transport. */

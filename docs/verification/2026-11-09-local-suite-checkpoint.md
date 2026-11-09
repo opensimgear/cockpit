@@ -244,3 +244,31 @@ database on either platform.
 | Linux dev executable | `2c800db7efb5b80ab8d6d551a46e4321f6b9cab3bd59b9db752c119068570fbf` |
 | `.research/reactive/profile-samples-native/1794253052875/evidence.json` | `0a893b4646315c23e53229d9a2900dfae0e5b38b2ec873d90529db262cdd2405` |
 | `.research/reactive/profile-samples-native/1794253045892/evidence.json` | `4232f9aa20ea79406d61ceccb049e8060c49f96e401f10eed637c6158087ec65` |
+
+### Full connected path on browser-dev
+
+The shared fixture reproduced an observation admission error on the
+32-node path in browser-dev. The portal already held readers when Path
+Activity attempted to subscribe. The browser context now admits 56
+readers within the bridge's existing shared limit of 64. The native
+WebViews use their existing admission path.
+
+The final fixture passed on browser-dev, Windows WebView2 and Linux
+WebKitGTK. Each used one opening inspection read and two topology reads,
+delivered the neutral baseline and both Boolean changes, withdrew samples
+on Stop and fenced the retired owner from reading or writing. A second
+browser tab observed the original owner, Stop and the replacement through
+its normal runtime stream while the first tab held the full path.
+
+All 34 frontend observation tests and 18 bridge and sample tests passed
+locally. The browser transport reached 98.20% lines, 87.83% branches and
+86.36% functions. Run the fixture with
+`OSG_PROFILE_SAMPLES_BROWSER_URL=http://127.0.0.1:5174/` and the private
+browser-dev server. The Windows native and gateway builds were
+`44217e01` and `2f175ef0` respectively. The Linux build is recorded above.
+
+| Local artifact under `.research/reactive/profile-samples-native/` | SHA-256 |
+| --- | --- |
+| Browser-dev `1794256551240/evidence.json` | `e01c8602de6ea349d3f1413a261777dd8f65468cb317701324b388104e24e916` |
+| WebKitGTK `1794256573967/evidence.json` | `63ae7744325c5c0ea746a0670e0ed821d599a5891e564a33d88e4c58520f7e87` |
+| WebView2 `1794256595377/evidence.json` | `9ed928397f38c577e045c2857260aecf9732c31a46bf4ac04b18cddf27ee9b67` |

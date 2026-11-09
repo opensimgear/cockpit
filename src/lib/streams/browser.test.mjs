@@ -69,20 +69,20 @@ test('one slow ACK never blocks independent topic delivery; one early ACK-race f
   first.controller.abort();second.controller.abort();
 });
 
-test('an application context admits 32 readers and reuses released capacity',async()=>{
+test('an application context admits 56 readers and reuses released capacity',async()=>{
   const h=harness();
-  const readers=Array.from({length:32},(_,index)=>h.open(`topic-${index}`));
+  const readers=Array.from({length:56},(_,index)=>h.open(`topic-${index}`));
   h.open('overflow');
   await turn();
   const subscriptions=()=>h.calls.filter(call=>call.url.endsWith('/subscribe'));
-  assert.equal(subscriptions().length,32);
+  assert.equal(subscriptions().length,56);
   assert.deepEqual(h.errors,['Observation subscription limit exceeded']);
   readers[0].controller.abort();
   const replacement=h.open('replacement');
   await turn();
   assert.equal(subscriptions().at(-1).body.topic,'replacement');
   assert.equal(h.physical.length,1);
-  h.send('33');
+  h.send('57');
   await turn();
   assert.equal(replacement.frames.length,1);
   h.physical[0].controller.close();
