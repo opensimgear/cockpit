@@ -60,8 +60,8 @@ export function createNativeRateBurst({cdp,observation,lanes,delay,paintOffsets,
       const batches=rows.filter(row=>row.batchIndex===0);
       const rate=(times)=>(times.length-1)*1000/(times.at(-1)-times[0]);
       return {...lanes[index],count:rows.length,sourceToDispatchMs:summarizeMilliseconds(rows.map(row=>row.dispatchAtMs-row.offerAtMs)),
-        coordinatorWaitMs:summarizeMilliseconds(batches.map(row=>row.coordinatorWaitMs)),
-        coordinatorWorkMs:summarizeMilliseconds(rows.map(row=>row.coordinatorWorkMs)),
+        ingressWaitMs:summarizeMilliseconds(batches.map(row=>row.ingressWaitMs)),
+        ingressWorkMs:summarizeMilliseconds(rows.map(row=>row.ingressWorkMs)),
         batchCount:batches.length,batchSizePeak:1+Math.max(...rows.map(row=>row.batchIndex)),
         dispatchHz:rate(dispatch),completionHz:rate(admitted),
         dispatchIntervalsMs:summarizeMilliseconds(intervals(dispatch)),

@@ -262,6 +262,7 @@ pub struct GatewayManager {
     profile_resources: Arc<crate::profile_resources::Runtime>,
     profile_compilation: crate::profile_compilation::Runtime,
     profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
+    debug_ingress: crate::profile_debug_controller::ingress::Ingress,
     profile_admission: RwLock<()>,
     mcp_clients: Mutex<BTreeMap<String, McpClientAuthorization>>,
     profile_prepare: ProfilePrepare,
@@ -449,10 +450,12 @@ impl GatewayManager {
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
         let profile_sample_signal = crate::profile_samples::Signal::default();
         let input_wake = profile_wake.clone();
+        let debug_ingress = crate::profile_debug_controller::ingress::Ingress::default();
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone())
                 .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message)))
                 .with_input_wake(Arc::new(move || input_wake.notify()))
+                .with_debug_ingress(debug_ingress.clone())
                 .with_native_wake(profile_wake.clone())
                 .with_sample_signal(profile_sample_signal.clone()),
             native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
@@ -596,6 +599,7 @@ impl GatewayManager {
             profile_resources,
             profile_compilation: crate::profile_compilation::Runtime::default(),
             profile_session,
+            debug_ingress,
             profile_admission: RwLock::new(()),
             mcp_clients: Mutex::new(BTreeMap::new()),
             widget_library: crate::widget_library::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("widgets.json"))),

@@ -355,7 +355,8 @@ fn stalled_simulator_command_and_panel_cache_do_not_hold_host_output_or_stop() {
         "streamId":uuid::Uuid::new_v4().to_string(), "sequence":"1",
         "changes":[{"portId":"button-1","value":true}]
     })).unwrap();
-    host.debug_controller(&run, &request).unwrap();
+    host.publish_debug_inputs(&run.owner);
+    host.debug_ingress.request(&request, || controllers.monotonic_us()).unwrap();
     let health = host.health(&run).unwrap();
     assert!(health.stop.is_none());
     assert!(health.degraded.iter().any(|message| message.contains("waiting for current HID publication proof")));

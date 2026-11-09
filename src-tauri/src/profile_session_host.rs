@@ -125,6 +125,7 @@ struct NativeGameResume {
     previous: String,
 }
 pub(crate) struct NativeProfileHost {
+    debug_ingress: crate::profile_debug_controller::ingress::Ingress,
     resources: Arc<crate::profile_resources::Runtime>,
     controllers: Arc<osg_controller_input::ControllerService>,
     games: Arc<crate::games::GamesRuntime>,
@@ -150,14 +151,6 @@ fn key(owner: &RunOwner) -> String {
 impl NativeProfileHost {
     pub(crate) fn project_companion_preview(snapshot: &mut osg_profiles::compiler_models::CompileSnapshot, hub: &osg_companion_service::Hub, document: &osg_profiles::ProfileDocument) -> Result<(), String> {
         companion::project_preview(snapshot, hub, document)
-    }
-    pub(crate) fn debug_controller_request(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> {
-        self.fence(&run.owner)?;
-        let now=self.controllers.monotonic_us();
-        let state=self.run(&run.owner)?;
-        if state.vehicle_paused { return Err("Wait for the active vehicle profile variant.".into()); }
-        let at=now.max(state.reducer.as_ref().ok_or("The profile reducer is stopped.")?.at_us().0);
-        state.debug_inputs.request(request,at)
     }
     fn unavailable_peripherals(snapshot: &osg_profiles::compiler_models::CompileSnapshot, document: &osg_profiles::ProfileDocument) -> BTreeMap<String, String> {
         document.resources.iter().filter(|resource| matches!(resource.kind, osg_profiles::ResourceKind::Device | osg_profiles::ResourceKind::Companion))
@@ -186,6 +179,7 @@ impl NativeProfileHost {
         admission_epoch: Arc<AtomicU64>,
     ) -> Self {
         Self {
+            debug_ingress: Default::default(),
             resources,
             controllers,
             games,
@@ -214,6 +208,10 @@ impl NativeProfileHost {
     }
     pub(crate) fn with_input_wake(mut self, wake: crate::profile_session_scripts::Wake) -> Self {
         self.input_wake = Some(wake);
+        self
+    }
+    pub(crate) fn with_debug_ingress(mut self, ingress: crate::profile_debug_controller::ingress::Ingress) -> Self {
+        self.debug_ingress = ingress;
         self
     }
     pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
@@ -1071,6 +1069,7 @@ impl Host for NativeProfileHost {
     }
 
     fn set_authority(&mut self, owner: Option<&RunOwner>) -> Result<(), String> {
+        if owner.is_none() { self.debug_ingress.revoke(); }
         if let Some(owner) = owner.filter(|owner| self.prepared.get(&key(owner))
             .is_some_and(|state| state.reducer.is_none())) {
             self.with_activation_heartbeat(owner, |host| host.install_authority(Some(owner)))
@@ -1083,8 +1082,17 @@ impl Host for NativeProfileHost {
         self.report_progress(&run.owner, "cleanup-validating-recorded-outputs", "Validating recorded profile outputs");
         self.prepare_action_recovery(run)
     }
-    fn debug_controller(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> { self.debug_controller_request(run,request) }
+    fn publish_debug_inputs(&mut self, owner: &RunOwner) {
+        if self.authority.as_ref() != Some(owner) { return; }
+        if let Some(state) = self.prepared.get_mut(&key(owner)).filter(|state| state.owner == *owner) {
+            if let Some(reducer) = state.reducer.as_ref() {
+                self.debug_ingress.activate(owner.clone(), std::mem::take(&mut state.debug_inputs), reducer.at_us().0);
+            }
+        }
+    }
+    fn revoke_debug_inputs(&mut self) { self.debug_ingress.revoke(); }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
+        self.debug_ingress.pause(&run.owner);
         if let Some(signal) = &self.sample_signal { signal.retire(&run.owner); }
         if self.prepared.contains_key(&key(&run.owner)) {
             self.report_progress(&run.owner, "neutralizing-outputs", "Stopping profile outputs");
@@ -1299,6 +1307,7 @@ impl Host for NativeProfileHost {
         let companions = self.companions.clone();
         let panels_io = self.panels.clone();
         let admission_epoch = self.admission_epoch.clone();
+        let debug_ingress = self.debug_ingress.clone();
         let state = self.run(&run.owner)?;
         publication::active(state)?;
         visibility::active(&mut state.visibility)?;
@@ -1332,18 +1341,19 @@ impl Host for NativeProfileHost {
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
+        let mut debug = debug_ingress.drain(&run.owner);
         let admissions = frames.into_iter().map(Into::into)
             .chain(game.frames)
             .chain(panels.frames.into_iter().map(Into::into))
             .chain(companion.frames.into_iter().map(Into::into))
-            .chain(state.debug_inputs.poll().into_iter().map(Into::into))
+            .chain(std::mem::take(&mut debug.frames).into_iter().map(Into::into))
             .collect::<Vec<_>>();
         degraded.extend(state.scripts.revoke_failed(reducer));
         // Admission time drives mapping timers; source capture stamps remain
         // evidence. Refresh legitimate quiet-source liveness before advancing.
         let tick = Counter(controllers.monotonic_us());
         if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
-        state.debug_inputs.refresh_liveness(reducer,tick)?;
+        debug.refresh_liveness(reducer, tick)?;
         reducer.pin_native_clock(&controllers.capture_clock().id().to_string())?;
         for registration in state.game.native_registrations() {
             reducer.register_native_source(registration)?;

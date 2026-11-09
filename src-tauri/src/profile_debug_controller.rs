@@ -2,7 +2,7 @@
 use crate::profile_session::RunOwner;
 use osg_mapping::{
     engine::{
-        typed::{Change as FrameChange, Frame, Phase},
+        typed::{Change as FrameChange, Frame},
         Counter, Reason,
     },
     program::SignalSample,
@@ -13,6 +13,8 @@ use osg_profiles::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+pub(crate) mod ingress;
 
 #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
 pub(crate) mod qualification;
@@ -289,14 +291,6 @@ impl DebugInputs {
     }
     pub(crate) fn poll(&mut self) -> Vec<Frame> {
         self.pending.drain(..).collect()
-    }
-    pub(crate) fn refresh_liveness(&self, reducer: &mut Phase, now: Counter) -> Result<(), String> {
-        for (id, source) in &self.sources {
-            if !source.used.is_empty() && reducer.has_source_baseline(id, Counter(self.generation)) {
-                reducer.observe_liveness(id, Counter(self.generation), now)?;
-            }
-        }
-        Ok(())
     }
     pub(crate) fn clear(&mut self) {
         *self = Self::default();

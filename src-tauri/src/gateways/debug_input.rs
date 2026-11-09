@@ -25,11 +25,7 @@ impl GatewayManager {
     }
 
     pub(super) fn dispatch_debug_controller(&self, request: &Request) -> Result<Value, String> {
-        let state = self
-            .profile_session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .debug_controller(request)?;
+        let state = self.debug_ingress.request(request, || self.controllers.monotonic_us())?;
         Ok(self.finish_debug_controller(state))
     }
 
@@ -76,17 +72,11 @@ impl GatewayManager {
         if self.closed.load(Ordering::Acquire) {
             return Err("Cockpit gateway manager has closed.".into());
         }
-        let waiting = Instant::now();
-        let mut session = self
-            .profile_session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let wait = waiting.elapsed();
         let (mut queued, mut changed) = (false, false);
-        let result = offer(
+        let result = self.debug_ingress.batch(|| self.controllers.monotonic_us(), |admit, wait| offer(
             &mut |request| {
                 let entered = Instant::now();
-                let mut state = session.debug_controller(request)?;
+                let mut state = admit(request)?;
                 let work = entered.elapsed();
                 let (frame_queued, frame_changed) = debug_controller_flags(&mut state);
                 queued |= frame_queued;
@@ -94,8 +84,7 @@ impl GatewayManager {
                 Ok((state, work))
             },
             wait,
-        );
-        drop(session);
+        ));
         self.notify_debug_controller(queued, changed);
         result
     }

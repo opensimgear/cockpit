@@ -90,6 +90,56 @@ fn native_internal_service_opt_out_ends_when_an_external_resource_is_authored() 
     manager.shutdown();
 }
 #[test]
+fn debug_gateway_admits_while_the_profile_worker_owns_the_session() {
+    let manager = Arc::new(GatewayManager::mcp_test_manager());
+    let request = |mut value: Value| {
+        value["clientId"] = json!("debug-session-lock-regression");
+        manager.request(value)
+    };
+    let document = debug_document();
+    let saved = request(json!({"command":"profile_editor_save","document":document,"expectedRevision":1,"assignments":[]}));
+    assert_eq!(saved["ok"], true, "{saved}");
+    let applied = request(json!({"command":"profile_apply","id":document.id,"expectedRevision":2}));
+    assert_eq!(applied["ok"], true, "{applied}");
+    let owner = applied["state"]["profiles"]["profileSession"]["owner"].clone();
+    let input = json!({"command":"profile_debug_controller_input","clientId":"debug-session-lock-regression",
+        "owner":owner,"nodeId":"debug","streamId":uuid::Uuid::new_v4().to_string(),"sequence":"1",
+        "changes":[{"portId":"axis-1","value":42}]});
+    let (done, reply) = std::sync::mpsc::channel();
+    let worker_manager = manager.clone();
+    let submitted = input.clone();
+    let mut session = manager.profile_session.lock().unwrap();
+    let worker = std::thread::spawn(move || {
+        let response = worker_manager.request(submitted.clone());
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        {
+            let mut next = submitted;
+            next.as_object_mut().unwrap().remove("clientId");
+            next["sequence"] = json!("2");
+            next["changes"][0]["value"] = json!(43);
+            let next = crate::profile_debug_controller::Request::parse(&next).unwrap();
+            let (state, _) = worker_manager.qualify_debug_controller_batch(|admit, _| admit(&next)).unwrap();
+            assert_eq!(state["sequence"], "2");
+            assert_eq!(state["replayed"], false);
+            assert_eq!(state["pendingFrames"], 2);
+        }
+        let _ = done.send(response);
+    });
+    let admitted = reply.recv_timeout(Duration::from_secs(2));
+    session.poll().unwrap();
+    drop(session);
+    worker.join().unwrap();
+    let admitted = admitted.expect("debug input must not wait for the active profile session mutex");
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    let inspected = request(json!({"command":"profile_runtime_inspect","owner":owner,"nodeId":"identity"}));
+    let expected = if cfg!(all(windows, debug_assertions, feature = "reactive-qualification")) { 43.0 } else { 42.0 };
+    assert_eq!(inspected["state"]["profileInspection"]["ports"][0]["sample"]["value"]["value"], expected);
+    assert_eq!(request(json!({"command":"profile_stop"}))["ok"], true);
+    assert_eq!(request(input)["ok"], false);
+    manager.shutdown();
+}
+
+#[test]
 fn native_debug_gateway_mcp_updates_real_mapping_and_retires_owner() {
     let manager = Arc::new(GatewayManager::mcp_test_manager());
     let request = |mut value: Value| {

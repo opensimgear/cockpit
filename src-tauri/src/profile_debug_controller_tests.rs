@@ -105,6 +105,36 @@ fn input(sequence: u64, changes: Value) -> Request {
     Request::parse(&json!({"command":"profile_debug_controller_input","owner":owner(),"nodeId":"debug","streamId":"22222222-2222-4222-8222-222222222222","sequence":sequence.to_string(),"changes":changes})).unwrap()
 }
 #[test]
+fn ingress_drains_in_order_and_pause_retires_the_exact_owner() {
+    let (document, plan) = fixture();
+    let ingress = ingress::Ingress::default();
+    let first = input(1, json!([{"portId":"button-1","value":true}]));
+    let second = input(2, json!([{"portId":"button-1","value":false}]));
+    assert!(ingress.request(&first, || 100).is_err());
+    let (debug, _) = DebugInputs::capture(&document, &plan, 1, 100).unwrap();
+    ingress.activate(owner(), debug, 100);
+    assert_eq!(ingress.request(&first, || 99).unwrap()["pendingFrames"], 1);
+    let mut unrelated = owner();
+    unrelated.generation += 1;
+    ingress.pause(&unrelated);
+    let drained = ingress.drain(&owner());
+    assert_eq!(drained.frames[0].captured_us, Counter(100));
+    assert_eq!(ingress.request(&first, || 101).unwrap()["replayed"], true);
+    assert_eq!(ingress.request(&second, || 102).unwrap()["pendingFrames"], 1);
+    ingress.pause(&owner());
+    assert!(ingress.drain(&owner()).frames.is_empty());
+    assert_eq!(ingress.request(&second, || 103).unwrap_err(), "Wait for the active vehicle profile variant.");
+    ingress.revoke();
+    let (debug, _) = DebugInputs::capture(&document, &plan, unrelated.generation, 103).unwrap();
+    ingress.activate(unrelated.clone(), debug, 103);
+    assert!(ingress.request(&first, || 104).is_err());
+    let mut new = first;
+    new.owner = unrelated.clone();
+    assert_eq!(ingress.request(&new, || 104).unwrap()["pendingFrames"], 1);
+    assert_eq!(ingress.drain(&unrelated).frames[0].generation, Counter(2));
+}
+
+#[test]
 fn native_debug_baseline_atomic_changes_replay_and_unused_values() {
     let (document, plan) = fixture();
     let (mut state, baselines) = DebugInputs::capture(&document, &plan, 1, 100).unwrap();

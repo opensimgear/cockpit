@@ -273,3 +273,55 @@ fences, as well as the existing ordering and queue bounds.
 | --- | --- |
 | `.research/dcs-physics-native/1794244913157/evidence.json` | `bd76c49ffc7749f636e6199d7a7b04d411cca39463b2679963ab7daad8e5078a` |
 | `dcs-browser-replacement/request-trace/osg-gateway-service.exe` | `43d0f7f8f53e1d0b7a7b4affb20bbdd42a999628e8d90c5e6135bfa51a09bbc9` |
+
+### Separate debug admission from the active session lock
+
+Gateway debug requests append to the active owner's existing bounded queue
+under a short mutex. The native profile worker takes the frames, releases
+the mutex and processes them with the other sources. The gateway still uses
+its normal profile and game admission guards. The queue is published only
+after the new profile owner commits. Takeover, Stop, recovery and vehicle
+pause retire the old queue and its stream state. The reducer still applies
+authored freshness to the original monotonic capture timestamps.
+
+Two stock candidate runs passed the loaded browser fixture with two live
+DCS panels and one stalled telemetry reader. In each run Raw Input matched
+all 218 warm-up offers and both Stop releases. The fast source went from
+590.67–597.02 Hz in earlier stock runs to 975.63–1,000.70 Hz, within the
+fixture's 5% tolerance.
+
+| Run | Browser HTTP lane | Measured rate | HTTP round trip p50 / p95 / p99 | Offer to Raw Input p50 / p95 / p99 | Peak pending frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | Fast | 1,000.70 Hz | 0.77 / 0.87 / 1.83 ms | 1.75 / 2.57 / 3.21 ms | 3 |
+| 1 | Peer | 125.00 Hz | 0.81 / 1.23 / 1.28 ms | 1.87 / 2.52 / 2.61 ms | 2 |
+| 2 | Fast | 975.63 Hz | 0.78 / 0.94 / 11.05 ms | 1.87 / 2.86 / 5.07 ms | 3 |
+| 2 | Peer | 125.01 Hz | 0.82 / 1.11 / 1.57 ms | 1.91 / 2.71 / 2.93 ms | 3 |
+
+Warm-up releases arrived 0.97–2.99 ms after Stop. The 125 Hz and 50 Hz
+replacement workload also matched all 2,452 edges and both releases in
+each run. Both panels recovered on the same profile owner, the slot
+returned to free, and fixture cleanup passed.
+
+The Windows dev WebView also passed with two panels, native qualification
+sources at 1,000 Hz and 125 Hz, and a stalled MCP reader. Raw Input matched
+5,402 authored transitions and both Stop releases. The fast lane measured
+1.22 / 1.96 / 2.48 ms offer-to-receipt p50 / p95 / p99. Its wait for the
+new ingress mutex was 0.0005 ms p95. Both lanes peaked at four pending
+frames and cleanup passed.
+
+The instrumented Windows library suite passed 2,503 tests with 18 existing
+ignores. A targeted regression held the session mutex while both the
+ordinary gateway and the native qualification batch admitted ordered input.
+The worker then drained the queue, and Stop rejected the retired owner.
+All 69 focused frontend tests passed. The new ingress and gateway debug
+modules reached 89.86% and 81.20% line coverage, with 71.43% function
+coverage in each. The changed gateway constructor lines were exercised.
+LLVM emitted no branch counters for those files.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `debug-ingress-candidate/osg-gateway-service.exe` | `d2673413d32815e2d248196308581c8c2bd35366b700e68c600a29f6f8454f6a` |
+| `.research/dcs-physics-native/1794245423664/evidence.json` | `bf455f9242e3c9b2570e13050efdd52e3b8cd3a0381a3e3339c676f2568e3093` |
+| `.research/dcs-physics-native/1794245740173/evidence.json` | `26d36cdd6e3d2d7a40423675a039dd0df03ecc0924ab0d7913e9af84c5c096d0` |
+| `debug-ingress-candidate/osg-cockpit.exe` | `db4b6a2204507162d4829f3a23c1d55c0477a1a24e0a474f79d6d805b4baa1d1` |
+| `.research/dcs-physics-native/1794245990424/evidence.json` | `d7a1416cfea82b4f9e120a4fa551fe9788b4e3dbf926e5c35578a63630362159` |

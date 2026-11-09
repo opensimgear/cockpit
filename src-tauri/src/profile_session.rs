@@ -164,7 +164,8 @@ pub(crate) trait Host: Send {
     fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
     fn desktop_readiness(&self) -> osg_mapping_host::desktop::Readiness { Default::default() }
-    fn debug_controller(&mut self,_:&OwnedRun,_:&crate::profile_debug_controller::Request)->Result<Value,String> { Err("This profile host has no debug controllers.".into()) }
+    fn publish_debug_inputs(&mut self, _owner: &RunOwner) {}
+    fn revoke_debug_inputs(&mut self) {}
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String>;
@@ -356,11 +357,6 @@ impl<H: Host> Coordinator<H> {
                 .chain(self.manifest.pending.iter().flat_map(|transition|transition.incoming.iter().chain(transition.outgoing.iter())))
                 .any(|run|run.receipts.iter().any(|receipt|receipt.kind=="desktop-output"))
     }
-    pub(crate) fn debug_controller(&mut self,request:&crate::profile_debug_controller::Request)->Result<Value,String> {
-        if !self.validates(&request.owner) {return Err("The requested debug controller owner expired; inspect the current running revision.".into());}
-        let run=self.manifest.active.as_ref().filter(|run|run.owner==request.owner).ok_or("The native applied manifest no longer owns this revision.")?;
-        self.host.debug_controller(run,request)
-    }
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)
             && self.status.owner.as_ref() == Some(owner)
@@ -511,6 +507,7 @@ impl<H: Host> Coordinator<H> {
         });
         // Failure to record the first intent has not revoked the prior run.
         self.persist(next)?;
+        self.host.revoke_debug_inputs();
         self.status.state = State::Transitioning;
         self.status.owner = None;
         self.notify_status();
@@ -607,10 +604,11 @@ impl<H: Host> Coordinator<H> {
                 State::Degraded
             },
             applied_snapshot: Some(run.snapshot.clone()),
-            owner: Some(owner),
+            owner: Some(owner.clone()),
             degradation: prepared.admission.optional_unavailable,
             fault: None,
         };
+        self.host.publish_debug_inputs(&owner);
         Ok(())
     }
     fn persist(&mut self, next: Manifest) -> Result<(), String> {

@@ -62,8 +62,8 @@ struct Submission {
     #[serde(serialize_with = "serialize_timestamp")]
     admitted_at_ns: u64,
     round_trip_ms: f64,
-    coordinator_wait_ms: f64,
-    coordinator_work_ms: f64,
+    ingress_wait_ms: f64,
+    ingress_work_ms: f64,
     batch_index: u32,
     pending_frames: u32,
     value: bool,
@@ -245,12 +245,12 @@ impl Burst<'_> {
                             dispatch_at_ns: dispatch,
                             admitted_at_ns: admitted,
                             round_trip_ms: (admitted - dispatch) as f64 / NS_PER_MS as f64,
-                            coordinator_wait_ms: if batch_index == 0 {
+                            ingress_wait_ms: if batch_index == 0 {
                                 wait.as_secs_f64() * 1000.0
                             } else {
                                 0.0
                             },
-                            coordinator_work_ms: work.as_secs_f64() * 1000.0,
+                            ingress_work_ms: work.as_secs_f64() * 1000.0,
                             batch_index: batch_index as u32,
                             pending_frames: pending_frames as u32,
                             value: offer.value,
