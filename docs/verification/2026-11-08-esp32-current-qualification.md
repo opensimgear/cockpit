@@ -108,3 +108,29 @@ an authored transport.
 Physical USB start and reconnect remain in #199. Current firmware uses a
 status watch after identification. The older firmware status policy is a
 separate decision.
+
+## Feedback after session replacement
+
+The ESP32 client harness now opens and replaces a live session over each
+of its two mocked transports. Both sessions accept an initial feedback
+snapshot and withdraw the value on Stop. The replacement rejects a delayed
+snapshot from the old session and a delta received before a new snapshot.
+Direct USB also rejects the old link and still rejects the old session
+when its frame is wrapped with the new link ID. Both transports accept
+the replacement snapshot and its next delta while the input lease and
+disarmed state stay independent of feedback.
+
+All six network-suite binaries passed with AddressSanitizer and
+UndefinedBehaviorSanitizer in Ubuntu WSL2. All nine coverage gates passed.
+The client reached 93.97% lines, 73.07% branches and 95.45% functions.
+The publication parser reached 99.58% lines, 75.13% branches and
+100% functions. The suite was built from `1361c52d` with the two updated
+test files.
+
+A separate Windows dev Cockpit run passed pinned native client pairing,
+three presence handoffs, cancellation of stalled TLS in 55.75 ms, and
+Forget. Its local artifact is
+`.research/reactive/companion-client-io-native/1794255687556/evidence.json`,
+SHA-256 `e26d7aadbc6a287268b7acc5e52e74e1e2b2a685a65df680a9a8b8b89327ce1b`.
+The firmware harness uses authored connections. Physical Wi-Fi and USB
+delivery and board recovery remain in #199.

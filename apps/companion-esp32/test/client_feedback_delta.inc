@@ -56,3 +56,55 @@ static void serial_feedback_tests(void){
     mock_wifi_message=cJSON_Parse("{\"ok\":true,\"type\":\"assignments-event\",\"assignments\":[]}");wifi_feedback();
     assert(state==AUTH&&!remote_armed);stop();
 }
+
+static void deliver_feedback(bool direct,const cJSON *event){
+    if(direct){
+        osg_network_serial_feedback(event);
+    }else{
+        assert(!mock_wifi_message);
+        mock_wifi_message=cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(event,"frame"),true);
+        assert(mock_wifi_message);
+        wifi_feedback();
+    }
+}
+
+static void feedback_session_replacement(bool direct){
+    live_ready_for_transport(direct);
+    if(direct)osg_copy(connection.link,sizeof(connection.link),"retired-link");
+    cJSON *retired=serial_feedback_record(connection.link,"1","1","snapshot",125.5);
+    deliver_feedback(direct,retired);
+    assert(session.feedback_envelope&&test_runtime.samples[3].available);
+    assert(test_runtime.samples[3].number==125.5);
+
+    stop();
+    assert(!test_runtime.connected&&!test_runtime.samples[3].available&&!remote_armed);
+    live_ready_for_transport(direct);
+    if(direct)osg_copy(connection.link,sizeof(connection.link),"replacement-link");
+    const cJSON *retired_frame=cJSON_GetObjectItemCaseSensitive(retired,"frame");
+    const cJSON *retired_feedback=cJSON_GetObjectItemCaseSensitive(retired_frame,"feedback");
+    assert(strcmp(osg_string(retired_feedback,"sessionId"),session.session));
+    const uint64_t lease=input.last_ack_ms;
+    test_dirty=false;
+    deliver_feedback(direct,retired);
+    if(direct){
+        /* Both link identity and the inner session must fence delayed USB data. */
+        cJSON_ReplaceItemInObjectCaseSensitive(retired,"linkId",cJSON_CreateString(connection.link));
+        deliver_feedback(direct,retired);
+    }
+    cJSON_Delete(retired);
+    assert(!test_dirty&&!session.feedback_envelope&&!test_runtime.samples[3].available);
+
+    cJSON *delta=serial_feedback_record(connection.link,"2","1","delta",200);
+    deliver_feedback(direct,delta);
+    assert(!test_dirty&&!session.feedback_envelope&&!test_runtime.samples[3].available);
+    cJSON *baseline=serial_feedback_record(connection.link,"1","1","snapshot",150);
+    deliver_feedback(direct,baseline);
+    assert(test_dirty&&session.feedback_envelope&&test_runtime.samples[3].number==150);
+    cJSON_Delete(baseline);
+    test_dirty=false;
+    deliver_feedback(direct,delta);
+    cJSON_Delete(delta);
+    assert(test_dirty&&session.feedback_sequence==2&&test_runtime.samples[3].number==200);
+    assert(input.last_ack_ms==lease&&!remote_armed&&!test_runtime.armed);
+    stop();
+}

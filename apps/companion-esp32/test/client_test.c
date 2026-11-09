@@ -183,13 +183,15 @@ static void setup(void){
     host_rejection=transport_error=NULL;
     network_ok=request_ok=store_ok=assigned_now=true;wrong_identity=wrong_session=false;storage_available=true;next_request=fake_ms;state=PAIR_BEGIN;mock_pairing_failure=false;
 }
-static void live_ready(void){
-    setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+static void live_ready_for_transport(bool direct){
+    setup();state=AUTH;settings.direct=direct;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     advance();assert(state==OPEN);advance();assert(state==LIVE&&!remote_armed&&!test_runtime.armed);
+    assert(connection.direct==direct);
     assert(osg_set_page(&test_runtime,0));osg_input_bind(&input,&test_runtime,true,fake_ms);bound_page=0;
     assert(!strcmp(operation.phase,"rendering")&&!strcmp(operation.instance,"instance")&&!strcmp(operation.session,session.session));
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
 }
+static void live_ready(void){live_ready_for_transport(false);}
 static void arm_text(char out[1024]){
     snprintf(out,1024,"{\"command\":\"arm\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\",\"armEpoch\":\"%" PRIu64 "\"}",session.session,session.generation,session.publication,input.epoch);
 }
@@ -423,6 +425,8 @@ int main(int argc,char **argv){
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true,wake_display});
     assert(state==OFF&&network_wait()==portMAX_DELAY);
     serial_feedback_tests();
+    feedback_session_replacement(false);
+    feedback_session_replacement(true);
     pairing_notification_tests();
     setup();advance();assert(state==PAIR_WAIT&&network_wait()==pdMS_TO_TICKS(pair_deadline-fake_ms));
     fake_ms+=800;const int quiet_requests=requests;advance();assert(state==PAIR_WAIT&&requests==quiet_requests);
