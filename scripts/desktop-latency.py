@@ -218,6 +218,43 @@ def latency(values, frequency):
         strictP95Below5ms=p95 * 1_000_000 < 5_000 * frequency,
         strictP99Below10ms=p99 * 1_000_000 < 10_000 * frequency)
 
+def stage_summary(values, frequency):
+    if not values:
+        return None
+    def micros(ticks):
+        return (ticks * 1_000_000 + frequency - 1) // frequency
+    return dict(samples=len(values), p50UsCeil=micros(nearest_rank(values, 50)),
+        p95UsCeil=micros(nearest_rank(values, 95)), p99UsCeil=micros(nearest_rank(values, 99)),
+        maxUsCeil=micros(max(values)), totalUsCeil=micros(sum(values)))
+
+
+def add_journal_stages(stages, writes, issued, worker_events, binding, request, queued):
+    channel, sequence = request.f[:2]
+    current = writes.get((channel, sequence), ())
+    for write in current:
+        start, end = write.f[2], write.f[8]
+        if request.qpc <= start < end <= queued.qpc:
+            stages["intentBeforeEnqueue"].append(end - start)
+
+    # The prior request may have been logged with a backdated issue stamp
+    # when a merged commit completed. Match channel/sequence, then intersect
+    # actual write intervals with the current delivery's wait before issue.
+    prior = issued.get((channel, sequence - 1), ())
+    if len(prior) != 1 or prior[0].f[3] != 3 or prior[0].qpc >= binding.qpc:
+        return
+    receipts = worker_events["WorkerOutcome"].get(prior[0].f[:3], ())
+    prior_wait = receipt_wait = 0
+    for write in writes.get((channel, sequence - 1), ()):
+        start, end = write.f[2], write.f[8]
+        overlap = max(0, min(end, request.qpc) - max(start, binding.qpc))
+        prior_wait += overlap
+        if len(receipts) == 1 and receipts[0].qpc <= start:
+            receipt_wait += overlap
+    if prior_wait:
+        stages["priorWriteOverlapAfterIssue"].append(prior_wait)
+    if receipt_wait:
+        stages["priorReceiptOverlapAfterIssue"].append(receipt_wait)
+
 
 def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_sources=2, parent_report=None):
     parent, workers = load_traces(directory)
@@ -235,6 +272,9 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
     require(phases and expected_key_sources > 0, "explicit workload phases and source count are required")
     by = defaultdict(list)
     for event in parent.events:
+        if event.kind == "JournalPersist":
+            require(0 < event.f[2] and tuple(sorted(event.f[2:])) == event.f[2:]
+                and event.f[8] == event.qpc, "invalid durable journal timing interval")
         by[event.kind].append(event)
     native_ids, native_changes, queue_epochs, typed_ids = set(), set(), defaultdict(set), defaultdict(set)
     for event in by["NativeEnqueue"]:
@@ -275,6 +315,8 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
     typed = index("TypedAlias", lambda f: (f[8], f[11], f[9], f[10], f[13]))
     bounds = index("SourceBound", lambda f: (f[0], f[1], f[2], f[3]))
     requests = index("RequestIssued", lambda f: (f[4], f[5], f[2]))
+    issued = index("RequestIssued", lambda f: f[:2])
+    journal_writes = index("JournalPersist", lambda f: f[:2])
     outcomes = index("ParentOutcome", lambda f: (f[0], f[1], f[2]))
     parent_queues = {kind: index(kind, lambda f: f[:2]) for kind in ("RequestQueued", "RequestDequeued")}
     worker_index = {}
@@ -340,6 +382,9 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
         excluded = Counter({key: 0 for key in EXCLUDED})
         samples, joined, target, source_set = [], set(), set(), set()
         dispatches = defaultdict(list)
+        stages = {name: [] for name in ("captureToDelivery", "deliveryToRequest",
+            "requestToNative", "intentBeforeEnqueue", "priorWriteOverlapAfterIssue",
+            "priorReceiptOverlapAfterIssue")}
         phase_errors = []
         phase_captures = [event for event in by["SourceCapture"] if begin.qpc < event.qpc < end.qpc]
         for capture in phase_captures:
@@ -403,6 +448,11 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                     require(send.qpc - capture.qpc > 1, "ambiguous admission-to-SendInput QPC interval (one tick or less)")
                     samples.append(send.qpc - capture.qpc)
                     dispatches[nf[6]].append((capture.sequence, capture.qpc, send.qpc))
+                    stages["captureToDelivery"].append(binding.qpc - capture.qpc)
+                    stages["deliveryToRequest"].append(request.qpc - binding.qpc)
+                    stages["requestToNative"].append(send.qpc - request.qpc)
+                    add_journal_stages(stages, journal_writes, issued, worker_index[qf[0]],
+                        binding, request, queue_points[0])
             except AuditError as error:
                 excluded["unacked"] += 1
                 phase_errors.append(str(error))
@@ -433,6 +483,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                 parentOutstandingReservationsMax=max((event.f[2] for event in phase_events if event.kind == "RequestQueued"), default=0),
                 workerOutstandingReservationsMax=max((event.f[2] for worker in workers.values() for event in worker.events if event.kind == "RequestQueued" and begin.qpc < event.qpc < end.qpc), default=0)),
             latency=measured, firstDispatchBySource=first, errors=sorted(set(phase_errors)), expectedCountsMatch=counts_match,
+            stages={name: stage_summary(values, parent.frequency) for name, values in stages.items()} if measured else None,
             passed=bool(measured and measured["strictP95Below5ms"] and measured["strictP99Below10ms"] and counts_match and not any(excluded[key] for key in ("noop", "collision", "skipped", "cleanup", "unacked", "fault", "unresolved")))))
     # Each exact worker must have a successfully acknowledged Stop, independent
     # of latency endpoints. A footer alone never proves native ownership cleanup.

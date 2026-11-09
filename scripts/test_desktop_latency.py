@@ -137,7 +137,36 @@ class LatencyTests(unittest.TestCase):
         report = fixture.run()
         self.assertTrue(report["traceValid"])
         self.assertTrue(report["passed"])
-        self.assertEqual(report["phases"], baseline["phases"])
+        phase, original = report["phases"][0], baseline["phases"][0]
+        self.assertEqual(phase["latency"], original["latency"])
+        self.assertEqual(phase["firstDispatchBySource"], original["firstDispatchBySource"])
+        self.assertEqual(phase["stages"]["intentBeforeEnqueue"]["p95UsCeil"], 4)
+        self.assertIsNone(phase["stages"]["priorReceiptOverlapAfterIssue"])
+
+    def test_prior_receipt_counts_only_the_intersection_with_the_next_delivery_wait(self):
+        fixture = Fixture()
+        # The second edge binds at 22035 and issues at 22040. Its preceding
+        # request has acknowledged native delivery before starting its write.
+        for row in fixture.parent:
+            if row["kind"] == "ParentOutcome" and row["fields"][1] == "1":
+                row["qpc"] = "22039"
+        fixture.parent.extend([
+            event("JournalPersist", [7, 1, 21000, 21000, 21001, 21002, 21003, 22038, 22039], 22039),
+            event("JournalPersist", [8, 1, 21000, 21000, 21001, 21002, 21003, 22039, 22040], 22040),
+        ])
+        phase = fixture.run()["phases"][0]
+        self.assertTrue(phase["passed"])
+        self.assertEqual(phase["stages"]["priorWriteOverlapAfterIssue"]["totalUsCeil"], 4)
+        self.assertEqual(phase["stages"]["priorReceiptOverlapAfterIssue"]["samples"], 1)
+        self.assertEqual(phase["stages"]["priorReceiptOverlapAfterIssue"]["p95UsCeil"], 4)
+        self.assertEqual(phase["stages"]["deliveryToRequest"]["p95UsCeil"], 5)
+
+    def test_inverted_journal_interval_is_not_a_latency_sample(self):
+        fixture = Fixture()
+        fixture.parent.append(event("JournalPersist",
+            [7, 1, 2040, 2040, 2041, 2042, 2043, 2045, 2044], 2044))
+        with self.assertRaisesRegex(audit.AuditError, "invalid durable journal timing interval"):
+            fixture.run()
 
     def test_one_tick_cross_process_interval_is_not_a_latency_sample(self):
         for ticks in (0, 1):

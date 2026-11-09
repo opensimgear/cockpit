@@ -81,3 +81,33 @@ Local evidence is under `.research/c193-reconnect/mixed-qualification-56876/`.
 | --- | --- |
 | `preflight-40612/evidence.json` | `60ac67f1cb205522b45aefad8d0ba0d654b11e05db8019de45f967450b1a4795` |
 | `keys-37700/desktop-stage-analysis.json` | `d053590e1a8361ecc0ee40ace33841ecace6fcf6140884b5c046cb65a753d379` |
+
+### Journal wait attribution
+
+The [desktop latency analyzer](../../scripts/desktop-latency.py) now reports
+capture to delivery binding, binding to request issue, and issue to native
+submission return separately. It joins durable writes by exact channel and
+request sequence. For a delivery that binds after the preceding request
+issued, it intersects that delivery's wait with the preceding writes. It
+reports the subset that starts after the previous worker acknowledgement
+as receipt overlap. It rejects malformed journal timing intervals.
+
+In the previous keyboard trace, 13 of 25 steady edges over 10 ms bound
+after the preceding press issued and overlapped its final receipt write.
+The other 12 already shared a journal write. This separates the potential
+benefit of allowing a late queued edge to share a receipt from the cost
+of writing the next acquisition intent.
+
+The fresh running-Cockpit check used the same executable and receiver
+and matched all 402 marked transitions. Both phases stopped cleanly.
+
+| Steady phase | Capture-to-native p95 / p99 | Delivery binding to request p95 | Current intent write p95 | Edges overlapping the prior receipt / maximum overlap |
+| --- | ---: | ---: | ---: | ---: |
+| Idle | 10.40 / 13.65 ms | 5.17 ms | 4.24 ms | 11 / 3.61 ms |
+| UI load | 10.79 / 13.93 ms | 5.38 ms | 4.14 ms | 14 / 3.90 ms |
+
+All 36 portable desktop tests passed. The analyzer had 91% executable
+line coverage. The refreshed audit report confirmed exact counts and
+retained the strict 5 ms p95 and 10 ms p99 failure. The local report is
+`.research/c193-reconnect/mixed-qualification-56876/attribution-32104/maintained-analysis.json`,
+SHA-256 `7acff2f745f848dfd350551f64bd60d737c9f0db812acb47f25814b09a4148ea`.
