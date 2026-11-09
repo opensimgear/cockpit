@@ -244,3 +244,32 @@ again passed at 125 Hz and 50 Hz with clean teardown.
 | `.research/dcs-physics-native/1794244459214/evidence.json` | `96b0f2f770f93483fb79cf874a4ce95367a5cfc4aa2f056af52aa9f70f26e722` |
 | `.research/dcs-physics-native/1794244640227/evidence.json` | `e1df5facd4a2661f4e86f50f34dea215cf41d9a74136de29a22d56a16c20edfe` |
 | `dcs-browser-replacement/instrumented-gateway/osg-gateway-service.exe` | `344ca6e35f67289658c695445f911190d19eefe1fb7ad00c40f2e19972c0adf1` |
+
+### Debug admission under the active session lock
+
+A private gateway trace joined the same browser request, bridge and native
+timestamps with the admission guards, the active profile session mutex
+and the debug handler. Both sources preserved all 218 ordered offers and
+both Stop releases. The fast lane offered 481.29 Hz, so the full test still
+failed its 1 kHz cadence check. The 125 Hz and 50 Hz process replacement
+scenario passed again with no cleanup errors.
+
+| Fast-lane native stage | p50 / p95 / p99 |
+| --- | ---: |
+| Whole gateway request | 0.71 / 3.75 / 5.62 ms |
+| Waiting for the active profile session mutex | 0.55 / 3.59 / 5.46 ms |
+| Admitting the input under that mutex | 0.03 / 0.04 / 0.04 ms |
+| Waking the reducer and publishing the debug observation | 0.03 / 0.03 / 0.04 ms |
+
+The profile and game admission guards each took under 0.005 ms at p99.
+The native profile worker takes the session mutex while it processes
+telemetry, effects and output health. The debug request needs the same
+mutex to verify the exact owner and append a frame. The trace measures
+the wait, and does not identify the mutex owner for each individual wait.
+An admission change must preserve the active owner, variant and Stop
+fences, as well as the existing ordering and queue bounds.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794244913157/evidence.json` | `bd76c49ffc7749f636e6199d7a7b04d411cca39463b2679963ab7daad8e5078a` |
+| `dcs-browser-replacement/request-trace/osg-gateway-service.exe` | `43d0f7f8f53e1d0b7a7b4affb20bbdd42a999628e8d90c5e6135bfa51a09bbc9` |
