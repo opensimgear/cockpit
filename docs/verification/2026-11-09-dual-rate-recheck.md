@@ -418,3 +418,67 @@ is `.research/dcs-physics-native/1794222465459/evidence.json`, SHA-256
 `085b0a5341f713c09facf42cb5ec6a4c5d52f4462f56a0a2d1697b9876fc9a4f`.
 The short trace is `.research/dcs-physics-native/1794222587311/evidence.json`,
 SHA-256 `2e6888dd0c3ac60981f8d3787d78852a5cb1153ed0030023bca140b16e70abc6`.
+
+### Native command stages and pending decoder commits
+
+A private Windows build of `b159afd9` recorded the native stages after
+reducer evaluation. The first export lacked the browser bundle. The rebuilt
+diagnostic included the previously verified browser assets and ran the same
+compiled-panel workload. All 28 commands before the failure arrived in
+order. The 29th command was refused because a BIOS datagram had reached the
+raw queue while the decoded commit was still pending. The command worker
+treated that refusal as terminal and retired the lane.
+
+| Native stage in the partial trace | Debug p50 / p95 | Panel p50 / p95 |
+| --- | ---: | ---: |
+| Reducer evaluation end to sender return | 17.68 / 19.67 ms | 15.64 / 93.70 ms |
+| Exact game context validation | 14.14 / 15.31 ms | 13.16 / 13.85 ms |
+| Catalogue validation | 0.16 / 0.18 ms | 0.15 / 79.16 ms |
+| Native sender | 0.04 / 0.12 ms | 0.04 / 0.07 ms |
+
+Each column has 14 completed samples, so p95 is the maximum here. The
+panel's slowest native stage was catalogue validation. The simulator action
+effects carried no source observation in this trace, so the table starts at
+reducer evaluation end. Actual simulator confirmation remains in #199.
+
+The queued sender now waits for the decoder's processed-cursor notification
+when the raw transport confirms the command has yet to reach send admission.
+A cursor advance can wake it even when the report produced no decoded frame.
+It releases the decoder lock while waiting, then rechecks the game context,
+catalogue, route token, aircraft, continuity, deadline and cancellation before
+the UDP send. The original 100 ms command deadline still bounds admission.
+
+The rebuilt dev Cockpit passed two extended trials. Each delivered all 48
+command datagrams in order, verified quiet Stop and reapply, and freed the
+vJoy slot with zero cleanup errors. The independent vJoy receipt paths met
+their timing targets. The DCS command submission-to-callback tails remained
+above the numeric target.
+
+The 98 Linux DCS-BIOS tests passed. A separate Linux run passed the
+production command worker's invalid-context check, which verified that the
+worker rejected the command before a UDP datagram could be sent. The decoder
+tests cover wake after a duplicate raw report, deadline expiry and aircraft
+replacement during the wait.
+The final Windows library suite passed 2,496 tests with 18 existing ignores.
+All four configured production line gates passed at 89.80% or higher. Raw
+LLVM function coverage across the changed files was 77.12%. The decoded source
+and raw transport files reported 69.57% and 66.67% functions individually.
+This build measured regions, lines and functions.
+
+| Trial | Debug offer to UDP receipt p50 / p95 / p99 | Panel activation to UDP receipt upper p50 / p95 / p99 |
+| --- | ---: | ---: |
+| 1 | 21.09 / 28.82 / 100.04 ms | 17.40 / 22.15 / 91.11 ms |
+| 2 | 22.20 / 28.56 / 105.09 ms | 18.45 / 23.27 / 90.95 ms |
+
+The partial diagnostic executable SHA-256 is
+`fa4f062ded73e367a115debd06f5605821af88a43b48529925336e23b197bfa8`.
+Its stderr trace is
+`.research/c193-reconnect/dcs-native-stage-timing/native-18748-native.err`,
+SHA-256 `ce45765671fbf199ff2afbed732bc9381e36d0f13cb3d3bed53266f6c814c9e0`.
+The corrected dev executable SHA-256 is
+`486c6a53f44589afbdaf1287c5197356de40bb8769d8ebf70bedeed154b68c03`.
+
+| Trial trace under `.research/dcs-physics-native/` | Profile ID, revision 2 | SHA-256 |
+| --- | --- | --- |
+| `1794223782483/evidence.json` | `34e7851f-926a-4287-a4d1-a7282ea88f47` | `d19f5390777a0c21b2011a8e4fc76c2a25b0dddc9596b11e534d573f0aa6ccca` |
+| `1794223846584/evidence.json` | `e7ea2205-c7eb-4c1e-8788-cea72a8563c9` | `461e1f8ff6ab77eba37eea63355257844ffae02646a1121c11cbdd5408086500` |

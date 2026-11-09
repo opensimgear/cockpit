@@ -1521,7 +1521,8 @@ fn sample_changes_do_not_republish_catalogues_but_delivery_authority_changes_do(
 
 #[test]
 fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_udp() {
-    let fixture = Dcs::new();
+    let mut fixture = Dcs::new();
+    fixture.game.connection["freshnessMs"] = json!(2000);
     let mut source = fixture.sources();
     let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
     let listen = reserve.local_addr().unwrap().port();
@@ -1558,17 +1559,48 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
     let mut data = [0; 128];
     let queued = transport.command_sender();
     assert_eq!(
-        queued.send(&command, &argument, None, || Err("Retired at send admission.".into())).unwrap_err(),
+        queued.send::<String>(&command, &argument, None, Instant::now() + Duration::from_secs(1),
+            || Ok(()), || Err("Retired at send admission.".into())).unwrap_err(),
         "Retired at send admission.",
     );
     commands.set_nonblocking(true).unwrap();
     assert_eq!(commands.recv_from(&mut data).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
     commands.set_nonblocking(false).unwrap();
-    queued.send(&command, &argument, None, || Ok(())).unwrap();
+    queued.send::<String>(&command, &argument, None, Instant::now() + Duration::from_secs(1),
+        || Ok(()), || Ok(())).unwrap();
     let (count, _) = commands.recv_from(&mut data).unwrap();
     assert_eq!(&data[..count], b"UFC_MASTER_CAUTION 1\n");
     assert!(source.command_request(&request).is_err());
     assert!(commands.recv_from(&mut data).is_err());
+
+    let games = Arc::new(GamesRuntime::test_runtime(
+        Arc::new(|request| panic!("A rejected command must not mutate configuration: {request}")),
+        crate::games::Paths::in_directory(fixture.folder.path()),
+        Arc::new(ProcessFixture { process: Mutex::new(None) }),
+    ));
+    let resources = Arc::new(crate::profile_resources::Runtime::new(None, Arc::new(|_| vec![]), false));
+    let mut inventory = osg_profiles::resources::Registry::new();
+    inventory.reconcile(source.delivery_batch().unwrap()).unwrap();
+    let token = inventory.list(0, 8).unwrap().resources.iter().find_map(|resource| {
+        inventory.token(&resource.id, &fixture.command.id, osg_profiles::resources::Access::Invoke).ok()
+    }).expect("The fixture must have an invokable command");
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    source.set_wake(Some(wake.clone()));
+    source.queue_command(&games, &resources, &token, &effect(&fixture.command, 2),
+        (Arc::new(std::sync::atomic::AtomicU64::new(1)), 1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let observed = wake.observed();
+        match source.command_worker.as_ref().unwrap().poll() {
+            Err(command_worker::Failure::Terminal(_)) => break,
+            Err(other) => panic!("Expected invalid-context rejection, got {other:?}"),
+            Ok(()) => assert!(wake.wait(observed, deadline.saturating_duration_since(Instant::now()))),
+        }
+    }
+    assert!(commands.recv_from(&mut data).is_err());
+    source.stop_commands();
+    games.shutdown();
+
     for counter in 3..83 {
         sender
             .send_to(&bytes(counter, true), ("127.0.0.1", listen))

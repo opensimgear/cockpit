@@ -63,18 +63,18 @@ impl Transport {
         argument: &str,
         port: u16,
     ) -> Result<(), String> {
-        self.send_control_checked(command, argument, port, None, || Ok(()))
+        self.send_control_checked(command, argument, port, None, || Ok(()))?.require_sent()
     }
     /// Submit only if every acquired report has reached the canonical decoder
     /// commit. This guard remains held through the nonblocking UDP dispatch.
-    pub(crate) fn send_control_port_after(
+    pub(in crate::dcs_bios) fn send_control_port_after(
         &self,
         command: &str,
         argument: &str,
         port: u16,
         processed_head: u64,
         admit: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<CommandSubmission, String> {
         self.send_control_checked(command, argument, port, Some(processed_head), admit)
     }
     fn send_control_checked(
@@ -84,7 +84,7 @@ impl Transport {
         port: u16,
         processed_head: Option<u64>,
         admit: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<CommandSubmission, String> {
         if port == 0
             || command.is_empty()
             || command.len() > 64
@@ -113,7 +113,7 @@ impl Transport {
         self.send_bytes_to(command, self.command)
     }
     fn send_bytes_to(&self, command: &str, destination: SocketAddrV4) -> Result<(), String> {
-        self.send_bytes_after(command, destination, None, || Ok(()))
+        self.send_bytes_after(command, destination, None, || Ok(()))?.require_sent()
     }
     fn send_bytes_after(
         &self,
@@ -121,7 +121,7 @@ impl Transport {
         destination: SocketAddrV4,
         processed_head: Option<u64>,
         admit: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<CommandSubmission, String> {
         // Queue loss revokes authority even before this reader polls. Serialize
         // validation and the nonblocking dispatch with native loss commits.
         let state = self.receiver.shared.lock();
@@ -135,9 +135,7 @@ impl Transport {
             .as_ref()
             .map_err(|error| error.clone())?;
         if processed_head.is_some_and(|head| head != state.sequence) {
-            // A transient rejection is never queued or retried here. Routing
-            // scheduler work (R4) owns any later decision to submit again.
-            return Err("DCS decode has pending native data; command was not submitted.".into());
+            return Ok(CommandSubmission::DecodePending);
         }
         admit()?;
         let written = self
@@ -148,6 +146,6 @@ impl Transport {
         if written != command.len() {
             return Err("DCS-BIOS command send was incomplete and will not be retried.".into());
         }
-        Ok(())
+        Ok(CommandSubmission::Sent)
     }
 }

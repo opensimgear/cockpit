@@ -1,6 +1,6 @@
 //! One canonical decoder owner; client reads only consume its native journal.
 use super::{Snapshot, Spec, State};
-use crate::dcs_bios::{transport::acquisition_key, Network, Transport};
+use crate::dcs_bios::{transport::{acquisition_key, CommandSubmission}, Network, Transport};
 use osg_streams::{
     Delivery, LossReason, NativeLimits, NativeStream, NativeSubscription, NativeWake, NativeWatch,
 };
@@ -9,7 +9,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, MutexGuard, OnceLock, Weak,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak,
     },
     thread::{self, JoinHandle},
     time::Instant,
@@ -34,12 +34,15 @@ struct Committed {
 }
 struct Shared {
     committed: Mutex<Committed>,
+    processed: Condvar,
     journal: NativeStream<Snapshot, Snapshot>,
     stop: AtomicBool,
     origin: Instant,
     clock_id: String,
     #[cfg(test)]
     waits: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    command_waits: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     before_commit: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
@@ -56,6 +59,8 @@ impl Shared {
         }
         if let Some(head) = processed_head {
             current.processed_head = head;
+            drop(current);
+            self.processed.notify_all();
         }
         Ok(())
     }
@@ -95,6 +100,8 @@ impl Shared {
         current.snapshot = state.snapshot();
         current.terminal = Some(error);
         self.journal.close();
+        drop(current);
+        self.processed.notify_all();
     }
 }
 
@@ -128,12 +135,15 @@ impl Owner {
                 processed_head: 0,
                 terminal: None,
             }),
+            processed: Condvar::new(),
             journal,
             stop: AtomicBool::new(false),
             origin,
             clock_id,
             #[cfg(test)]
             waits: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            command_waits: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             before_commit: Mutex::new(None),
         });
@@ -260,16 +270,46 @@ pub(crate) struct CommandSender {
     command_port: u16,
 }
 impl CommandSender {
-    pub(crate) fn send(
+    pub(crate) fn send<E: From<String>>(
         &self, command: &str, argument: &str, expected: Option<&str>,
-        admit: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(), String> {
+        deadline: Instant,
+        mut validate: impl FnMut() -> Result<(), E>,
+        admit: impl Fn() -> Result<(), String>,
+    ) -> Result<(), E> {
         let source = Source {
-            owner: self.owner.upgrade().ok_or("The DCS command reader retired.")?,
-            client: self.client.upgrade().ok_or("The DCS command reader retired.")?,
+            owner: self.owner.upgrade().ok_or_else(|| "The DCS command reader retired.".to_owned())?,
+            client: self.client.upgrade().ok_or_else(|| "The DCS command reader retired.".to_owned())?,
             command_port: self.command_port,
         };
-        source.send_control_checked(command, argument, expected, admit)
+        let shared = &source.owner.shared;
+        let check_deadline = || -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("The queued DCS command expired before dispatch.".into());
+            }
+            Ok(())
+        };
+        loop {
+            check_deadline()?;
+            validate()?;
+            let current = shared.lock();
+            match source.send_control_attempt(&current, command, argument, expected, || {
+                check_deadline()?;
+                admit()
+            })? {
+                CommandSubmission::Sent => return Ok(()),
+                CommandSubmission::DecodePending => {
+                    // No datagram or admission callback has run. Release the
+                    // decoder lock so it can commit, then recheck authority.
+                    let head = current.processed_head;
+                    #[cfg(test)]
+                    shared.command_waits.fetch_add(1, Ordering::Relaxed);
+                    drop(shared.processed.wait_timeout_while(
+                        current, deadline.saturating_duration_since(Instant::now()),
+                        |state| state.processed_head == head && state.terminal.is_none(),
+                    ).unwrap_or_else(|p| p.into_inner()));
+                }
+            }
+        }
     }
 }
 impl Source {
@@ -355,17 +395,16 @@ impl Source {
         argument: &str,
         expected: Option<&str>,
     ) -> Result<(), String> {
-        self.send_control_checked(command, argument, expected, || Ok(()))
+        self.send_control_attempt(&self.owner.shared.lock(), command, argument, expected, || Ok(()))?.require_sent()
     }
     pub(crate) fn command_sender(&self) -> CommandSender {
         CommandSender { owner: Arc::downgrade(&self.owner), client: Arc::downgrade(&self.client),
             command_port: self.command_port }
     }
-    fn send_control_checked(
-        &self, command: &str, argument: &str, expected: Option<&str>,
+    fn send_control_attempt(
+        &self, current: &Committed, command: &str, argument: &str, expected: Option<&str>,
         admit: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(), String> {
-        let current = self.owner.shared.lock();
+    ) -> Result<CommandSubmission, String> {
         let client = self.client.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(error) = &current.terminal {
             return Err(error.clone());
@@ -398,3 +437,7 @@ impl Source {
 #[cfg(test)]
 #[path = "source_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "command_wait_tests.rs"]
+mod command_wait_tests;

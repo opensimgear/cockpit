@@ -141,7 +141,7 @@ impl GameSources {
                 if Instant::now() >= deadline { return Err("The queued DCS command expired before dispatch.".into()); }
                 Ok(())
             };
-            let result = (|| -> Result<(), command_worker::Failure> {
+            let validate = || -> Result<(), command_worker::Failure> {
                 check()?;
                 games.validate_admitted_game_context(&context, &game.proof).map_err(|failure| {
                     match failure {
@@ -153,8 +153,9 @@ impl GameSources {
                 })?;
                 catalogue.lock().unwrap_or_else(|error| error.into_inner()).validate(true)?;
                 resources.validate_delivery(&token)?;
-                sender.send(&command, &argument, game.proof.vehicle_id.as_deref(), check).map_err(Into::into)
-            })();
+                Ok(())
+            };
+            let result = sender.send(&command, &argument, game.proof.vehicle_id.as_deref(), deadline, validate, check);
             if retired() { Ok(()) } else { result }
         });
         // A completion can cancel the lane between the last telemetry poll

@@ -14,6 +14,20 @@ const MAX_PENDING_FRAMES: usize = 256;
 const MAX_PENDING_BYTES: usize = 1024 * 1024;
 const OVERFLOW: &str = "DCS export subscriber queue overflowed; acquire a fresh baseline.";
 
+pub(super) enum CommandSubmission {
+    Sent,
+    DecodePending,
+}
+
+impl CommandSubmission {
+    pub(super) fn require_sent(self) -> Result<(), String> {
+        match self {
+            Self::Sent => Ok(()),
+            Self::DecodePending => Err("DCS decode has pending native data; command was not submitted.".into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CapturedDatagram {
     pub bytes: Arc<[u8]>,
