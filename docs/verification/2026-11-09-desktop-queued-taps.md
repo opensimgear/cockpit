@@ -116,3 +116,33 @@ receiver and ownership evidence is under
 `mixed-11bf59e5-49188` and `mixed-11bf59e5-repeat-18116`.
 The dev executable SHA-256 is
 `c628a650ddad47381842f0c8f681469cb03a98ef79cd3667624acd027522476a`.
+
+### Durable write timing by stage
+
+A private Windows dev build timestamped path checks, the record read,
+`BEGIN IMMEDIATE`, identity and payload checks, `commit()`, and the final
+path check inside each durable write. It used the existing bounded audit
+collector. Each diagnostic row matched one `JournalPersist` row by parent
+process, channel, request sequence and both exact QPC write bounds. The
+neutral DCS restart check passed and matched all 34 writes. The checkpoint
+recorded 628 events with zero drops or errors.
+
+Two isolated replays used the same retained `Evidence::write` path on
+private local WAL/FULL databases. Each measured 1,536 one-kibibyte writes
+after warm-up, at a requested 64 writes per second.
+
+| Run | Write p50 / p95 / p99 | Commit p99 | Slowest write | Commit in slowest write |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.814 / 1.033 / 1.174 ms | 0.422 ms | 1.740 ms | 1.178 ms |
+| 2 | 0.794 / 1.045 / 1.161 ms | 0.411 ms | 8.785 ms | 8.106 ms |
+
+The slowest replay write spent 92% of its time in `commit()`. The trace
+measures wall time, so identifying a flush, checkpoint or scheduling delay
+would require lower-level evidence. The guarded mixed-input test still
+needs an unobstructed foreground to trace a recurrence under the original
+workload. [SQLite WAL performance notes](https://sqlite.org/wal.html#performance_considerations)
+
+The private build, replay CSVs, source and neutral audit are in
+`.research/c193-reconnect/dcs-native-stage-timing/desktop-write-stages/`.
+The private dev executable SHA-256 is
+`4ddd71b8d6c29d2344324418a934aa8091ffb4d5ba753a20d2ee05b2c80b0737`.
