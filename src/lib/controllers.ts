@@ -6,6 +6,7 @@ export type HostController = {
   vendorId: number; productId: number; osgHid: boolean; online: boolean;
   generation: string; sequence: string; controlCount: number; baselineReady: boolean;
   identityConfidence: 'serial' | 'local-path';
+  nativeReadUs?: string;
 };
 export type ControllerControl = {
   capability: { id: string; kind: 'button' | 'axis' | 'hat' | 'diagnostic'; usagePage: number; usage: number;

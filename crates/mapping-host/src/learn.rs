@@ -132,6 +132,7 @@ mod tests {
                     generation: 1,
                     sequence: 1,
                     captured_us: 1,
+                    native_read_us: None,
                     reason: stream::Reason::Baseline,
                     values: BTreeMap::new(),
                 },

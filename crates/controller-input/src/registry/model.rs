@@ -190,6 +190,7 @@ struct Source {
     generation: u64,
     sequence: u64,
     captured_us: u64,
+    native_read_us: Option<u64>,
     cursor: u64,
     controls: Vec<Control>,
     values: BTreeMap<String, Sample>,
@@ -212,18 +213,23 @@ impl Source {
             generation: self.generation,
             sequence: self.sequence.max(1),
             captured_us: 0,
+            native_read_us: None,
             reason,
             values: self.values.clone(),
         }
     }
     fn summary(&self) -> Value {
-        json!({"id":self.saved.id,"name":self.saved.name,"role":self.saved.role,
+        let mut summary = json!({"id":self.saved.id,"name":self.saved.name,"role":self.saved.role,
             "origin":"host-controller","backend":self.saved.identity.backend,
             "vendorId":self.saved.identity.vendor_id,"productId":self.saved.identity.product_id,
             "osgHid":self.saved.identity.vendor_id==0xcafe && self.saved.identity.product_id==0x4010,
             "online":self.online,"generation":self.generation.to_string(),"sequence":self.sequence.to_string(),
             "controlCount":self.controls.len(),"baselineReady":self.online && self.controls.iter().any(|c|c.kind!=Kind::Diagnostic)
                 && self.controls.iter().filter(|c| c.kind!=Kind::Diagnostic).all(|c| self.values.contains_key(&c.id)),
-            "identityConfidence":if self.saved.identity.serial.is_some() {"serial"} else {"local-path"}})
+            "identityConfidence":if self.saved.identity.serial.is_some() {"serial"} else {"local-path"}});
+        if let Some(read_us) = self.native_read_us {
+            summary["nativeReadUs"] = json!(read_us.to_string());
+        }
+        summary
     }
 }

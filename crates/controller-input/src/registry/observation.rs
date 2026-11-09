@@ -91,9 +91,11 @@ impl Registry {
         if let Some(source) = self.sources.get_mut(id) {
             if let Some(event) = captured {
                 source.captured_us = event.captured_us;
+                source.native_read_us = event.native_read_us;
                 source.cursor = event.cursor;
             } else if reason == "baseline" || reason == "change" {
                 source.captured_us = self.journal.now();
+                source.native_read_us = None;
                 source.cursor = self.journal.cursor();
             }
         }

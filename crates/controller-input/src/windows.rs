@@ -6,6 +6,7 @@ use std::{
     mem::size_of,
     ptr::{null, null_mut},
     sync::{atomic::AtomicBool, Arc, Mutex},
+    time::Instant,
 };
 use windows_sys::Win32::{
     Devices::HumanInterfaceDevice::*,
@@ -424,6 +425,7 @@ unsafe fn input(
         &mut capacity,
         header_size,
     );
+    let read_at = Instant::now();
     if bytes == u32::MAX {
         return Err(win_error("Raw Input report"));
     }
@@ -481,7 +483,7 @@ unsafe fn input(
             );
             continue;
         };
-        if let Err(error) = r.report(&id, report_id, &values) {
+        if let Err(error) = r.report_acquired(&id, report_id, &values, read_at) {
             r.fault(&id, &error);
         }
     }

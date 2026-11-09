@@ -248,6 +248,7 @@ fn fixture() -> (Source, stream::Event) {
         generation: 7,
         sequence: 42,
         captured_us: 100,
+        native_read_us: None,
         reason: stream::Reason::Baseline,
         values: BTreeMap::from([(control.id.clone(), control.decode(0xffff).unwrap())]),
     };

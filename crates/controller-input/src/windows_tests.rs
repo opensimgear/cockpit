@@ -491,7 +491,16 @@ fn enumeration_reconnects_and_reports_preserve_atomic_control_state() {
         assert_eq!(devices.len(), 1);
         enumerate(&api, &mut devices, &shared).unwrap();
         assert_eq!(shared.lock().unwrap().list(0)["total"], 1);
+        let before_raw_read = shared.lock().unwrap().capture_clock().now_us();
         input(&api, 1usize as HRAWINPUT, &devices, &shared).unwrap();
+        {
+            let registry = shared.lock().unwrap();
+            let session = registry.list(0)["session"].as_str().unwrap().to_owned();
+            let page = registry.stream_page(&session, 0);
+            let event = page.events.last().unwrap();
+            let read = event.native_read_us.expect("raw input must retain its original read");
+            assert!(before_raw_read <= read && read <= event.captured_us);
+        }
         let id = shared.lock().unwrap().list(0)["sources"][0]["id"]
             .as_str()
             .unwrap()

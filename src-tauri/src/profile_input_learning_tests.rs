@@ -33,6 +33,7 @@ fn baseline() -> stream::Event {
         generation: 1,
         sequence: 1,
         captured_us: 100,
+        native_read_us: None,
         reason: stream::Reason::Baseline,
         values: controls()
             .iter()

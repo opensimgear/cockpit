@@ -55,6 +55,7 @@ fn event(generation: u64, sequence: u64, reason: stream::Reason, pressed: bool) 
         generation,
         sequence,
         captured_us: generation * 100 + sequence,
+        native_read_us: None,
         reason,
         values: BTreeMap::from([
             (

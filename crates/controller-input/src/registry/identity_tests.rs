@@ -118,6 +118,7 @@ fn remembered_duplicate_layout_never_replaces_the_online_identity() {
             generation: 0,
             sequence: 0,
             captured_us: 0,
+            native_read_us: None,
             cursor: 0,
             controls: vec![],
             values: BTreeMap::new(),

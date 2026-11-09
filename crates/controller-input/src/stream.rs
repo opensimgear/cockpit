@@ -24,6 +24,9 @@ pub struct Event {
     pub generation: u64,
     pub sequence: u64,
     pub captured_us: u64,
+    /// Host Raw Input read completion in the same clock as the journal commit.
+    /// An authored event or a synthetic snapshot boundary has no native read.
+    pub native_read_us: Option<u64>,
     pub reason: Reason,
     pub values: BTreeMap<String, Sample>,
 }

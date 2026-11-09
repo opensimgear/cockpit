@@ -94,6 +94,7 @@ impl Registry {
                     generation: 0,
                     sequence: 0,
                     captured_us: 0,
+                    native_read_us: None,
                     cursor: 0,
                     controls: vec![],
                     values: BTreeMap::new(),

@@ -65,6 +65,7 @@ impl Registry {
                     generation: 0,
                     sequence: 0,
                     captured_us: 0,
+                    native_read_us: None,
                     cursor: 0,
                     controls: vec![],
                     values: BTreeMap::new(),
@@ -88,6 +89,7 @@ impl Registry {
         }
         if !source.online || layout_changed {
             source.captured_us = self.journal.now();
+            source.native_read_us = None;
             source.cursor = self.journal.cursor();
         }
         source.online = true;
@@ -107,6 +109,7 @@ impl Registry {
     pub fn disconnect(&mut self, id: &str) {
         if let Some(s) = self.sources.get_mut(id).filter(|s| s.online) {
             s.online = false;
+            s.native_read_us = None;
             s.values.clear();
             s.sequence = s.sequence.saturating_add(1);
             let event = self.journal.publish(s.event(Reason::Disconnect));
@@ -122,6 +125,7 @@ impl Registry {
     }
     pub fn fault(&mut self, id: &str, message: &str) {
         if let Some(s) = self.sources.get_mut(id) {
+            s.native_read_us = None;
             let next = s.generation.checked_add(2).map(|wire|wire - 1);
             if let Some(generation) = next { s.generation = generation; }
             else { s.online = false; }
@@ -141,11 +145,23 @@ impl Registry {
         report: u8,
         data: &BTreeMap<u16, u32>,
     ) -> Result<(), String> {
-        self.apply_values(id, report, data, true)
+        self.apply_values(id, report, data, true, None)
+    }
+    /// Commit a Windows report with the completion of its original raw read.
+    #[cfg(windows)]
+    pub(crate) fn report_acquired(
+        &mut self,
+        id: &str,
+        report: u8,
+        data: &BTreeMap<u16, u32>,
+        read_at: std::time::Instant,
+    ) -> Result<(), String> {
+        let native_read_us = self.journal.clock().captured_us(read_at)?;
+        self.apply_values(id, report, data, true, Some(native_read_us))
     }
     /// Incremental native values preserve untouched controls, including held buttons.
     pub fn delta(&mut self, id: &str, report: u8, data: &BTreeMap<u16, u32>) -> Result<(), String> {
-        self.apply_values(id, report, data, false)
+        self.apply_values(id, report, data, false, None)
     }
     fn apply_values(
         &mut self,
@@ -153,6 +169,7 @@ impl Registry {
         report: u8,
         data: &BTreeMap<u16, u32>,
         implicit_buttons: bool,
+        native_read_us: Option<u64>,
     ) -> Result<(), String> {
         let s = self.sources.get_mut(id).ok_or("Unknown controller.")?;
         if !s.online {
@@ -182,7 +199,9 @@ impl Registry {
         };
         let ready = s.ready();
         let event = if ready {
-            self.journal.publish(s.event(reason.clone()))
+            let mut event = s.event(reason.clone());
+            event.native_read_us = native_read_us;
+            self.journal.publish(event)
         } else {
             None
         };

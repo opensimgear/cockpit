@@ -139,6 +139,44 @@ fn exact_domains_partial_baseline_atomic_report_and_capture() {
     );
 }
 #[test]
+#[cfg(windows)]
+fn raw_read_evidence_is_separate_from_the_snapshot_and_commit_boundaries() {
+    use std::time::{Duration, Instant};
+
+    let (mut registry, _, id, mut reader) = setup();
+    reader.recv().unwrap();
+    registry.report(&id, 1, &BTreeMap::from([(0, 1), (1, 20)])).unwrap();
+    reader.recv().unwrap();
+    registry.report(&id, 2, &BTreeMap::from([(2, 1)])).unwrap();
+    reader.recv().unwrap();
+    let original_read = Instant::now();
+    let expected = registry.capture_clock().captured_us(original_read).unwrap();
+    let snapshot = registry.stream_snapshot(std::slice::from_ref(&id)).unwrap();
+    assert!(snapshot.sources[0].baseline.native_read_us.is_none());
+    assert!(registry.report_acquired(&id, 1, &BTreeMap::new(), Instant::now() + Duration::from_secs(1)).is_err());
+    assert_eq!(registry.stream_page(&registry.session, snapshot.cursor).cursor, snapshot.cursor);
+
+    registry.report_acquired(&id, 1, &BTreeMap::from([(1, 21)]), original_read).unwrap();
+    let page = registry.stream_page(&registry.session, snapshot.cursor);
+    assert_eq!(page.events.len(), 1);
+    let event = &page.events[0];
+    assert_eq!(event.native_read_us, Some(expected));
+    assert!(expected <= snapshot.captured_us && snapshot.captured_us <= event.captured_us);
+    let change = reader.recv().unwrap();
+    let payload = change.payload.as_ref().unwrap();
+    assert_eq!(payload["source"]["sequence"], event.sequence.to_string());
+    assert_eq!(payload["source"]["nativeReadUs"], expected.to_string());
+    assert_eq!(payload["capturedUs"], event.captured_us.to_string());
+
+    registry.fault(&id, "raw input lost");
+    assert_eq!(reader.recv().unwrap().kind, "loss");
+    let unavailable = reader.recv().unwrap();
+    let source = &unavailable.payload.as_ref().unwrap()["source"];
+    assert_eq!(source["baselineReady"], false);
+    assert!(source.get("nativeReadUs").is_none());
+}
+
+#[test]
 fn speculative_metadata_isolated_and_committed_metadata_keeps_current_samples() {
     let (mut registry, _, id, mut reader) = setup();
     reader.recv().unwrap();

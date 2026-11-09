@@ -142,6 +142,7 @@ impl Slot {
                 generation: source.generation,
                 sequence: source.sequence,
                 captured_us: source.captured_us,
+                native_read_us: source.native_read_us,
                 cursor: source.cursor,
                 controls: vec![],
                 values: source.values.clone(),

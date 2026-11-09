@@ -1,5 +1,5 @@
 // Opt-in live measurement. Open the native Devices controller inspector first.
-// Measures journal commit -> JS/DOM/frame opportunities, not hardware or photon latency.
+// Measures native read completion -> journal/DOM and journal -> JS/DOM/frame opportunities.
 // OSG_CONTROLLER_TRACE_IPC=1 also measures large WebView channel fetches.
 // OSG_CONTROLLER_TRACE_DIRECTORY can separate comparison runs.
 import {nativePage} from './cdp.mjs';
@@ -83,7 +83,8 @@ try{
       const sequence=current.source.generation+':'+current.source.sequence;
       if(lastSequence&&sequence!==lastSequence&&samples.length<5000){
         const captured=Number(BigInt(current.capturedUs))/1000+offset;
-        samples.push({sequence,captured,received});
+        const nativeRead=current.source.nativeReadUs===undefined?undefined:Number(BigInt(current.source.nativeReadUs))/1000+offset;
+        samples.push({sequence,captured,received,nativeRead});
       }
       lastSequence=sequence;
     });
@@ -93,8 +94,12 @@ try{
     if(!detail.isConnected||!rows.some(row=>Number.isFinite(row.dom))){
       errors.push('No matching reports were rendered by the selected inspector.');
     }
+    if(selected.backend==='windows-raw-input'&&rows.some(row=>!Number.isFinite(row.nativeRead))){
+      errors.push('A Windows Raw Input report is missing its native read timestamp.');
+    }
     const summary=(key,from='captured')=>{
-      const data=rows.filter(row=>Number.isFinite(row[key])).map(row=>row[key]-row[from]).sort((a,b)=>a-b);
+      const data=rows.filter(row=>Number.isFinite(row[key])&&Number.isFinite(row[from]))
+        .map(row=>row[key]-row[from]).sort((a,b)=>a-b);
       const p=f=>data.length?data[Math.min(data.length-1,Math.floor((data.length-1)*f))]:null;
       return {count:data.length,p50:p(.5),p95:p(.95),p99:p(.99),max:p(1)};
     };
@@ -103,6 +108,7 @@ try{
       source:{name:selected.name,backend:selected.backend,controls:selected.controlCount},
       clockUncertaintyMs:best.rtt/2,clockRoundTripMs:best.rtt,
       journalToObserverMs:summary('received'),journalToDomMs:summary('dom'),
+      nativeReadToJournalMs:summary('captured','nativeRead'),nativeReadToDomMs:summary('dom','nativeRead'),
       // Separate readers can receive the same report in either order.
       diagnosticObserverToDomOffsetMs:summary('dom','received'),
       journalToFrameOpportunityMs:summary('frame'),journalToFollowingFrameMs:summary('nextFrame'),

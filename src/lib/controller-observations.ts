@@ -42,6 +42,7 @@ function source(value: unknown, id: string): asserts value is HostController {
     && typeof value.osgHid === 'boolean' && typeof value.online === 'boolean'
     && uint64(value.generation) && uint64(value.sequence) && integer(value.controlCount, 0, 256)
     && typeof value.baselineReady === 'boolean' && (!value.baselineReady || value.online)
+    && (value.nativeReadUs === undefined || uint64(value.nativeReadUs))
     && ['serial', 'local-path'].includes(value.identityConfidence as string));
 }
 function capability(value: unknown): asserts value is ControllerControl['capability'] {
@@ -108,6 +109,10 @@ function reduce(id: string, frame: Readonly<WireFrame>, previous?: Snapshot, des
   requireValid(frame.source === 'controller-input' && frame.clockId === `controllers:${payload.session}`
     && BigInt(frame.generation) === BigInt(payload.source.generation) + 1n
     && uint64(payload.cursor) && uint64(payload.capturedUs) && payload.capturedUs === frame.capturedUs);
+  if (payload.source.nativeReadUs !== undefined) {
+    requireValid(payload.source.baselineReady && payload.source.online
+      && BigInt(payload.source.nativeReadUs) > 0n && BigInt(payload.source.nativeReadUs) <= BigInt(frame.capturedUs));
+  }
   const unavailable = !payload.source.online || !payload.source.baselineReady;
   if (frame.kind === 'snapshot') {
     requireValid(record(payload.identity) && text(payload.identity.path) && text(payload.identity.collection)

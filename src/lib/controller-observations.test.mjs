@@ -78,6 +78,26 @@ test('shares reduction, late snapshot, immutable consumer isolation and referenc
   assert.equal(states.length, before);
 });
 
+test('preserves a validated native read completion timestamp on the immutable source summary', () => {
+  const { states, send } = setup();
+  send(snapshot({ source: controller({ nativeReadUs: '9' }) }));
+  const source = states.at(-1).detail.source;
+  assert.equal(source.nativeReadUs, '9');
+  assert.ok(Object.isFrozen(source));
+  for (const nativeReadUs of ['0', '01', '-1', '18446744073709551616', 9]) {
+    const invalid = setup();
+    invalid.send(snapshot({ source: controller({ nativeReadUs }) }));
+    assert.equal(invalid.states.at(-1).status, 'error', String(nativeReadUs));
+  }
+  for (const payload of [
+    snapshot({ source: controller({ nativeReadUs: '11' }) }),
+    snapshot({ source: controller({ nativeReadUs: '9', baselineReady: false }) }),
+  ]) {
+    const invalid = setup(); invalid.send(payload);
+    assert.equal(invalid.states.at(-1).status, 'error');
+  }
+});
+
 test('preview renders only the latest continuous report per frame and clears immediately on loss', t => {
   previewDocument(t);
   const { client, states, send } = setup();

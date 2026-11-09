@@ -138,6 +138,7 @@ fn overflow_reports_a_gap_instead_of_skipping_a_release() {
         generation: 1,
         sequence: 1,
         captured_us: 0,
+        native_read_us: None,
         reason: Reason::Change,
         values: BTreeMap::new(),
     };
@@ -184,6 +185,7 @@ fn event(source: &str, reason: Reason) -> Event {
         generation: 1,
         sequence: 1,
         captured_us: 0,
+        native_read_us: None,
         reason,
         values: BTreeMap::new(),
     }
