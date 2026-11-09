@@ -163,3 +163,28 @@ under `.research/c193-reconnect/current-ui-88ee864e/`.
 | Raw Input probe | `6ea93864c16d2897aedc150df5addf45fd65a3dcd89a0f40773a779c88f35e9e` |
 | `native-verified.log` | `0f6537bcf393981c624d9cac826b5c76afab7880abeed371bfe043e63121f220` |
 | `browser-verified.log` | `d4a819033d95a4ea6c2847c1776ba585519f9f92d5482713c41b4dd0aad5cdac` |
+
+## Linux native suite at the frontend queue fix
+
+The clean export of `e0dcdced9a0f91c69146e7e5c7df62d45d18ea26` passed
+the full locked and offline Ubuntu WSL2 suite using a private D-Bus
+session and Secret Service store. The library passed 2,422 tests with
+nine existing ignores. The native gateway framing unit test and
+separate real gateway integration test also passed. The integration
+exercised a real service process, including the editor payload limit,
+correlated replies, profile CRUD and clean service exit.
+
+An instrumented rerun of the integration passed with 97.27% line,
+75.00% function and 95.15% region coverage. This build measured regions,
+lines and functions. Physical Linux controller input and desktop
+presentation remain separate checks.
+
+Artifacts and logs are under `.research/c193-reconnect/r9-linux-e0dcdced/`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Exact source archive | `045ac77b53ddf77971c60b09cb5feea1bbac385a4de1ad4d00c6041457e5cbbf` |
+| Library test binary | `680ba5fd0dca24f94854b18a5edd59e2b546a925374808f847864c3da2e38609` |
+| Native gateway service | `68d9237c2e359b32630434ae53659e6ffe32ca47e8422b829e6602256e29934b` |
+| Instrumented gateway integration binary | `6526fb65b8e42b43ea24505fb8ef9616bcdc5109a27e5a4514191d0158259673` |
+| Full test log | `ca8e0dbc0950f35cf8b3049800952e31e31685ecd3495b1518bd3c9e53b99a22` |

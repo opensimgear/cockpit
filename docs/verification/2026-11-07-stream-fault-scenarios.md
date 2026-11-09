@@ -33,3 +33,45 @@ Real controller unplug and replug, held-input rearming, physical input
 latency, and simulator effects remain operator acceptance in
 [#199](https://github.com/opensimgear/cockpit/issues/199). The broader
 cross-platform matrix, full timing budget and CI gates in #198 remain open.
+
+## Browser-dev gateway restart with held vJoy
+
+Two Windows dev runs started from a private Cockpit database and a free
+vJoy slot. Each held an authored button for more than one feeder lease.
+The fixture terminated only the exact native gateway child of its private
+Vite process. The Raw Input receiver recorded neutral output within
+10.24 ms and 9.19 ms of the respective kill requests. The QPC brackets
+for process termination were 12.72 and 12.01 ms wide. These are upper
+bounds measured from before the kill request to the neutral report.
+
+The same page observed loss of its runtime subscription. A new gateway
+process reported recovery needed with no active owner. Explicit recovery
+freed the slot, and the replacement observation began with an ownerless
+snapshot in a new observation session. The gateway rejected a press from
+the old owner. A deliberate reapply acquired a fresh owner and a neutral
+baseline. The receiver's exact sequence was the original press, the
+release on process loss, a fresh press, and its release. Stop freed the
+slot again. The final fixture verified a single native vJoy identity.
+
+The final tracked fixture reached 100% lines, 88.71% branches and
+95.83% functions. It is opt-in on Windows. Run
+`node --test tests/ui/browser-gateway-held-restart.mjs` against a
+private browser-dev instance with `OSG_GATEWAY_RESTART_PRIVATE=1`.
+Supply its loopback URL, exact Vite PID, native service executable and
+Raw Input probe through `OSG_GATEWAY_RESTART_URL`,
+`OSG_GATEWAY_RESTART_ROOT_PID`, `OSG_GATEWAY_RESTART_EXE` and
+`OSG_GATEWAY_RESTART_PROBE`. The fixture checks the gateway process
+identity before the kill. Give the instance its own `OSG_SQLITE_DATABASE`.
+
+The native gateway executable SHA-256 is
+`a7164c3d58fe28a90c5707d82c9b2f4fd82247141f32565c8241534340ce96e8`.
+The Raw Input probe SHA-256 is
+`6ea93864c16d2897aedc150df5addf45fd65a3dcd89a0f40773a779c88f35e9e`.
+The logs are under `.research/c193-reconnect/dcs-native-stage-timing/`.
+This qualifies authored browser-dev gateway restart. Physical input
+replacement and actual simulator effects stay in #199.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `browser-gateway-held-restart-1.log` | `2712ff771a87ccb5dc9f6c29c89485b0f0c41799d0c3b0c0e6faf2f809b22fc6` |
+| `browser-gateway-held-restart-coverage.log` | `1f025e4dc18efd07b02ef1f2657f015667444e3ea84d26b6947cb17b01b98fc4` |
