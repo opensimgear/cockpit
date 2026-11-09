@@ -263,7 +263,7 @@ With the assigned controller selected in the visible Profiles
 inspector, set `OSG_CONTROLLER_SOURCE_ID` to the current local source ID.
 Run `node scripts/reactive/profile-preview-latency.mjs --preflight` with
 the controller stationary. Then run the same command without
-`--preflight` and sweep an axis during its ten-second capture. The
+`--preflight` and sweep an axis during its 15-second capture. The
 sweep must yield at least 20 unambiguous visible transitions. The probe
 reports native read completion to DOM and the next frame opportunity
 separately from report cadence. Display scan-out, deliberate button
@@ -273,3 +273,46 @@ delivery to vJoy, and simulator response have separate acceptance steps.
 | --- | --- |
 | `.research/reactive/profile-preview-latency/1794251645252.json` | `b4da6820104cbdbfa38219b237c057317ccbca14dc37667a805803039b3c8a0f` |
 | `.research/reactive/physical-vjoy-latency/5f6fa5ab-8efc-4d27-ac32-67722b0267c5/evidence.json` | `b899d5e8660abb06cb1042c6cac52278ae73e9b6cffce93927e517e62c69394c` |
+
+## Operator Gladiator sweep and vJoy receipts
+
+The same Windows dev executable received the operator's physical VKB
+Gladiator input. Two main axes spanned the normalized presentation
+range from 0 through 32,767. The foreground Profiles inspector matched
+1,624 unambiguous changes out of 2,814 changed reports. Its passive reader
+received 2,857 reports. The median interval between adjacent native
+reports was 4.00 ms. The p95 interval was 4.04 ms. The full run includes
+the quiet period before and after movement.
+
+The earlier probe treated any forward jump as loss. The current probe
+counts skipped reports when a complete snapshot advances within the
+same generation. It still rejects loss, identity replacement, backwards
+progress, and nonconsecutive deltas. The final sweep counted 19 reports
+coalesced by the preview subscription. The ordered routing journal
+has its own reader and evidence.
+
+| Segment | Samples | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Raw Input read to journal during sweep | 2,857 | 0.187 ms | 0.286 ms | 0.332 ms |
+| Raw Input read to Profiles DOM | 1,624 | 8.35 ms | 10.25 ms | 14.34 ms |
+| Raw Input read to next frame opportunity | 1,624 | 15.58 ms | 17.20 ms | 20.19 ms |
+| Raw Input read to vJoy Raw Input receipt, upper bound | 44 | 0.760 ms | 1.013 ms | 1.046 ms |
+
+The preview clock bracket was ±2.45 ms. The separate button run matched
+all 44 ordered press and release events on HID button 3 and vJoy slot 1.
+Its native clock uncertainty was 2.3 µs. Stop freed the slot and the
+temporary profile was deleted. The first button run matched eight edges,
+below the minimum sample count. The final run used a private build of
+the same receive-only probe with its maximum observation window extended
+to 30 seconds so the operator cue and Stop fit inside the capture.
+The native button trace ran for ten seconds.
+
+The measured segments begin at Windows Raw Input read completion.
+Physical actuation before that point, display scan-out, and simulator
+effects remain separate.
+
+| Local trace or binary | SHA-256 |
+| --- | --- |
+| `.research/reactive/profile-preview-latency/1794252869754.json` | `c9049598e1d5781832bb194b2cbc09c254808a79e73355db3624f595a811b34c` |
+| `.research/reactive/physical-vjoy-latency/8d07844b-e250-4d19-a280-d1acf608e4f2/evidence.json` | `163fde17708d09979241059a1e8e1e7d4d4cf1c6524452a8a486e3431671fb31` |
+| `OperatorRawInputProbe.exe` | `bb31c37369b97e467ce4a26a45000108ec1d2aa94a43d6156b5512c88ccba0f5` |

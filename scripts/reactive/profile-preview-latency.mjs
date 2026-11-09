@@ -31,7 +31,7 @@ try{
   const before=await calibrate(),samples=[],dom=[],errors=[],controller=new AbortController();
   let snapshotCount=0,changeCount=0;
   let axes=[],generation,backend,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
-  let reportCount=0,previousRead;
+  let reportCount=0,coalescedPreviewReports=0,previousRead;
   const nativeReadIntervals=[],readToJournal=[];
   const axisValues=new Map(), axisLabels=new Map();
   const wireSignature=()=>axes.map(id=>String(axisValues.get(id))).join('|');
@@ -66,10 +66,14 @@ try{
      if(delivery!==undefined&&BigInt(raw.delivery)!==delivery+1n)errors.push('Delivery continuity changed.');
      subscriptionId=raw.subscriptionId;delivery=BigInt(raw.delivery);
      if(frame.topic!=='controllers.input.'+sourceId||frame.source!=='controller-input')errors.push('Wrong native topic or producer.');
-     if(previousFrame&&(frame.session!==previousFrame.session||frame.generation!==previousFrame.generation
-      ||BigInt(frame.revision)!==BigInt(previousFrame.revision)+1n
-      ||(previousFrame.sequence!==undefined&&BigInt(frame.sequence)!==BigInt(previousFrame.sequence)+1n)))errors.push('Native stream revision or sequence continuity changed.');
      const snapshot=frame.kind==='snapshot';
+     if(previousFrame){
+      const advance=BigInt(frame.revision)-BigInt(previousFrame.revision);
+      const same=frame.session===previousFrame.session&&frame.generation===previousFrame.generation;
+      const sequenceOk=previousFrame.sequence===undefined||(frame.sequence!==undefined&&
+       (snapshot?BigInt(frame.sequence)>BigInt(previousFrame.sequence):BigInt(frame.sequence)===BigInt(previousFrame.sequence)+1n));
+      if(!same||advance<=0n||(!snapshot&&advance!==1n)||!sequenceOk)errors.push('Native stream revision or sequence continuity changed.');
+     }
      if(snapshot)snapshotCount++;
      if(frame.kind==='change')changeCount++;
      const controls=snapshot?(payload?.controls??[]):[];
@@ -92,11 +96,14 @@ try{
      }else if(generation!==undefined&&(snapshot||frame.kind==='change')){
       if(payload?.source?.generation!==generation||payload?.source?.id!==sourceId||!payload?.source?.baselineReady)errors.push('Source identity, generation or readiness changed.');
       if(snapshot&&snapshotAxes.join('|')!==axes.join('|'))errors.push('Axis set changed during measurement.');
-      const sequence=BigInt(payload.source.sequence),expected=nativeSequence+(payload.reason==='metadata'?0n:1n);
-      if(sequence!==expected)errors.push('Native controller report continuity changed.');
-      nativeSequence=sequence;
+      const sequence=BigInt(payload.source.sequence),advance=sequence-nativeSequence;
       const capturedUs=BigInt(frame.capturedUs);
       const isReport=payload.reason!=='metadata';
+      // Complete same-generation preview snapshots may replace unread state.
+      // Routing reads the separate ordered journal. Deltas still require adjacency.
+      if(isReport&&snapshot&&advance>1n)coalescedPreviewReports+=Number(advance-1n);
+      else if(advance!==(isReport?1n:0n))errors.push('Native controller report continuity changed.');
+      nativeSequence=sequence;
       const readUs=isReport&&payload.source.nativeReadUs!==undefined?BigInt(payload.source.nativeReadUs):null;
       const validRead=readUs!==null&&readUs>0n&&readUs<=capturedUs;
       if(isReport){
@@ -104,7 +111,7 @@ try{
        if(validRead){
         if(previousRead!==undefined){
          if(readUs<previousRead)errors.push('Physical read timestamps regressed.');
-         else nativeReadIntervals.push(Number(readUs-previousRead)/1000);
+         else if(advance===1n)nativeReadIntervals.push(Number(readUs-previousRead)/1000);
         }
         previousRead=readUs;
         readToJournal.push(Number(capturedUs-readUs)/1000);
@@ -126,7 +133,7 @@ try{
      void ack().catch(error=>errors.push(String(error)));
     },error:message=>errors.push(message)
    },controller.signal);
-   await new Promise(resolve=>setTimeout(resolve,preflight?3000:10000));
+   await new Promise(resolve=>setTimeout(resolve,preflight?3000:15000));
   }finally{controller.abort();mutation.disconnect();document.removeEventListener('visibilitychange',changedVisibility);window.removeEventListener('blur',blurred);}
   const after=await calibrate();
   if(!inspector.isConnected||inspector.dataset.controllerSourceId!==sourceId)errors.push('Visible inspector was replaced.');
@@ -149,7 +156,7 @@ try{
   if(!preflight&&matched.length<20)errors.push('Fewer than 20 unambiguous visible axis transitions; this run cannot qualify timing.');
   if(matched.some(row=>row.dom-row.captured < -before.uncertainty))errors.push('DOM predates correlated capture beyond clock uncertainty.');
   return {at:new Date().toISOString(),durationMs:performance.now()-started,scope:'profile-controller-inspector',
-   sourceId,generation,backend,axes,visibility,focused,preflight,reportCount,nativeReadCount:readToJournal.length,
+   sourceId,generation,backend,axes,visibility,focused,preflight,reportCount,coalescedPreviewReports,nativeReadCount:readToJournal.length,
    clockUncertaintyMs:before.uncertainty,
    clockOffsetDriftMs:after.offset-before.offset,snapshotCount,changeCount,changedReportCount:rows.length,domTransitionCount:dom.length,
    journalToObserverMs:summarize('received'),journalToDomMs:summarize('dom'),journalToFrameOpportunityMs:summarize('frameOpportunity'),
@@ -159,7 +166,7 @@ try{
    nativeReadToPreviewMeasured:!preflight&&errors.length===0&&matched.filter(row=>Number.isFinite(row.nativeRead)).length>=20,
    qualification:'Passive timing to DOM and next frame opportunity. Native-read metrics start at Raw Input read completion. Physical actuation, display scan-out and virtual output need separate measurements.',
    rawInputLatencyQualified:false,virtualLatencyQualified:false,errors,before,after,rows};
- })()`);
+ })()`, preflight?15_000:23_000);
  const directory='.research/reactive/profile-preview-latency';await mkdir(directory,{recursive:true});
  result.executableSha256=createHash('sha256').update(await readFile(process.env.OSG_DESKTOP_NATIVE_APP??'src-tauri/target/debug/osg-cockpit.exe')).digest('hex');
  const path=directory+'/'+Date.now()+'.json';await writeFile(path,JSON.stringify(result,null,2)+'\n');
