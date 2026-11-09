@@ -86,3 +86,93 @@ The same diagnostic fixture recorded three existing deadline margins from the na
 Both live Windows dev trials retained the dual-rate vJoy workload and matched all 96 commands in order. The analyzer required positive margins for each individual command, a free vJoy slot, zero fixture budget misses and no cleanup errors. Debug capture to UDP callback p95 was 8.30–8.42 ms. Panel capture to UDP callback p95 was 8.43–10.72 ms. Actual simulator effects and physical input and display timing remain in the separate acceptance follow-up.
 
 The diagnostic executable SHA-256 is `55485a40fb4cf0857daea6d3842cf2d84d60d8e825605441ecf93017558e023a`. The paired reports under `.research/c193-reconnect/dcs-native-stage-timing` are `command-lease-stages-1.json` and `command-lease-stages-2.json`, SHA-256 `9c59af5fc6c2822166ff9503b2f0baa9cb827919c037bd5216283173a2e781b4` and `26c5c64304494840a1f7f1fa76430ea1f5b75bea35846779c470055226910624`. They contain the per-command margins and hashes of the native traces and workload evidence.
+
+## Concurrent command producers under dual-rate vJoy load
+
+The private Windows fixture offered a debug press and a compiled browser
+panel press concurrently, then verified exactly one private UDP receipt
+from each source before releasing both controls. It repeated that pair
+24 times at a nominal 180 ms interval. Each run also offered 4,801 and
+601 ordered transitions at 1 kHz and 125 Hz to vJoy. The window with
+both load lanes active lasted 4.8 seconds.
+
+| Trial | Paired offer skew upper p95 / max | Debug offer to UDP p50 / p95 / p99 | Panel activation to UDP upper p50 / p95 / p99 |
+| --- | ---: | ---: | ---: |
+| Windows dev 1 | 5.04 / 7.05 ms | 13.88 / 23.96 / 28.19 ms | 7.89 / 11.58 / 12.05 ms |
+| Windows dev 2 | 7.59 / 8.66 ms | 10.35 / 25.90 / 29.98 ms | 8.73 / 11.58 / 16.14 ms |
+
+Across both runs, the receiver matched all 96 commands and every vJoy edge,
+including both Stop releases in each trial. Stop and reapply produced no command replay
+and returned the slot to free. The highest pending depth was 19 frames on
+the fast lane and 18 on the peer. The fast MCP reader recorded 630 and
+640 updates while another reader stayed unread for at least 12 seconds.
+Cleanup reported no errors.
+
+The offer timings start before the command reaches Cockpit's capture
+boundary. The panel timings include the upper end of a 0.41–0.43 ms
+browser clock bracket. The debug offer-to-callback p95 was 24–26 ms.
+The R9 native latency target starts at the host capture stamp.
+
+The first attempt stopped before routing because the private seed named
+a catalogue path absent from the clean frontend export. The reruns used
+the existing authored catalogue as the read-only copy source. The
+concurrent command fixture reached 96.64% lines, 91.94% branches and
+97.56% functions in both running dev trials.
+
+The dev executable from `d996b19e` has SHA-256
+`0a722a56cb4b1726d516245bbb7f925114c2c37e455fd7c6fcb4df0f8a3d1c47`.
+The frontend is from `88ee864e`. The private concurrent command fixture
+has SHA-256
+`ed544c70a5fe07e142c885673da6ccd5b354f25d00eaab1cce86002368efb1d6`.
+The evidence files are under the clean frontend's `.research/dcs-physics-native/`.
+
+| Trial directory | `evidence.json` SHA-256 |
+| --- | --- |
+| `1794235857729` | `8069294ff784cc37301877d1cfc50c44a429959e4f57b356ff03ba0c12fb3754` |
+| `1794235934149` | `2e46fb8ec05a3d5fae2085b757e938ee902791265cb24b24ee664954f1d1f590` |
+
+### Native capture timing with concurrent producers
+
+The earlier `cc68085b` diagnostic executable paired each source capture
+and reducer batch with the ordered UDP receipts and the lease margins.
+The command worker, DCS sender and delivery validation source files match
+the current dev revision. The builds differ in other Cockpit code and in
+the diagnostic probes.
+
+| Trace sink and source | Worker queue p95 / max | Host capture to UDP p50 / p95 / p99 |
+| --- | ---: | ---: |
+| File, debug | 11.881 / 12.218 ms | 8.068 / 22.466 / 23.056 ms |
+| File, panel | 13.443 / 38.090 ms | 17.343 / 23.875 / 43.809 ms |
+| Memory run 1, debug | 0.023 / 0.091 ms | 7.916 / 11.037 / 11.859 ms |
+| Memory run 1, panel | 0.019 / 0.019 ms | 7.149 / 11.936 / 13.229 ms |
+| Memory run 2, debug | 0.021 / 0.085 ms | 7.612 / 10.721 / 11.201 ms |
+| Memory run 2, panel | 0.019 / 0.023 ms | 6.915 / 11.065 / 11.490 ms |
+
+In the file-backed trace, the slowest panel command spent 38.09 ms between
+queueing and worker entry. The preceding command's sender had already
+returned 2.59 ms before the panel command was queued. Context validation,
+catalogue validation and delivery-token validation then took 1.04 ms,
+0.16 ms and 0.16 ms respectively. With stderr drained into memory and
+written after exit, the tail did not recur in two trials. The trace
+setup and host scheduling are possible contributors to the difference.
+
+Both memory-drained trials met the native 20 ms p95 and 50 ms p99
+targets. Capture-to-reducer batch-end p95 was 2.81–3.08 ms for debug
+and 7.60–7.81 ms for the panel. Before capture, debug offer-to-capture
+p95 was 14.66–15.23 ms, compared with 0.92–0.95 ms for panel
+activation-to-capture. Every command used one validation attempt.
+At socket submission, the smallest remaining command deadline was
+98.03 ms. Decoder and reader freshness had at least 558.75 and
+554.67 ms remaining respectively.
+
+All three diagnostic trials matched all commands to their source sequence,
+generation and receipt. The executable hash is in the lease section
+above. The analysis files under `.research/c193-reconnect/dcs-native-stage-timing/`
+also record the raw trace and workload hashes. Physical input, actual
+simulator effects and the wider R9 matrix remain open.
+
+| Analysis file | SHA-256 |
+| --- | --- |
+| `command-pairs-diagnostic-stages.json` | `e73e2cbb9c1aae8b352e409d3eeffc3fb13a1ed1ee0b94337739925b4e7dd372` |
+| `command-pairs-memory-stages.json` | `46917e9d1db411fcb94f44676520cd5afda590d10af358d6059ab206a10ee2e4` |
+| `command-pairs-memory-stages-2.json` | `899addaa9714996003cc5e0feadbf277818407b8f4bb70cd72c8e0cccd06b992` |
