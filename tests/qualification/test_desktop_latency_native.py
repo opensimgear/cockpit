@@ -53,18 +53,23 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(all(b[0] - a[0] >= 1 / latency.RATE - 1e-10 for a, b in zip(sends, sends[1:])))
         self.assertEqual(record['inputFrames'], len(sends))
 
-    def test_wire_axis_stays_normalized_and_requires_actual_native_integer_contract(self):
+    def test_wire_axis_uses_compiled_unipolar_contract_and_explicit_signed_conversion(self):
         observed = dict(delivery='state', fallback=0, freshnessMs=1500,
-            schema=dict(type='integer', min=-32768, max=32767, unit=None))
+            schema=dict(type='integer', min=0, max=32767, unit=None))
         boundary = latency.axis_boundary(observed)
-        self.assertEqual(boundary['wireRange'], [-1, 1])
-        self.assertAlmostEqual(boundary['explicitScaleFactor'], 1 / 32768)
+        self.assertEqual(boundary['signedWorkloadRange'], [-1, 1])
+        self.assertEqual(boundary['wireRange'], [0, 1])
+        self.assertEqual(boundary['nativeRange'], [0, 32767])
+        self.assertEqual(boundary['wireNeutral'], latency.axis_wire(0))
+        self.assertEqual(boundary['wireNeutral'], 0.5)
+        self.assertEqual(boundary['explicitScaleFactor'], 1 / 16384)
+        self.assertEqual(boundary['explicitScaleOffset'], -1)
         record, _sends = self.run_workload()
-        self.assertTrue(all(-1 <= frame['changes'][0]['value'] <= 1 for frame in record['frames']))
+        self.assertTrue(all(0 <= frame['changes'][0]['value'] <= 1 for frame in record['frames']))
         with self.assertRaises(AssertionError):
-            latency.axis_boundary(dict(schema=dict(type='integer', min=-1, max=1)))
+            latency.axis_boundary(dict(schema=dict(type='integer', min=-32768, max=32767)))
         with self.assertRaises(AssertionError):
-            latency.axis_boundary(dict(schema=dict(type='number', min=-32768, max=32767)))
+            latency.axis_boundary(dict(schema=dict(type='number', min=0, max=32767)))
 
     def test_native_marker_ids_must_be_canonical_decimal(self):
         with patch.object(latency.mapping, 'state', return_value={'auditMarker': {'id': '01', 'phase': 1}}):
@@ -140,15 +145,18 @@ class WorkloadTests(unittest.TestCase):
         def outcome(action, operation):
             return dict(delivery=dict(actionId=action, operationId=str(operation), intent=dict(kind='pointer')),
                 acknowledgement=dict(ok=True, uncertain=False, skipped=False, attempted=1, confirmed=1))
-        moves = dict(observations=[dict(message=512, injectedMarker=True), dict(message=512, injectedMarker=True)])
+        event = dict(message=512, injectedMarker=True, foregroundWindow='100', captureWindow='0')
+        moves = dict(focusAfter='100', observations=[event, event.copy()])
         status = dict(runtime=dict(outcomes=[outcome('pointer-a', 11), outcome('pointer-b', 12)]))
         value = latency.pointer_load_proof(moves, status, 1, 10)
         self.assertEqual(value['receiverMarkedMouseMoves'], 1)
         self.assertEqual(value['recentNativePointerCounts']['pointer-b']['nativeEventsConfirmed'], 1)
         self.assertIsNone(latency.pointer_load_proof(moves, status, 2, 10))
         self.assertIsNone(latency.pointer_load_proof(moves, status, 1, 11))
-        unmarked = dict(observations=[dict(message=512, injectedMarker=False)])
-        self.assertIsNone(latency.pointer_load_proof(unmarked, status, 0, 10))
+        for rejected in (dict(injectedMarker=False), dict(foregroundWindow='200'), dict(captureWindow='300')):
+            with self.subTest(rejected=rejected):
+                report = dict(focusAfter='100', observations=[event | rejected])
+                self.assertIsNone(latency.pointer_load_proof(report, status, 0, 10))
         failed = copy.deepcopy(status)
         failed['runtime']['outcomes'][1]['acknowledgement']['confirmed'] = 0
         with self.assertRaises(AssertionError): latency.pointer_load_proof(moves, failed, 1, 10)

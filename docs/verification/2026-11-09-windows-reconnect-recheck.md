@@ -155,3 +155,57 @@ locally. The desktop-output suite used the bundled Python for its Windows
 child-process check. Changed production modules had at least 87.69% line
 coverage and 77.78% function coverage. The candidate also passed the running
 helper-loss fixture, which recovered the exact held key and verified cleanup.
+
+### Desktop journal cost and queue attribution
+
+An offline replay of the retained QPC trace matched all 392 steady
+transitions from the two WSS sources on the late-press build. For each
+transition, it subtracted the observed delivery-binding-to-request
+interval and the exact request's own journal-write interval separately.
+These are arithmetic comparisons on recorded samples. They hold the
+other intervals fixed.
+
+| Phase | Measured p95 / p99 | Subtract pre-request wait | Subtract current intent write | Subtract both |
+| --- | ---: | ---: | ---: | ---: |
+| Idle | 10.19 / 13.75 ms | 5.88 / 6.56 ms | 6.76 / 8.13 ms | 2.56 / 2.83 ms |
+| Profiles UI load | 10.49 / 11.71 ms | 5.97 / 6.82 ms | 7.02 / 8.42 ms | 2.82 / 3.00 ms |
+
+The 5 ms p95 target requires work on both the pre-request wait and the
+write path in this trace. The report is
+`.research/c193-reconnect/journal-tail-analysis.json`, SHA-256
+`23938222983158a216cc1b05eb9d836bcb1b7adfcba1a1ff0a142ab3554d24dc`.
+
+A separate Windows storage probe linked the pinned SQLite 3.53.2
+library and used FULL synchronization in all modes. Each of three
+runs per mode performed 256 measured transactions with an immediate
+transaction and a conditional update of a 1,200-byte record. The
+private fixture used one connection and no Cockpit path fences or
+concurrent readers.
+
+| Journal mode | Transaction p95 across runs | Commit p95 across runs |
+| --- | ---: | ---: |
+| DELETE | 1.52–1.63 ms | 1.13–1.21 ms |
+| PERSIST | 1.19–1.22 ms | 1.12–1.16 ms |
+| TRUNCATE | 1.30–1.42 ms | 1.16–1.27 ms |
+| WAL | 0.36–0.39 ms | 0.34–0.38 ms |
+
+Cockpit continues using DELETE with FULL synchronization. WAL would
+require a local storage and recovery design because it uses shared
+memory on the same host, while Cockpit's current database supports
+redirected directories. The probe did not exercise checkpoint tails,
+process loss, shared writers or end-to-end input. [SQLite journaling
+modes](https://sqlite.org/pragma.html#pragma_journal_mode) and
+[WAL constraints](https://sqlite.org/wal.html).
+
+The local probe and measurements are under
+`.research/c193-reconnect/journal-mode-cost-32048/`. The executable and
+measurement file SHA-256 values
+are `8c41de4f9d16d45b15d0d9985e135ab614847c5c6d1f2446d23e71dd2e7a8345`
+and `a11ee9f9898868b9b169d5e327601af98d11702c8bbb85c08956a5caa8d9db57`.
+
+The local qualification suite initially found two stale workload fixtures.
+The updated axis fixture verifies the compiled unipolar wire domain and
+explicit signed conversion. The pointer fixture supplies the production
+receiver's window fields and rejects marked events from the wrong
+foreground window or with mouse capture. All 27 desktop script tests
+and 14 qualification script tests passed after those corrections.
