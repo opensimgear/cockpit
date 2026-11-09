@@ -157,3 +157,33 @@ The trace is `.research/reactive/companion-client-io-native/1794220887352/eviden
 SHA-256 `195df8cdeb1be55670d869a2bdafb754b39a6c96029347548f85347b0eb78d25`.
 Local transport and coverage outputs are under
 `.research/c193-reconnect/linux-companion-local/`.
+## Pending pairing across native lifecycle changes
+
+The standalone Companion now invokes the client's cancellation path on a
+native lifecycle event when an operation is active. This includes an
+in-flight pairing or assignment refresh. Retirement clears the pending
+request ID and invalidates the operation's I/O epoch. Idle resume preserves
+the current epoch. The real TLS regression waits for host approval,
+suspends the client, then has the host approve the old request. The client
+retires in under one second with no credential write.
+
+Against the running Windows dev Cockpit from `c8a57cb0`, a candidate
+service-library client paired with its private listener and performed three
+presence handoffs. The same client cancellation method stopped a subsequent
+TLS-stalled pairing attempt in 56.38 ms, advancing epoch 5 to 6. The client
+remained disconnected from the cancelled attempt, restored its saved
+host's passive presence, then disconnected on Forget. Cleanup passed.
+
+All 246 Windows companion service tests passed. The changed client reached
+95.12% production line coverage and 90.51% LLVM function coverage. LLVM
+emitted no branch counters. All 41 packaging and release-check tests passed
+under WSL. The Windows run passed 40 and failed the POSIX simulator bundle
+execute-bit assertion. The live Windows probe exercises the shared native
+client. Signed Android and iOS builds and OS-driven lifecycle tests remain
+in [#55](https://github.com/opensimgear/cockpit/issues/55), [#56](https://github.com/opensimgear/cockpit/issues/56), and [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `lifecycle_probe.exe` | `c827b551ff8361e5a3074b185813c663d4cae2ed21e3883cbbb236b5bf99a256` |
+| Instrumented Windows companion test binary | `12b5ae14c332f27441412d811d053eba5ddd975b9bfe05d8aebb2863ef9b5308` |
+| `companion-client-io-native/1794230565574/evidence.json` | `3810c855ce75f2b43addcf0f4eee6a545a9780d6408bf7461b295f5fb9a26542` |

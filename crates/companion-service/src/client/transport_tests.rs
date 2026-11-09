@@ -240,9 +240,9 @@ fn pending_pairing_sends_one_subscription_and_no_status_acquisition() {
 }
 
 #[test]
-fn native_pending_pairing_observes_reject_cancel_and_listener_stop() {
+fn native_pending_pairing_observes_reject_cancel_listener_stop_and_client_suspend() {
     use crate::{Hub,NullSourceSink,server::{ServerConfig,ServerRuntime}};
-    for action in ["companion_reject","companion_pair_cancel","listener-stop"] {
+    for action in ["companion_reject","companion_pair_cancel","listener-stop","client-suspend"] {
         let (client,storage,directory)=fixture();
         let hub=Hub::new("host-test".into(),Arc::new(NullSourceSink));
         let server=ServerRuntime::new(hub.clone(),directory.path().join("host")).unwrap();
@@ -252,12 +252,25 @@ fn native_pending_pairing_observes_reject_cancel_and_listener_stop() {
         start_pairing(&client,payload);
         let pending=wait_for_status(&client,Duration::from_secs(3),|status|status.phase=="awaiting-approval");
         let began=Instant::now();
-        if action=="listener-stop" {server.stop();}
-        else {hub.command(&json!({"command":action,"requestId":pending.request_id})).unwrap();}
+        match action {
+            "listener-stop" => server.stop(),
+            "client-suspend" => {
+                client.invalidate_active("Native application suspended");
+                hub.command(&json!({"command":"companion_pair_approve","requestId":pending.request_id})).unwrap();
+            }
+            _ => { hub.command(&json!({"command":action,"requestId":pending.request_id})).unwrap(); }
+        }
         let ended=wait_for_status(&client,Duration::from_secs(1),|status|!status.busy);
         assert!(began.elapsed()<Duration::from_secs(1),"{action}");
         assert_ne!(ended.phase,"paired");
         assert_eq!(storage.writes.load(Ordering::SeqCst),0);
+        if action=="client-suspend" {
+            assert_eq!(ended.phase,"unpaired");
+            assert_eq!(ended.epoch,pending.epoch+1);
+            assert!(ended.request_id.is_none());
+            client.invalidate_active("Native application resumed");
+            assert_eq!(client.status().epoch,ended.epoch);
+        }
         server.stop();
         assert_eq!(server.status().active_connections,0);
     }

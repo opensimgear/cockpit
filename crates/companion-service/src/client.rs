@@ -273,6 +273,13 @@ impl ClientRuntime {
         self.shared.status_wake.notify();
         self.shared.presence_wake.notify();
     }
+    /// Retire an active native operation on a shell lifecycle change.
+    pub fn invalidate_active(&self, reason: &str) {
+        let status = self.status();
+        if status.busy || matches!(status.phase.as_str(), "armed" | "ready" | "connecting") {
+            self.invalidate(reason);
+        }
+    }
     pub fn set_network_access(&self, allowed: bool) {
         // A grant must wait for a preceding revocation to retire its I/O scopes.
         let _update = self.shared.network_access_update.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -664,6 +671,7 @@ fn publish_invalidation(shared: &Shared, epoch: u64, reason: &str) {
             }
             .into();
             state.status.last_error = Some(reason.into());
+            state.status.request_id = None;
             clear_session_status(&mut state);
             state.publication = None;
             if let Some(input) = state.sender.take() { input.wake.notify(); }

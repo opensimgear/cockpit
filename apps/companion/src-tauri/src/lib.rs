@@ -80,12 +80,7 @@ async fn companion_client_request(
 fn invalidate(window: &tauri::Window, reason: &str) {
     if let Some(bridge) = window.try_state::<ClientBridge>() {
         if let Ok(client) = bridge.client() {
-            if matches!(
-                client.status().phase.as_str(),
-                "armed" | "ready" | "connecting"
-            ) {
-                client.invalidate(reason);
-            }
+            client.invalidate_active(reason);
         }
     }
     let lifecycle = window.state::<Lifecycle>();
