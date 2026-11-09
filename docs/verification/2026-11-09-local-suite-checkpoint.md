@@ -213,3 +213,34 @@ Artifacts are under `.research/c193-reconnect/r9-linux-b1a368be/`.
 | Native gateway service | `c37ab93012a0f65c12188386150dbc006ea5dc24d2f20f0b719762518ad26277` |
 | Instrumented gateway integration binary | `4af4cbbdcaec749b93b924157c99f12ab15f2c99c10d39406fc22f53c7419a3f` |
 | Full test log | `9e5e360918df86fd488c00caeb78e0a68ff5dea0edbe955d11752c18a690c9ba` |
+
+### Native profile sample lifecycle on WebKitGTK and WebView2
+
+The WSLg desktop executable from `b1a368be` and the Windows dev
+executable from `44217e01` ran the same 32-node authored profile with
+no output routes. On both native WebViews, two sample subscribers and
+the inspection and activity controllers received the neutral baseline,
+then the true and false changes. The inspection performed one opening
+read and activity performed two topology reads. Stop withdrew the
+samples. The retired owner could neither reopen the reader nor send a
+debug frame to the replacement. The replacement started neutral.
+
+The fixture passed with 98.84% lines, 81.25% branches and 100% functions
+on WebKitGTK, and 100%, 90%, and 100% on WebView2. It exercises the
+native desktop IPC and profile sample clients. Physical Linux capture
+and desktop presentation timing remain separate.
+
+Use `OSG_PROFILE_SAMPLES_NATIVE=1` for the Windows dev server. For the
+Linux desktop, set `WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:9285` and
+`OSG_PROFILE_SAMPLES_WEBKIT_URL=http://127.0.0.1:9285/`. A built
+frontend needs a separate Vite entry for
+`tests/ui/profile-samples-probe.mjs`. Serve its emitted module and set
+`OSG_PROFILE_SAMPLES_PROBE_MODULE` to its URL path. Run
+`node --test tests/ui/profile-samples-native.mjs` against a private
+database on either platform.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Linux dev executable | `2c800db7efb5b80ab8d6d551a46e4321f6b9cab3bd59b9db752c119068570fbf` |
+| `.research/reactive/profile-samples-native/1794253052875/evidence.json` | `0a893b4646315c23e53229d9a2900dfae0e5b38b2ec873d90529db262cdd2405` |
+| `.research/reactive/profile-samples-native/1794253045892/evidence.json` | `4232f9aa20ea79406d61ceccb049e8060c49f96e401f10eed637c6158087ec65` |

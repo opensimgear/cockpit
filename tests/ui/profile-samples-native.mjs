@@ -4,11 +4,15 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {webKitPage} from '../../scripts/reactive/webkit.mjs';
+
+const webKitUrl=process.env.OSG_PROFILE_SAMPLES_WEBKIT_URL;
+const probeModule=process.env.OSG_PROFILE_SAMPLES_PROBE_MODULE??'/tests/ui/profile-samples-probe.mjs';
 
 test('native profile samples use shared actual-Tauri observations and fence retired owners',{
-  skip:process.env.OSG_PROFILE_SAMPLES_NATIVE!=='1',timeout:120000,
+  skip:!webKitUrl&&process.env.OSG_PROFILE_SAMPLES_NATIVE!=='1',timeout:120000,
 },async()=>{
-  const page=await nativePage();
+  const page=webKitUrl?await webKitPage(webKitUrl):await nativePage();
   const directory=`.research/reactive/profile-samples-native/${Date.now()}`;
   await mkdir(directory,{recursive:true});
   let profile,owner;
@@ -18,6 +22,8 @@ test('native profile samples use shared actual-Tauri observations and fence reti
   };
   const equalOwner=(left,right)=>left?.session===right?.session&&left?.generation===right?.generation;
   try{
+    await until(()=>page.evaluate(`!!window.__TAURI_INTERNALS__?.invoke &&
+      !!document.querySelector('nav[aria-label="Main navigation"]')`));
     const initial=(await request({command:'profile_status'})).profiles.profileSession;
     assert.equal(initial.owner,null,'Start with no active profile owner.');
     const created=(await request({command:'profile_create',name:`Native samples ${randomUUID()}`})).profiles.document;
@@ -44,12 +50,11 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     const applied=(await request({command:'profile_apply',id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null})).profiles.profileSession;
     assert.equal(applied.state,'running',JSON.stringify(applied));owner=applied.owner;
     const installed=await page.evaluate(`(async()=>{
-      const {observeProfileNodeSamples}=await import('/src/lib/profile-samples/shared.ts');
+      const {observeProfileNodeSamples,ProfileInspectorClient,ProfileInspectionController,
+        ProfileActivityController,profileActivityPort,ProfileTopologyClient}=await import(${JSON.stringify(probeModule)});
       window.__profileSampleProbe={first:[],second:[],old:[],stopFirst:null,stopSecond:null,stopOld:null,stopReplacement:null};
       window.__profileSampleProbe.stopFirst=observeProfileNodeSamples(${JSON.stringify(owner)},'mirror',state=>window.__profileSampleProbe.first.push(structuredClone(state)));
       window.__profileSampleProbe.stopSecond=observeProfileNodeSamples(${JSON.stringify(owner)},'mirror',state=>window.__profileSampleProbe.second.push(structuredClone(state)));
-      const {ProfileInspectorClient}=await import('/src/lib/profile-inspection.ts');
-      const {ProfileInspectionController}=await import('/src/lib/profile-inspection-controller.ts');
       const probe=window.__profileSampleProbe;
       probe.inspections=0;
       probe.inspector=new ProfileInspectionController(new ProfileInspectorClient(async request=>{
@@ -58,8 +63,6 @@ test('native profile samples use shared actual-Tauri observations and fence reti
         if(!reply.ok)throw new Error(reply.error);
         return reply.state.profileInspection;
       }),observeProfileNodeSamples);
-      const {ProfileActivityController,profileActivityPort}=await import('/src/lib/profile-activity-controller.ts');
-      const {ProfileTopologyClient}=await import('/src/lib/profile-activity.ts');
       probe.topologyReads=0;
       probe.activity=new ProfileActivityController(new ProfileTopologyClient(async request=>{
         probe.topologyReads++;
@@ -105,24 +108,30 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     const stopped=await until(states,value=>value.first?.status==='lost'&&value.second?.status==='lost'&&value.inspector.stale&&value.activityStale);
     assert.equal(stopped.first.value,undefined,'Loss clears the first cached value.');
     assert.equal(stopped.second.value,undefined,'Loss clears the second cached value.');
-    await page.evaluate('window.__profileSampleProbe.stopFirst();window.__profileSampleProbe.stopSecond();window.__profileSampleProbe.inspector.dispose();window.__profileSampleProbe.activity.dispose();');
+    await page.evaluate(`(() => {
+      const probe=window.__profileSampleProbe;
+      probe.stopFirst();
+      probe.stopSecond();
+      probe.inspector.dispose();
+      probe.activity.dispose();
+    })()`);
     // Re-importing the module gives the same frontend singleton and tests that a retired identity cannot reopen.
     const oldInstalled=await page.evaluate(`(async()=>{
-      const {observeProfileNodeSamples}=await import('/src/lib/profile-samples/shared.ts');
+      const {observeProfileNodeSamples}=await import(${JSON.stringify(probeModule)});
       window.__profileSampleProbe.stopOld=observeProfileNodeSamples(${JSON.stringify(owner)},'mirror',state=>window.__profileSampleProbe.old.push(structuredClone(state)));
       return true;
     })()`);
     assert.equal(oldInstalled,true);
     const oldRejected=await until(()=>page.evaluate('window.__profileSampleProbe.old.at(-1)'),state=>state?.status==='error');
     assert.match(oldRejected.error,/owner|applied|running|current/i);
-    await page.evaluate('window.__profileSampleProbe.stopOld();');
+    await page.evaluate('window.__profileSampleProbe.stopOld()');
 
     const retiredOwner=owner;
     const replacement=(await request({command:'profile_apply',id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null})).profiles.profileSession;
     assert.equal(replacement.state,'running',JSON.stringify(replacement));
     assert.equal(equalOwner(replacement.owner,owner),false,'Restart creates a replacement owner.');
     const replacementInstalled=await page.evaluate(`(async()=>{
-      const {observeProfileNodeSamples}=await import('/src/lib/profile-samples/shared.ts');
+      const {observeProfileNodeSamples}=await import(${JSON.stringify(probeModule)});
       window.__profileSampleProbe.replacement=[];
       window.__profileSampleProbe.stopReplacement=observeProfileNodeSamples(${JSON.stringify(replacement.owner)},'mirror',state=>window.__profileSampleProbe.replacement.push(structuredClone(state)));
       return true;
@@ -136,18 +145,29 @@ test('native profile samples use shared actual-Tauri observations and fence reti
     assert.equal(staleInput.ok,false,'The prior owner cannot write into its replacement.');
 
     await request({command:'profile_stop'});
-    const evidence={at:new Date().toISOString(),actualNativeCockpit:true,profile:profile.id,owner:replacement.owner,
+    const evidence={at:new Date().toISOString(),actualNativeCockpit:true,webView:webKitUrl?'webkit-gtk':'webview2',
+      profile:profile.id,owner:replacement.owner,
       baselineWithoutExplicitInput:baseline,knownTrueChange:high,knownFalseChange:low,lossAfterStop:stopped,
       retiredOwnerReopenRejected:oldRejected,replacementBaseline:fresh,staleInputRejected:true,
       sharedConsumers:4,inspectionRequests:1,topologyRequests:2,pathNodes:32,noPhysicalOutputs:true,noExternalOutputs:true,simulatorQualified:false,latencyQualified:false};
     await writeFile(`${directory}/evidence.json`,JSON.stringify(evidence,null,2)+'\n');
   }finally{
     try{
-      const active=(await request({command:'profile_status'})).profiles.profileSession;
-      if(owner&&equalOwner(active.owner,owner))await request({command:'profile_stop'});
+      if(owner){
+        const active=(await request({command:'profile_status'})).profiles.profileSession;
+        if(equalOwner(active.owner,owner))await request({command:'profile_stop'});
+      }
       if(profile)await request({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});
     }finally{
-      try{await page.evaluate("for(const key of ['stopFirst','stopSecond','stopOld','stopReplacement'])window.__profileSampleProbe?.[key]?.();window.__profileSampleProbe?.inspector?.dispose();window.__profileSampleProbe?.activity?.dispose();delete window.__profileSampleProbe;");}finally{page.close();}
+      try{
+        await page.evaluate(`(() => {
+          const probe=window.__profileSampleProbe;
+          for(const key of ['stopFirst','stopSecond','stopOld','stopReplacement'])probe?.[key]?.();
+          probe?.inspector?.dispose();
+          probe?.activity?.dispose();
+          delete window.__profileSampleProbe;
+        })()`);
+      }finally{page.close();}
     }
   }
 });
