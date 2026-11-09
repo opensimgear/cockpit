@@ -105,7 +105,6 @@ struct NativeRun {
     game_retry: game_resume_schedule::Schedule,
     game_resume: Option<std::sync::mpsc::Receiver<Result<Option<NativeGameResume>,String>>>,
     game_publication: game_publication::Publication,
-    game_predecessor: Option<(String, Option<String>)>,
     launch_epoch_bound: bool,
     launch_context_installed: bool,
     companions: crate::profile_session_companions::CompanionSources,
@@ -476,13 +475,9 @@ impl NativeProfileHost {
                         if state.game.accepts_replacement_from(&replacement.previous, &replacement.game) {
                             replacement.game.inherit_source_counters(&state.game);
                             replacement.game.set_wake(state.game.notification_wake());
-                            let game_id = &replacement.proof.proof.game_id;
-                            let previous = state.game.provider_identity().filter(|(game, _)| *game == game_id.as_str())
-                                .map(|(_, reader)| reader.to_owned()).or_else(|| state.game_predecessor.as_ref()
-                                    .filter(|(game, _)| game == game_id).and_then(|(_, reader)| reader.clone()));
                             state.game_publication.cancel();
                             if let Some((batch, refresh)) = replacement.delivery {
-                                state.game_publication.replace(batch, previous, refresh);
+                                state.game_publication.replace(batch, refresh);
                             }
                             state.game = replacement.game;
                             state.game_preparation = Some(replacement.proof);
@@ -984,7 +979,7 @@ impl Host for NativeProfileHost {
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             debug_inputs: crate::profile_debug_controller::DebugInputs::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
-            child_game_owner: None, game_retry: Default::default(), game_resume: None, game_publication: game_publication::Publication::with_wake(self.native_wake.as_ref()), game_predecessor: None, launch_epoch_bound: false, launch_context_installed: false,
+            child_game_owner: None, game_retry: Default::default(), game_resume: None, game_publication: game_publication::Publication::with_wake(self.native_wake.as_ref()), launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_rebind, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,

@@ -14,7 +14,7 @@ pub(super) enum Completion {
 }
 enum Change {
     Publish(ProviderBatch),
-    Replace { batch: ProviderBatch, previous: Option<String>, refresh: RefreshDelivery },
+    Replace { batch: ProviderBatch, refresh: RefreshDelivery, committed: Arc<AtomicBool> },
     Withdraw(Identity),
 }
 impl Change {
@@ -32,6 +32,7 @@ struct Pending {
     publishing: bool,
     replacing: bool,
     cancelled: Arc<AtomicBool>,
+    committed: Option<Arc<AtomicBool>>,
     receiver: mpsc::Receiver<Result<Completion, String>>,
 }
 #[derive(Default)]
@@ -41,6 +42,7 @@ pub(super) struct Publication {
     queued: Option<Change>,
     pub(super) deferred: bool,
     withdrawn: Option<Identity>,
+    predecessor: Option<(String, Option<String>)>,
 }
 impl Drop for Publication {
     fn drop(&mut self) { self.cancel(); }
@@ -59,9 +61,22 @@ impl Publication {
         // Retain a cancelled pending slot until that exact worker exits.
     }
     pub(super) fn publish(&mut self, batch: ProviderBatch) { self.queued = Some(Change::Publish(batch)); }
-    pub(super) fn replace(&mut self, batch: ProviderBatch, previous: Option<String>, refresh: RefreshDelivery) {
+    pub(super) fn seed_predecessor(&mut self, predecessor: Option<(String, Option<String>)>) {
         self.cancel();
-        self.queued = Some(Change::Replace { batch, previous, refresh });
+        if let Some(pending) = &mut self.pending { pending.committed = None; }
+        self.predecessor = predecessor;
+    }
+    pub(super) fn publish_initial(&mut self, resources: &Runtime, batch: ProviderBatch) -> Result<(), String> {
+        let game = batch.scope.strip_prefix("profile-game:")
+            .ok_or("Game delivery needs its dedicated native scope.")?;
+        let identity = (game.to_owned(), Some(batch.session.clone()));
+        resources.publish_profile_game_delivery(batch)?;
+        self.seed_predecessor(Some(identity));
+        Ok(())
+    }
+    pub(super) fn replace(&mut self, batch: ProviderBatch, refresh: RefreshDelivery) {
+        self.cancel();
+        self.queued = Some(Change::Replace { batch, refresh, committed: Arc::new(AtomicBool::new(false)) });
     }
     pub(super) fn claiming(&self, identity: &Identity) -> bool {
         self.queued.as_ref().is_some_and(|change| change.replacing() && change.identity() == *identity)
@@ -88,20 +103,34 @@ impl Publication {
             Err(mpsc::TryRecvError::Disconnected) => Err("The native game inventory worker ended before reporting its result.".into()),
         };
         let pending = self.pending.take().unwrap();
+        // The inventory claim can commit before delivery refresh or cancellation.
+        // Retain its exact reader independently of the plan's authority.
+        if pending.committed.is_some_and(|receipt| receipt.load(Ordering::Acquire)) {
+            self.predecessor = Some((pending.identity.0.clone(), Some(pending.identity.1.clone())));
+        }
         if !pending.publishing && !pending.cancelled.load(Ordering::Acquire) && matches!(result, Ok(Completion::Updated)) {
             self.withdrawn = Some(pending.identity.clone());
         }
         (!pending.cancelled.load(Ordering::Acquire) && current == Some(&pending.identity)).then_some(result)
     }
     pub(super) fn drive(&mut self, resources: Arc<Runtime>) -> Result<(), String> {
+        let predecessor = if self.pending.is_none() && matches!(self.queued, Some(Change::Replace { .. })) {
+            self.predecessor.clone()
+        } else {
+            None
+        };
         self.start(move |change, cancelled| {
             let current = || !cancelled.load(Ordering::Acquire);
             let updated = match change {
                 Change::Publish(batch) => resources.publish_current_profile_game_delivery(batch, current)?,
-                Change::Replace { batch, previous, refresh } => {
-                    if !resources.replace_profile_game_delivery(batch, previous.as_deref(), current)? || !current() {
+                Change::Replace { batch, refresh, committed } => {
+                    let (_, previous) = predecessor.filter(|(game, _)| batch.scope.strip_prefix("profile-game:") == Some(game.as_str()))
+                        .ok_or("Returning game reader lacks its captured inventory predecessor.")?;
+                    if !resources.replace_profile_game_delivery(batch, previous.as_deref(), current)? {
                         return Ok(Completion::Rejected);
                     }
+                    committed.store(true, Ordering::Release);
+                    if !current() { return Ok(Completion::Rejected); }
                     return refresh(&resources).map(|plan| Completion::Replaced(Box::new(plan)));
                 }
                 Change::Withdraw((game, reader)) => {
@@ -119,6 +148,10 @@ impl Publication {
         let identity = change.identity();
         let publishing = change.publishing();
         let replacing = change.replacing();
+        let committed = match &change {
+            Change::Replace { committed, .. } => Some(committed.clone()),
+            _ => None,
+        };
         let cancelled = Arc::new(AtomicBool::new(false));
         let captured = cancelled.clone();
         let wake = self.wake.clone();
@@ -128,7 +161,7 @@ impl Publication {
                 if let Some(wake) = wake.and_then(|wake| wake.upgrade()) { wake.notify(); }
             }
         }).map_err(|error| format!("Cannot start the native game inventory worker: {error}"))?;
-        self.pending = Some(Pending { identity, publishing, replacing, cancelled, receiver });
+        self.pending = Some(Pending { identity, publishing, replacing, cancelled, committed, receiver });
         Ok(())
     }
 }

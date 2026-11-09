@@ -37,8 +37,7 @@ cleaned up successfully.
 A private diagnostic build recovered after two successive reader claims
 were accepted. It bound a healthy helper to the replacement PID and kept
 the profile service interval off through 1,100 ms without gateway reads.
-This run proves the replacement can reattach under the same owner. The
-reason the earlier stock run stayed stale is still under investigation.
+This run proves the replacement can reattach under the same owner.
 
 The held-key variant stopped before sending input when PickerHost took
 foreground. The exact receiver recorded zero marked keyboard events and
@@ -51,3 +50,43 @@ remain open in #198.
 | `.research/dcs-physics-native/1794239709617/evidence.json` | `0fb33f92085c4166c8175f63f4bb5180f0a6a41edd1df7eedfa0e63c1b1a6a8b` |
 | `.research/dcs-physics-native/1794239959823/evidence.json` | `ba0e8d5922ca94501b6a920c18cea41b4ed3df7fd33911aac80cbc68f40ec2bc` |
 | `.research/c193-reconnect/dcs-native-stage-timing/native-45904-native.err` | `e54ad8f581b9a6fb766fe7a8ecb491881b18e655d87e2e87291ffe52e0d6d4a1` |
+
+### Preserve the last committed inventory reader
+
+A second diagnostic run reproduced the stalled profile. The first returning
+reader reached the profile while its native module metadata was unavailable.
+The inventory rejected the claim before committing its reader ID. The host
+then used that uncommitted ID as the expected predecessor, and 67 subsequent
+claims were rejected during the recovery window.
+
+The publication lane now seeds its predecessor during activation, records
+successful initial and returning reader claims, and uses the last committed
+reader for the next claim. It records a successful claim before refreshing
+delivery, so cancelling a pending plan cannot discard the inventory receipt.
+The prepared reader and the inventory claim each retain their exact ownership
+check. The focused regressions cover the missing-metadata error, cancellation
+before and after commit, and an independent reader intervening between attempts.
+
+Three runs of the rebuilt Windows dev Cockpit recovered BIOS and ownship
+on the same profile owner. Each run retired the old helper and bound the
+replacement process, kept the service interval off for 1,100 ms without
+gateway reads, and completed cleanup with no errors or timing-budget misses.
+The final build passed the same checks after removing a redundant claim
+record from the activation phase.
+The runs used neutral desktop controls. Held-key exit and actual simulator
+acceptance remain separate.
+
+The final Windows library suite passed 2,501 tests with 18 default ignores.
+Both pinned DCS archive checks passed when run separately. The three changed
+production modules reached 77.25–95.00% line coverage and 74.68–93.94%
+function coverage. LLVM emitted no branch counters for these files.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `.research/c193-reconnect/dcs-native-stage-timing/native-50092-native.err` | `0b4ee317febf7acce62130075f96c0d7ebe9e338787f442d172b75e89801c89e` |
+| `dcs-committed-reader/committed-reader.exe` | `3d590d3fc104b691d6ca71559238005e1bee595dd0d1ad533373789355ba608e` |
+| `.research/dcs-physics-native/1794240418915/evidence.json` | `b3d574b249ddb402d34bd073fc925a860f8b0609b30eec2702b044fe43113d28` |
+| `.research/dcs-physics-native/1794240506611/evidence.json` | `633d929701c8b4eaebbeb91d0327c195d846ef757f9960ec1a0dbd1205c6c89f` |
+| `.research/dcs-physics-native/1794240564250/evidence.json` | `5dcdadec0c76458d41ed37f81a60fdbb7abe6b7b7c80aa17a13a8fa34c9a57ee` |
+| `dcs-committed-reader/committed-reader-final.exe` | `8241baca6621b207652fbf2d464bfd2a6d22b8c4fede54fa133d8446b3f826bf` |
+| `.research/dcs-physics-native/1794240968311/evidence.json` | `4e28050ddc2b6d297e906c791267d00cbefbf7144abf6ab899e9eceeeb7f656c` |

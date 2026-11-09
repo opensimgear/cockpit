@@ -127,11 +127,13 @@ fn replacement_refreshes_delivery_only_after_its_exact_reader_is_published() {
     let replacement = test_game_delivery("dcs", "returning", 1);
     let identity = ("dcs".into(), replacement.session.clone());
     let mut publication = Publication::default();
-    publication.replace(replacement.clone(), None, Box::new(|_| panic!("Rejected reader refreshed delivery")));
+    publication.seed_predecessor(Some(("dcs".into(), None)));
+    publication.replace(replacement.clone(), Box::new(|_| panic!("Rejected reader refreshed delivery")));
     publication.drive(resources.clone()).unwrap();
     assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Rejected))));
 
-    publication.replace(replacement, Some("reader".into()), Box::new(|resources| {
+    publication.seed_predecessor(Some(("dcs".into(), Some("reader".into()))));
+    publication.replace(replacement, Box::new(|resources| {
         assert_eq!(resources.try_validate_profile_game_delivery("dcs", "returning")?, Some(()));
         let snapshot = resources.snapshot_for_compile_with_companions(vec![], &[])?;
         osg_profiles::compiler::compile(&osg_profiles::default_document(), &snapshot).plan
@@ -141,6 +143,89 @@ fn replacement_refreshes_delivery_only_after_its_exact_reader_is_published() {
     assert!(publication.claiming(&identity));
     assert!(matches!(completion(&mut publication, &identity), Some(Ok(Completion::Replaced(_)))));
     assert!(!publication.claiming(&identity));
+}
+
+#[test]
+fn returning_reader_retries_from_the_last_committed_claim() {
+    use crate::profile_resources::{test_game_delivery, test_game_runtime};
+
+    for commit_before_cancellation in [false, true] {
+        for unrelated_reader in [false, true] {
+            let resources = Arc::new(test_game_runtime());
+            let mut publication = Publication::default();
+            publication.publish_initial(&resources, test_game_delivery("dcs", "initial", 1)).unwrap();
+            resources.withdraw_profile_game_delivery("dcs", "initial").unwrap();
+            let (entered, waiting) = mpsc::channel();
+            let (release, blocked) = mpsc::channel();
+            let pause = move || {
+                entered.send(()).unwrap();
+                blocked.recv_timeout(Duration::from_secs(2)).unwrap();
+            };
+            if commit_before_cancellation {
+                publication.replace(test_game_delivery("dcs", "interrupted", 1), Box::new(move |_| {
+                    pause();
+                    Err("The reader was lost before refreshing the delivery plan.".into())
+                }));
+                publication.drive(resources.clone()).unwrap();
+            } else {
+                publication.replace(test_game_delivery("dcs", "interrupted", 1), Box::new(|_| panic!("Cancelled reader refreshed delivery")));
+                publication.start(move |_, cancelled| {
+                    pause();
+                    assert!(cancelled.load(Ordering::Acquire));
+                    Ok(Completion::Rejected)
+                }).unwrap();
+            }
+            waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+            publication.replace(test_game_delivery("dcs", "returning", 1), Box::new(|resources| {
+                let snapshot = resources.snapshot_for_compile_with_companions(vec![], &[])?;
+                osg_profiles::compiler::compile(&osg_profiles::default_document(), &snapshot).plan
+                    .ok_or_else(|| "Expected a live plan after replacement.".into())
+            }));
+            let identity = ("dcs".into(), "returning".into());
+            publication.drive(resources.clone()).unwrap(); // The previous worker still owns the slot.
+            release.send(()).unwrap();
+            assert!(completion(&mut publication, &identity).is_none());
+            let last = if commit_before_cancellation { "interrupted" } else { "initial" };
+            assert_eq!(resources.profile_game_reader("dcs").unwrap().as_deref(), Some(last));
+            if unrelated_reader {
+                resources.publish_profile_game_delivery(test_game_delivery("dcs", "independent", 1)).unwrap();
+                resources.withdraw_profile_game_delivery("dcs", "independent").unwrap();
+            }
+            publication.drive(resources.clone()).unwrap();
+            let result = completion(&mut publication, &identity);
+            if unrelated_reader {
+                assert!(matches!(result, Some(Ok(Completion::Rejected))));
+                assert_eq!(resources.profile_game_reader("dcs").unwrap().as_deref(), Some("independent"));
+            } else {
+                assert!(matches!(result, Some(Ok(Completion::Replaced(_)))));
+                assert_eq!(resources.try_validate_profile_game_delivery("dcs", "returning").unwrap(), Some(()));
+            }
+        }
+    }
+}
+
+#[test]
+fn metadata_error_before_the_claim_preserves_the_admitted_predecessor() {
+    use crate::profile_resources::{test_game_delivery, test_game_runtime};
+
+    let resources = Arc::new(test_game_runtime());
+    let mut publication = Publication::default();
+    publication.publish_initial(&resources, test_game_delivery("dcs", "initial", 1)).unwrap();
+    resources.withdraw_profile_game_delivery("dcs", "initial").unwrap();
+
+    let mut unavailable = test_game_delivery("dcs", "unavailable", 1);
+    unavailable.observations[0].key = "dcs:missing-aircraft".into();
+    publication.replace(unavailable, Box::new(|_| panic!("Unverified catalogue refreshed delivery")));
+    publication.drive(resources.clone()).unwrap();
+    let result = completion(&mut publication, &("dcs".into(), "unavailable".into()));
+    assert!(matches!(result, Some(Err(error)) if error.contains("no current verified native module metadata")));
+    assert_eq!(resources.profile_game_reader("dcs").unwrap().as_deref(), Some("initial"));
+
+    publication.replace(test_game_delivery("dcs", "returning", 1), Box::new(|_| Err("Refresh interrupted".into())));
+    publication.drive(resources.clone()).unwrap();
+    let result = completion(&mut publication, &("dcs".into(), "returning".into()));
+    assert!(matches!(result, Some(Err(error)) if error == "Refresh interrupted"));
+    assert_eq!(resources.profile_game_reader("dcs").unwrap().as_deref(), Some("returning"));
 }
 
 #[test]

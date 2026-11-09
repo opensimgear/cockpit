@@ -124,7 +124,7 @@ impl NativeProfileHost {
         let predecessor = game_id.map(|game| self.resources.profile_game_reader(&game)
             .map(|reader| (game, reader))).transpose()?;
         self.check_transition(owner)?;
-        self.run(owner)?.game_predecessor = predecessor;
+        self.run(owner)?.game_publication.seed_predecessor(predecessor);
         Ok(())
     }
 
@@ -213,7 +213,9 @@ impl NativeProfileHost {
                     let wait_until = state.game.baseline_wait_until(deadline);
                     host.check_transition(owner)?;
                     let published = batch.is_some();
-                    if let Some(batch) = batch { resources.publish_profile_game_delivery(batch)?; }
+                    // Admission may update the same reader's delivery flags later.
+                    // The baseline is what first records its inventory claim.
+                    if let Some(batch) = batch { host.run(owner)?.game_publication.publish_initial(&resources, batch)?; }
                     if sample.context_lost {
                         return Err(format!("The verified game context changed during baseline acquisition. {}", sample.diagnostics.join(" ")));
                     }
