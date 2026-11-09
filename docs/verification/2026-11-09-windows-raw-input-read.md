@@ -316,3 +316,26 @@ effects remain separate.
 | `.research/reactive/profile-preview-latency/1794252869754.json` | `c9049598e1d5781832bb194b2cbc09c254808a79e73355db3624f595a811b34c` |
 | `.research/reactive/physical-vjoy-latency/8d07844b-e250-4d19-a280-d1acf608e4f2/evidence.json` | `163fde17708d09979241059a1e8e1e7d4d4cf1c6524452a8a486e3431671fb31` |
 | `OperatorRawInputProbe.exe` | `bb31c37369b97e467ce4a26a45000108ec1d2aa94a43d6156b5512c88ccba0f5` |
+
+## Native axis range evidence
+
+The Profiles probe now records each axis's declared HID and presentation
+ranges alongside the observed native extrema. Each extremum carries its
+normalized value and native report sequence. The probe checks the native
+to presentation conversion before discarding repeated display signatures,
+so two raw samples that display the same value still count toward the
+observed span. These witnesses reflect the controller's reported values.
+
+On the attached Gladiator, both main axes declared 0–4,095 native and
+0–32,767 in the preview. In the stationary preflight the six axes each
+had 39 valid observations, including the initial snapshot. All values
+agreed with the declared conversion. The 38 continuing reports carried
+Raw Input read timestamps, with no gaps or coalesced reports. The run
+establishes the probe and descriptor bounds. A deliberate sweep is still
+needed for measured raw travel.
+
+The preflight trace is
+`.research/reactive/profile-preview-latency/1794255066025.json`, SHA-256
+`d7f9d59d39342656e202599228bb9c328d3443c24c1308cbb2f5605037d271ed`.
+The two focused tests exercised all lines, branches and functions of the
+range collector.

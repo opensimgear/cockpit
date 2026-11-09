@@ -2,6 +2,7 @@
 // Open its physical controller block and set OSG_CONTROLLER_SOURCE_ID explicitly.
 // Set OSG_DESKTOP_NATIVE_APP when Cockpit is running from a copied executable.
 import {nativePage} from './cdp.mjs';
+import {profileAxisRanges} from './profile-axis-ranges.mjs';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const sourceId=process.env.OSG_CONTROLLER_SOURCE_ID;
@@ -34,6 +35,11 @@ try{
   let reportCount=0,coalescedPreviewReports=0,previousRead;
   const nativeReadIntervals=[],readToJournal=[];
   const axisValues=new Map(), axisLabels=new Map();
+  const ranges=(${profileAxisRanges.toString()})();
+  const observeAxis=(id,value,sequence)=>{
+   axisValues.set(id,value?.normalized);
+   ranges.record(id,value,sequence);
+  };
   const wireSignature=()=>axes.map(id=>String(axisValues.get(id))).join('|');
   const domSignature=()=>axes.map(id=>{
    let label=axisLabels.get(id);
@@ -76,13 +82,16 @@ try{
      }
      if(snapshot)snapshotCount++;
      if(frame.kind==='change')changeCount++;
-     const controls=snapshot?(payload?.controls??[]):[];
-     const snapshotAxes=controls.filter(c=>c.capability.kind==='axis').map(c=>c.capability.id).sort();
+     const controls=snapshot?(payload?.controls??[]).filter(c=>c.capability.kind==='axis'):[];
+     const snapshotAxes=controls.map(c=>c.capability.id).sort();
      if(snapshot){
       axisValues.clear();
-      for(const control of controls)if(control.capability.kind==='axis')axisValues.set(control.capability.id,control.value?.normalized);
+      for(const control of controls){
+       ranges.declare(control.capability);
+       observeAxis(control.capability.id,control.value,payload.source.sequence);
+      }
      }else{
-      for(const id of axes)if(Object.hasOwn(payload?.values??{},id))axisValues.set(id,payload.values[id]?.normalized);
+      for(const id of axes)if(Object.hasOwn(payload?.values??{},id))observeAxis(id,payload.values[id],payload.source.sequence);
      }
      if(generation===undefined&&snapshot){
       generation=payload?.source?.generation;
@@ -156,7 +165,7 @@ try{
   if(!preflight&&matched.length<20)errors.push('Fewer than 20 unambiguous visible axis transitions; this run cannot qualify timing.');
   if(matched.some(row=>row.dom-row.captured < -before.uncertainty))errors.push('DOM predates correlated capture beyond clock uncertainty.');
   return {at:new Date().toISOString(),durationMs:performance.now()-started,scope:'profile-controller-inspector',
-   sourceId,generation,backend,axes,visibility,focused,preflight,reportCount,coalescedPreviewReports,nativeReadCount:readToJournal.length,
+   sourceId,generation,backend,axes,axisRanges:ranges.evidence(),visibility,focused,preflight,reportCount,coalescedPreviewReports,nativeReadCount:readToJournal.length,
    clockUncertaintyMs:before.uncertainty,
    clockOffsetDriftMs:after.offset-before.offset,snapshotCount,changeCount,changedReportCount:rows.length,domTransitionCount:dom.length,
    journalToObserverMs:summarize('received'),journalToDomMs:summarize('dom'),journalToFrameOpportunityMs:summarize('frameOpportunity'),
