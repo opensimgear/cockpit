@@ -150,3 +150,38 @@ Local build, audits and crash evidence are under
 `87a61b594652d5e2b91f75b3d1a714bd8a1c72fe4d5cadb2072752661fe0d840`.
 The successful crash `evidence.json` SHA-256 is
 `799237517b50a7265a2c5aa143e0029f83cd30be938cace6091fd90c07e8297b`.
+
+## Live WAL/FULL and native main-file check
+
+Four more alternating runs compared the private WAL/FULL build with the
+same mode plus the native main-file check. The experiment replaced the main
+path check only at live evidence checkpoints. The current sidecar checks,
+journal retry, SQLite transaction boundaries and exact evidence comparisons
+were still in use. The build only accepted disposable database paths.
+
+| Run | Main-file check | Sustained idle p50 / p95 / p99 | Sustained Profiles p50 / p95 / p99 |
+| --- | --- | ---: | ---: |
+| A1 | Current | 3.63 / 7.05 / 7.79 ms | 3.58 / 6.94 / 8.03 ms |
+| B1 | Native | 2.96 / 5.41 / 5.73 ms | 2.93 / 5.41 / 17.10 ms |
+| B2 | Native | 2.88 / 5.30 / 5.88 ms | 2.95 / 5.30 / 5.85 ms |
+| A2 | Current | 2.98 / 4.42 / 7.52 ms | 3.83 / 7.39 / 9.50 ms |
+
+All 1,614 key transitions matched the audited and observed counts, and
+all four runs proved clean Stop. Under Profiles load, the intent segment
+fell from 2.57–2.72 ms p95 to 1.67–1.73 ms. Loaded p95 improved in both
+pairs but still missed the strict 5 ms budget. Idle p95 increased in the
+second pair. In B1, a 15.319 ms durable write accounted for most of a
+17.096 ms dispatch. The next delivery waited 16.338 ms before issue
+and took 19.553 ms end to end. The trace does not identify which
+operation inside the durable write accounted for that tail.
+
+The combined build reached an acknowledged KeyA hold in the crash
+fixture. The fixture then failed to pin exactly one private child and
+stopped before termination. Stop released the key, the journal proved
+clean ownership and the receiver exited. The earlier WAL-only build
+passed full interruption and recovery. Combined-build crash recovery,
+production path equivalence and strict timing still need qualification.
+
+Local inputs and outputs are under `.research/c193-reconnect/wal-live/`
+and `.research/c193-reconnect/wal-fast/`. The combined executable SHA-256 is
+`82dc5483ecc7f9c1d8f1e447b35e05be935197812d220a37397cf0ef30f860cd`.
