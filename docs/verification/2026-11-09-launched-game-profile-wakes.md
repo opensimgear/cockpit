@@ -325,3 +325,52 @@ LLVM emitted no branch counters for those files.
 | `.research/dcs-physics-native/1794245740173/evidence.json` | `26d36cdd6e3d2d7a40423675a039dd0df03ecc0924ab0d7913e9af84c5c096d0` |
 | `debug-ingress-candidate/osg-cockpit.exe` | `db4b6a2204507162d4829f3a23c1d55c0477a1a24e0a474f79d6d805b4baa1d1` |
 | `.research/dcs-physics-native/1794245990424/evidence.json` | `d7a1416cfea82b4f9e120a4fa551fe9788b4e3dbf926e5c35578a63630362159` |
+
+## Telemetry and browser panel replacement on both Cockpit transports
+
+The private DCS fixture used the Windows Cockpit and browser-dev gateway
+binaries from `2f175ef0` above and the same Cockpit frontend from
+`e82f44d9` for both runs. One profile routed the authored ownship
+`inAir` value to two authenticated browser panels. The Cockpit telemetry
+reader used the same shared observation client on native IPC and browser
+HTTP. It read the selected value under its exact observation scope after
+each committed invalidation. Panel feedback carried value deltas over WSS.
+
+Both clients observed the same false, true, false, true value sequence.
+The test retired the Cockpit reader and navigated one panel away while
+the value was true. The old observation scope rejected reads. The second
+panel received the change to false in its existing session. On reopen,
+the Cockpit reader received a fresh snapshot under a new scope. The
+reopened panel received a snapshot under a new session, then a fresh
+false value without replaying the old true value. A new true change
+reached both panels and the reopened Cockpit reader.
+
+| Cockpit transport | Reader baseline, change, reopened baseline, next change | Raw Input edges including Stop | Stop release |
+| --- | --- | ---: | ---: |
+| Native IPC | 519, 521, 528, 533 | 194 + 26 | 37.79 ms |
+| Browser-dev HTTP | 518, 520, 527, 533 | 194 + 26 | 1.14 ms |
+
+Both runs matched the expected edges and finished with no cleanup errors.
+The replacement panel first reported an unknown value in its snapshot.
+The first fresh value was a false delta under that same new session.
+An earlier browser attempt exhausted the short Raw Input capture before
+Stop. The final run verified the capture continued for 7.40 seconds after
+Stop and matched both releases. The lifecycle helper reached 100% lines,
+88.46% branches and 95.24% functions on both transports. All 85 focused
+frontend and companion tests passed.
+
+| Local trace | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794250408930/evidence.json` | `77879018154836c102fda5d2d4944e00a30daf748f98ec5fbcfcf74f27fcc72b` |
+| `.research/dcs-physics-native/1794250350770/evidence.json` | `7b6a1dce460c37cfdda65ef37e687fe6fbc41e8cc7d7f17deb861dc1267b6df2` |
+
+The fixture runs panel replacement after the existing presentation and
+dual-rate checks. Its Raw Input probe must capture through Stop. To run
+the lifecycle variant, enable `OSG_DCS_TRANSPORT_LIFECYCLE=1` and set
+`OSG_DCS_COMBINED_VJOY_PROBE` to the two-button probe. For native dev
+Cockpit, enable `OSG_DCS_PHYSICS_NATIVE=1`, `OSG_DCS_COMBINED_MCP=1` and
+`OSG_DCS_COMBINED_NATIVE_RATES=1`. For browser-dev, set
+`OSG_DCS_PHYSICS_BROWSER_URL` to the private browser-dev server URL.
+Run `node --experimental-test-coverage --test tests/ui/dcs-physics-native.mjs`
+against the isolated dev session with the private DCS seed. The physical
+panel, signed mobile and actual simulator checks remain separate.

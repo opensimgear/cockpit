@@ -385,7 +385,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     }
     await checkpoint('BIOS counter-only renewal and expiry verified with one stalled telemetry reader');
     if (combined) {
-      evidence.phases.closedPreviews = await combined.withPreviewsClosed(owner, setAirborne);
+      evidence.phases.closedPreviews = await combined.withPreviewsClosed(owner, setAirborne, submitOwnship);
       assert.deepEqual((await status()).profileSession.owner, owner);
       setAirborne(false);
     }

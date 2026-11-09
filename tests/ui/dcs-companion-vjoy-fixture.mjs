@@ -11,6 +11,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {connect} from 'node:tls';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {measurePanelPresentation,tracePanelCanvas} from './dcs-panel-presentation-timing.mjs';
+import {verifyDcsTransportLifecycle} from './dcs-transport-lifecycle.mjs';
 import {airborneChannel,withInspectorPresentation} from './dcs-inspector-presentation.mjs';
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
@@ -25,6 +26,8 @@ const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false, seconds=0}={}) {
   const inspectorTiming=process.env.OSG_DCS_INSPECTOR_PRESENTATION==='1';
+  const checkLifecycle=process.env.OSG_DCS_TRANSPORT_LIFECYCLE==='1';
+  const extendedProbe=seconds||nativeRates||checkLifecycle;
   if(inspectorTiming)assert.ok(nativeRates&&extendedNativeRates&&!seconds,'Inspector timing requires the extended native dual-rate burst');
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
@@ -38,7 +41,6 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   const samples=(target=page)=>target.evaluate(()=>window.__combinedLamp);
   const waitLamp=(offset,predicate,target=page)=>until(async()=>(await samples(target)).slice(offset).find(predicate))
     .catch(async error=>{throw new Error('Panel feedback did not arrive: '+JSON.stringify((await samples(target)).slice(-5)),{cause:error});});
-
   async function enableListener() {
     const current=await listener();
     assert.equal(current.configuredEnabled,false,'Use a disposable Cockpit with its listener disabled');
@@ -53,7 +55,6 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       discovery:false,expectedSettingsRevision:current.settingsRevision});
     listenerEnabled=true;
   }
-
   async function connectPanel() {
     const {host}=await companion('companion_status');
     const before=new Set(host.clients.map(row=>row.companionId));
@@ -92,9 +93,10 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
             const feedback=data?.reply?.feedback;
             const sample=feedback?.values?.find(row=>row.channelId==='flight-channel-0'
               &&row.outputId==='flight-output-0');
-            if(sample&&window.__combinedLamp.length<512)window.__combinedLamp.push({
-              sequence:feedback.sequence,status:sample.status,value:sample.value,sourceKind:sample.sourceKind,
-              sourceAgeMs:sample.sourceAgeMs,receivedAt:performance.now(),
+            if(feedback&&(sample||feedback.mode==='snapshot')&&window.__combinedLamp.length<512)window.__combinedLamp.push({
+              sequence:feedback.sequence,mode:feedback.mode,sessionId:feedback.sessionId,
+              publicationHash:feedback.publicationHash,status:sample?.status,value:sample?.value,sourceKind:sample?.sourceKind,
+              sourceAgeMs:sample?.sourceAgeMs,receivedAt:performance.now(),
             });
           });
         }
@@ -107,7 +109,6 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     panels.push(connected);
     return connected;
   }
-
   async function publishPanel() {
     const original=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
     const publication=commands?await commandPanelPublication(JSON.parse(original)):JSON.parse(original);
@@ -119,7 +120,6 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     await companion('companion_publish_commit',{uploadId,saveAsLatest:false});
     return publication.publicationHash;
   }
-
   async function assignPanel(document, assignments, publicationHash, {page,peer}, nodeId) {
     const resource=await until(async()=>(await request({command:'profile_resources_list',limit:128}))
       .profileResources.resources.find(row=>row.attributes?.companionId===peer.companionId
@@ -271,7 +271,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     });
     inspectorSubscription=[...previewActive].find(([,topic])=>topic==='games.telemetry')[0];
   }
-  async function withPreviewsClosed(owner,setAirborne) {
+  async function withPreviewsClosed(owner,setAirborne,submitOwnship) {
     await cdp.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Overview"]').click()`);
     await until(async()=>{
       if(previewError)throw previewError;
@@ -287,12 +287,12 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const lamp=await waitLamp(offset,sample=>sample.status==='fresh'&&sample.value===true);
     if(!browserUrl&&!nativeRates)await sendDebug(owner,true);
     assert.deepEqual([previewOpens,previewReads],before,'Closed previews must not subscribe or read while native routes run');
-    return {lamp,retiredReaders:before[0],previewOpens:0,previewReads:0};
+    const lifecycle=checkLifecycle?await verifyDcsTransportLifecycle(cdp,panels,submitOwnship):undefined;
+    return {lamp,retiredReaders:before[0],previewOpens:0,previewReads:0,lifecycle};
   }
-
   async function startProbe() {
     probeStart=process.hrtime.bigint();
-    const args=seconds||nativeRates?['--vjoy-buttons','15000']:['--vjoy-buttons'];
+    const args=extendedProbe?['--vjoy-buttons','15000']:['--vjoy-buttons'];
     probe=spawn(probeExecutable,args,{windowsHide:true});
     const lines=createInterface({input:probe.stdout});
     const started=once(lines,'line'), trace=[];
@@ -432,7 +432,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const qpcNs=ticks=>ticks*1_000_000_000n/hz;
     assert.ok(qpcNs(start)>=probeStart&&qpcNs(start)<=probeReady,'Raw Input and Node must share QPC');
     let probeAfterStopMs;
-    if(seconds||nativeRates){
+    if(extendedProbe){
       assert.ok(raw.receiverEndedTicks,'Use a Raw Input probe with a capture end timestamp');
       probeAfterStopMs=Number(qpcNs(BigInt(raw.receiverEndedTicks))-stopNs)/1e6;
       assert.ok(probeAfterStopMs>0,`Raw Input must keep capturing through Stop (${probeAfterStopMs.toFixed(2)} ms)`);
