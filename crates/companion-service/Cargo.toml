@@ -9,6 +9,7 @@ license-file = "../../LICENSE"
 # Explicit lower-level legacy fixture admission for transport/storage tests only.
 # Public publication validation and IPC remain compiled-only with this enabled.
 legacy-test-fixtures = []
+reactive-qualification = []
 
 [dependencies]
 osg-persistence = { path = "../persistence" }

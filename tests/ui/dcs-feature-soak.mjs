@@ -262,6 +262,20 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     if (rates) {
       await rates.offered;
       assert.ok(evidence.mcpSamples > 0 && lastFast > firstReader.fast);
+      const leaseRequest = {
+        command: 'qualification_companion_leases', clientId: fixtureClientId, sessions: evidence.instances,
+      };
+      const inputLeases = await cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',
+        {request:${JSON.stringify(leaseRequest)}})`);
+      assert.equal(inputLeases.length, evidence.instances.length);
+      inputLeases.forEach((lease, index) => {
+        for (const [key, value] of Object.entries(evidence.instances[index])) assert.equal(lease[key], value);
+        assert.ok(Number.isSafeInteger(lease.acceptedRenewals) && lease.acceptedRenewals > 0);
+        assert.ok(Number.isSafeInteger(lease.minimumMarginMs) && lease.minimumMarginMs > 0);
+        assert.equal(lease.minimumMarginMs, lease.leaseMs - lease.maxGapMs);
+        assert.ok(lease.gapAtReadMs >= 0 && lease.gapAtReadMs <= lease.maxGapMs);
+      });
+      evidence.inputLeases = inputLeases;
     }
     evidence.elapsedMs = Math.round(performance.now() - start);
     traffic.stop();

@@ -187,3 +187,40 @@ existing explicit ignores. LLVM measured 81.53% line and 72.73% function coverag
 the qualification module. The build did not instrument branches. The
 binary trace decoder regression, fixture module checks, and UI timer
 tests passed locally.
+
+## Host panel input lease margin
+
+The opt-in Windows dev build records gaps between accepted input and
+heartbeat renewals from each panel's armed neutral baseline. The
+dual-rate fixture reads both exact sessions once, before Stop. It
+includes the time since the most recent renewal in the maximum and
+requires the original session, generation and publication to be armed.
+The gateway trace records one fixture request for the measurement.
+
+In the 15.01-second live run, both loopback Edge panels accepted 140
+renewals. Each panel's longest gap was 266 ms, leaving 1,234 ms on the
+1,500 ms host input lease. The gaps at read time were 101 and 193 ms.
+The Raw Input receiver matched all 16,886 offered vJoy edges and both
+Stop releases in order. Offer-to-receipt p95/p99 was 6.7/11.7 ms at
+1 kHz and 7.1/10.9 ms at 125 Hz. Both releases arrived 33.04 ms after
+Stop, and the vJoy slot returned to free. The fixture recorded no timing
+misses or cleanup errors. The first launch lacked embedded browser
+assets and stopped at pairing. The successful rebuild included the
+browser bundle.
+
+The Windows dev binary SHA-256 is
+`588e42b36f5833d7f2b660187c8327c651d2253ffffb932535c712c770acb1ba`.
+The local evidence is
+`.research/dcs-physics-native/1794190315211/evidence.json`, SHA-256
+`038ea919923dd57d96808ea3aca629104e89dd1763fda30874d83589362ee327`.
+The 242 companion-service tests and 75 browser-companion tests passed.
+The full Windows suite passed 2,486 tests with 18 existing ignores at
+two threads. The initial eight-thread run hit disk-full errors while
+three X-Plane fixtures copied their temporary executables.
+LLVM measured 97.62% line and 75.00% function coverage for the lease
+diagnostic, and 91.60% line and 79.56% function coverage for the hub.
+This LLVM build did not instrument branches.
+
+The margin covers the host leases of these two loopback sessions during
+the short run. The 30-minute margin, capture-to-reducer timing, other
+lease boundaries and real LAN panels remain open.

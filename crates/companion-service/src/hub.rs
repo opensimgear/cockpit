@@ -27,6 +27,9 @@ mod content;
 mod display;
 #[path="hub_retirement.rs"]
 mod retirement;
+#[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+#[path = "hub_lease_qualification.rs"]
+pub mod lease_qualification;
 pub use content::SavedPanel;
 
 pub const LEASE_MS: u64 = 1500;
@@ -121,6 +124,8 @@ struct Session {
     sequence: u64,
     heartbeat: u64,
     last_seen: u64,
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    lease_evidence: lease_qualification::Evidence,
     batches: VecDeque<u64>,
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
@@ -1363,6 +1368,8 @@ impl Hub {
                             panel_error: false,
                             operation: None,
                             last_seen: now,
+                            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+                            lease_evidence: Default::default(),
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
                             feedback_cursor: Default::default(),
@@ -1515,6 +1522,8 @@ impl Hub {
             if panel_error {
                 if let Some(wake) = s.feedback_wake.take().and_then(|wake| wake.upgrade()) { wake.notify(); }
             }
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            s.note_input_renewal(now);
             s.last_seen = now;
             if changed { self.notify_presence(); }
             return Ok(reply(frame["sequence"].clone(), "ack"));
@@ -1567,6 +1576,10 @@ impl Hub {
             s.baseline_pending = false;
             s.values = values;
             s.sequence = 0;
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            {
+                s.lease_evidence = Default::default();
+            }
             s.last_seen = now;
             self.notify_presence();
             return Ok(reply(json!("0"), "ack"));
@@ -1642,6 +1655,8 @@ impl Hub {
         }
         s.batches.push_back(now);
         s.sequence = seq;
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        s.note_input_renewal(now);
         s.last_seen = now;
         Ok(reply(frame["sequence"].clone(), "ack"))
     }

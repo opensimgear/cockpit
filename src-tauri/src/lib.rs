@@ -337,12 +337,16 @@ async fn gateway_request(
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
         if request["command"] == "qualification_debug_burst" {
-            return profile_debug_controller::qualification::run(&service, request);
+            return Ok(profile_debug_controller::qualification::run(&service, request));
         }
-        service.request(request)
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        if request["command"] == "qualification_companion_leases" {
+            return service.qualify_companion_leases(request);
+        }
+        Ok(service.request(request))
     })
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?
 }
 
 pub fn run() {

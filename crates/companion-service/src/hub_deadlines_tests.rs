@@ -25,12 +25,61 @@ fn session(last_seen: u64) -> Session {
         sequence: 0,
         heartbeat: 0,
         last_seen,
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        lease_evidence: Default::default(),
         batches: VecDeque::new(),
         values: BTreeMap::new(),
         feedback_cursor: Default::default(),
         feedback_wake: None,
         feedback_stream_resync: None,
     }
+}
+
+#[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+#[test]
+fn qualification_counts_armed_renewals_and_includes_the_current_lease_gap() {
+    let hub = Hub::new("lease-host".into(), Arc::new(crate::hub::NullSourceSink));
+    let mut first = session(100);
+    first.note_input_renewal(200);
+    first.armed = true;
+    first.note_input_renewal(500);
+    first.last_seen = 500;
+    first.note_input_renewal(900);
+    first.last_seen = 900;
+    let mut second = session(950);
+    second.armed = true;
+    second.token.source_id = "peer".into();
+    second.token.session_id = "peer-session".into();
+    {
+        let mut inner = hub.inner.lock().unwrap();
+        inner.last_now = 1000;
+        inner.sessions.insert("session".into(), first);
+        inner.sessions.insert("peer-session".into(), second);
+    }
+    let first = json!({
+        "instanceId": "instance", "sessionId": "session",
+        "generation": "1", "publicationHash": "publication",
+    });
+    let second = json!({
+        "instanceId": "peer", "sessionId": "peer-session",
+        "generation": "1", "publicationHash": "publication",
+    });
+    let read = |first, second| {
+        hub.qualify_input_leases(serde_json::from_value(json!([first, second])).unwrap())
+    };
+    let rows = read(first.clone(), second.clone()).unwrap();
+    assert_eq!(rows[0]["acceptedRenewals"], 2);
+    assert_eq!(rows[0]["maxGapMs"], 400);
+    assert_eq!(rows[0]["gapAtReadMs"], 100);
+    assert_eq!(rows[0]["minimumMarginMs"], 1100);
+    assert_eq!(rows[1]["acceptedRenewals"], 0);
+    assert_eq!(rows[1]["maxGapMs"], 50);
+    let mut stale = second.clone();
+    stale["generation"] = json!("2");
+    assert!(read(first.clone(), stale).is_err());
+    assert!(read(first.clone(), first.clone()).is_err());
+    hub.inner.lock().unwrap().last_now = 2400;
+    assert!(read(first, second).is_err());
 }
 
 #[test]

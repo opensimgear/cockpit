@@ -1,6 +1,20 @@
 use super::*;
 use crate::profile_debug_controller::Request;
 
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+impl GatewayManager {
+    pub(crate) fn qualify_companion_leases(&self, mut request: Value) -> Result<Value, String> {
+        if std::env::var("OSG_REACTIVE_QUALIFICATION").as_deref() != Ok("1") {
+            return Err("Desktop qualification is disabled.".into());
+        }
+        let identities = serde_json::from_value(request["sessions"].take())
+            .map_err(|error| error.to_string())?;
+        self.companion_host
+            .profile_metadata()?
+            .qualify_input_leases(identities)
+    }
+}
+
 impl GatewayManager {
     pub(super) fn dispatch_debug_controller(&self, request: &Request) -> Result<Value, String> {
         let state = self
