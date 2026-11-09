@@ -385,6 +385,10 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<Value, String> 
         cancelled: AtomicBool::new(false),
         attempted: std::array::from_fn(|_| AtomicU64::new(0)),
     };
+    let reducer = super::qualification_reducer::Scope::start(
+        burst.request.owner.clone(), burst.request.nodes.clone(), burst.streams.clone(),
+        [duration + 1, duration / 8 + 1],
+    );
     let (fast_tx, fast_rx) = mpsc::sync_channel(193);
     let (peer_tx, peer_rx) = mpsc::sync_channel(25);
     let result = thread::scope(|scope| -> Result<[Value; 2], String> {
@@ -404,16 +408,17 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<Value, String> 
         offered?;
         Ok(lanes)
     });
+    let result = result.and_then(|lanes| reducer.finish().map(|timing| (lanes, timing)));
     if result.is_err() {
         // Release only through the original owner fence. The fixture's Stop
         // remains the fallback if the queue is full or the owner is retired.
         burst.release();
     }
-    let lanes = result?;
+    let (lanes, timing) = result?;
     Ok(if tracing {
-        json!({"qualificationTrace":lanes})
+        json!({"qualificationTrace":lanes,"captureToReducerBatchMs":timing})
     } else {
-        json!({"qualificationBurst":lanes})
+        json!({"qualificationBurst":lanes,"captureToReducerBatchMs":timing})
     })
 }
 

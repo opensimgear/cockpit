@@ -116,13 +116,23 @@ fn qualification_requires_explicit_enable_and_the_current_neutral_owner() {
             "startNs":(clock.now().unwrap() + 50 * NS_PER_MS).to_string()
         })
     };
-    let result = run(&manager, request());
+    // This test manager has no native profile worker.
+    let result = thread::scope(|scope| {
+        let request = request();
+        let burst = scope.spawn(|| run(&manager, request));
+        while !burst.is_finished() {
+            manager.poll_qualification_test_profile().unwrap();
+            thread::sleep(Duration::from_millis(1));
+        }
+        burst.join().unwrap()
+    });
     assert_eq!(result["ok"], true, "{result}");
     for (index, count) in [193, 25].into_iter().enumerate() {
         let lane = result["state"]["qualificationBurst"][index]
             .as_array()
             .unwrap();
         assert_eq!(lane.len(), count);
+        assert_eq!(result["state"]["captureToReducerBatchMs"][index]["count"], count);
         assert!(lane
             .iter()
             .enumerate()

@@ -16,6 +16,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
 pub(crate) mod qualification;
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+pub(crate) mod qualification_reducer;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -262,6 +264,8 @@ impl DebugInputs {
                         changes: frame_changes,
                     });
                     source.sequence = next;
+                    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+                    qualification_reducer::captured(request, self.generation, next);
                     queued = true;
                 }
                 changed = !changed_values.is_empty();

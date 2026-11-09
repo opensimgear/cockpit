@@ -1353,9 +1353,14 @@ impl Host for NativeProfileHost {
         for registration in state.game.native_registrations() {
             reducer.register_native_source(registration)?;
         }
-        degraded.extend(crate::profile_session::source_admission::admit(
+        let admission_diagnostics = crate::profile_session::source_admission::admit(
             reducer, admissions.iter().cloned(), tick, panels.liveness, companion.liveness,
-        )?);
+        )?;
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        crate::profile_debug_controller::qualification_reducer::accepted(
+            &run.owner, &admissions, &admission_diagnostics, || controllers.monotonic_us(),
+        );
+        degraded.extend(admission_diagnostics);
         reducer.advance(tick)?;
         degraded.extend(health_policy::input_degradation(reducer, state.delivery.as_ref(), &state.document));
         degraded.extend(state.scripts.poll(reducer));

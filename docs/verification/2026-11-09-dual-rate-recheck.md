@@ -254,5 +254,48 @@ The local evidence is
 The Raw Input receiver matches the earlier sustained fixture hash.
 
 These margins cover the two host leases for loopback WSS panel input
-under authored DCS traffic. Capture-to-reducer timing, other lease
-boundaries and real LAN, controller and simulator checks remain open.
+under authored DCS traffic. Other lease boundaries and real LAN,
+controller and simulator checks remain open.
+
+## Debug input capture to reducer
+
+The opt-in Windows dev fixture matches each of its two authored streams
+to the exact queued source, generation and sequence. The host samples
+the capture clock after the reducer accepts and applies the whole batch,
+before the output poll. Each frame uses its original capture timestamp.
+That gives an upper bound for earlier frames in a batch. The fixture
+checks that each offered edge has one reducer measurement and keeps
+this measurement separate from API queue admission and vJoy receipt.
+Percentiles within the one-second histogram round up by at most
+0.1 ms. Overflow percentiles use the observed maximum.
+
+| Source | Measured captures | Capture-to-batch-end p50 / p95 / p99 | Maximum | Offer-to-Raw-Input p50 / p95 / p99 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 kHz | 15,009 | 1.2 / 1.6 / 1.9 ms | 17.665 ms | 3.1 / 7.1 / 11.2 ms |
+| 125 Hz | 1,877 | 1.2 / 1.6 / 1.9 ms | 2.271 ms | 3.3 / 7.4 / 11.1 ms |
+
+The two schedules overlapped for 15,007.89 ms. The Raw Input receiver
+matched all offered edges and both Stop releases. Both releases arrived
+41.14 ms after Stop and vJoy returned to free. The fixture reported no
+timing budget misses or cleanup errors. An initial isolated candidate
+omitted the reducer hook and timed out. The successful rebuild included
+both hooks, with the staged source verified against the isolated copy.
+The build emitted the linked Cockpit executable and Rust library to
+fit the available disk space.
+
+The Windows dev executable SHA-256 is
+`4f66a66d36f49f8aff26ca7cb9bf9da5a6d1107a8bb28ce70a231261132cb31b`.
+The evidence is `.research/dcs-physics-native/1794193361642/evidence.json`,
+SHA-256 `482d6bd8de44a99f7f103891ccafe32d8f8193e98a18d251af865ed03a4b5c5e`.
+All seven focused qualification tests passed with the diagnostic enabled
+and disabled.
+LLVM measured 89.53% lines and 77.27% functions for the reducer diagnostic,
+97.37% lines and 100% functions for the histogram, and 81.56% lines and
+74.29% functions for the burst fixture. This build did not instrument
+branches. The dual-rate trace decoder regression passed.
+The full Windows suite passed 2,490 tests with 18 existing ignores.
+The debug controller, native profile host and debug gateway also met
+the 71% line and function floors in the full run.
+
+The 30-minute measurement for this segment, other acquisition paths and
+physical controller-to-preview and controller-to-vJoy timing remain open.

@@ -201,18 +201,26 @@ export async function startDualRateSoak(cdp, executable, slot, owner, directory,
       assert.equal(reply.ok,true,`qualification_debug_burst: ${reply.error}`);
       const counts = reply.state.qualificationTrace;
       assert.deepEqual(counts,dualRateLanes.map(lane=>durationMs/lane.intervalMs+1));
-      return counts;
+      const reducer = reply.state.captureToReducerBatchMs;
+      assert.deepEqual(reducer.map(row => row.count), counts);
+      for (const row of reducer) {
+        const timings = [row.p50, row.p95, row.p99, row.max];
+        assert.ok(timings.every((ms, index) =>
+          Number.isFinite(ms) && ms >= (timings[index - 1] ?? 0)));
+      }
+      return {counts, reducer};
     });
     void offered.catch(error => { failure=error; });
     return {startNs,endNs,offered,
       check() { if (failure) throw failure; },
       async stopped(stopNs) {
-        const counts = await offered;
+        const {counts, reducer} = await offered;
         probe.stdin.end('stop\n');
         const raw = await report;
         const originNs = BigInt(raw.receiverStartedTicks)*1_000_000_000n/BigInt(raw.receiverTickHz);
         assert.ok(originNs >= beforeReady && originNs <= afterReady,'Raw Input must share the Node monotonic clock');
         const result = summarizeDualRateTrace(directory,slot,counts,raw,stopNs);
+        result.lanes.forEach((lane, index) => { lane.captureToReducerBatchMs = reducer[index]; });
         assert.ok(result.overlapMs >= durationMs - 20,'The two native schedules must overlap throughout the soak');
         const budgetMisses = result.lanes.flatMap(lane => {
           const misses=[];

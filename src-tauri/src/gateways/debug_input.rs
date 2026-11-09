@@ -16,6 +16,14 @@ impl GatewayManager {
 }
 
 impl GatewayManager {
+    #[cfg(all(test, windows, debug_assertions, feature = "reactive-qualification"))]
+    pub(crate) fn poll_qualification_test_profile(&self) -> Result<(), String> {
+        self.profile_session
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .poll()
+    }
+
     pub(super) fn dispatch_debug_controller(&self, request: &Request) -> Result<Value, String> {
         let state = self
             .profile_session
