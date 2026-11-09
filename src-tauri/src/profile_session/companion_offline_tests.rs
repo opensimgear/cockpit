@@ -66,10 +66,15 @@ fn offline_unassigned_pair_keeps_base_healthy_and_reconnects_its_desired_publica
             ),
         ]);
         let mut ports = vec![];
-        let route = if let Some(source) =
-            source.filter(|source| source.online && source.baseline_ready)
-        {
-            let publication = hub.assigned_publication(&paired.instance_id).unwrap();
+        let verified_source = source
+            .filter(|source| source.online && source.baseline_ready)
+            .and_then(|source| {
+                // The assignment may retire between the provider and Hub reads.
+                let publication = hub.assigned_publication(&paired.instance_id).ok()?;
+                (publication.publication_hash == source.definition.publication_hash)
+                    .then_some((source, publication))
+            });
+        let route = if let Some((source, publication)) = verified_source {
             ports =
                 crate::profile_resource_ports::companion(&source.definition, &publication.feedback)
                     .unwrap();
