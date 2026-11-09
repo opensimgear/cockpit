@@ -1,6 +1,7 @@
 # ESP32 direct USB status-watch requirement
 
-The operator chose to retire status-only ESP32 direct USB support for now.
+The operator chose to retire status-only ESP32 direct USB support for now
+and defer further firmware changes until ESP32 work resumes.
 This is a Cockpit host change. A correlated discovery or recovery snapshot
 must advertise `statusEvents: true` before the host can connect the board or
 publish ready status. Automatic reconnect applies the same capability check
