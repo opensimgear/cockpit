@@ -58,3 +58,49 @@ Linux desktop dependency resolution stopped offline on `arbitrary 1.5.0`.
 The macOS desktop and signed Android and iOS applications were unavailable
 in this run. Actual simulator and hardware checks remain in #199 and
 mobile prerequisites remain in #55 and #56. CI remains deferred.
+
+## Current Linux and Windows native suite
+
+The exact `c7bf381d` export with the two fixture corrections used the
+unchanged Cargo lockfile. The Linux dependencies resolved under Ubuntu
+WSL2. The full native suite ran offline with an isolated D-Bus session and
+temporary Secret Service store.
+
+The first build found that the desktop lifecycle fixture lacked the tap
+clock required by the new desktop adapter. After adding the fixture clock,
+all 2,417 Linux library tests passed, with nine existing ignores. The real
+gateway test then found that the large editor request referenced devices
+absent from its inventory. The fixture now seeds 16 retained controller
+identities through the native registry and launches the gateway against that
+private SQLite database. The gateway passed the 65,536-byte framing boundary,
+profile CRUD, the large editor save with all 16 assignments, the ordinary
+profile payload limit, and clean service exit. The standalone framing test
+also passed. The final locked Linux run passed all 2,419 tests with nine
+existing ignores. The gateway integration fixture passed separately with
+97.27% line and 75.00% function coverage.
+
+The instrumented Windows library run passed 2,493 tests with 18 existing
+ignores. The desktop lifecycle fixture reached 100% line and function
+coverage. Its production desktop adapter reached 86.63% lines and 72.73%
+functions. This build measured regions, lines and functions.
+
+The mixed keyboard and pointer retry used the Windows dev Cockpit at
+`ec7348da`. The fixture still found PickerHost PID 17540 under the pointer
+and stopped before attempting native input. The receiver exited normally,
+and the wrapper confirmed stopped ownership and empty cleanup errors.
+Mixed pointer receipt remains unqualified. The Linux run exercised a real
+gateway process under WSL2. Physical Linux, macOS and mobile qualification
+remain open.
+
+Local results are in `.research/c193-reconnect/r9-linux-current/`. The
+test and service executable hashes identify the tested artifacts.
+
+| Executable | SHA-256 |
+| --- | --- |
+| Linux library tests | `afc49b8c5e82ce647d7bc201ef92a48fa1ee2fce137a32001e8718a12a51998c` |
+| Linux gateway service | `b4ac9156c592a18e47c7a87389fbf740a9a4b4502aa11b87f31ef7ddfa975a45` |
+| Windows library tests | `2048d8b825cbbca6eabc6968f2e3b5b9a11e90fbc79bbd8ee5257bf2bf856136` |
+
+The guarded pointer evidence is in
+`.research/c193-reconnect/required-journal-leaf/mixed-ec7348da-24832/evidence.json`,
+SHA-256 `7daa656bf4a9a63e97f55216e8c694a9254d9cd7c6661ff95245424c87b79ebb`.

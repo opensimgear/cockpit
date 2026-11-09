@@ -27,6 +27,7 @@ fn empty_wrapper(scope: Option<Scope>, started: bool) -> Desktop {
         scope,
         started,
         wake: None,
+        tap_clock: Arc::new(|| 0),
         process_observation: None,
     }
 }

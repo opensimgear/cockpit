@@ -1,15 +1,65 @@
 //! Exercise the actual browser service, rather than a mock bridge process.
 #![cfg(debug_assertions)] // The browser service deliberately rejects release builds.
 
+use osg_profiles::{
+    resources::{Observation, ProviderBatch, Registry, ResourceType},
+    resources_store::Store,
+};
 use serde_json::{json, Value};
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 include!("../../tests/fixtures/profiles/editor-boundary.rs");
+
+fn retain_editor_resources(scratch: &Path, editor: &mut Value) {
+    let observations = editor["document"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|resource| Observation {
+            key: resource["id"].as_str().unwrap().into(),
+            name: resource["name"].as_str().unwrap().into(),
+            resource_type: ResourceType::HostController,
+            evidence: vec![],
+            attributes: Default::default(),
+            diagnostics: vec![],
+            route: None,
+            ports: None,
+        })
+        .collect();
+    let mut registry = Registry::new();
+    registry
+        .reconcile(ProviderBatch {
+            scope: "editor-boundary-fixture".into(),
+            session: "editor-boundary-session".into(),
+            revision: 1,
+            complete: true,
+            observations,
+        })
+        .unwrap();
+    let saved = registry.saved();
+    for assignment in editor["assignments"].as_array_mut().unwrap() {
+        let key = assignment["resourceId"].as_str().unwrap();
+        let resource = saved
+            .resources
+            .iter()
+            .find(|resource| {
+                resource
+                    .sightings
+                    .iter()
+                    .any(|sighting| sighting.key == key)
+            })
+            .unwrap();
+        assignment["sourceId"] = json!(resource.id);
+    }
+    Store::new(scratch.join("profile-resources-v1"))
+        .save(&saved)
+        .unwrap();
+}
 
 #[test]
 fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service() {
@@ -19,9 +69,13 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         .join(".research")
         .join(format!("native-service-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&scratch).unwrap();
+    let mut editor = editor_boundary_request();
+    retain_editor_resources(&scratch, &mut editor);
     let mut service = Command::new(env!("CARGO_BIN_EXE_osg-gateway-service"))
         .env("OSG_LOCAL_GATEWAYS_ONLY", "1")
         .env("OSG_DCS_BIOS_CONFIG", scratch.join("dcs.json"))
+        .env("OSG_SQLITE_DATABASE", scratch.join("cockpit.sqlite3"))
+        .env_remove("OSG_GAMES_CONFIG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -146,7 +200,6 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     }
     assert!(!scratch.join("games.json").exists());
     assert!(!scratch.join("mappings").exists());
-    let mut editor = editor_boundary_request();
     editor["clientId"] = json!("cockpit-service-boundary-test");
     assert!(editor.to_string().len() > osg_cockpit::gateways::PROFILE_REQUEST_LIMIT);
     let saved_editor = exchange("large-editor-save", editor.clone());
