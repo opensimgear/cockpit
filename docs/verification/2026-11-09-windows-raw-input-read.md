@@ -242,3 +242,34 @@ The local evidence is
 `.research/reactive/physical-vjoy-latency/51f89263-c1e6-48fe-9134-54b9ae27c975/evidence.json`,
 SHA-256 `ad429ad5ebbaf7cda5ab000290ad9655486718b608fd05c8ae90ea8c3a5a2522`.
 Physical taps, motion-to-preview, and simulator acceptance stay in #199.
+
+## Current rig and Profiles timing preflight
+
+The Windows dev build from `44217e01` repeated the stationary vJoy
+preflight with the attached VKBsim Gladiator EVO R. It observed nine
+physical reports, the neutral baseline on slot 1, and 2.3 µs clock
+uncertainty. Stop freed the slot and the fixture deleted its profile
+without cleanup errors. All five receipt matcher tests passed.
+
+A separate unrouted profile opened the Gladiator inspector in the
+foreground with the frontend from `6beee318`. The new preview preflight
+received 38 consecutive reports for the six axes and checked a valid
+Raw Input read timestamp for each report. The stationary report interval
+was 80.00 ms at p50 and 80.07 ms at p95. Native read completion to journal
+commit measured 0.329 ms p50, 0.383 ms p95 and 0.400 ms p99. These two
+segments use the native clock. The browser clock bracket was ±2.80 ms.
+
+With the assigned controller selected in the visible Profiles
+inspector, set `OSG_CONTROLLER_SOURCE_ID` to the current local source ID.
+Run `node scripts/reactive/profile-preview-latency.mjs --preflight` with
+the controller stationary. Then run the same command without
+`--preflight` and sweep an axis during its ten-second capture. The
+sweep must yield at least 20 unambiguous visible transitions. The probe
+reports native read completion to DOM and the next frame opportunity
+separately from report cadence. Display scan-out, deliberate button
+delivery to vJoy, and simulator response have separate acceptance steps.
+
+| Local trace | SHA-256 |
+| --- | --- |
+| `.research/reactive/profile-preview-latency/1794251645252.json` | `b4da6820104cbdbfa38219b237c057317ccbca14dc37667a805803039b3c8a0f` |
+| `.research/reactive/physical-vjoy-latency/5f6fa5ab-8efc-4d27-ac32-67722b0267c5/evidence.json` | `b899d5e8660abb06cb1042c6cac52278ae73e9b6cffce93927e517e62c69394c` |

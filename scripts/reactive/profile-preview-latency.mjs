@@ -1,15 +1,17 @@
-// Opt-in passive measurement of the actual profile inspector, never raw/photon latency.
+// Opt-in passive measurement of the actual profile inspector.
 // Open its physical controller block and set OSG_CONTROLLER_SOURCE_ID explicitly.
 // Set OSG_DESKTOP_NATIVE_APP when Cockpit is running from a copied executable.
 import {nativePage} from './cdp.mjs';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const sourceId=process.env.OSG_CONTROLLER_SOURCE_ID;
+const preflight=process.argv.includes('--preflight');
 if(!sourceId)throw Error('Set OSG_CONTROLLER_SOURCE_ID to the controller shown in the profile inspector.');
 const page=await nativePage();
 try{
  const result=await page.evaluate(`(async()=>{
   const sourceId=${JSON.stringify(sourceId)};
+  const preflight=${preflight};
   const {gatewayRequest}=await import('/src/lib/gateway.ts');
   const {createNativeObservationTransport}=await import('/src/lib/streams/native.ts');
   const inspector=document.querySelector('[aria-label="Selected block inspector"] .controller-inputs');
@@ -28,7 +30,9 @@ try{
   };
   const before=await calibrate(),samples=[],dom=[],errors=[],controller=new AbortController();
   let snapshotCount=0,changeCount=0;
-  let axes=[],generation,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
+  let axes=[],generation,backend,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
+  let reportCount=0,previousRead;
+  const nativeReadIntervals=[],readToJournal=[];
   const axisValues=new Map(), axisLabels=new Map();
   const wireSignature=()=>axes.map(id=>String(axisValues.get(id))).join('|');
   const domSignature=()=>axes.map(id=>{
@@ -78,6 +82,7 @@ try{
      }
      if(generation===undefined&&snapshot){
       generation=payload?.source?.generation;
+      backend=payload?.source?.backend;
       nativeSequence=BigInt(payload.source.sequence);
       axes=snapshotAxes;
       if(payload?.source?.id!==sourceId||!payload.source.baselineReady||!axes.length)errors.push('Wrong controller, no ready baseline or no axes.');
@@ -90,10 +95,29 @@ try{
       const sequence=BigInt(payload.source.sequence),expected=nativeSequence+(payload.reason==='metadata'?0n:1n);
       if(sequence!==expected)errors.push('Native controller report continuity changed.');
       nativeSequence=sequence;
+      const capturedUs=BigInt(frame.capturedUs);
+      const isReport=payload.reason!=='metadata';
+      const readUs=isReport&&payload.source.nativeReadUs!==undefined?BigInt(payload.source.nativeReadUs):null;
+      const validRead=readUs!==null&&readUs>0n&&readUs<=capturedUs;
+      if(isReport){
+       reportCount++;
+       if(validRead){
+        if(previousRead!==undefined){
+         if(readUs<previousRead)errors.push('Physical read timestamps regressed.');
+         else nativeReadIntervals.push(Number(readUs-previousRead)/1000);
+        }
+        previousRead=readUs;
+        readToJournal.push(Number(capturedUs-readUs)/1000);
+       }
+       else if(backend==='windows-raw-input')errors.push('A physical report is missing its valid native read timestamp.');
+      }
       const signature=wireSignature();
       // Equal consecutive values do not establish a new visible transition.
       if(signature!==previousWire){
-       if(samples.length<5000)samples.push({signature,sequence:payload?.source?.sequence,captured:Number(BigInt(frame.capturedUs))/1000+before.offset,received});
+       if(samples.length<5000)samples.push({
+        signature,sequence:payload.source.sequence,captured:Number(capturedUs)/1000+before.offset,
+        nativeRead:validRead?Number(readUs)/1000+before.offset:undefined,received,
+       });
        else if(!limited){limited=true;errors.push('Timing sample limit exceeded.');}
        previousWire=signature;
       }
@@ -102,7 +126,7 @@ try{
      void ack().catch(error=>errors.push(String(error)));
     },error:message=>errors.push(message)
    },controller.signal);
-   await new Promise(resolve=>setTimeout(resolve,10000));
+   await new Promise(resolve=>setTimeout(resolve,preflight?3000:10000));
   }finally{controller.abort();mutation.disconnect();document.removeEventListener('visibilitychange',changedVisibility);window.removeEventListener('blur',blurred);}
   const after=await calibrate();
   if(!inspector.isConnected||inspector.dataset.controllerSourceId!==sourceId)errors.push('Visible inspector was replaced.');
@@ -112,20 +136,28 @@ try{
   // Returning to an earlier value is ambiguous; exclude it instead of attributing
   // an old DOM timestamp to a later report. Missing/coalesced transitions remain counted.
   const rows=samples.map(row=>({...row,...(wireCounts.get(row.signature)===1&&domCounts.get(row.signature)===1?bySignature.get(row.signature):undefined)}));
-  const summarize=key=>{
-   const values=rows.filter(row=>Number.isFinite(row[key])).map(row=>row[key]-row.captured).sort((a,b)=>a-b);
-   const p=f=>values.length?values[Math.floor((values.length-1)*f)]:null;
+  const percentiles=values=>{
+   values.sort((a,b)=>a-b);
+   const p=f=>values.length?values[Math.ceil(values.length*f)-1]:null;
    return {count:values.length,p50:p(.5),p95:p(.95),p99:p(.99),max:p(1)};
   };
+  const summarize=(key,from='captured')=>percentiles(
+   rows.filter(row=>Number.isFinite(row[key])&&Number.isFinite(row[from])).map(row=>row[key]-row[from]));
   const matched=rows.filter(row=>Number.isFinite(row.dom));
   if(!snapshotCount)errors.push('No native controller snapshot arrived.');
-  if(matched.length<20)errors.push('Fewer than 20 unambiguous visible axis transitions; this run cannot qualify timing.');
+  if(!reportCount)errors.push('No continuing controller reports arrived.');
+  if(!preflight&&matched.length<20)errors.push('Fewer than 20 unambiguous visible axis transitions; this run cannot qualify timing.');
   if(matched.some(row=>row.dom-row.captured < -before.uncertainty))errors.push('DOM predates correlated capture beyond clock uncertainty.');
   return {at:new Date().toISOString(),durationMs:performance.now()-started,scope:'profile-controller-inspector',
-   sourceId,generation,axes,visibility,focused,clockUncertaintyMs:before.uncertainty,
+   sourceId,generation,backend,axes,visibility,focused,preflight,reportCount,nativeReadCount:readToJournal.length,
+   clockUncertaintyMs:before.uncertainty,
    clockOffsetDriftMs:after.offset-before.offset,snapshotCount,changeCount,changedReportCount:rows.length,domTransitionCount:dom.length,
    journalToObserverMs:summarize('received'),journalToDomMs:summarize('dom'),journalToFrameOpportunityMs:summarize('frameOpportunity'),
-   qualification:'Passive journal commit to observed DOM only; excludes OS/HID delivery, lock wait and physical display. No virtual output or deliberate hardware sweep.',
+   nativeReportIntervalMs:percentiles(nativeReadIntervals),nativeReadToJournalMs:percentiles(readToJournal),
+   nativeReadToDomMs:summarize('dom','nativeRead'),
+   nativeReadToFrameOpportunityMs:summarize('frameOpportunity','nativeRead'),
+   nativeReadToPreviewMeasured:!preflight&&errors.length===0&&matched.filter(row=>Number.isFinite(row.nativeRead)).length>=20,
+   qualification:'Passive timing to DOM and next frame opportunity. Native-read metrics start at Raw Input read completion. Physical actuation, display scan-out and virtual output need separate measurements.',
    rawInputLatencyQualified:false,virtualLatencyQualified:false,errors,before,after,rows};
  })()`);
  const directory='.research/reactive/profile-preview-latency';await mkdir(directory,{recursive:true});
