@@ -42,7 +42,8 @@ struct Input {
     logical: String,
     observed: String,
     resource: String,
-    descriptor: PortDescriptor,
+    contract: PortContract,
+    contract_hash: String,
     token: Option<ResourceToken>,
 }
 struct Output {
@@ -50,7 +51,8 @@ struct Output {
     from: Endpoint,
     observed: String,
     resource: String,
-    descriptor: PortDescriptor,
+    contract: PortContract,
+    contract_hash: String,
     binding: FeedbackBinding,
     feedback: FeedbackDescriptor,
     token: Option<ResourceToken>,
@@ -106,24 +108,25 @@ fn selected_port(
         .cloned()
         .ok_or("The companion port does not match the retained immutable native contract.".into())
 }
-fn token(
-    token: Option<&ResourceToken>,
+fn token<'a>(
+    token: Option<&'a ResourceToken>,
     resource: &str,
-    descriptor: &PortDescriptor,
+    port: &str,
+    contract_hash: &str,
     instance: &str,
     access: Access,
-) -> Result<ResourceToken, String> {
+) -> Result<&'a ResourceToken, String> {
     let token = token
         .ok_or("Acquire a current actual companion delivery token before binding its signal.")?;
     if token.resource_id != resource
-        || token.port_id != descriptor.id
-        || token.contract_hash != descriptor.contract_hash()?
-        || token.route_id != format!("companion:{instance}")
+        || token.port_id != port
+        || token.contract_hash != contract_hash
+        || token.route_id.strip_prefix("companion:") != Some(instance)
         || token.access != access
     {
         return Err("The companion delivery token changed identity, contract or access.".into());
     }
-    Ok(token.clone())
+    Ok(token)
 }
 impl CompanionSources {
     pub(crate) fn prepare(
@@ -166,7 +169,8 @@ impl CompanionSources {
                         .inventory_resource_id
                         .clone()
                         .ok_or("The companion source has no native identity.")?,
-                    descriptor,
+                    contract_hash: descriptor.contract_hash()?,
+                    contract: descriptor.contract,
                     token: None,
                 });
             }
@@ -215,7 +219,8 @@ impl CompanionSources {
                         .inventory_resource_id
                         .clone()
                         .ok_or("The feedback target has no exact native identity.")?,
-                    descriptor,
+                    contract_hash: descriptor.contract_hash()?,
+                    contract: descriptor.contract,
                     binding: FeedbackBinding {
                         channel_id: selected.0.channel_id.clone(),
                         output_id: selected.1.clone(),
@@ -896,7 +901,7 @@ impl Instance {
                         && source.endpoint.port_id == port.logical
                         && source.observed_port_id.as_ref() == Some(&port.observed)
                         && source.inventory_resource_id.as_ref() == Some(&port.resource)
-                        && source.contract == port.descriptor.contract
+                        && source.contract == port.contract
                         && source.readiness == PlanReadiness::Ready
                 })
                 .ok_or("The companion input binding changed before delivery.")?;
@@ -913,10 +918,11 @@ impl Instance {
             inputs.push(token(
                 source.token.as_ref(),
                 &port.resource,
-                &port.descriptor,
+                &port.observed,
+                &port.contract_hash,
                 self.proof.instance_id(),
                 Access::Read,
-            )?);
+            )?.clone());
         }
         for port in &self.outputs {
             let sink = delivery
@@ -927,7 +933,7 @@ impl Instance {
                         && sink.adapter == SinkAdapter::CompanionFeedback
                         && sink.observed_port_id.as_ref() == Some(&port.observed)
                         && sink.inventory_resource_id.as_ref() == Some(&port.resource)
-                        && sink.contract == port.descriptor.contract
+                        && sink.contract == port.contract
                         && sink.readiness == PlanReadiness::Ready
                 })
                 .ok_or("The companion feedback binding changed before delivery.")?;
@@ -947,10 +953,12 @@ impl Instance {
                         token(
                             Some(delivery),
                             &port.resource,
-                            &port.descriptor,
+                            &port.observed,
+                            &port.contract_hash,
                             self.proof.instance_id(),
                             Access::Write,
                         )
+                        .cloned()
                     })
                     .transpose()?,
             );
@@ -1017,7 +1025,8 @@ impl Instance {
             token(
                 input.token.as_ref(),
                 &input.resource,
-                &input.descriptor,
+                &input.observed,
+                &input.contract_hash,
                 self.proof.instance_id(),
                 Access::Read,
             )?;
@@ -1027,7 +1036,8 @@ impl Instance {
                 token(
                     Some(delivery),
                     &output.resource,
-                    &output.descriptor,
+                    &output.observed,
+                    &output.contract_hash,
                     self.proof.instance_id(),
                     Access::Write,
                 )?;
@@ -1103,13 +1113,14 @@ impl Instance {
         if matches!(frame.reason, Reason::Disconnect | Reason::Gap) {
             return self.loss(now_us.max(frame.captured_us.0));
         }
+        let generation = frame.generation.0.to_string();
         if self
             .inputs
             .iter()
             .map(|input| &input.token)
             .chain(self.outputs.iter().map(|output| &output.token))
             .flatten()
-            .any(|token| token.provider_generation != frame.generation.0.to_string())
+            .any(|token| token.provider_generation != generation)
         {
             return Err(
                 "The companion input generation changed; bind a fresh native baseline.".into(),

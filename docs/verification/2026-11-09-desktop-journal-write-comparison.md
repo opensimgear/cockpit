@@ -185,3 +185,45 @@ production path equivalence and strict timing still need qualification.
 Local inputs and outputs are under `.research/c193-reconnect/wal-live/`
 and `.research/c193-reconnect/wal-fast/`. The combined executable SHA-256 is
 `82dc5483ecc7f9c1d8f1e447b35e05be935197812d220a37397cf0ef30f860cd`.
+
+## Companion input admission
+
+The combined experiment's native trace located most of the pre-conversion
+latency between enqueue and dequeue. Under Profiles load, that interval
+was 848–849 µs p95. Dequeue through typed alias conversion was 42–43 µs.
+Typed alias through desktop effect was another 778–788 µs p95.
+
+The companion adapter now computes the immutable contract hash once per
+binding at preparation. Delivery checks compare that hash, route identity,
+port and access directly against the borrowed token. Taking ownership of
+a new binding still clones its token. Per-frame generation checks reuse
+one encoding. Current inventory validation and reconnect fences still run
+on the live path.
+
+The instrumented Windows suite passed 52 focused companion tests. The
+changed adapter reached 81.78% line and 90.82% function coverage. In the
+full run, 2,487 tests passed and 18 were ignored. Five X-Plane bridge
+tests hit the disk limit, and a game capture test missed an X-Plane packet.
+All six passed when rerun serially on the same executable.
+
+Four alternating dev Cockpit runs with the production DELETE/FULL
+journal delivered all 1,605 audited key transitions and proved clean Stop.
+The comparison removes repeated binding work but does not establish a
+consistent gain in end-to-end latency.
+
+| Run | Binding hash | Profiles dequeue through alias p95 | Profiles WSS admission through SendInput p95 / p99 |
+| --- | --- | ---: | ---: |
+| A1 | Recomputed | 44 µs | 9.62 / 11.95 ms |
+| B1 | Prepared | 41 µs | 9.22 / 17.45 ms |
+| B2 | Prepared | 43 µs | 9.70 / 15.75 ms |
+| A2 | Recomputed | 43 µs | 9.76 / 10.33 ms |
+
+The B1 p99 sample had a 15.452 ms durable write before the parent
+transport enqueue. The B2 p99 sample waited 14.068 ms from request issue
+to parent enqueue without a matching write interval. Both samples
+reached the desktop binding within 1.1 ms of WSS admission. The audit
+does not attribute the second stall inside the pre-enqueue boundary.
+The strict desktop timing and mixed pointer criteria stay open.
+
+Local coverage and the four native run artifacts are under
+`.research/c193-reconnect/companion-contract-cache/`.
