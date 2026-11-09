@@ -2,14 +2,17 @@ import assert from 'node:assert/strict';
 import {execFile,spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
+import {realpath} from 'node:fs/promises';
+import {dirname,isAbsolute,relative,sep} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 import {promisify} from 'node:util';
 import test from 'node:test';
-import {browserPage,until} from '../../scripts/reactive/cdp.mjs';
+import {browserPage,nativeMainTarget,nativePage,until} from '../../scripts/reactive/cdp.mjs';
 
 const runFile=promisify(execFile);
 const url=process.env.OSG_GATEWAY_RESTART_URL;
+const native=process.env.OSG_GATEWAY_RESTART_NATIVE==='1';
 const probePath=process.env.OSG_GATEWAY_RESTART_PROBE;
 const outputId='restart-vjoy';
 const nodeId='restart-debug';
@@ -46,6 +49,61 @@ async function service(expectedPid) {
   return JSON.parse(stdout);
 }
 
+async function nativeHost() {
+  const executable=await realpath(process.env.OSG_GATEWAY_RESTART_EXE);
+  const database=await realpath(dirname(process.env.OSG_SQLITE_DATABASE));
+  const webview=await realpath(dirname(process.env.WEBVIEW2_USER_DATA_FOLDER));
+  const privateRoot=await realpath(process.env.OSG_GATEWAY_RESTART_PRIVATE_ROOT);
+  const relativeToRoot=relative(privateRoot,dirname(executable));
+  assert.ok(relativeToRoot!=='..'&&!relativeToRoot.startsWith('..'+sep)&&!isAbsolute(relativeToRoot));
+  assert.equal(database.toLowerCase(),privateRoot.toLowerCase());
+  assert.equal(webview.toLowerCase(),privateRoot.toLowerCase());
+  const endpoint=new URL(process.env.OSG_NATIVE_CDP_URL);
+  assert.equal(endpoint.hostname,'127.0.0.1');
+  let child,target;
+  const currentTarget=async()=>{
+    try{return nativeMainTarget(await (await fetch(new URL('/json',endpoint),{signal:AbortSignal.timeout(1000)})).json());}
+    catch{return undefined;}
+  };
+  return {
+    async open(){
+      assert.equal(await currentTarget(),undefined,'A private native CDP port is required');
+      child=spawn(executable,[],{windowsHide:true,stdio:'ignore'});
+      await once(child,'spawn');
+      target=await until(currentTarget,Boolean,12000);
+      const page=await nativePage(endpoint.origin,target.webSocketDebuggerUrl);
+      try {
+        await until(async()=>{
+          try{return await page.evaluate("typeof window.__TAURI_INTERNALS__?.invoke === 'function'");}
+          catch{return false;}
+        },Boolean,5000);
+        const state=await page.evaluate("window.__TAURI_INTERNALS__.invoke('persistence_status')");
+        assert.equal((await realpath(state.path)).toLowerCase(),
+          (await realpath(process.env.OSG_SQLITE_DATABASE)).toLowerCase(),'Expected the private Cockpit database');
+        return page;
+      } catch(error) {page.close();throw error;}
+    },
+    identity(){return {pid:child.pid,target:target.id};},
+    async terminate(expected){
+      assert.deepEqual(this.identity(),expected);
+      const exited=once(child,'exit');
+      const before=process.hrtime.bigint();
+      assert.ok(child.kill(),'Failed to terminate the exact private app');
+      await exited;
+      const after=process.hrtime.bigint();
+      await until(async()=>!await currentTarget(),Boolean,5000);
+      return {pid:expected.pid,target:expected.target,before:String(before),after:String(after)};
+    },
+    async close(){
+      if(child?.pid&&child.exitCode===null&&child.signalCode===null){
+        const exited=once(child,'exit');
+        child.kill();
+        await exited;
+      }
+    },
+  };
+}
+
 async function receive() {
   const launch=process.hrtime.bigint();
   const probe=spawn(probePath,['--vjoy-buttons','15000'],{windowsHide:true});
@@ -74,7 +132,7 @@ async function receive() {
 function checkReceipts(trace,slot,exit,firstPress,freshPress) {
   const {report,launch,ready}=trace;
   assert.equal(report.captureOverflow,false);
-  assert.equal(report.receiverTickHz,exit.frequency);
+  if(exit.frequency)assert.equal(report.receiverTickHz,exit.frequency);
   const hz=BigInt(report.receiverTickHz);
   const ns=ticks=>BigInt(ticks)*1_000_000_000n/hz;
   const start=BigInt(report.receiverStartedTicks);
@@ -89,7 +147,8 @@ function checkReceipts(trace,slot,exit,firstPress,freshPress) {
   const changes=events.filter((event,index)=>event.pressed!==(events[index-1]?.pressed??false));
   assert.deepEqual(changes.map(row=>row.pressed),[true,false,true,false],
     'The old press must release and only the fresh press may rearm the output');
-  const startKill=ns(exit.before), endKill=ns(exit.after);
+  const killNs=exit.frequency?ns:BigInt;
+  const startKill=killNs(exit.before), endKill=killNs(exit.after);
   assert.ok(changes[0].ns>=firstPress&&changes[0].ns<startKill);
   assert.ok(changes[1].ns>=startKill&&changes[1].ns<freshPress);
   assert.ok(changes[2].ns>=freshPress);
@@ -100,14 +159,14 @@ function checkReceipts(trace,slot,exit,firstPress,freshPress) {
     killBracketMs:Number(endKill-startKill)/1e6,releaseLowerMs:lowerMs,releaseUpperMs:upperMs};
 }
 
-test('browser-dev gateway death releases held vJoy and reopens from a neutral owner',{
-  skip:process.platform!=='win32'||!url,timeout:60000,
+test(`${native?'native Cockpit':'browser-dev gateway'} death releases held vJoy and reopens from a neutral owner`,{
+  skip:process.platform!=='win32'||!native&&!url,timeout:60000,
 },async()=>{
   assert.equal(process.env.OSG_GATEWAY_RESTART_PRIVATE,'1');
   assert.ok(process.env.OSG_SQLITE_DATABASE);
-  assert.equal(new URL(url).hostname,'127.0.0.1');
-  const page=await browserPage(url);
-  let profile,slot,probe,induced=false;
+  if(!native)assert.equal(new URL(url).hostname,'127.0.0.1');
+  const host=native?await nativeHost():null;
+  let page,profile,slot,probe,induced=false;
   const gateway=request=>page.evaluate(`import('/src/lib/gateway.ts').then(({gatewayRequest})=>
     gatewayRequest(${JSON.stringify(request)}))`);
   const status=async()=>(await gateway({command:'profile_status'})).profiles.profileSession;
@@ -118,7 +177,17 @@ test('browser-dev gateway death releases held vJoy and reopens from a neutral ow
     .debugController.values.find(port=>port.portId==='button-1').value;
   const apply=async()=> (await gateway({command:'profile_apply',id:profile.id,expectedRevision:profile.revision,
     expectedActiveOwner:null})).profiles.profileSession.owner;
+  const openObserver=name=>page.evaluate(`(async()=>{
+    const {SharedObservations}=await import('/src/lib/streams/shared.ts');
+    const shared=window.__gatewayRestart?.shared??new SharedObservations(
+      ${native
+        ? "(await import('/src/lib/streams/native.ts')).createNativeObservationTransport()"
+        : "(await import('/src/lib/streams/browser.ts')).createBrowserObservationTransport()"});
+    const trace=window.__gatewayRestart??={identity:crypto.randomUUID(),old:[],fresh:[],shared};
+    shared.subscribe('profiles.runtime',state=>trace[${JSON.stringify(name)}].push(state));
+  })()`);
   try {
+    page=host?await host.open():await browserPage(url);
     await until(()=>page.evaluate(`!!document.querySelector('nav[aria-label="Main navigation"]')`));
     assert.equal((await status()).owner,null);
     slot=await until(async()=>(await inventory()).find(row=>row.status==='free'&&row.buttons>=1&&Array.isArray(row.axes)
@@ -142,15 +211,8 @@ test('browser-dev gateway death releases held vJoy and reopens from a neutral ow
     await gateway({command:'profile_virtual_slot_set',id:profile.id,expectedRevision:profile.revision,nodeId:outputId,slot:slot.slot});
     const oldOwner=await apply(), oldStream=randomUUID();
     assert.equal(await readInput(oldOwner),false);
-    const original=await service();
-    await page.evaluate(`(async()=>{
-      const {SharedObservations}=await import('/src/lib/streams/shared.ts');
-      const {createBrowserObservationTransport}=await import('/src/lib/streams/browser.ts');
-      const shared=new SharedObservations(createBrowserObservationTransport());
-      const trace=window.__gatewayRestart={identity:crypto.randomUUID(),old:[],fresh:[],shared};
-      trace.stop=shared.subscribe('profiles.runtime',state=>trace.old.push(state));
-      trace.reopen=()=>{trace.stopFresh=shared.subscribe('profiles.runtime',state=>trace.fresh.push(state));};
-    })()`);
+    const original=host?host.identity():await service();
+    await openObserver('old');
     const snapshot=name=>page.evaluate(`(()=>{const trace=window.__gatewayRestart;return {identity:trace.identity,
       state:trace[${JSON.stringify(name)}].at(-1),lost:trace.old.some(row=>['error','lost'].includes(row.status))};})()`);
     const before=await until(()=>snapshot('old'),row=>row.state?.status==='ready'&&row.state.frame?.payload?.profileSession?.owner?.session===oldOwner.session);
@@ -161,23 +223,29 @@ test('browser-dev gateway death releases held vJoy and reopens from a neutral ow
     await delay(650);
     assert.equal(await readInput(oldOwner),true);
     assert.equal((await inventory()).find(row=>row.slot===slot.slot)?.status,'busy');
-    const exit=await service(original.pid);
+    const exit=host?await host.terminate(original):await service(original.pid);
     induced=true;
-    assert.equal(exit.created,original.created);
-    const lost=await until(()=>snapshot('old'),row=>row.lost);
-    assert.equal(lost.identity,before.identity);
+    if(host){
+      page.close();page=null;
+      page=await host.open();
+    }else{
+      assert.equal(exit.created,original.created);
+      const lost=await until(()=>snapshot('old'),row=>row.lost);
+      assert.equal(lost.identity,before.identity);
+    }
     const recovered=await status();
     assert.equal(recovered.owner,null,'Gateway restart must leave the old run stopped');
     if(recovered.state==='recovery-needed'||recovered.state==='faulted'){
       await gateway({command:'profile_recover'});
     }
     await until(inventory,rows=>rows.some(row=>row.slot===slot.slot&&row.status==='free'),5000);
-    const replacement=await service();
+    const replacement=host?host.identity():await service();
     assert.notEqual(replacement.pid,original.pid);
-    assert.equal(replacement.parent,original.parent);
-    await page.evaluate('window.__gatewayRestart.reopen()');
+    if(host)assert.notEqual(replacement.target,original.target);
+    else assert.equal(replacement.parent,original.parent);
+    await openObserver('fresh');
     const reopened=await until(()=>snapshot('fresh'),row=>row.state?.status==='ready');
-    assert.equal(reopened.identity,before.identity);
+    assert.equal(reopened.identity===before.identity,!native);
     assert.equal(reopened.state.frame.kind,'snapshot');
     assert.equal(reopened.state.frame.payload.profileSession.owner,null);
     assert.notEqual(reopened.state.frame.session,before.state.frame.session);
@@ -199,17 +267,17 @@ test('browser-dev gateway death releases held vJoy and reopens from a neutral ow
     console.log(JSON.stringify({profile:{id:profile.id,revision:profile.revision},slot:slot.slot,
       original,exit,replacement,recoveryState:recovered.state,oldOwner,owner,
       oldObservationSession:before.state.frame.session,newObservationSession:reopened.state.frame.session,
-      sameBrowser:true,staleInputRejected:true,slotFree:true,receipt}));
+      sameBrowser:!native,staleInputRejected:true,slotFree:true,receipt}));
   } finally {
     try {
       await probe?.close();
-      await page.evaluate('window.__gatewayRestart?.shared.close()');
-      if(profile){
+      await page?.evaluate('window.__gatewayRestart?.shared.close()');
+      if(page&&profile){
         const current=await status();
         if(current.owner?.profileId===profile.id)await gateway({command:'profile_stop'});
         if(induced&&(current.state==='recovery-needed'||current.state==='faulted'))await gateway({command:'profile_recover'});
         await gateway({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});
       }
-    } finally {await page.close();}
+    } finally {await page?.close();await host?.close();}
   }
 });

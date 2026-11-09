@@ -55,7 +55,7 @@ slot again. The final fixture verified a single native vJoy identity.
 
 The final tracked fixture reached 100% lines, 88.71% branches and
 95.83% functions. It is opt-in on Windows. Run
-`node --test tests/ui/browser-gateway-held-restart.mjs` against a
+`node --test tests/ui/gateway-held-restart.mjs` against a
 private browser-dev instance with `OSG_GATEWAY_RESTART_PRIVATE=1`.
 Supply its loopback URL, exact Vite PID, native service executable and
 Raw Input probe through `OSG_GATEWAY_RESTART_URL`,
@@ -75,3 +75,47 @@ replacement and actual simulator effects stay in #199.
 | --- | --- |
 | `browser-gateway-held-restart-1.log` | `2712ff771a87ccb5dc9f6c29c89485b0f0c41799d0c3b0c0e6faf2f809b22fc6` |
 | `browser-gateway-held-restart-coverage.log` | `1f025e4dc18efd07b02ef1f2657f015667444e3ea84d26b6947cb17b01b98fc4` |
+
+## Native Cockpit parent restart with held vJoy
+
+The Windows native mode launched the disposable Cockpit parent with a
+private SQLite database and WebView directory. It verified the database
+through the running app before applying the authored vJoy profile. The
+fixture held one button across multiple feeder leases and terminated
+only the exact Cockpit parent it had started. A separate Raw Input
+receiver stayed registered through the crash and recovery.
+
+| Trial | Kill request to neutral report, upper bound | Process termination bracket |
+| --- | ---: | ---: |
+| Native 1 | 10.56 ms | 14.88 ms |
+| Native 2 | 11.13 ms | 16.15 ms |
+
+The old DevTools target disappeared. A new process and WebView reopened
+the same database with recovery needed and no active owner. Explicit
+recovery freed the slot. The runtime observation started with an ownerless
+snapshot in a fresh session. The new process rejected the old input owner.
+After reapply, the new owner began neutral and accepted a deliberate press
+and release. The receiver matched the old press, crash release, fresh
+press and fresh release on one vJoy device. Final Stop freed the slot.
+
+The native fixture met the coverage gates with 85.87% lines, 70.11%
+branches and 91.23% functions. The browser-dev branch also passed after
+the fixture was shared, with a 10.93 ms release upper bound. Its first
+launch stopped before the test because a scratch directory name had been
+reused. The rerun used a unique directory.
+
+For native mode, set `OSG_GATEWAY_RESTART_NATIVE=1` and
+`OSG_GATEWAY_RESTART_PRIVATE_ROOT` to the disposable directory that
+contains the copied app and the private database and WebView paths.
+Supply a private loopback `OSG_NATIVE_CDP_URL` and the usual dev frontend
+asset server. The fixture owns the native process launch and restart.
+The native executable SHA-256 is
+`0a722a56cb4b1726d516245bbb7f925114c2c37e455fd7c6fcb4df0f8a3d1c47`.
+These trials cover loss of the native parent with its feeder left to
+release the output. Physical input and mixed desktop timing remain open.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `native-gateway-held-restart-1.log` | `f7086412b6ce12420d3448898473ca1ed50b7b3f56f9faf873c62e341f934e30` |
+| `native-gateway-held-restart-final.log` | `aaf5cad84dd57b263dfe669a1945669f4127c2125971b2580bf08399ea8ff38b` |
+| `browser-gateway-held-restart-final-retry.log` | `5f371b98bd81900a7e9f2dbee4cdfe8aa07066bae42e1a3b014edffe0b69c15c` |
