@@ -28,7 +28,13 @@ GATES = {
     "linux-output": ("crates/virtual-controller/src/uinput.rs", r"^pub const QUALIFIED: bool = false;$"),
     "macos-output": ("crates/virtual-controller/src/apple_helper.rs", r"^pub const QUALIFIED: bool = false;$"),
     "linux-isolated-launch": ("crates/controller-input/src/visibility/launch.rs", r"^pub const QUALIFIED: bool = false;$"),
-    "mobile-authentication": ("crates/companion-service/src/client.rs", r"fn authentication_reason\([\s\S]{0,200}?if mobile \{\s*Some\("),
+    "mobile-authentication": ("crates/companion-service/src/client.rs",
+        r'^    status\.authentication_unavailable_reason = authentication_reason\(\s*'
+        r'unavailable,\s*cfg!\(any\(target_os = "android", target_os = "ios"\)\),\s*'
+        r'cfg!\(debug_assertions\) && cfg!\(feature = "mobile-qualification"\),\s*\);$'
+        r'[\s\S]*?^fn authentication_reason\(\s*unavailable: Option<String>,\s*'
+        r'mobile: bool,\s*mobile_qualification_build: bool,\s*\) -> Option<String> \{\s*'
+        r'if mobile && !mobile_qualification_build \{\s*Some\('),
 }
 # Profile outputs are enabled on Windows; this does not qualify companion
 # clients, other platforms, automatic driver provisioning or live scripts.

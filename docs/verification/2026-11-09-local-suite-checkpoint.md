@@ -104,3 +104,25 @@ test and service executable hashes identify the tested artifacts.
 The guarded pointer evidence is in
 `.research/c193-reconnect/required-journal-leaf/mixed-ec7348da-24832/evidence.json`,
 SHA-256 `7daa656bf4a9a63e97f55216e8c694a9254d9cd7c6661ff95245424c87b79ebb`.
+
+## Current frontend and companion release guard
+
+The clean `88ee864e` export used the pinned pnpm lockfile and Node 24.20.0.
+The initial uncached Nx run reached all 19 applicable projects and failed
+the companion release-tooling target. Its checker still expected the old
+mobile authentication guard. It now verifies that Android and iOS can enter
+qualification only with both debug assertions and the explicit qualification
+feature, and that the authentication helper receives those inputs in order.
+The regression test covers removing either build condition, swapping the
+arguments, and bypassing the mobile branch.
+
+All nine focused guard tests passed. Python line tracing measured 99% for
+the release checker. `--require-release` exited with code 2 and reported
+`releaseEligible: false` with zero qualified client targets. The signed
+Android and iOS shell checks still require their native prerequisites.
+
+The uncached `check`, `test`, and `build` rerun passed all 19 applicable
+Nx projects. The exact final release-tooling target passed all 42 tests.
+The changed controller observation module reached 98.76% lines, 96.98%
+branches and 97.50% functions. Logs and the blocked release report are in
+`.research/c193-reconnect/current-ui-88ee864e/`.

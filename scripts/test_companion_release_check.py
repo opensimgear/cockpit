@@ -88,17 +88,27 @@ class ReleaseReadinessTests(unittest.TestCase):
                 target = root / relative
                 original = target.read_text(encoding="utf-8")
                 if name == "mobile-authentication":
-                    changed = original.replace("if mobile {\n        Some(", "if mobile {\n        None.or(", 1)
+                    changes = [
+                        original.replace("if mobile && !mobile_qualification_build {", "if false {", 1),
+                        original.replace('cfg!(debug_assertions) && cfg!(feature = "mobile-qualification")',
+                                         'cfg!(feature = "mobile-qualification")', 1),
+                        original.replace('cfg!(debug_assertions) && cfg!(feature = "mobile-qualification")',
+                                         'cfg!(debug_assertions)', 1),
+                        original.replace('    mobile: bool,\n    mobile_qualification_build: bool,',
+                                         '    mobile_qualification_build: bool,\n    mobile: bool,', 1),
+                    ]
                 elif name == "host-live-output":
-                    changed = re.sub(r"LIVE_OUTPUT_QUALIFIED: bool = [^;]+;", "LIVE_OUTPUT_QUALIFIED: bool = true;", original, count=1)
+                    changes = [re.sub(r"LIVE_OUTPUT_QUALIFIED: bool = [^;]+;", "LIVE_OUTPUT_QUALIFIED: bool = true;", original, count=1)]
                 elif name == "live-scripts":
-                    changed = original.replace("SCRIPT_LIVE_QUALIFIED: bool = false", "SCRIPT_LIVE_QUALIFIED: bool = true", 1)
+                    changes = [original.replace("SCRIPT_LIVE_QUALIFIED: bool = false", "SCRIPT_LIVE_QUALIFIED: bool = true", 1)]
                 else:
-                    changed = re.sub(r"QUALIFIED: bool = [^;]+;", "QUALIFIED: bool = true;", original, count=1)
-                self.assertNotEqual(changed, original, name)
-                target.write_text(changed, encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, name):
-                    release.validate(self.matrix, root)
+                    changes = [re.sub(r"QUALIFIED: bool = [^;]+;", "QUALIFIED: bool = true;", original, count=1)]
+                for variant, changed in enumerate(changes):
+                    with self.subTest(gate=name, variant=variant):
+                        self.assertNotEqual(changed, original)
+                        target.write_text(changed, encoding="utf-8")
+                        with self.assertRaisesRegex(ValueError, name):
+                            release.validate(self.matrix, root)
                 target.write_text(original, encoding="utf-8")
 
     def test_host_constructor_cannot_bypass_its_platform_output_constant(self):
