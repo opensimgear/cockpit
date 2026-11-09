@@ -37,6 +37,80 @@ fn repeated_verification_reuses_validated_connection_and_observes_fresh_commits(
 }
 
 #[test]
+fn writes_reuse_the_checked_connection_and_remain_visible_after_reopen() {
+    let (directory, mut evidence) = store();
+    let opens = crate::connection::OPEN_ATTEMPTS.with(|attempts| attempts.get());
+    for payload in [b"second".as_slice(), b"third"] {
+        evidence.write(payload).unwrap();
+        evidence.verify().unwrap();
+    }
+    assert_eq!(
+        crate::connection::OPEN_ATTEMPTS.with(|attempts| attempts.get()),
+        opens
+    );
+    let live = evidence.live.as_ref().unwrap().lock().unwrap();
+    let synchronous: i64 = live
+        .connection
+        .pragma_query_value(None, "synchronous", |row| row.get(0))
+        .unwrap();
+    let journal: String = live
+        .connection
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .unwrap();
+    assert_eq!((synchronous, journal.as_str()), (2, "delete"));
+    drop(live);
+    drop(evidence);
+    let fresh = Evidence::open(&directory.path().join("run.json"), "live", 32).unwrap();
+    assert_eq!(fresh.payload(), Some(b"third".as_slice()));
+    assert_eq!(fresh.revision, 3);
+}
+
+#[test]
+fn retained_writer_rejects_layout_changes_and_restores_the_short_read_budget() {
+    let (_directory, mut evidence) = store();
+    let writer = evidence.database.connection().unwrap();
+    writer
+        .execute("CREATE TABLE external_layout(value)", [])
+        .unwrap();
+    assert!(evidence
+        .write(b"overwrite")
+        .unwrap_err()
+        .contains("layout or journal mode"));
+    let live = evidence.live.as_ref().unwrap().lock().unwrap();
+    let timeout: i64 = live
+        .connection
+        .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+        .unwrap();
+    assert_eq!(timeout, 5);
+    drop(live);
+    evidence.verify().unwrap();
+    assert_eq!(
+        evidence
+            .database
+            .read("live", &evidence.key)
+            .unwrap()
+            .unwrap()
+            .payload,
+        b"intent"
+    );
+}
+
+#[test]
+fn retained_writer_rejects_external_journal_mode_changes() {
+    let (_directory, mut evidence) = store();
+    let writer = evidence.database.connection().unwrap();
+    let mode: String = writer
+        .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    assert!(evidence
+        .write(b"overwrite")
+        .unwrap_err()
+        .contains("layout or journal mode"));
+    evidence.verify().unwrap();
+}
+
+#[test]
 fn payload_edits_and_tombstones_are_rejected_without_holding_a_snapshot() {
     let (directory, mut evidence) = store();
     let writer = evidence.database.connection().unwrap();
@@ -69,9 +143,18 @@ fn malformed_null_revision_cannot_impersonate_absent_evidence() {
     let directory = crate::test_directory();
     let evidence = Evidence::open_live(&directory.path().join("run.json"), "live", 32).unwrap();
     let writer = evidence.database.connection().unwrap();
-    writer.execute_batch("ALTER TABLE records RENAME TO retired_records;
-        CREATE TABLE records(domain TEXT,key TEXT,revision INTEGER,payload BLOB);").unwrap();
-    writer.execute("INSERT INTO records VALUES('live',?1,NULL,NULL)", [&evidence.key]).unwrap();
+    writer
+        .execute_batch(
+            "ALTER TABLE records RENAME TO retired_records;
+        CREATE TABLE records(domain TEXT,key TEXT,revision INTEGER,payload BLOB);",
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO records VALUES('live',?1,NULL,NULL)",
+            [&evidence.key],
+        )
+        .unwrap();
     assert!(evidence.verify().is_err());
 }
 
@@ -112,11 +195,12 @@ fn epoch_and_sidecar_indirection_revoke_live_authority() {
         .verify()
         .unwrap_err()
         .contains("restored or replaced"));
-    let (_directory, evidence) = store();
+    let (_directory, mut evidence) = store();
     let mut journal = evidence.database.path().as_os_str().to_os_string();
     journal.push("-journal");
     std::fs::create_dir(&journal).unwrap();
     assert!(evidence.verify().is_err());
+    assert!(evidence.write(b"overwrite").is_err());
 }
 
 #[test]
@@ -124,27 +208,34 @@ fn retained_connection_fences_database_replacement_even_with_identical_epoch_and
     let (directory, evidence) = store();
     let replacement = directory.path().join("replacement.sqlite3");
     evidence.database.backup(&replacement).unwrap();
-    let path = evidence.database.path();
+    let path = evidence.database.path().to_owned();
     let retired = directory.path().join("retired.sqlite3");
     #[cfg(windows)]
     {
         // The bundled Windows VFS denies FILE_SHARE_DELETE for the lifetime of
         // the open connection; replacement cannot get past the OS handle.
-        assert!(std::fs::rename(path, &retired).is_err());
-        assert!(std::fs::remove_file(path).is_err());
+        assert!(std::fs::rename(&path, &retired).is_err());
+        assert!(std::fs::remove_file(&path).is_err());
         evidence.verify().unwrap();
         drop(evidence);
         std::fs::rename(directory.path().join("cockpit.sqlite3"), retired).unwrap();
     }
     #[cfg(unix)]
     {
-        std::fs::rename(path, &retired).unwrap();
+        let mut evidence = evidence;
+        std::fs::rename(&path, &retired).unwrap();
         assert!(evidence.verify().is_err());
-        std::fs::rename(replacement, path).unwrap();
+        std::fs::rename(replacement, &path).unwrap();
         assert!(evidence
             .verify()
             .unwrap_err()
             .contains("removed or replaced"));
+        assert!(evidence
+            .write(b"overwrite")
+            .unwrap_err()
+            .contains("removed or replaced"));
+        let fresh = Evidence::open(&directory.path().join("run.json"), "live", 32).unwrap();
+        assert_eq!(fresh.payload(), Some(b"intent".as_slice()));
     }
 }
 

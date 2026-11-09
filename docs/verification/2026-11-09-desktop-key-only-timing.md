@@ -95,3 +95,50 @@ candidate SHA-256 is
 `127e911aef3329eb842336146071f633ca4f764a0cec9844d63a5bc643750cf9`.
 The native manifest, audit files and stage summaries for all four runs
 are in `.research/reactive/r4-desktop-timing/journal-ab-57742634/`.
+
+## Retained live journal connection
+
+Live desktop recovery evidence now uses one checked SQLite connection for
+verification reads and writes. Reads keep their 5 ms busy budget, and writes
+keep the existing 250 ms budget. The writer commits under an immediate
+transaction with FULL synchronization and DELETE journaling. It compares the
+database epoch and exact prior revision and bytes. It revalidates the path,
+sidecars, application identity, schema cookie and journal mode before
+committing. Native dispatch still waits for durable success.
+
+The retained writer rejects external schema or journal-mode changes. The
+Windows and Linux tests cover connection reuse, reopen, external records,
+busy limits, sidecars and storage replacement. On Linux an equal-byte
+replacement cannot receive a write through the retired connection.
+
+The four uninstrumented Windows runs used the existing single-verification
+build as the baseline. All 1,612 marked transitions arrived in order, and
+all workers and profiles stopped cleanly.
+
+| Run order | Build | Steady idle p95 / p99 | Steady Profiles p95 / p99 | Recovery intent p95 during Profiles |
+| --- | --- | ---: | ---: | ---: |
+| A1 | Baseline | 14.94 / 16.08 ms | 14.30 / 16.56 ms | 4.63 ms |
+| B1 | Retained connection | 14.17 / 16.03 ms | 13.96 / 15.91 ms | 4.27 ms |
+| B2 | Retained connection | 5.81 / 13.38 ms | 13.93 / 15.79 ms | 4.18 ms |
+| A2 | Baseline | 15.45 / 19.22 ms | 15.09 / 33.74 ms | 4.43 ms |
+
+Profiles p95 and the recovery-intent p95 decreased in both comparisons.
+Idle and first-press results varied substantially across runs. The
+strict desktop targets remain open.
+
+The Windows persistence suite passed 67 tests with one existing ignore.
+Linux passed 64 tests with one existing ignore. All 195 desktop-output
+tests and their 29 module coverage gates passed. The four changed
+persistence modules measured at least 94.37% production lines and
+100% LLVM functions. Branch instrumentation was unavailable.
+
+The full Windows native suite reported 2,485 passes, 18 existing ignores,
+and one companion reconnect failure. Its inventory test queried the
+assigned publication after the companion instance had been unassigned.
+The same case passed on its own on both the baseline and candidate builds.
+
+The baseline executable SHA-256 is the single-verification candidate above.
+The retained-connection executable SHA-256 is
+`b1eb29dd1c65e128d4084d9bb9584e74b042c33b50c7727dea99f93ba4635966`.
+The native manifests, QPC traces and stage summaries are in
+`.research/reactive/r4-desktop-timing/journal-ab-27110a00/`.

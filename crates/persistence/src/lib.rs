@@ -238,12 +238,24 @@ impl Database {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failure)?;
-        self.verify_epoch(&tx)?;
+        let revisions = self.apply_exact(&tx, changes, checks, payloads)?;
+        tx.commit().map_err(failure)?;
+        Ok(revisions)
+    }
+
+    fn apply_exact(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        changes: &[Change<'_>],
+        checks: &[RevisionCheck<'_>],
+        payloads: &[PayloadCheck<'_>],
+    ) -> Result<Vec<u64>, String> {
+        self.verify_epoch(tx)?;
         for check in payloads {
             identifier(check.domain)?;
             identifier(check.key)?;
-            if revision(&tx, check.domain, check.key)? != check.expected_revision
-                || read_record(&tx, check.domain, check.key)?
+            if revision(tx, check.domain, check.key)? != check.expected_revision
+                || read_record(tx, check.domain, check.key)?
                     .as_ref()
                     .map(|r| r.payload.as_slice())
                     != check.expected_payload
@@ -254,7 +266,7 @@ impl Database {
         for check in checks {
             identifier(check.domain)?;
             identifier(check.key)?;
-            if revision(&tx, check.domain, check.key)? != check.expected_revision {
+            if revision(tx, check.domain, check.key)? != check.expected_revision {
                 return Err("Persistence reference revision conflict. Reload current settings before saving.".into());
             }
         }
@@ -268,7 +280,7 @@ impl Database {
             {
                 return Err("Invalid or duplicate persistence change.".into());
             }
-            if revision(&tx, change.domain, change.key)? != change.expected_revision {
+            if revision(tx, change.domain, change.key)? != change.expected_revision {
                 return Err(
                     "Persistence revision conflict. Reload current settings before saving.".into(),
                 );
@@ -288,7 +300,6 @@ impl Database {
                 params![change.domain, change.key, next as i64, change.payload]).map_err(failure)?;
             revisions.push(next);
         }
-        tx.commit().map_err(failure)?;
         Ok(revisions)
     }
 

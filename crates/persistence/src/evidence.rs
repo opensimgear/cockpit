@@ -13,7 +13,7 @@ pub struct Evidence {
     limit: usize,
     revision: u64,
     payload: Option<Vec<u8>>,
-    live: Option<Mutex<live::Reader>>,
+    live: Option<Mutex<live::LiveEvidence>>,
 }
 impl Evidence {
     pub fn open(anchor: &Path, domain: &str, limit: usize) -> Result<Self, String> {
@@ -36,11 +36,11 @@ impl Evidence {
             live: None,
         })
     }
-    /// Retain a checked connection for repeated pre-dispatch verification.
+    /// Retain a checked connection for verification and durable journal writes.
     /// The adapter must retain its OS lifetime ownership alongside this value.
     pub fn open_live(anchor: &Path, domain: &str, limit: usize) -> Result<Self, String> {
         let mut evidence = Self::open(anchor, domain, limit)?;
-        evidence.live = Some(Mutex::new(live::Reader::open(&evidence.database)?));
+        evidence.live = Some(Mutex::new(live::LiveEvidence::open(&evidence.database)?));
         evidence.verify()?;
         Ok(evidence)
     }
@@ -86,8 +86,8 @@ impl Evidence {
         Ok(keys)
     }
     pub fn verify(&self) -> Result<(), String> {
-        if let Some(reader) = &self.live {
-            return reader
+        if let Some(live) = &self.live {
+            return live
                 .try_lock()
                 .map_err(|_| "Recovery evidence verification is already in progress.")?
                 .verify(self);
@@ -102,24 +102,25 @@ impl Evidence {
     }
     pub fn write(&mut self, payload: &[u8]) -> Result<(), String> {
         bounded(Some(payload), self.limit)?;
-        if self.live.is_some() {
-            self.verify()?;
-        }
-        let revisions = self.database.commit_exact(
-            &[Change {
-                domain: &self.domain,
-                key: &self.key,
-                expected_revision: self.revision,
-                payload: Some(payload),
-            }],
-            &[],
-            &[PayloadCheck {
-                domain: &self.domain,
-                key: &self.key,
-                expected_revision: self.revision,
-                expected_payload: self.payload(),
-            }],
-        )?;
+        let change = Change {
+            domain: &self.domain,
+            key: &self.key,
+            expected_revision: self.revision,
+            payload: Some(payload),
+        };
+        let prior = PayloadCheck {
+            domain: &self.domain,
+            key: &self.key,
+            expected_revision: self.revision,
+            expected_payload: self.payload(),
+        };
+        let revisions = if let Some(live) = &self.live {
+            live.try_lock()
+                .map_err(|_| "Recovery evidence verification is already in progress.")?
+                .write(self, change, prior)?
+        } else {
+            self.database.commit_exact(&[change], &[], &[prior])?
+        };
         self.revision = revisions[0];
         self.payload = Some(payload.to_vec());
         Ok(())

@@ -64,19 +64,7 @@ impl Database {
             }
             tx.commit().map_err(failure)?;
         }
-        let columns = connection
-            .prepare("SELECT name FROM pragma_table_info('records') ORDER BY cid")
-            .map_err(failure)?
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(failure)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(failure)?;
-        if columns != ["domain", "key", "revision", "payload"] {
-            return Err(
-                "SQLite layout differs from this development build. Start with a fresh database."
-                    .into(),
-            );
-        }
+        validate_record_layout(&connection)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -86,6 +74,23 @@ impl Database {
         crate::epoch::read(&connection)?;
         Ok(connection)
     }
+}
+
+pub(crate) fn validate_record_layout(connection: &Connection) -> Result<(), String> {
+    let columns = connection
+        .prepare("SELECT name FROM pragma_table_info('records') ORDER BY cid")
+        .map_err(failure)?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(failure)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failure)?;
+    if columns != ["domain", "key", "revision", "payload"] {
+        return Err(
+            "SQLite layout differs from this development build. Start with a fresh database."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
