@@ -2,8 +2,7 @@
 use crate::{
     persistence::{self, StateStorage},
     server::{
-        send_json, websocket_config, BudgetIo, DeadlineTcp, PairingPayload,
-        SERVICE_TYPE, SUBPROTOCOL,
+        send_json, websocket_config, BudgetIo, DeadlineTcp, PairingPayload, SUBPROTOCOL,
     },
     tls,
 };
@@ -26,6 +25,7 @@ use std::{
 };
 use tungstenite::{client::IntoClientRequest};
 use zeroize::{Zeroize, Zeroizing};
+pub use crate::discovery::discover;
 #[path = "client/io.rs"]
 mod io;
 use io::{Registry, Socket};
@@ -1406,56 +1406,9 @@ fn session_worker(
     });
     Ok(())
 }
-pub fn discover(duration: Duration) -> Result<Value, String> {
-    let daemon = mdns_sd::ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let receiver = daemon
-        .browse(SERVICE_TYPE)
-        .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + duration;
-    let mut hints = BTreeMap::new();
-    while Instant::now() < deadline {
-        match receiver.recv_deadline(deadline) {
-            Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) => {
-                let addresses = info.get_addresses().iter().map(ToString::to_string).collect::<Vec<_>>();
-                hints.insert(info.get_fullname().to_string(), json!({
-                    "name": info.get_fullname(),
-                    "hostname": info.get_hostname(),
-                    "port": info.get_port(),
-                    "addresses": addresses,
-                    "hostId": info.get_property_val_str("hostId"),
-                    "trusted": false,
-                    "requiresOutOfBandPairing": true,
-                }));
-                if hints.len() >= 32 {
-                    break;
-                }
-            }
-            Ok(mdns_sd::ServiceEvent::SearchStopped(_)) | Err(_) => break,
-            Ok(_) => {}
-        }
-    }
-    let _ = daemon.shutdown();
-    Ok(json!({"hints":hints.into_values().collect::<Vec<_>>(),"trusted":false}))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bounded_discovery_returns_only_untrusted_hints() {
-        // Opt-in live qualification can require the exact running Cockpit host.
-        let expected_host = std::env::var("OSG_DISCOVERY_EXPECTED_HOST_ID").ok();
-        let duration = if expected_host.is_some() { 1200 } else { 25 };
-        let result = discover(Duration::from_millis(duration)).unwrap();
-        assert_eq!(result["trusted"], false);
-        let hints = result["hints"].as_array().unwrap();
-        assert!(hints.len() <= 32);
-        assert!(hints.iter().all(|hint| hint["trusted"] == false && hint["requiresOutOfBandPairing"] == true));
-        if let Some(host_id) = expected_host {
-            assert!(hints.iter().any(|hint| hint["hostId"] == host_id), "Running Cockpit was not discovered");
-        }
-    }
 
     struct Adapter {
         value: Mutex<Option<Vec<u8>>>,

@@ -37,6 +37,7 @@ pub fn qrcode_matrix(payload: &str) -> Result<Vec<Vec<bool>>, String> {
 pub mod browser;
 pub mod client;
 pub mod client_cache;
+mod discovery;
 pub mod server;
 pub mod tls;
 

@@ -151,10 +151,12 @@ the [browser guide](browser-companion.md). Stock WebSocket plugin availability a
 not establish pairing-bound/self-signed LAN certificate support. All targets use
 the same versioned envelopes, authorization and limits. C2's UI default is
 TCP 54437 (user-configurable); a bind conflict is diagnosed without silently
-switching an already paired endpoint. Discovery advertises the actual address/port
-under `_osg-companion._tcp.local.` and is an untrusted connection hint;
-manual host/port and QR remain available. Listener enablement and interface binding
-are explicit; do not add a firewall exception or expose all interfaces silently.
+switching an already paired endpoint. Discovery uses
+`_osg-companion._tcp.local.`, with the configured pairing host in the `h`
+TXT field and the listener port in the service record. The client presents
+that exact endpoint as an untrusted hint. Manual host/port and QR remain
+available. Listener enablement, interface binding and any firewall exception
+require an explicit operator choice.
 
 The host generates a persistent private CA in Windows protected storage and a
 server leaf certificate signed by that CA. The CA is self-signed; the server leaf

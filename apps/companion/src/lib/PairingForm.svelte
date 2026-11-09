@@ -4,7 +4,7 @@
   import { scanQrFrames } from './qr-frame-scan';
   let { disabled=false, onsubmitted }: { disabled?: boolean; onsubmitted: () => void } = $props();
   let name=$state('Companion'), code=$state(''), endpoint=$state(''), busy=$state(false), error=$state('');
-  let hints=$state<{name:string;hostname:string;port:number;addresses:string[]}[]>([]);
+  let hints=$state<{name:string;endpoint:string}[]>([]);
   let video = $state<HTMLVideoElement>();
   let stream: MediaStream | undefined;
   let scanning=$state(false);
@@ -14,12 +14,8 @@
   async function discover() {
     busy=true; error='';
     try { const result=await request<{hints:typeof hints}>({type:'discover',durationMs:1200}); hints=result.hints;
-      if (!endpoint && hints[0]) endpoint=hostEndpoint(hints[0]);
+      if (!endpoint && hints[0]) endpoint=hints[0].endpoint;
     } catch(e) {error=String(e);} finally {busy=false;}
-  }
-  function hostEndpoint(host: typeof hints[number]) {
-    const address=host.addresses.find(a=>!a.includes(':')) || host.hostname.replace(/\\.$/,'');
-    return 'wss://'+address+':'+host.port+'/companion';
   }
   function stopScan() { generation++; scanning=false; stopFrameScan?.(); stopFrameScan=undefined; stream?.getTracks().forEach(t=>t.stop()); stream=undefined; }
   async function submit(payload?: string) {
@@ -73,7 +69,7 @@
   <label>This device name<input bind:value={name} maxlength="80" /></label>
   <button disabled={disabled||busy} onclick={scan}>Scan pairing QR code</button>
   {#if scanning}<video bind:this={video} autoplay playsinline muted aria-label="Pairing QR scanner"></video><button onclick={stopScan}>Stop scanning</button>{/if}
-  <div class="host-row"><label>Cockpit host{#if hints.length}<select value={endpoint} onchange={e=>endpoint=e.currentTarget.value}>{#each hints as host}<option value={hostEndpoint(host)}>{host.name}</option>{/each}</select>{/if}<input bind:value={endpoint} placeholder="wss://192.168.1.10:54437/companion" /></label><button disabled={disabled||busy} onclick={discover}>Find nearby hosts</button></div>
+  <div class="host-row"><label>Cockpit host{#if hints.length}<select value={endpoint} onchange={e=>endpoint=e.currentTarget.value}>{#each hints as host}<option value={host.endpoint}>{host.name}</option>{/each}</select>{/if}<input bind:value={endpoint} placeholder="wss://192.168.1.10:54437/companion" /></label><button disabled={disabled||busy} onclick={discover}>Find nearby hosts</button></div>
   <label>Pairing code<input bind:value={code} maxlength="8" placeholder="ABCDEFGH" autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
   <button disabled={disabled||busy||code.trim().length!==8||!endpoint||!name.trim()} onclick={()=>submit()}>Pair with Cockpit</button>
   {#if error}<p role="alert">{error}</p>{/if}

@@ -1,5 +1,6 @@
 //! Narrow, opt-in WSS transport. Every connection has its own bounded worker and timeouts.
 use crate::{
+    discovery::{advertise, listener_endpoint},
     tls::{self, NativeIdentity},
     Hub,
 };
@@ -28,7 +29,7 @@ use tungstenite::{
 pub const FRAME_BYTES: usize = 16 * 1024;
 pub const TRANSFER_BYTES: usize = 13 * 1024 * 1024;
 pub const SUBPROTOCOL: &str = "opensimgear-companion-v1";
-pub const SERVICE_TYPE: &str = "_osg-companion._tcp.local.";
+pub use crate::discovery::SERVICE_TYPE;
 pub fn websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .read_buffer_size(8192)
@@ -353,15 +354,11 @@ impl ServerRuntime {
         let listener_failure = failure.clone();
         let connections = Arc::new(connections::Connections::default());
         let peer_connections = connections.clone();
-        let endpoint = if host.contains(':') {
-            format!("wss://[{host}]:{}/companion", address.port())
-        } else {
-            format!("wss://{host}:{}/companion", address.port())
-        };
+        let endpoint = listener_endpoint(host, address.port());
         let mut discovery = None;
         let mut discovery_status = "disabled".to_string();
         if config.discovery {
-            match discovery_advertisement(&self.hub.host_id(), host, address.port()) {
+            match advertise(&self.hub.host_id(), host, address.port()) {
                 Ok(daemon) => {
                     discovery = Some(daemon);
                     discovery_status = "advertising (untrusted hints only)".into();
@@ -646,48 +643,6 @@ pub(crate) fn serve_messages<S: Read + Write + ReadDeadline>(
     }
     let _ = socket.close(None);
     Ok(())
-}
-fn discovery_advertisement(
-    host_id: &str,
-    host: &str,
-    port: u16,
-) -> Result<mdns_sd::ServiceDaemon, String> {
-    let daemon = mdns_sd::ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let hostname = format!(
-        "osg-{}.local.",
-        host_id
-            .chars()
-            .filter(|value| value.is_ascii_alphanumeric() || *value == '-')
-            .take(48)
-            .collect::<String>()
-    );
-    let address = host
-        .parse::<IpAddr>()
-        .map(|ip| ip.to_string())
-        .unwrap_or_default();
-    let properties = [
-        ("hostId", host_id),
-        ("version", "1"),
-        ("path", "/companion"),
-        ("trust", "out-of-band-required"),
-    ];
-    let info = mdns_sd::ServiceInfo::new(
-        SERVICE_TYPE,
-        &format!("Cockpit-{}", &host_id[..host_id.len().min(12)]),
-        &hostname,
-        address.as_str(),
-        port,
-        &properties[..],
-    )
-    .map_err(|error| error.to_string())?;
-    daemon
-        .register(if address.is_empty() {
-            info.enable_addr_auto()
-        } else {
-            info
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(daemon)
 }
 pub fn local_interfaces() -> Result<Value, String> {
     let interfaces = if_addrs::get_if_addrs().map_err(|error| error.to_string())?;

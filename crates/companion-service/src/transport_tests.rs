@@ -418,12 +418,24 @@ fn short_code_pairing_persists_both_ends_tracks_presence_and_revocation() {
     let sink=Arc::new(Recorder::default());
     let hub=Hub::open(directory.path().join("host-record"),sink.clone()).unwrap();
     let server=ServerRuntime::new(hub.clone(),directory.path().join("tls")).unwrap();
-    let status=server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:"127.0.0.1".into(),discovery:false}).unwrap();
+    let discovery=std::env::var_os("OSG_TEST_PAIRING_DISCOVERY").is_some();
+    let advertised_host=if discovery{"LOCALHOST"}else{"127.0.0.1"};
+    let status=server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:advertised_host.into(),discovery}).unwrap();
+    let endpoint=status.endpoint.unwrap();
+    let selected=if discovery{
+        let hints=crate::client::discover(Duration::from_millis(1200)).unwrap();
+        let host_id=hub.host_id();
+        let hint=hints["hints"].as_array().unwrap().iter().find(|hint|hint["hostId"]==host_id)
+            .expect("The test Cockpit listener must be discovered");
+        assert_eq!(hint["endpoint"],endpoint);
+        assert_eq!(hint["trusted"],false);
+        hint["endpoint"].as_str().unwrap().to_owned()
+    }else{endpoint};
     let offer=hub.command(&json!({"command":"companion_pair_offer","kind":"desktop","autoApprove":true})).unwrap();
     let payload=server.pairing_payload(offer["secret"].as_str().unwrap(),offer["expiresAtMs"].as_u64().unwrap()).unwrap();
     let code=hub.command(&json!({"command":"companion_pair_code","payload":payload})).unwrap();
     let client=ClientRuntime::open(directory.path().join("client")).unwrap();
-    client.command(json!({"type":"pair-code-start","code":code["code"],"endpoint":status.endpoint,"name":"Code-paired desktop"})).unwrap();
+    client.command(json!({"type":"pair-code-start","code":code["code"],"endpoint":selected,"name":"Code-paired desktop"})).unwrap();
     wait(|| client.status().phase=="paired" && !client.status().busy);
     let state=hub.command(&json!({"command":"companion_status"})).unwrap();
     let id=state["clients"][0]["companionId"].clone();
