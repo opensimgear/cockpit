@@ -1,11 +1,65 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
+import {setTimeout as delay} from 'node:timers/promises';
 import {browserPage,nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {summarize} from './dcs-panel-presentation-timing.mjs';
 
 const browserUrl=process.env.OSG_VIRTUAL_PREVIEW_BROWSER_URL;
 const preview='[aria-label="Virtual controller inputs"]';
 const outputId='reopen-vjoy';
+
+async function measureVisiblePreview(page,owner,streamId){
+  const buttonSelector=preview+' [data-control-id="button-1"]';
+  await page.evaluate(`(async()=>{
+    const {gatewayRequest}=await import('/src/lib/gateway.ts');
+    const button=document.querySelector(${JSON.stringify(buttonSelector)});
+    button.scrollIntoView({block:'center',inline:'nearest'});
+    let current=null;
+    const observer=new MutationObserver(()=>{
+      const rect=button.getBoundingClientRect();
+      if(!current||current.dom!==undefined||document.visibilityState!=='visible'||!button.isConnected
+        ||rect.width===0||rect.height===0||rect.top<0||rect.bottom>innerHeight
+        ||rect.left<0||rect.right>innerWidth||button.classList.contains('pressed')!==current.value)return;
+      const sample=current;
+      sample.dom=performance.now();
+      requestAnimationFrame(()=>{sample.frame=performance.now();});
+    });
+    observer.observe(button,{attributes:true,attributeFilter:['class']});
+    window.__virtualPreviewTiming={
+      get current(){return current;},
+      async send(sequence,value){
+        const request={command:'profile_debug_controller_input',owner:${JSON.stringify(owner)},
+          nodeId:'debug',streamId:${JSON.stringify(streamId)},sequence:String(sequence),
+          changes:[{portId:'button-1',value}]};
+        current={sequence,value,submitted:performance.now()};
+        await gatewayRequest(request);
+      },
+      close(){observer.disconnect();},
+    };
+  })()`);
+  try{
+    const samples=[];
+    for(let index=0;index<64;index++){
+      if(index)await delay(50);
+      const sequence=index+3,value=index%2===0;
+      await page.evaluate(`window.__virtualPreviewTiming.send(${sequence},${value})`);
+      const sample=await until(()=>page.evaluate('window.__virtualPreviewTiming.current'),
+        row=>Number.isFinite(row.frame),1000);
+      assert.equal(sample.sequence,sequence);
+      assert.equal(sample.value,value);
+      assert.ok(sample.submitted<=sample.dom&&sample.dom<=sample.frame);
+      samples.push(sample);
+    }
+    return {
+      submitToDomMs:summarize(samples.map(row=>row.dom-row.submitted)),
+      submitToFrameMs:summarize(samples.map(row=>row.frame-row.submitted)),
+      samples,
+    };
+  }finally{
+    await page.evaluate('window.__virtualPreviewTiming.close(); delete window.__virtualPreviewTiming;');
+  }
+}
 
 test('virtual inputs mount hidden, reopen on the current native sample, and retire exactly',{
   skip:!browserUrl&&process.env.OSG_VIRTUAL_PREVIEW_NATIVE!=='1',timeout:90000,
@@ -109,6 +163,8 @@ test('virtual inputs mount hidden, reopen on the current native sample, and reti
     const second=await waitTrace(()=>opens[1]?.token);
     assert.notEqual(second,first);
     assert.equal(opens[1].topic,opens[0].topic);
+    const timing=await measureVisiblePreview(page,owner,streamId);
+    assert.ok(timing.submitToFrameMs.p95<=100,'Foreground preview presentation exceeded 100 ms p95');
     assert.deepEqual((await request({command:'profile_status'})).profiles.profileSession.owner,owner);
     assert.deepEqual(reads,[],'The applied virtual preview should use samples without inspection queries');
 
@@ -118,7 +174,8 @@ test('virtual inputs mount hidden, reopen on the current native sample, and reti
     await request({command:'profile_stop'});
     await until(inventory,rows=>rows.find(row=>row.slot===slot.slot)?.status==='free');
     console.log(JSON.stringify({transport:browserUrl?'browser-dev':'native',opens:2,retirements:2,
-      hiddenInitialOpen:false,currentOnReopen:true,inspectionReads:0,slotFreed:true}));
+      hiddenInitialOpen:false,currentOnReopen:true,inspectionReads:0,slotFreed:true,
+      profile:{id:owner.profileId,revision:owner.profileRevision},slot:slot.slot,timing}));
   }finally{
     stopTrace();
     try{
