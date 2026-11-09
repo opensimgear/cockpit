@@ -1,7 +1,7 @@
 //! Pinned current-layout initialization; no import or schema upgrades.
 use super::*;
 impl Database {
-    pub(crate) fn connect(&self, create: bool) -> Result<Connection, String> {
+    pub(crate) fn connect(&self, create: bool, enable_wal: bool) -> Result<Connection, String> {
         #[cfg(test)]
         OPEN_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
         if rusqlite::version() != SQLITE_RUNTIME_VERSION {
@@ -9,6 +9,7 @@ impl Database {
         }
         check_path(&self.path, create)?;
         crate::path::check_sidecars(&self.path)?;
+        journal_mode::check_open(&self.path, self.journal, enable_wal)?;
         let mut connection = Connection::open_with_flags(
             &self.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -38,15 +39,19 @@ impl Database {
             .pragma_update(None, "synchronous", "FULL")
             .map_err(failure)?;
         let (_, existing) = identity(&connection)?;
-        // DELETE/FULL is deliberate: redirected configuration directories are
-        // not guaranteed to support WAL shared memory. No checkpoint dependency.
         let mode: String = connection
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
             .map_err(failure)?;
-        if mode != "delete" {
-            connection
-                .pragma_update(None, "journal_mode", "DELETE")
+        if mode != self.journal_mode() {
+            if !enable_wal || mode != "delete" || !matches!(self.journal, JournalMode::Wal(_)) {
+                return Err("Persistence journal mode changed. Restart Cockpit with the original database location.".into());
+            }
+            let selected: String = connection.query_row("PRAGMA main.journal_mode=WAL", [], |row| row.get(0))
                 .map_err(failure)?;
+            if selected != self.journal_mode() {
+                return Err("Cannot enable write-ahead logging for the Cockpit database.".into());
+            }
+            crate::path::check_sidecars(&self.path)?;
         }
         if !existing && create {
             let tx = connection

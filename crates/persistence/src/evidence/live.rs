@@ -91,7 +91,7 @@ impl LiveEvidence {
              (SELECT schema_version FROM pragma_schema_version), (SELECT journal_mode FROM pragma_journal_mode)",
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(failure)?;
-        if application != APPLICATION_ID || schema != self.schema_version || journal != "delete" {
+        if application != APPLICATION_ID || schema != self.schema_version || journal != database.journal_mode() {
             return Err(
                 "Recovery evidence database layout or journal mode changed externally.".into(),
             );

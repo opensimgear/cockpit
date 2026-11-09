@@ -265,3 +265,43 @@ passed. Windows line coverage for the two changed coordinator modules
 was 76.87% for the journal and 87.35% for the transaction. The audit enum
 addition has no executable lines. Local probe sources, coverage and
 native traces are under `.research/c193-reconnect/sqlite-read-wait/`.
+
+## WAL/FULL on verified local Windows storage
+
+The native startup lease now selects WAL/FULL for an ordinary fixed NTFS
+drive whose device and volume serial can be verified. Routine database
+opens retain the selected mode, and the post-restore handle is registered
+before starting workers. Hard-linked databases and unqualified locations
+use DELETE/FULL. An existing WAL database on an unqualified location is
+refused with its sidecars preserved.
+
+The first live route preflight rejected the database before Apply.
+A lease-owned connection now retains the WAL sidecars between command
+connections. It holds no transaction and closes before the namespace
+lease releases. Both subsequent dev Cockpit route runs passed and matched
+all 808 key transitions, including the first-dispatch samples.
+
+| Run | Sustained idle p50 / p95 / p99 | Sustained Profiles p50 / p95 / p99 |
+| --- | ---: | ---: |
+| 1 | 3.53 / 7.11 / 18.93 ms | 2.91 / 3.84 / 4.32 ms |
+| 2 | 3.54 / 7.17 / 7.79 ms | 3.60 / 6.79 / 7.66 ms |
+
+The running backup fixture created a portable DELETE snapshot, restarted
+Cockpit, restored the profile and invalidated historical MCP credentials.
+The restored process reported WAL/FULL and a new database epoch. The
+separate whole-app interruption fixture preserved the held-key row at
+revision 8 through termination and restart. Explicit recovery produced
+the only KeyA up and advanced the row to revision 14, with clean Stop.
+
+Windows persistence tests passed 70 cases with one existing ignore.
+Line coverage for journal mode selection and Windows eligibility was
+94.67% and 93.41%, respectively. All 29 focused Cockpit persistence tests
+passed, with 95.62% line coverage in backup startup and 94.33% in the
+backup module. The hard-link and existing rollback
+sidecar fallbacks ran locally. Redirected and mapped network locations
+were not exercised live. The strict desktop timing gate and long-running
+checkpoint behavior remain open.
+
+Local artifacts are under `.research/c193-reconnect/local-wal-mode/`.
+The final Windows dev executable SHA-256 is
+`67fd7e5c07b2168812ecd3eb23b31f6461ca25e215e81b45a27bcd2b93edbd67`.

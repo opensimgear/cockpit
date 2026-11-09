@@ -10,6 +10,15 @@ type Entry = (PathBuf, PathBuf, Arc<Mutex<Option<Database>>>);
 static NAMESPACES: OnceLock<RwLock<Vec<Entry>>> = OnceLock::new();
 
 pub fn register_namespace(roots: &[PathBuf], database: &Path) -> Result<(), String> {
+    register(roots, database, None)
+}
+
+/// Register the post-restore handle selected by the native namespace owner.
+pub fn register_database_namespace(roots: &[PathBuf], database: &Database) -> Result<(), String> {
+    register(roots, database.path(), Some(database))
+}
+
+fn register(roots: &[PathBuf], database: &Path, opened: Option<&Database>) -> Result<(), String> {
     crate::check_path(database, false)?;
     for root in roots {
         crate::check_path(&root.join(".namespace-check"), false)?;
@@ -31,6 +40,16 @@ pub fn register_namespace(roots: &[PathBuf], database: &Path) -> Result<(), Stri
         .find(|(_, target, _)| target == database)
         .map(|(_, _, pin)| pin.clone())
         .unwrap_or_else(|| Arc::new(Mutex::new(None)));
+    if let Some(opened) = opened {
+        let mut pin = shared.lock().map_err(|_| "Persistence namespace access failed.")?;
+        if let Some(pinned) = pin.as_ref() {
+            if pinned.epoch() != opened.epoch() || pinned.journal_mode() != opened.journal_mode() {
+                return Err("A persistence namespace is already pinned to another database incarnation or journal mode.".into());
+            }
+        } else {
+            *pin = Some(opened.clone());
+        }
+    }
     for root in roots {
         if !namespaces.iter().any(|(existing, _, _)| existing == root) {
             namespaces.push((root.clone(), database.to_owned(), shared.clone()));

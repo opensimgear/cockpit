@@ -105,13 +105,22 @@ connection and bounded payloads are required. Foreign application IDs and
 incompatible layouts fail closed; no upgrade or compatibility layer is provided. Corrupt content never becomes an
 empty/default successful save.
 
-Use rollback journal `DELETE`, `synchronous=FULL` and a 250 ms busy timeout.
-Do not enable WAL by assuming APPDATA/XDG is local; redirected/network-backed
-configuration requires qualified OS locking and a supported filesystem. SQLite
-cannot guarantee storage-device/filesystem durability outside their contracts.
-There is no WAL checkpoint to lose on normal shutdown. Online backup uses the
-[SQLite Backup API](https://www.sqlite.org/backup.html); durability behavior is
-defined by [SQLite pragmas](https://www.sqlite.org/pragma.html).
+Every connection uses `synchronous=FULL`. The standard busy timeout is
+250 ms. The Windows namespace owner selects WAL before starting native
+workers when the configured database is on a verified fixed NTFS drive.
+It pins the drive identity, rejects aliases and hard-linked files, and
+keeps the WAL sidecars open with a connection that holds no transaction.
+An existing rollback sidecar is handled in DELETE mode before any later
+startup considers promotion.
+
+Other locations and standalone databases use the DELETE rollback journal.
+An existing WAL database whose location fails verification is refused
+with its sidecars preserved. The configured path is never rewritten.
+Backups use the SQLite Backup API for DELETE sources and `VACUUM INTO`
+for WAL sources. Both paths produce one standalone DELETE file before
+integrity checking and hashing. Restore uses that verified snapshot and
+rotates the primary database epoch in the selected journal mode.
+[SQLite WAL](https://www.sqlite.org/wal.html) · [SQLite Backup API](https://www.sqlite.org/backup.html) · [SQLite VACUUM](https://www.sqlite.org/lang_vacuum.html)
 
 Database access runs on native command/storage workers, never in input/telemetry
 callbacks. Immediate transactions check every expected revision before committing

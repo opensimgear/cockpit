@@ -9,6 +9,8 @@ use std::{
 
 mod activity;
 mod connection;
+mod journal_mode;
+use journal_mode::JournalMode;
 pub use activity::{
     ActivityEvent, ActivityPage, ActivityQuery, ActivitySettings, NewActivityEvent,
 };
@@ -20,7 +22,7 @@ pub use repository::Repository;
 mod path;
 pub use path::check_path;
 mod namespace;
-pub use namespace::register_namespace;
+pub use namespace::{register_database_namespace, register_namespace};
 mod profile_index;
 pub use profile_index::{ProfileIndex, ProfileReference};
 mod observation;
@@ -37,6 +39,7 @@ pub const SQLITE_RUNTIME_VERSION: &str = "3.53.2";
 pub struct Database {
     path: PathBuf,
     epoch: String,
+    journal: JournalMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,18 +113,24 @@ fn identity(connection: &Connection) -> Result<(i64, bool), String> {
 
 impl Database {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
-        Self::open_in(path.into(), true)
+        Self::open_in(path.into(), true, JournalMode::Delete, false)
     }
     /// Passive current-layout open. Never creates a missing database.
     pub fn open_existing(path: impl Into<PathBuf>) -> Result<Self, String> {
-        Self::open_in(path.into(), false)
+        Self::open_in(path.into(), false, JournalMode::Delete, false)
     }
-    fn open_in(path: PathBuf, create: bool) -> Result<Self, String> {
+    /// Verify the portable format before SQLite can try to recover a sidecar.
+    pub fn open_snapshot(path: &Path) -> Result<Self, String> {
+        journal_mode::require_snapshot(path)?;
+        Self::open_existing(path)
+    }
+    fn open_in(path: PathBuf, create: bool, journal: JournalMode, enable_wal: bool) -> Result<Self, String> {
         let mut database = Self {
             path,
             epoch: String::new(),
+            journal,
         };
-        let mut connection = database.connect(create)?;
+        let mut connection = database.connect(create, enable_wal)?;
         database.epoch = epoch::read(&connection)?;
         if create {
             activity::initialize(&mut connection, &database.epoch)?;
@@ -129,7 +138,7 @@ impl Database {
         Ok(database)
     }
     fn connection(&self) -> Result<Connection, String> {
-        let connection = self.connect(false)?;
+        let connection = self.connect(false, false)?;
         self.verify_epoch(&connection)?;
         Ok(connection)
     }
@@ -146,6 +155,9 @@ impl Database {
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    pub fn journal_mode(&self) -> &'static str {
+        self.journal.name()
     }
 
     pub fn read(&self, domain: &str, key: &str) -> Result<Option<Record>, String> {
@@ -306,6 +318,9 @@ impl Database {
     /// Use the SQLite backup API; never copy the main file of a live database.
     pub fn backup(&self, target: &Path) -> Result<(), String> {
         check_path(target, true)?;
+        if !journal_mode::no_sidecars(target) {
+            return Err("Cannot reserve a backup destination with existing SQLite sidecars.".into());
+        }
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -317,9 +332,16 @@ impl Database {
             .open(target)
             .map_err(|_| "Cannot reserve backup destination; it may already exist.")?;
         drop(reserved);
-        self.connection()?
-            .backup("main", target, None)
-            .map_err(failure)?;
+        let connection = self.connection()?;
+        if matches!(self.journal, JournalMode::Wal(_)) {
+            // VACUUM INTO makes a standalone snapshot without copying the
+            // source WAL file header or requiring shared memory at the target.
+            let destination = target.to_str().ok_or("Invalid backup database path.")?;
+            connection.execute("VACUUM INTO ?1", [destination]).map_err(failure)?;
+        } else {
+            connection.backup("main", target, None).map_err(failure)?;
+        }
+        journal_mode::require_snapshot(target)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

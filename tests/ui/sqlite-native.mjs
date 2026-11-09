@@ -21,7 +21,9 @@ test('native SQLite service is healthy through real Cockpit IPC', {
     const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('persistence_status'));
     assert.equal(status.healthy, true);
     assert.equal(status.sqliteVersion, '3.53.2');
-    assert.equal(status.journalMode, 'delete');
+    const header = (await readFile(status.path)).subarray(18,20);
+    assert.ok(header.equals(Buffer.from([1,1])) || header.equals(Buffer.from([2,2])));
+    assert.equal(status.journalMode, header[0]===2 ? 'wal' : 'delete');
     assert.equal(status.synchronous, 'full');
     assert.equal(status.busyTimeoutMs, 250);
     assert.match(status.path, /cockpit\.sqlite3$/);

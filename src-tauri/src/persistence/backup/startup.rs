@@ -1,7 +1,7 @@
 //! Runs with an OS namespace lease before constructing any native worker.
 use super::*;
 use std::sync::OnceLock;
-static LEASE: OnceLock<Mutex<Option<NamespaceLease>>> = OnceLock::new();
+static LEASE: OnceLock<Mutex<Option<(NamespaceLease, Database)>>> = OnceLock::new();
 pub(crate) fn release_namespace() {
     if let Some(held) = LEASE.get() {
         if let Ok(mut held) = held.lock() {
@@ -9,35 +9,38 @@ pub(crate) fn release_namespace() {
         }
     }
 }
-pub(crate) fn initialize() -> Result<(), String> {
+pub(crate) fn initialize() -> Result<Database, String> {
     let mut held = LEASE
         .get_or_init(|| Mutex::new(None))
         .lock()
         .map_err(|_| "Namespace ownership is unavailable.")?;
-    if held.is_some() {
-        return Ok(());
-    }
     let path = crate::config_paths::database_path();
+    if let Some((_, database)) = held.as_ref() {
+        if database.path() != path {
+            return Err("Cockpit already owns another persistence namespace.".into());
+        }
+        return Ok(database.clone());
+    }
     let anchor = crate::config_paths::config_path();
     let root = anchor
         .parent()
         .ok_or("Invalid native configuration namespace.")?;
-    let lease = boot(&path, root)?;
-    *held = Some(lease);
-    Ok(())
+    let (lease, database) = boot(&path, root)?;
+    *held = Some((lease, database.clone()));
+    Ok(database)
 }
-fn boot(path: &Path, root: &Path) -> Result<NamespaceLease, String> {
-    let lease = NamespaceLease::acquire(path)?;
-    let database = Database::open(path)?;
+fn boot(path: &Path, root: &Path) -> Result<(NamespaceLease, Database), String> {
+    let mut lease = NamespaceLease::acquire(path)?;
+    let database = lease.open_database()?;
     let runtime = Runtime {
-        database: Ok(database),
+        database: Ok(database.clone()),
         root: root.to_owned(),
         controls: Mutex::new(()),
         creating: Mutex::new(None),
         observation: Mutex::new(None),
     };
-    runtime.finish_pending(&lease)?;
-    Ok(lease)
+    let database = runtime.finish_pending(&lease)?.unwrap_or(database);
+    Ok((lease, database))
 }
 
 impl Runtime {
@@ -72,7 +75,7 @@ impl Runtime {
         // Install only immutable artwork. Historical DCS backups remain in the bundle
         // for inspection and never regain cleanup authority in the restored runtime.
         assets::restore(&self.root, &directory, &manifest)?;
-        let snapshot = Database::open_existing(directory.join("snapshot.sqlite3"))?;
+        let snapshot = Database::open_snapshot(&directory.join("snapshot.sqlite3"))?;
         let host = trust::fresh_host(&snapshot, osg_companion_service::persistence::seal)?;
         let database = self.database()?.restore_with_fresh_host(
             &directory.join("snapshot.sqlite3"),
@@ -107,9 +110,8 @@ mod tests {
     fn stopped_boot_requires_exclusive_namespace_and_never_seeds_credentials() {
         let directory = crate::test_directory();
         let path = directory.path().join("cockpit.sqlite3");
-        let lease = boot(&path, directory.path()).unwrap();
+        let (lease, database) = boot(&path, directory.path()).unwrap();
         assert!(boot(&path, directory.path()).is_err());
-        let database = Database::open_existing(&path).unwrap();
         assert!(database
             .read("secrets", "companion-host")
             .unwrap()

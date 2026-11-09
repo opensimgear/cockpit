@@ -53,7 +53,9 @@ fn native_desktop_and_configured_game_roots_share_the_requested_database() {
         ("OSG_GAMES_CONFIG", games.clone().into_os_string()),
         ("OSG_SQLITE_DATABASE", database.clone().into_os_string()),
     ]);
-    let initialized = initialize_in(&[desktop.clone()], &|name| values.get(name).cloned()).unwrap();
+    let mut lease = osg_persistence::NamespaceLease::acquire(&database).unwrap();
+    let initialized = lease.open_database().unwrap();
+    initialize_in(&[desktop.clone()], &|name| values.get(name).cloned(), &initialized).unwrap();
     assert_eq!(initialized.path(), database);
     initialized.integrity_check().unwrap();
     for anchor in [native, games, desktop.join("preferences.json")] {
@@ -66,11 +68,12 @@ fn native_desktop_and_configured_game_roots_share_the_requested_database() {
         assert!(!anchor.exists());
     }
     assert!(initialize_in(&[], &|name| (name == "OSG_DCS_BIOS_CONFIG")
-        .then(|| "relative.json".into()))
+        .then(|| "relative.json".into()), &initialized)
     .is_err());
     let other = dir.path().join("other/dcs.json");
+    let other_database = osg_persistence::Database::open(other.with_file_name("cockpit.sqlite3")).unwrap();
     initialize_in(&[], &|name| {
         (name == "OSG_DCS_BIOS_CONFIG").then(|| other.clone().into_os_string())
-    })
+    }, &other_database)
     .unwrap();
 }

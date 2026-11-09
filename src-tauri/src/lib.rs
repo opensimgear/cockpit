@@ -61,8 +61,8 @@ pub mod gateways;
 /// Initialize shared native persistence before constructing source workers.
 /// The browser development service uses the same namespace as desktop/MCP.
 pub fn initialize_persistence(additional_roots:&[std::path::PathBuf])->Result<osg_persistence::Database,String> {
-    persistence::backup::initialize()?;
-    let database=config_paths::initialize(additional_roots)?;
+    let database=persistence::backup::initialize()?;
+    config_paths::initialize(additional_roots,&database)?;
     #[cfg(debug_assertions)]
     persistence::development::seed(&database)?;
     Ok(database)

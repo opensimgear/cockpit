@@ -37,6 +37,7 @@ pub fn snapshot_hash(path: &Path) -> Result<String, String> {
 pub struct NamespaceLease {
     path: PathBuf,
     _lock: File,
+    wal_anchor: Option<Connection>,
 }
 impl NamespaceLease {
     pub fn acquire(database: &Path) -> Result<Self, String> {
@@ -56,11 +57,25 @@ impl NamespaceLease {
         Ok(Self {
             path: database.to_owned(),
             _lock: lock,
+            wal_anchor: None,
         })
+    }
+    /// Select journaling before any native workers use this namespace.
+    pub fn open_database(&mut self) -> Result<Database, String> {
+        let (mode, enable_wal) = journal_mode::select(&self.path)?;
+        let database = Database::open_in(self.path.clone(), true, mode, enable_wal)?;
+        if matches!(mode, JournalMode::Wal(_)) && self.wal_anchor.is_none() {
+            // Keep the WAL files alive between short command connections.
+            // The anchor owns no transaction or read snapshot.
+            self.wal_anchor = Some(database.connection()?);
+        }
+        Ok(database)
     }
 }
 impl Drop for NamespaceLease {
     fn drop(&mut self) {
+        // Let SQLite close and checkpoint before another process can start.
+        drop(self.wal_anchor.take());
         let _ = self._lock.unlock();
     }
 }
@@ -133,7 +148,7 @@ impl Database {
         if metadata.len() == 0 || metadata.len() > 1024 * 1024 * 1024 {
             return Err("The backup database exceeds its size bounds.".into());
         }
-        let snapshot = Self::open_existing(source)?;
+        let snapshot = Self::open_snapshot(source)?;
         snapshot.integrity_check()?;
         let mut connection = self.connection()?;
         connection
@@ -191,6 +206,7 @@ impl Database {
         Ok(Self {
             path: self.path.clone(),
             epoch: next,
+            journal: self.journal,
         })
     }
 }

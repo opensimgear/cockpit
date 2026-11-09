@@ -13,7 +13,7 @@ async function connect(endpoint,token){const client=new Client({name:'SQLite bac
 async function call(client,name,args={}){const reply=await client.callTool({name,arguments:args});return reply.structuredContent??JSON.parse(reply.content.find(c=>c.type==='text').text);}
 test('running Cockpit backup and restart restore reject historical MCP credentials',{skip:process.env.OSG_SQLITE_BACKUP_ACCEPTANCE!=='1',timeout:120000},async()=>{
  const require=createRequire(import.meta.url),{chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'playwright');
- const artifacts=resolve('.research/sqlite/backup-native');await mkdir(artifacts,{recursive:true});
+ const artifacts=resolve(process.env.OSG_SQLITE_BACKUP_ARTIFACTS??'.research/sqlite/backup-native');await mkdir(artifacts,{recursive:true});
  let browser,page,writer,reader;const clients=[];
  const attach=async()=>{browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224');page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(process.env.OSG_NATIVE_DEV_ORIGIN??'http://127.0.0.1:1421/')&&!p.url().includes('activation'));return !!page&&await page.evaluate(()=>!!window.__TAURI_INTERNALS__?.invoke);};
  const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
@@ -21,6 +21,7 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
  try{
   await until(async()=>{try{if(await attach())return true;}catch{}await browser?.close().catch(()=>{});return false;},'Native Cockpit page');
   const before=await invoke('persistence_status');assert.equal((await native({command:'profile_status'})).profiles.profileSession.state,'stopped');
+  if(process.env.OSG_SQLITE_EXPECTED_JOURNAL_MODE)assert.equal(before.journalMode,process.env.OSG_SQLITE_EXPECTED_JOURNAL_MODE);
   const original=(await native({command:'profile_create',name:'Backup acceptance fixture'})).profiles.document;
   let settings=await invoke('mcp_settings_get');if(settings.enabled)settings=await invoke('mcp_settings_update',{settings:{enabled:false,port:settings.port,expectedSettingsRevision:settings.settingsRevision}});for(const credential of [...settings.credentials]){settings=await invoke('mcp_credential_revoke',{id:credential.id,expectedSettingsRevision:settings.settingsRevision});}assert.equal(settings.enabled,false);
   const write=await invoke('mcp_credential_create',{name:'Backup acceptance writer',scope:'write',expectedSettingsRevision:settings.settingsRevision});settings=await invoke('mcp_settings_get');
@@ -66,6 +67,7 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
   await section.getByRole('button',{name:'Restart',exact:true}).click();await pause(1200);await browser.close().catch(()=>{});
   await until(async()=>{try{await attach();const current=await invoke('persistence_status');if(current.processId!==before.processId)return current;}catch{}await browser?.close().catch(()=>{});return null;},'Native restart',45000);
   const after=await invoke('persistence_status'),restored=(await native({command:'storage_status'})).storage;
+  assert.equal(after.journalMode,before.journalMode);
   assert.notEqual(after.processId,before.processId);assert.notEqual(restored.epoch,captured.epoch);assert.equal(restored.restartRequired,false);assert.equal(restored.backups.length,2);
   const current=(await native({command:'profile_list'})).profiles.profiles.find(p=>p.id===original.id);assert.equal(current.name,original.name);assert.equal(current.revision,original.revision);
   const state=(await native({command:'profile_status'})).profiles.profileSession;assert.equal(state.state,'stopped');assert.equal(state.owner,null);
@@ -73,7 +75,9 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
   const trust=await invoke('mcp_settings_get');assert.equal(trust.enabled,false);assert.deepEqual(trust.credentials,[]);
   await assert.rejects(()=>connect(settings.endpoint,write.token));
   await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('region',{name:'Backups',exact:true}).getByRole('button',{name:'Create',exact:true}).waitFor();await page.getByRole('region',{name:'Backups',exact:true}).screenshot({path:resolve(artifacts,'restored.png')});
-  const manifest=JSON.parse(await readFile(resolve(dirname(process.env.OSG_DCS_BIOS_CONFIG),'backups',id,'manifest.json'),'utf8'));assert.ok(manifest.databaseHash);
+  const bundle=resolve(dirname(process.env.OSG_DCS_BIOS_CONFIG),'backups',id);
+  const manifest=JSON.parse(await readFile(resolve(bundle,'manifest.json'),'utf8'));assert.ok(manifest.databaseHash);
+  assert.deepEqual([...((await readFile(resolve(bundle,'snapshot.sqlite3'))).subarray(18,20))],[1,1]);
   await writeFile(resolve(artifacts,'verified.json'),JSON.stringify({before,after,captured,restored,original,current,state,credentialsInvalidated:true,hostBefore,hostAfter,readerMutationsDenied:true,mcpAndPortal:true,actualNative:true,manifest,verifiedAt:new Date().toISOString()},null,2));
  }finally{for(const client of clients)await client.close().catch(()=>{});await browser?.close().catch(()=>{});}
 });

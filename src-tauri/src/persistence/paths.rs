@@ -13,8 +13,9 @@ pub fn config_path() -> PathBuf {
 }
 pub(crate) fn initialize(
     additional_roots: &[PathBuf],
-) -> Result<osg_persistence::Database, String> {
-    initialize_in(additional_roots, &system_environment)
+    database: &osg_persistence::Database,
+) -> Result<(), String> {
+    initialize_in(additional_roots, &system_environment, database)
 }
 fn database_path_in(environment: Environment<'_>, anchor: &std::path::Path) -> PathBuf {
     environment("OSG_SQLITE_DATABASE")
@@ -24,7 +25,8 @@ fn database_path_in(environment: Environment<'_>, anchor: &std::path::Path) -> P
 fn initialize_in(
     additional_roots: &[PathBuf],
     environment: Environment<'_>,
-) -> Result<osg_persistence::Database, String> {
+    database: &osg_persistence::Database,
+) -> Result<(), String> {
     let anchor = config_path_in(environment);
     let mut roots = vec![anchor
         .parent()
@@ -39,9 +41,10 @@ fn initialize_in(
         );
     }
     roots.extend_from_slice(additional_roots);
-    let database = database_path_in(environment, &anchor);
-    osg_persistence::register_namespace(&roots, &database)?;
-    osg_persistence::Database::open(database)
+    if database.path() != database_path_in(environment, &anchor) {
+        return Err("The opened database does not match the configured persistence namespace.".into());
+    }
+    osg_persistence::register_database_namespace(&roots, database)
 }
 fn config_path_in(environment: Environment<'_>) -> PathBuf {
     if let Some(path) = environment("OSG_DCS_BIOS_CONFIG") {

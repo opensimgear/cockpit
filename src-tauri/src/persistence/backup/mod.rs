@@ -174,7 +174,7 @@ impl Runtime {
         let snapshot = directory.join("snapshot.sqlite3");
         self.database()?.backup(&snapshot)?;
         self.check_create_cancelled()?;
-        let captured = Database::open_existing(&snapshot)?;
+        let captured = Database::open_snapshot(&snapshot)?;
         captured.integrity_check()?;
         self.check_create_cancelled()?;
         let assets = assets::collect(&captured, &self.root, directory)?;
@@ -234,7 +234,7 @@ impl Runtime {
                 "The backup database failed its hash check. Existing data was preserved.".into(),
             );
         }
-        Database::open_existing(directory.join("snapshot.sqlite3"))?.integrity_check()?;
+        Database::open_snapshot(&directory.join("snapshot.sqlite3"))?.integrity_check()?;
         assets::verify(&directory, &manifest)?;
         Ok((directory, manifest))
     }

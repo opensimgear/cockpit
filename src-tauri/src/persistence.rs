@@ -14,7 +14,7 @@ pub(crate) async fn persistence_status(database: tauri::State<'_, osg_persistenc
             "sqliteVersion":osg_persistence::SQLITE_RUNTIME_VERSION,
             "processId":std::process::id(),
             "profileCount":database.profile_index()?.len(),
-            "path":database.path(),"journalMode":"delete","synchronous":"full",
+            "path":database.path(),"journalMode":database.journal_mode(),"synchronous":"full",
             "busyTimeoutMs":osg_persistence::BUSY_TIMEOUT.as_millis(),"healthy":true}))
     }).await.map_err(|_| "The persistence worker failed.".to_string())?
 }
