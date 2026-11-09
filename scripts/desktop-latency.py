@@ -21,7 +21,7 @@ SCHEMA = dict(SourceCapture=8, SourceResult=3, SourceBound=8, NativeEnqueue=12,
     DeliveryBound=6, DeliveryDropped=5, ChannelOpened=2, ChannelExited=5, RequestIssued=6,
     RequestQueued=3, RequestDequeued=3, SubmitReturned=6, WorkerOutcome=6,
     ParentOutcome=7, QueueFault=3, NativeGap=4, Marker=2, Fault=1,
-    JournalPersist=9, JournalMerged=3, JournalReleasesMerged=3)
+    JournalPersist=9, JournalMerged=3, JournalReleasesMerged=3, JournalVerify=5)
 ERROR_COUNTERS = ("queueDrops", "capDrops", "aliasFailures", "qpcFailures", "invalidFields",
     "serializationErrors", "ioErrors", "flushTimeouts", "evidenceFaults", "afterFinish")
 COUNTERS = ("attempted", "enqueued", "written", *ERROR_COUNTERS, "queueHighWater",
@@ -275,6 +275,9 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
         if event.kind == "JournalPersist":
             require(0 < event.f[2] and tuple(sorted(event.f[2:])) == event.f[2:]
                 and event.f[8] == event.qpc, "invalid durable journal timing interval")
+        elif event.kind == "JournalVerify":
+            require(0 < event.f[2] <= event.f[3] == event.qpc and event.f[4] in (0, 1),
+                "invalid recovery verification timing interval")
         by[event.kind].append(event)
     native_ids, native_changes, queue_epochs, typed_ids = set(), set(), defaultdict(set), defaultdict(set)
     for event in by["NativeEnqueue"]:
@@ -317,6 +320,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
     requests = index("RequestIssued", lambda f: (f[4], f[5], f[2]))
     issued = index("RequestIssued", lambda f: f[:2])
     journal_writes = index("JournalPersist", lambda f: f[:2])
+    journal_verifications = index("JournalVerify", lambda f: f[:2])
     outcomes = index("ParentOutcome", lambda f: (f[0], f[1], f[2]))
     parent_queues = {kind: index(kind, lambda f: f[:2]) for kind in ("RequestQueued", "RequestDequeued")}
     worker_index = {}
@@ -383,7 +387,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
         samples, joined, target, source_set = [], set(), set(), set()
         dispatches = defaultdict(list)
         stages = {name: [] for name in ("captureToDelivery", "deliveryToRequest",
-            "requestToNative", "intentBeforeEnqueue", "priorWriteOverlapAfterIssue",
+            "requestToNative", "intentBeforeEnqueue", "verificationBeforeEnqueue", "priorWriteOverlapAfterIssue",
             "priorReceiptOverlapAfterIssue")}
         phase_errors = []
         phase_captures = [event for event in by["SourceCapture"] if begin.qpc < event.qpc < end.qpc]
@@ -451,6 +455,11 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                     stages["captureToDelivery"].append(binding.qpc - capture.qpc)
                     stages["deliveryToRequest"].append(request.qpc - binding.qpc)
                     stages["requestToNative"].append(send.qpc - request.qpc)
+                    verified = [event for event in journal_verifications.get(key[:2], ())
+                        if request.qpc <= event.f[2] <= event.qpc <= queue_points[0].qpc and event.f[4] == 1]
+                    require(len(verified) <= 1, "ambiguous pre-enqueue recovery verification")
+                    if verified:
+                        stages["verificationBeforeEnqueue"].append(verified[0].qpc - verified[0].f[2])
                     add_journal_stages(stages, journal_writes, issued, worker_index[qf[0]],
                         binding, request, queue_points[0])
             except AuditError as error:

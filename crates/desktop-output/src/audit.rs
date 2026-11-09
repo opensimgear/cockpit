@@ -110,6 +110,8 @@ pub enum Kind {
     JournalMerged,
     /// channel, first released request sequence, second released request sequence
     JournalReleasesMerged,
+    /// Channel, request sequence, verification start and end QPC, success.
+    JournalVerify,
     /// queue kind, normalized reason, depth
     QueueFault,
     /// source, provider, subscription, normalized reason

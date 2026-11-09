@@ -168,6 +168,27 @@ class LatencyTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.AuditError, "invalid durable journal timing interval"):
             fixture.run()
 
+    def test_verification_only_counts_the_successful_exact_pre_enqueue_interval(self):
+        fixture = Fixture()
+        baseline = fixture.run()["phases"][0]
+        fixture.parent.extend([
+            event("JournalVerify", [7, 1, 2037, 2039, 0], 2039),
+            event("JournalVerify", [8, 1, 2040, 2044, 1], 2044),
+            event("JournalVerify", [7, 1, 2040, 2043, 1], 2043),
+            event("JournalVerify", [7, 1, 2045, 2046, 1], 2046),
+        ])
+        phase = fixture.run()["phases"][0]
+        self.assertTrue(phase["passed"])
+        self.assertEqual(phase["latency"], baseline["latency"])
+        self.assertEqual(phase["stages"]["verificationBeforeEnqueue"]["samples"], 1)
+        self.assertEqual(phase["stages"]["verificationBeforeEnqueue"]["p95UsCeil"], 3)
+
+    def test_malformed_verification_interval_rejects_the_trace(self):
+        fixture = Fixture()
+        fixture.parent.append(event("JournalVerify", [7, 1, 2043, 2044, 1], 2045))
+        with self.assertRaisesRegex(audit.AuditError, "invalid recovery verification timing interval"):
+            fixture.run()
+
     def test_one_tick_cross_process_interval_is_not_a_latency_sample(self):
         for ticks in (0, 1):
             fixture = Fixture()

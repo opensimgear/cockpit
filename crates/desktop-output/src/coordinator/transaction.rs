@@ -152,7 +152,7 @@ impl Coordinator {
             }
         }
         if pointer || release_only_arm || release_only_delivery {
-            if let Err(error) = self.verify_current_evidence() {
+            if let Err(error) = self.verify_dispatch_evidence(request.sequence) {
                 if merge_releases {
                     // No request or audit issue used the reserved sequence.
                     self.sequence -= 1;

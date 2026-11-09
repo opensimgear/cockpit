@@ -227,3 +227,41 @@ The strict desktop timing and mixed pointer criteria stay open.
 
 Local coverage and the four native run artifacts are under
 `.research/c193-reconnect/companion-contract-cache/`.
+
+## Release verification and SQLite contention
+
+The opt-in desktop audit now records each pre-dispatch evidence
+verification with its exact channel, request sequence, QPC interval and
+result. The analyzer reports successful verification only inside that
+request's issue-to-enqueue window. Latency still ends at the native
+submission receipt.
+
+Two running Windows dev Cockpit workloads delivered all 805 expected key
+transitions and proved clean Stop. The analyzer joined 400 read-only
+verifications. Sustained verification p95 ranged from 0.82 to 0.95 ms,
+with a maximum of 1.204 ms. The largest measured intent write was
+32.571 ms. These runs did not reproduce the earlier 14 ms pre-enqueue
+stall in the read-only step.
+
+A separate contention probe used the pinned SQLite 3.53.2 Windows
+VFS, rollback journal and a private database held by an exclusive writer.
+The 5 ms busy timeout took 168.55–168.95 ms p95 to return busy. A custom
+high-resolution busy callback reduced that to 61.26–62.68 ms p95. The
+VFS retries acquiring its pending lock before calling the busy handler.
+A precise callback alone therefore cannot enforce the read budget.
+[SQLite Windows VFS source](https://raw.githubusercontent.com/sqlite/sqlite/version-3.53.2/src/os_win.c)
+
+A prototype shared pending-byte lock on SQLite's own file handle refused
+exclusive contention in at most 1.2 µs across 64 attempts. Ordinary reads
+and reads under a reserved writer succeeded. With a hot rollback journal,
+the query recovered the journal but the prototype's unlock failed with
+Windows error 158. The extra lock cannot be relied on across SQLite's
+recovery path, so this prototype was discarded.
+[SQLite native file handle](https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html)
+· [Windows byte-range unlock contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-unlockfileex)
+
+All 202 Windows desktop-output tests and 29 analyzer and fixture tests
+passed. Windows line coverage for the two changed coordinator modules
+was 76.87% for the journal and 87.35% for the transaction. The audit enum
+addition has no executable lines. Local probe sources, coverage and
+native traces are under `.research/c193-reconnect/sqlite-read-wait/`.

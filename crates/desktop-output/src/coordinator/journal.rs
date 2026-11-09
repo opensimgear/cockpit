@@ -196,7 +196,7 @@ impl Coordinator {
     }
     /// Non-acquiring commands may omit writes, but must still hold the exact
     /// retained evidence before dispatch. Verification never creates a store.
-    pub(super) fn verify_current_evidence(&self) -> Result<(), String> {
+    fn verify_current_evidence(&self) -> Result<(), String> {
         let Some(path) = &self.journal else { return Ok(()); };
         let slot = self.journal_store.borrow();
         let store = slot.as_ref().ok_or("Desktop recovery evidence is not acquired.")?;
@@ -204,6 +204,23 @@ impl Coordinator {
             return Err("Desktop recovery storage identity changed.".into());
         }
         store.evidence.verify()
+    }
+    pub(super) fn verify_dispatch_evidence(&self, sequence: Counter) -> Result<(), String> {
+        use crate::audit::{self, Fault, Kind};
+        let channel = self.channel.audit_id().filter(|_| self.journal.is_some());
+        let start = channel.and_then(|_| audit::stamp());
+        let result = self.verify_current_evidence();
+        if let Some(channel) = channel {
+            match (start, audit::stamp()) {
+                (Some(start), Some(end)) if start.qpc <= end.qpc => audit::record_at(
+                    end,
+                    Kind::JournalVerify,
+                    &[channel, sequence.0, start.qpc, end.qpc, u64::from(result.is_ok())],
+                ),
+                _ => audit::fault(Fault::Clock),
+            }
+        }
+        result
     }
     pub(super) fn persist(&self) -> Result<(), String> {
         let result = self.persist_inner();
