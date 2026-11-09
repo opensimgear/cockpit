@@ -21,7 +21,7 @@ export async function alignClock(page) {
   const brackets=[];
   for(let attempt=0;attempt<16;attempt++){
     const before=Number(process.hrtime.bigint())/1e6;
-    const browser=await page.evaluate(()=>performance.now());
+    const browser=await page.evaluate('performance.now()');
     const after=Number(process.hrtime.bigint())/1e6;
     brackets.push({low:browser-after,high:browser-before});
   }

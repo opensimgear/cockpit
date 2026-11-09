@@ -3,11 +3,13 @@ import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {setTimeout as delay} from 'node:timers/promises';
 import {browserPage,nativePage,until} from '../../scripts/reactive/cdp.mjs';
-import {summarize} from './dcs-panel-presentation-timing.mjs';
+import {alignClock,summarize} from './dcs-panel-presentation-timing.mjs';
+import {startPreviewVjoyProbe} from './virtual-preview-vjoy-timing.mjs';
 
 const browserUrl=process.env.OSG_VIRTUAL_PREVIEW_BROWSER_URL;
 const preview='[aria-label="Virtual controller inputs"]';
 const outputId='reopen-vjoy';
+const rawProbeExecutable=process.env.OSG_VIRTUAL_PREVIEW_RAW_PROBE;
 
 async function measureVisiblePreview(page,owner,streamId){
   const buttonSelector=preview+' [data-control-id="button-1"]';
@@ -33,7 +35,11 @@ async function measureVisiblePreview(page,owner,streamId){
           nodeId:'debug',streamId:${JSON.stringify(streamId)},sequence:String(sequence),
           changes:[{portId:'button-1',value}]};
         current={sequence,value,submitted:performance.now()};
-        await gatewayRequest(request);
+        const {debugController}=await gatewayRequest(request);
+        if(debugController?.sequence!==String(sequence)||debugController.replayed
+          ||!Number.isInteger(debugController.pendingFrames)||debugController.pendingFrames<1
+          ||debugController.pendingFrames>256)throw Error('Expected one admitted debug input sequence');
+        current.pendingFrames=debugController.pendingFrames;
       },
       close(){observer.disconnect();},
     };
@@ -54,6 +60,8 @@ async function measureVisiblePreview(page,owner,streamId){
     return {
       submitToDomMs:summarize(samples.map(row=>row.dom-row.submitted)),
       submitToFrameMs:summarize(samples.map(row=>row.frame-row.submitted)),
+      submissionIntervalMs:summarize(samples.slice(1).map((row,index)=>row.submitted-samples[index].submitted)),
+      pendingFramesPeak:Math.max(...samples.map(row=>row.pendingFrames)),
       samples,
     };
   }finally{
@@ -163,7 +171,17 @@ test('virtual inputs mount hidden, reopen on the current native sample, and reti
     const second=await waitTrace(()=>opens[1]?.token);
     assert.notEqual(second,first);
     assert.equal(opens[1].topic,opens[0].topic);
-    const timing=await measureVisiblePreview(page,owner,streamId);
+    const rawProbe=rawProbeExecutable?await startPreviewVjoyProbe(rawProbeExecutable):null;
+    let timing,vjoy;
+    try {
+      const before=rawProbe?await alignClock(page):null;
+      timing=await measureVisiblePreview(page,owner,streamId);
+      if(rawProbe) {
+        vjoy=await rawProbe.finish(slot.slot,timing.samples,before,await alignClock(page));
+        const {p95,p99}=vjoy.submitToRawUpperMs;
+        assert.ok(p95<=20&&p99<=50,`Raw Input budget exceeded with p95 ${p95} ms and p99 ${p99} ms`);
+      }
+    } finally { await rawProbe?.close(); }
     assert.ok(timing.submitToFrameMs.p95<=100,'Foreground preview presentation exceeded 100 ms p95');
     assert.deepEqual((await request({command:'profile_status'})).profiles.profileSession.owner,owner);
     assert.deepEqual(reads,[],'The applied virtual preview should use samples without inspection queries');
@@ -175,7 +193,7 @@ test('virtual inputs mount hidden, reopen on the current native sample, and reti
     await until(inventory,rows=>rows.find(row=>row.slot===slot.slot)?.status==='free');
     console.log(JSON.stringify({transport:browserUrl?'browser-dev':'native',opens:2,retirements:2,
       hiddenInitialOpen:false,currentOnReopen:true,inspectionReads:0,slotFreed:true,
-      profile:{id:owner.profileId,revision:owner.profileRevision},slot:slot.slot,timing}));
+      profile:{id:owner.profileId,revision:owner.profileRevision},slot:slot.slot,timing,vjoy}));
   }finally{
     stopTrace();
     try{
