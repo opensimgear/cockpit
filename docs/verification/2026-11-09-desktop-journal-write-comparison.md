@@ -465,3 +465,32 @@ desktop. Mixed pointer qualification remains open. No pointer input was
 attempted in this check.
 
 Local evidence is under `.research/c193-reconnect/queued-key-head/`.
+
+### Instrumented profile poll
+
+A private build of `f993800a` added QPC stamps around the profile poll,
+runtime mutex and companion read. The running Cockpit received input
+from two authenticated WSS peers and delivered all 402 expected keyboard
+edges to the exact Windows receiver. Stop cleared owned output and both
+receivers exited cleanly. The audit checkpoint had zero drops or errors.
+
+| Phase | Edges | Admission to SendInput p95 / p99 | Enqueue to dequeue p95 |
+| --- | ---: | ---: | ---: |
+| First idle | 4 | 5.608 / 5.608 ms | 0.380 ms |
+| Sustained idle | 196 | 4.351 / 4.813 ms | 0.745 ms |
+| First with Profiles open | 4 | 4.754 / 4.754 ms | 0.412 ms |
+| Sustained with Profiles open | 198 | 4.593 / 5.543 ms | 0.776 ms |
+
+The slowest first-idle edge shared one paired request with the other
+key down. Its 0.380 ms queue interval included 0.304 ms inside the
+companion read, 0.016 ms before the worker poll began and 0.002 ms
+acquiring the runtime mutex. The paired request spent 1.792 ms writing
+the recovery intent, including 1.678 ms in commit. The helper then took
+2.139 ms from request dequeue to `SendInput` return. That interval
+includes helper preparation and the native call. The slowest sustained
+queue samples overlapped work in the previous profile poll.
+
+The first-idle budget remains open. The stamps were diagnostic only and
+the fixture covered keyboard output. Local evidence, instrumentation and
+the isolated executable are under `.research/c193-reconnect/profile-poll-trace/`.
+Executable SHA-256 is `c306ecdac484ea4b56aa1667ba518949ffec4ef19676e688d4c508b0747f837e`.
