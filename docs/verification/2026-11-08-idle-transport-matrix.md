@@ -68,3 +68,32 @@ separately. [Profile mode and active editing](2026-11-09-profile-mode-editing.md
 | Private `reactive-idle-mode-ready.mjs` | `019663f8eb39e0effcfdf918f1d0db63454cbe4ab91a2ff623a3ee1f3e46d5e7` |
 
 The traces are under `.research/c193-reconnect/linux-companion-local/mode-idle-matrix/`.
+
+## Observation traffic regression guard
+
+The idle fixture now fails if a settled view sends any observation protocol
+requests during its one-minute trace. Previously it logged those requests
+and only enforced the gateway request budget. The gateway guard still allows
+editing-claim renewals.
+
+The updated fixture passed all eight views on Windows native and all eight
+on browser-dev. All 16 windows recorded zero gateway and observation
+protocol requests. Native windows ran for 60,104–60,114 ms and browser-dev
+windows for 60,101–60,115 ms. Both local coverage reports show execution of
+the new assertion, and all five frontend timer tests passed.
+
+The dev WebView used the `44217e01` qualification build. Browser-dev used
+the `2f175ef0` Windows gateway build. Both loaded the `dba59935` Cockpit
+frontend from a private archive. All 294 checked frontend source and asset
+records matched main after normalizing Windows line endings. The traces
+cover settled views on these transports.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| Native executable | `e21ae9c5c789edc6fbeee1a56283e13ed4d893919875a2ecbe2a14d4c3ce9b2f` |
+| Browser-dev gateway | `d2673413d32815e2d248196308581c8c2bd35366b700e68c600a29f6f8454f6a` |
+| `native.log` | `32426e008c58d2d7bf909607a91f13f9d9b3b9fa4cee193066d7fc9a94b1ac3a` |
+| `browser.log` | `0b31d03a9f7b5111b2c935151b90427a8f8d1d629b55243f92a809e056056ce0` |
+
+The logs and per-view summaries are under
+`.research/c193-reconnect/linux-companion-local/strict-idle-dba59935/`.

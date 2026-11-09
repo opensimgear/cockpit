@@ -169,6 +169,7 @@ async function traceTraffic(view, listen) {
     console.log(JSON.stringify({ transport, view, elapsedMs, gatewayRequests, observationRequests }));
     assert.ok(elapsedMs >= 60_000);
     assert.deepEqual(gatewayRequests.filter(request => request.command !== 'workspace_client_renew'), []);
+    assert.deepEqual(observationRequests, [], 'The settled view must not make observation protocol requests while idle.');
   } finally {
     stop();
   }
