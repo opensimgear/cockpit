@@ -37,3 +37,47 @@ reported zero cleanup errors. The preflight evidence is in
 with SHA-256 `6eb2b4192e84fa6fd1df7411752b2d1a3679d76c9cdd09d9c2a7d7bca3dae84b`.
 Mixed pointer receipt needs an unobstructed desktop. The strict
 dispatch targets remain open.
+
+### Current audit build and early pointer check
+
+The Windows dev build at `2f748f9d` opened its audit collector and ran
+the same mixed fixture. The exact receiver again had keyboard foreground
+while window 2755484 from PID 17540 covered the pointer target. A process
+name check before launch had returned no PickerHost result. The native
+hit test remained authoritative and the fixture stopped before submitting
+input.
+
+The fixture now checks the pointer target before capturing the application
+scope, enabling desktop output or applying the profile. It still checks
+again after Apply and after warmup. The running dev rerun reproduced the
+obstruction at this earlier check. Its bridge and audit recorded zero
+workload configure commands, Apply commands and native submissions. The
+receiver exited normally and ownership cleanup was confirmed. All 25
+portable latency tests passed.
+
+The keyboard-only run on the same executable matched 404 marked
+transitions across the idle and Svelte UI-load phases. Both phases
+stopped cleanly.
+
+| Phase | Matched samples | Capture-to-native p50 / p95 / p99 |
+| --- | ---: | ---: |
+| Idle first edges | 4 | 3.60 / 10.59 / 10.59 ms |
+| Idle steady | 198 | 4.81 / 10.58 / 14.57 ms |
+| UI-load first edges | 4 | 3.15 / 23.81 / 23.81 ms |
+| UI-load steady | 198 | 4.76 / 10.27 / 14.12 ms |
+
+The slowest UI-load first edge included 18.22 ms in the durable intent
+operation. The slowest idle steady edge waited 16.03 ms between delivery
+binding and request issue. The strict 5 ms p95 and 10 ms p99 targets
+remain open, as does mixed pointer receipt.
+
+The dev executable SHA-256 is
+`e67217d25ed30ac1d3286c5d07595665a5e433976d8d4657bfdea5b4e19ab94c`.
+The receiver SHA-256 is
+`8178c417374c57c88a9c3362dba29969c739e6a5ce1cdc5c356ba12532154b68`.
+Local evidence is under `.research/c193-reconnect/mixed-qualification-56876/`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `preflight-40612/evidence.json` | `60ac67f1cb205522b45aefad8d0ba0d654b11e05db8019de45f967450b1a4795` |
+| `keys-37700/desktop-stage-analysis.json` | `d053590e1a8361ecc0ee40ace33841ecace6fcf6140884b5c046cb65a753d379` |

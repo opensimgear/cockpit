@@ -379,9 +379,8 @@ def main():
             receiver_path, identity = Path(target["file"]), target["identity"]
             receiver_paths.append(receiver_path)
             phase["receiverIdentity"] = identity
-            phase["initialForeground"] = (ownership.position_receiver(service, receiver_path, identity, keyboard_window=target["window"])
-                if args.keys_only else mapping.wait_for(lambda: identity if native.desktop_status(service).get("recentApplication") == identity else None,
-                    "Native foreground observer did not capture the exact receiver process"))
+            phase["initialForeground"] = ownership.position_receiver(service, receiver_path, identity,
+                pointer_target=not args.keys_only, keyboard_window=target["window"] if args.keys_only else None)
             saved, captured, compilation = capture_profile_scope(service, saved, assignments, identity)
             phase["exactCapturedApplication"] = captured
             phase.update(profile=saved, compilation=compilation)
