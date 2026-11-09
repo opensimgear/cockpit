@@ -429,3 +429,39 @@ changes atomic with SQLite commit.
 Evidence is under `.research/c193-reconnect/verified-wal-path/`.
 The dev executable SHA-256 is
 `69f274fa6795682b90f34604b0c1c91bebb3b8893c08289a69ffa9ccf5a4ab81`.
+
+### First-press queue boundary
+
+The first idle miss in each exact-path trial came from the second key
+down. Its frame was in the native companion queue before the first
+request issued, then waited 0.917–0.920 ms for dequeue. The second
+delivery bound after the first request was in progress. It waited
+another 1.77–1.80 ms from binding to its own request, then spent
+1.38–1.40 ms persisting the new intent before enqueue. Both measured
+misses were acquisitions. The release path and receiver teardown passed.
+
+An experimental build opened the existing FIFO successor slot before the
+worker started. A deterministic mapping-host test exercised pairing and
+independent successor dispatch after the first producer was withdrawn.
+All 185 mapping-host tests passed on that build. The timing runs matched
+all 806 candidate transitions and proved clean Stop.
+
+| Run | First idle / Profiles p95 | Sustained idle / Profiles p95 | Confirmed native pairs |
+| --- | ---: | ---: | ---: |
+| Current main build | 5.143 / 4.353 ms | 4.541 / 4.294 ms | 87 |
+| Experimental run 1 | 4.342 / 3.999 ms | 4.776 / 4.587 ms | 87 |
+| Experimental run 2 | 4.019 / 3.491 ms | 4.740 / 4.420 ms | 93 |
+
+All 180 candidate pairs had both native dequeues before the first
+delivery bound. They were handled by the existing same-pass path. The
+experimental cross-pass path was never exercised in either live run,
+so the first-dispatch improvement cannot be attributed to it. The
+prototype was discarded. The next timing boundary is the interval from
+native enqueue to reducer dequeue while the first delivery is prepared.
+
+A read-only Windows desktop check found the same PickerHost process in
+the foreground and at all nine sampled points across the 2560 by 1440
+desktop. Mixed pointer qualification remains open. No pointer input was
+attempted in this check.
+
+Local evidence is under `.research/c193-reconnect/queued-key-head/`.
