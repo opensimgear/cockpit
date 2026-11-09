@@ -39,10 +39,9 @@ were accepted. It bound a healthy helper to the replacement PID and kept
 the profile service interval off through 1,100 ms without gateway reads.
 This run proves the replacement can reattach under the same owner.
 
-The held-key variant stopped before sending input when PickerHost took
+An early held-key attempt stopped before sending input when PickerHost took
 foreground. The exact receiver recorded zero marked keyboard events and
-cleanup completed. Release with a held key and no replay after replacement
-remain open in #198.
+cleanup completed.
 
 | Local artifact | SHA-256 |
 | --- | --- |
@@ -90,6 +89,36 @@ function coverage. LLVM emitted no branch counters for these files.
 | `.research/dcs-physics-native/1794240564250/evidence.json` | `5dcdadec0c76458d41ed37f81a60fdbb7abe6b7b7c80aa17a13a8fa34c9a57ee` |
 | `dcs-committed-reader/committed-reader-final.exe` | `8241baca6621b207652fbf2d464bfd2a6d22b8c4fede54fa133d8446b3f826bf` |
 | `.research/dcs-physics-native/1794240968311/evidence.json` | `4e28050ddc2b6d297e906c791267d00cbefbf7144abf6ab899e9eceeeb7f656c` |
+
+### Held keyboard output on selected-game exit
+
+Windows dev Cockpit dispatched an authored key hold to the exact private
+DCS receiver. Its marked key-down and the Windows asynchronous key state
+confirmed the key was held when the fixture was terminated. After exit,
+Windows reported the key up, the desktop helper retired, and the output
+backend reported complete cleanup with empty held and possibly held lists.
+
+The replacement process recovered both telemetry families on the same
+profile owner. The source stayed pressed while the replacement waited
+for neutral. It received no marked keys during the 350 ms replay check.
+A fresh neutral transition armed it, then a deliberate press and release
+produced exactly one marked key-down and key-up. The isolated fixture
+finished with no cleanup errors or timing-budget misses.
+
+After PickerHost was dismissed, the dev Cockpit window still owned the
+foreground. The private receiver build allowed a focus handoff only from
+the known isolated Cockpit PID and executable. The first attempt with the
+handoff stopped at neutral arming because debug input publishes value
+changes. The passing run verified that an initial pre-neutral press
+produced no key before the falling edge armed output. The desktop fixture
+reached 97.91% line and 87.04% branch coverage. The native application was
+the same `committed-reader-final.exe` build used above.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794243239025/evidence.json` | `2b7043e37963a4f8f3366baf8f27108e44ae8431c72eaf1fe8077287f560b829` |
+| `dcs-held-exit-9628/retry-fresh-neutral.log` | `fcab54c4f419fb3d1e892d84aeced3584910536e4948e769d33cffcef1033374` |
+| `dcs-held-exit-9628/native_receiver.exe` | `aeb6ddfef463c171e9d7836e25fa82690c6719b629e36bef7308e938ab5dd675` |
 
 ### Process replacement during browser panel and vJoy load
 
