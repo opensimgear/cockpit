@@ -280,9 +280,13 @@ impl ClientRuntime {
             self.invalidate(reason);
         }
     }
-    pub fn set_network_access(&self, allowed: bool) {
+    /// Reject a late platform permission result before it can replace current access.
+    pub fn set_network_access_while_current(&self, allowed: bool, shell_current: &dyn Fn() -> bool) -> bool {
         // A grant must wait for a preceding revocation to retire its I/O scopes.
         let _update = self.shared.network_access_update.lock().unwrap_or_else(|poison| poison.into_inner());
+        if !shell_current() {
+            return false;
+        }
         if self.shared.network_access.swap(allowed, Ordering::SeqCst) != allowed {
             if allowed {
                 self.shared.presence_wake.notify();
@@ -290,6 +294,7 @@ impl ClientRuntime {
                 self.invalidate("Companion lost Local Network access");
             }
         }
+        true
     }
 
     pub fn requires_network_access(command: &str) -> bool {
@@ -297,10 +302,22 @@ impl ClientRuntime {
     }
 
     pub fn command(&self, request: Value) -> Result<Value, String> {
+        self.command_while_current(request, &|| true)
+    }
+
+    /// A shell request must still belong to the lifecycle that admitted it.
+    pub fn command_while_current(
+        &self,
+        request: Value,
+        shell_current: &dyn Fn() -> bool,
+    ) -> Result<Value, String> {
         let command = request["type"]
             .as_str()
             .ok_or("Missing companion client command")?;
-        if Self::requires_network_access(command) {
+        let network = Self::requires_network_access(command);
+        let request_epoch = self.shared.epoch.load(Ordering::SeqCst);
+        if network {
+            check_shell_lifecycle(shell_current)?;
             check_network_access(&self.shared)?;
         }
         if matches!(
@@ -308,6 +325,9 @@ impl ClientRuntime {
             "pair-start" | "pair-code-start" | "connect" | "refresh-assignments" | "storage-status"
         ) {
             let availability = self.shared.storage.available();
+            if network {
+                check_shell_lifecycle(shell_current)?;
+            }
             let mut state = self
                 .shared
                 .state
@@ -383,7 +403,7 @@ impl ClientRuntime {
                     .filter(|n| !n.trim().is_empty() && n.len() <= 80)
                     .ok_or("Choose a companion name.")?
                     .to_owned();
-                self.start_worker("pairing", None, move |shared, epoch| {
+                self.start_worker("pairing", request_epoch, shell_current, move |shared, epoch| {
                     let io = io_scope(&shared, epoch)?;
                     let payload = resolve_pairing_code(&endpoint, &code, &io)?;
                     pair_worker(shared, epoch, payload, name)
@@ -413,17 +433,17 @@ impl ClientRuntime {
                     .filter(|name| !name.trim().is_empty() && name.len() <= 80)
                     .ok_or("Choose a companion display name")?
                     .to_string();
-                self.start_worker("pairing", None, move |shared, epoch| {
+                self.start_worker("pairing", request_epoch, shell_current, move |shared, epoch| {
                     pair_worker(shared, epoch, payload, name)
                 })?;
                 Ok(json!({"ok":true}))
             }
             "refresh-assignments" => {
-                let (credential, selected_epoch) = {
+                let credential = {
                     let state = self.shared.state.lock().map_err(|_| "Client state lock poisoned")?;
-                    (state.credential.clone().ok_or("Pair with a host first")?, state.status.epoch)
+                    state.credential.clone().ok_or("Pair with a host first")?
                 };
-                self.start_worker("checking-assignments", Some(selected_epoch), move |shared, epoch| {
+                self.start_worker("checking-assignments", request_epoch, shell_current, move |shared, epoch| {
                     refresh_worker(shared, epoch, credential)
                 })?;
                 Ok(json!({"ok":true}))
@@ -438,11 +458,11 @@ impl ClientRuntime {
                     return Err("Takeover requires an explicit Cockpit host operator action".into());
                 }
                 let takeover = false;
-                let (credential, selected_epoch) = {
+                let credential = {
                     let state = self.shared.state.lock().map_err(|_| "Client state lock poisoned")?;
-                    (state.credential.clone().ok_or("Pair with a host first")?, state.status.epoch)
+                    state.credential.clone().ok_or("Pair with a host first")?
                 };
-                self.start_worker("connecting", Some(selected_epoch), move |shared, epoch| {
+                self.start_worker("connecting", request_epoch, shell_current, move |shared, epoch| {
                     session_worker(shared, epoch, credential, instance, takeover)
                 })?;
                 Ok(json!({"ok":true}))
@@ -572,19 +592,21 @@ impl ClientRuntime {
                 self.shared.presence_wake.notify();
                 Ok(json!({"ok":true}))
             }
-            "discover" => discover(Duration::from_millis(
-                request["durationMs"]
-                    .as_u64()
-                    .unwrap_or(1200)
-                    .clamp(200, 3000),
-            )),
+            "discover" => {
+                let result = discover(Duration::from_millis(
+                    request["durationMs"].as_u64().unwrap_or(1200).clamp(200, 3000),
+                ));
+                check_shell_lifecycle(shell_current)?;
+                result
+            }
             _ => Err("Unsupported companion client command".into()),
         }
     }
     fn start_worker(
         &self,
         phase: &str,
-        selected_epoch: Option<u64>,
+        selected_epoch: u64,
+        shell_current: &dyn Fn() -> bool,
         work: impl FnOnce(Arc<Shared>, u64) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
         check_network_access(&self.shared)?;
@@ -599,11 +621,15 @@ impl ClientRuntime {
                     .into(),
             );
         }
-        let reservation = match selected_epoch {
-            Some(epoch) => epoch.checked_add(1).ok_or(epoch).and_then(|next|
-                self.shared.epoch.compare_exchange(epoch, next, Ordering::SeqCst, Ordering::SeqCst)),
-            None => self.shared.epoch.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| epoch.checked_add(1)),
-        };
+        // The shell advances its lifecycle before checking whether a worker
+        // is running. Once the slot is claimed, either this check or the
+        // shell's cancellation can retire a request from the old lifecycle.
+        if let Err(error) = check_shell_lifecycle(shell_current) {
+            self.shared.running.store(false, Ordering::SeqCst);
+            return Err(error);
+        }
+        let reservation = selected_epoch.checked_add(1).ok_or(selected_epoch).and_then(|next|
+            self.shared.epoch.compare_exchange(selected_epoch, next, Ordering::SeqCst, Ordering::SeqCst));
         let retired = match reservation {
             Ok(epoch) => epoch,
             Err(epoch) => {
@@ -830,6 +856,11 @@ fn check_network_access(shared: &Shared) -> Result<(), String> {
     } else {
         Err("Allow Local Network access to connect to Cockpit".into())
     }
+}
+
+fn check_shell_lifecycle(current: &dyn Fn() -> bool) -> Result<(), String> {
+    current().then_some(()).ok_or_else(||
+        "Native application activity changed; select the action again".into())
 }
 fn receive_event(socket: &mut Socket, first: Option<tungstenite::Message>, budget: Duration) -> Result<Value, String> {
     let deadline = Instant::now() + budget;

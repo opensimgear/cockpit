@@ -2,7 +2,7 @@
   import { onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { scanQrFrames } from './qr-frame-scan';
-  let { disabled=false, onsubmitted }: { disabled?: boolean; onsubmitted: () => void } = $props();
+  let { disabled=false, lifecycleEpoch=null, onsubmitted }: { disabled?: boolean; lifecycleEpoch?: number|null; onsubmitted: () => void } = $props();
   let name=$state('Companion'), code=$state(''), endpoint=$state(''), busy=$state(false), error=$state('');
   let hints=$state<{name:string;endpoint:string}[]>([]);
   let video = $state<HTMLVideoElement>();
@@ -10,7 +10,7 @@
   let scanning=$state(false);
   let stopFrameScan: (() => void) | undefined;
   let generation=0;
-  const request=<T,>(value: unknown) => invoke<T>('companion_client_request',{request:value});
+  const request=<T,>(value: unknown) => invoke<T>('companion_client_request',{request:value,lifecycleEpoch});
   async function discover() {
     busy=true; error='';
     try { const result=await request<{hints:typeof hints}>({type:'discover',durationMs:1200}); hints=result.hints;

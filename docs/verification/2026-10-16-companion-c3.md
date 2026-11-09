@@ -187,3 +187,34 @@ in [#55](https://github.com/opensimgear/cockpit/issues/55), [#56](https://github
 | `lifecycle_probe.exe` | `c827b551ff8361e5a3074b185813c663d4cae2ed21e3883cbbb236b5bf99a256` |
 | Instrumented Windows companion test binary | `12b5ae14c332f27441412d811d053eba5ddd975b9bfe05d8aebb2863ef9b5308` |
 | `companion-client-io-native/1794230565574/evidence.json` | `3810c855ce75f2b43addcf0f4eee6a545a9780d6408bf7461b295f5fb9a26542` |
+
+### Requests queued before a lifecycle change
+
+Network actions now carry the renderer's observed lifecycle epoch. The
+native shell checks it before requesting Android permission, and the client
+checks it before network work, after the protected-store probe, and after
+claiming the worker slot. The worker also reserves the original client epoch.
+Android applies permission results under the existing serialized update
+guard, so a late result cannot overwrite a newer lifecycle's permission.
+Status, neutralization and Forget remain available after a lifecycle change.
+
+The Windows service regressions suspended a request while the protected
+store was blocked and retired another between dispatch and worker admission.
+Neither created a new worker epoch. The permission test rejected a stale
+denial and kept the current I/O scope live. In the running Windows dev Cockpit
+from `c8a57cb0`, the candidate client rejected a stale request and a fresh
+action paired with the same offer. Presence handoff, TLS cancellation and
+Forget passed with no cleanup errors. This probe called the shared client
+guard directly. The signed mobile shells and OS callbacks still require
+device qualification.
+
+The final Windows service suite passed 248 tests. Client coverage reached
+95.22% production lines and 90.65% LLVM functions. The companion frontend
+passed all 35 tests, its coverage gate, Svelte diagnostics and a production
+build using the installed tools.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| Candidate `lifecycle_probe.exe` | `7b85d07d7847e355a817a6c49fe1bc8d05cd9fc1977e7e267975826165049991` |
+| Instrumented Windows companion test binary | `6cbe141d1fb00c290c9ed7b1a1190536918d40fd0a44a13b7272f1e83362a04a` |
+| `companion-client-io-native/1794231227027/evidence.json` | `d108a3a78db75358bf21b9bc0bf6c587fcc3cc5b506f97fb46903be1069e71b5` |

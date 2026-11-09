@@ -18,13 +18,13 @@
   let assets = $state<Record<string,string>>({}), feedback = $state<FeedbackSamples>({}), hints = $state<unknown[]>([]);
   let cached = $state<CacheSummary[]>([]), offlineKey = $state(''), currentCacheKey = $state(''), cacheNotice = $state('Loading saved panels...');
   let loadedHash = $state(''), sessionUpdate = $state(0), switching = $state(false);
-  let epoch:number|null=null, readingStatus=false, statusQueued=false, disposed=false;
+  let epoch=$state<number|null>(null), readingStatus=false, statusQueued=false, disposed=false;
   let feedbackNotice=$state('');
   const feedbackView=createFeedbackView();
   let discovering=$state(false);
   const gate=createSessionGuard(), cache=createPublicationCache(publicationCacheStore({invoke,browser:browserCacheStore}));
   const remoteSelected=$derived(panelMode==='remote'), offline=$derived(panelMode==='offline');
-  const request = <T,>(value:unknown) => invoke<T>('companion_client_request',{request:value});
+  const request = <T,>(value:unknown) => invoke<T>('companion_client_request',{request:value,lifecycleEpoch:epoch});
   const inputQueue=createOrderedInputQueue((epoch,changes)=>request({type:'input',epoch,changes}),reason=>fail(new Error(reason)));
   const recorder = createPreviewController(flightTemplate,{onchange:changes=>untrack(()=>{
     if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed')inputQueue.enqueue(remote.epoch,changes);
@@ -132,7 +132,7 @@
       if(!switching&&!state.armed&&gate.snapshot().armed)disarm(state.reason);
     }));
     const unlisten:(()=>void)[]=[];
-    async function synchronizeNative(){try{const state=await invoke<{invalidationEpoch:number}>('companion_lifecycle');if(disposed)return;nativeAvailable=true;nativeStatus='Tauri 2 · native pinned WSS';if(epoch===null||epoch!==state.invalidationEpoch)disarm('Native lifecycle changed');epoch=state.invalidationEpoch;await refreshStatus();}catch{nativeAvailable=false;}}
+    async function synchronizeNative(){try{const state=await invoke<{invalidationEpoch:number}>('companion_lifecycle');if(disposed||epoch!==null&&state.invalidationEpoch<epoch)return;nativeAvailable=true;nativeStatus='Tauri 2 · native pinned WSS';if(epoch!==state.invalidationEpoch)disarm('Native lifecycle changed');epoch=state.invalidationEpoch;await refreshStatus();}catch{nativeAvailable=false;}}
     async function initialize(){
       try{
         const {listen}=await import('@tauri-apps/api/event');
@@ -170,7 +170,7 @@
       <section class="connection-card"><div class="card-heading"><h3>Connection</h3><span class="pill">{nativeAvailable?remote.phase.toUpperCase():'BROWSER PREVIEW'}</span></div>
         {#if nativeAvailable}
           {#if remote.pairedHost}<p><strong>Cockpit host</strong><br/>{remote.pairedHost.endpoint}</p><p class="fingerprint">Host CA · {remote.pairedHost.caSpkiSha256}</p><div class="connection-actions"><label>Assigned controller <select value={instanceId} onchange={event=>chooseAssignment(event.currentTarget.value)}>{#each assigned as item}<option value={item.id}>{item.label}</option>{/each}</select></label><button onclick={connect} disabled={!instanceId||remote.busy||remote.authenticationAvailable===false||['pairing','awaiting-approval','connecting','ready','armed'].includes(remote.phase)}>Connect</button><button onclick={refreshAssignments} disabled={remote.busy||remote.authenticationAvailable===false||['armed','ready','connecting'].includes(remote.phase)}>Refresh assignments</button><button onclick={disconnect}>Disconnect</button><button onclick={local}>Local preview</button><button onclick={forget}>Forget host</button></div>
-          {:else}<PairingForm disabled={remote.protectedStoreAvailable===false||remote.busy||['pairing','awaiting-approval'].includes(remote.phase)} onsubmitted={()=>void refreshStatus()} />{/if}
+          {:else}<PairingForm disabled={remote.protectedStoreAvailable===false||remote.busy||['pairing','awaiting-approval'].includes(remote.phase)} lifecycleEpoch={epoch} onsubmitted={()=>void refreshStatus()} />{/if}
           {#if remote.authenticationAvailable===false||remote.protectedStoreAvailable===false}<p>{remote.authenticationUnavailableReason??'Native authentication waits for qualified protected storage on this platform. Saved panels and local preview remain available.'}</p><button onclick={retryStorage}>Retry protected storage</button>{#if remote.storageError}<p class="validation-error">{remote.storageError}</p><button onclick={forget}>Forget saved pairing</button>{/if}{/if}{#if remote.requestId}<p>Completing the pairing handshake with Cockpit…</p>{/if}
           {#if remote.lastError}<p class="validation-error">{remote.lastError}</p>{/if}
           <button class="discover-button" onclick={discover} disabled={discovering}>{discovering?'Looking nearby...':'Find nearby hosts'}</button>{#if hints.length}<pre class="discovery-hints">{JSON.stringify(hints,null,2)}</pre>{/if}<p class="fine-print">Discovery is an untrusted hint. Credentials stay in native protected storage. Backgrounding, page changes and rotation stop an active session; Connect and Start explicitly afterward. If an instance is busy, use Cockpit’s host-side Disconnect/Takeover controls.</p>

@@ -41,10 +41,11 @@ fn companion_lifecycle(state: tauri::State<'_, Lifecycle>) -> LifecycleSnapshot 
 
 #[tauri::command]
 async fn companion_client_request(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: tauri::State<'_, ClientBridge>,
     events: tauri::State<'_, StatusEvents>,
     request: Value,
+    lifecycle_epoch: Option<u64>,
 ) -> Result<Value, String> {
     if request["type"] == "status" { events.acknowledge(); }
     if state.0.get().is_none() && request["type"] == "status" {
@@ -54,13 +55,18 @@ async fn companion_client_request(
             "assignments":[],"feedback":[]}));
     }
     let client = state.client()?;
+    let network = request["type"].as_str().is_some_and(ClientRuntime::requires_network_access);
     tauri::async_runtime::spawn_blocking(move || {
+        let current = || lifecycle_epoch == Some(app.state::<Lifecycle>().snapshot().invalidation_epoch);
+        let changed = || "Native application activity changed; select the action again".to_owned();
+        if network && !current() { return Err(changed()); }
         #[cfg(target_os = "android")]
-        if request["type"].as_str().is_some_and(ClientRuntime::requires_network_access) {
-            let platform = _app.state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>();
-            let access = platform.request_local_network()
-                .inspect_err(|_| client.set_network_access(false))?;
-            client.set_network_access(access.allowed);
+        if network {
+            let platform = app.state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>();
+            let access = platform.request_local_network();
+            let allowed = access.as_ref().is_ok_and(|result| result.allowed);
+            if !client.set_network_access_while_current(allowed, &current) { return Err(changed()); }
+            let access = access?;
             if !access.allowed {
                 return Err("Allow Local Network access for OpenSimGear Companion in Android Settings, then try again".into());
             }
@@ -68,23 +74,22 @@ async fn companion_client_request(
                 return Err("Local Network access is granted. Select the action again to continue".into());
             }
             if request["type"] == "discover" {
-                return platform.with_discovery(|| client.command(request));
+                return platform.with_discovery(|| client.command_while_current(request, &current));
             }
         }
-        client.command(request)
+        client.command_while_current(request, &current)
     })
         .await
         .map_err(|error| error.to_string())?
 }
 
 fn invalidate(window: &tauri::Window, reason: &str) {
+    let snapshot = window.state::<Lifecycle>().invalidate();
     if let Some(bridge) = window.try_state::<ClientBridge>() {
         if let Ok(client) = bridge.client() {
             client.invalidate_active(reason);
         }
     }
-    let lifecycle = window.state::<Lifecycle>();
-    let snapshot = lifecycle.invalidate();
     let _ = window.emit("companion-lifecycle-invalidated", snapshot);
 }
 
@@ -96,9 +101,8 @@ fn refresh_android_network_access(window: &tauri::Window) {
     tauri::async_runtime::spawn_blocking(move || {
         let platform = app.state::<tauri_plugin_companion_platform::PlatformStore<tauri::Wry>>();
         let allowed = platform.local_network_allowed();
-        if app.state::<Lifecycle>().snapshot().invalidation_epoch == epoch {
-            client.set_network_access(allowed);
-        }
+        client.set_network_access_while_current(allowed, &||
+            app.state::<Lifecycle>().snapshot().invalidation_epoch == epoch);
     });
 }
 
