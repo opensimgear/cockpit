@@ -37,6 +37,10 @@ and macOS LaunchAgent delivery remain in #199.
 | #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
 | #198 | The [30-minute dual-rate Windows soak](../verification/2026-11-09-dual-rate-recheck.md#30-minute-windows-baseline), [software burst and fault scenarios](../verification/2026-11-07-stream-fault-scenarios.md), and [terminal observation reopen](../verification/2026-11-08-terminal-observation-reopen.md) passed on their recorded builds. All eight views passed [60-second native and browser-dev idle traces](../verification/2026-11-08-idle-transport-matrix.md) with zero gateway requests. The [Windows native suite](../verification/2026-11-08-telemetry-quality-transitions.md#retain-identical-captures-on-2026-11-09) passed 2,486 tests at eight threads after identical telemetry projections stopped replacing the retained capture. The integrated matrix, full timing budget, remaining applicable suites and CI, and final acquisition inventory remain open. Physical unplug and replug remain in #199. |
 
+The #198 timing evidence now includes the
+[minimum host input lease margins during the 30-minute dual-rate soak](../verification/2026-11-09-dual-rate-recheck.md#sustained-host-input-lease-margin).
+Capture-to-reducer timing and the remaining lease boundaries are still open.
+
 ## R7 UI consistency
 
 The [R7 acceptance matrix](../verification/2026-11-08-r7-reopen-acceptance.md)

@@ -221,6 +221,38 @@ LLVM measured 97.62% line and 75.00% function coverage for the lease
 diagnostic, and 91.60% line and 79.56% function coverage for the hub.
 This LLVM build did not instrument branches.
 
-The margin covers the host leases of these two loopback sessions during
-the short run. The 30-minute margin, capture-to-reducer timing, other
-lease boundaries and real LAN panels remain open.
+### Sustained host input lease margin
+
+The same Windows dev binary passed the 1,800-second soak. The two
+native schedules overlapped for 1,799,999.95 ms. One fixture request
+read both exact panel sessions before Stop. Both panels remained armed
+on generation 1 and the original publication through 910 health
+checks, 60 inventory reads and 60 discovery scans.
+
+| Panel | Accepted renewals since baseline | Longest renewal gap | Gap at read | Minimum margin on 1,500 ms lease | UDP-to-canvas upper p50 / p95 / p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 7,046 | 267 ms | 26 ms | 1,233 ms | 4.08 / 9.33 / 42.29 ms |
+| 2 | 7,042 | 268 ms | 215 ms | 1,232 ms | 7.17 / 42.16 / 46.36 ms |
+
+| Source | Offered edges | Received including Stop | Offer-to-Raw-Input p50 / p95 / p99 | Peak pending frames / batch |
+| --- | ---: | ---: | ---: | ---: |
+| 1 kHz | 1,800,001 | 1,800,002 | 3.0 / 6.5 / 10.0 ms | 26 / 8 |
+| 125 Hz | 225,001 | 225,002 | 3.2 / 7.0 / 10.3 ms | 21 / 5 |
+
+The receiver matched every offered edge in order. Both Stop releases
+arrived after 36.49 ms and the slot returned to free. The fast native
+and MCP readers received 404,162 and 405,412 updates during the soak.
+The held native reader resumed after acknowledgement. The fast MCP
+reader saw retirement at Stop, and the unread MCP response closed. The
+closing private-memory and panel-heap peaks were below their opening
+peaks in the fixture's comparison windows. No timing budget misses or
+cleanup errors were recorded.
+
+The local evidence is
+`.research/dcs-physics-native/1794190871342/evidence.json`, SHA-256
+`cf8c334c472ed24cdf5f2e30c7e4b72714c6a1a69fd76c696aec1d485c8a466e`.
+The Raw Input receiver matches the earlier sustained fixture hash.
+
+These margins cover the two host leases for loopback WSS panel input
+under authored DCS traffic. Capture-to-reducer timing, other lease
+boundaries and real LAN, controller and simulator checks remain open.
