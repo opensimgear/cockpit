@@ -53,3 +53,36 @@ that edited inventory with the pinned tables and rejected it. The committed
 checks pass for all 247 historical and 464 current sites. The frontend timer
 guard and its five regressions pass. The unresolved HidHide executable and
 Sunton held-coordinate acquisition boundaries remain in #189.
+
+## Private mobile session qualification builds
+
+The Android and iOS shells can opt in to authenticated panel sessions
+with the `mobile-qualification` feature in a debug build. Standard
+mobile builds keep the session gate. The qualification build still
+requires its native protected store. Existing pinned TLS, assignment,
+neutral baseline and explicit Start checks govern session admission.
+[Build commands](../../apps/companion/README.md#development-and-native-builds)
+and [Tauri CLI options](https://v2.tauri.app/reference/cli/#ios-build).
+
+The Windows companion service passed all 241 tests with the feature
+enabled. The admission regression exercised desktop, gated mobile and
+qualification policies with available and locked stores. LLVM measured
+94.27% lines and 88.32% functions for `client.rs`. The mobile frontend
+passed 35 tests, its coverage floors, and Svelte checking.
+
+The rebuilt Windows client-library probe passed live Cockpit pairing,
+three authenticated presence handoffs, stalled TLS cancellation and
+Forget. Cleanup reported zero errors. The first launcher opened the CDP
+target before Tauri IPC was ready and stopped before pairing. The passing
+run waited for the bridge before opening the fixture.
+
+The host and probe SHA-256 values are
+`ed43c0ead1eeb6d41a06aaee13d1b36a4bbcdb409d07b30235b71863d63536ff`
+and `7c3e8b101830f664de8b036fa165285f08697f6a2ef54d6223d61e2b6293d34e`.
+The live result is
+`.research/reactive/companion-client-io-native/1794202389565/evidence.json`,
+SHA-256 `8c90233df48f0f3ee35170b33601a50567eedfa50d6c8849d344dde1006f2b5f`.
+
+This Windows run verified the shared client library and mobile frontend.
+Native Android and iOS builds, signing, LAN and device lifecycle
+qualification remain open in #55, #56 and #199.

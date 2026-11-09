@@ -731,6 +731,7 @@ fn set_storage_status(status: &mut ClientStatus, availability: Result<(), String
     status.authentication_unavailable_reason = authentication_reason(
         unavailable,
         cfg!(any(target_os = "android", target_os = "ios")),
+        cfg!(debug_assertions) && cfg!(feature = "mobile-qualification"),
     );
     if let Some(error) = &status.storage_error {
         status.phase = "storage-error".into();
@@ -739,8 +740,12 @@ fn set_storage_status(status: &mut ClientStatus, availability: Result<(), String
     }
     status.authentication_available = status.authentication_unavailable_reason.is_none();
 }
-fn authentication_reason(unavailable: Option<String>, mobile: bool) -> Option<String> {
-    if mobile {
+fn authentication_reason(
+    unavailable: Option<String>,
+    mobile: bool,
+    mobile_qualification_build: bool,
+) -> Option<String> {
+    if mobile && !mobile_qualification_build {
         Some("Mobile authentication remains disabled pending native protected-store and lifecycle qualification (#55/#56); local preview and protected-store probing remain available.".into())
     } else {
         unavailable.map(|reason| {
@@ -1509,14 +1514,18 @@ mod tests {
 
     #[test]
     fn native_adapter_probe_and_mobile_qualification_are_distinct_admission_boundaries() {
-        assert!(authentication_reason(None, false).is_none());
-        assert!(authentication_reason(Some("Locked".into()), false)
+        assert!(authentication_reason(None, false, false).is_none());
+        assert!(authentication_reason(Some("Locked".into()), false, false)
             .unwrap()
             .contains("Locked"));
-        assert!(authentication_reason(None, true)
+        assert!(authentication_reason(None, true, false)
             .unwrap()
             .contains("#55/#56"));
-        assert!(authentication_reason(Some("Locked".into()), true).is_some());
+        assert!(authentication_reason(Some("Locked".into()), true, false).is_some());
+        assert!(authentication_reason(None, true, true).is_none());
+        assert!(authentication_reason(Some("Locked".into()), true, true)
+            .unwrap()
+            .contains("Locked"));
         let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         storage.available.store(false, Ordering::SeqCst);

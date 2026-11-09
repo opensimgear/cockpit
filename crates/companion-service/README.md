@@ -72,11 +72,11 @@ validated by rustls. The leaf is not accepted as a CA. Public-CA trust and globa
 certificate-verifier overrides are unnecessary. CA changes require re-pairing;
 discovery does not rewrite saved trust or endpoints.
 
-Only Windows DPAPI-backed credentials/private keys are implemented. Android/iOS
-pairing and connect stop before secret exchange until their protected-store
-adapters are qualified. Browser rendering remains a local preview. The native
-client stores credential/trust and assignments, not a durable downloaded-panel
-asset cache. Never put credentials in UI exports, logs, URLs or web storage.
+The native client uses platform-protected credential storage. Android injects an
+Android Keystore adapter and iOS uses Apple Keychain. Authenticated panel sessions
+on mobile require the private debug qualification build pending #55/#56.
+The client stores credentials, trust and assignments separately from the public
+panel cache. Keep credentials out of UI exports, logs, URLs and web storage.
 
 ## Wire summary and bounds
 

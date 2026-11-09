@@ -21,8 +21,8 @@ Native credential adapters are distinct from this public cache:
 
 | Platform | Native protection | Qualification boundary |
 | --- | --- | --- |
-| Android | App-owned Android Keystore AES-GCM adapter | Native bridge wired; authentication remains disabled pending #55. |
-| iOS/iPadOS | Native Apple Keychain adapter | Authentication remains disabled pending #56. |
+| Android | App-owned Android Keystore AES-GCM adapter | Authenticated panel sessions require a qualification build pending #55. |
+| iOS/iPadOS | Native Apple Keychain adapter | Authenticated panel sessions require a qualification build pending #56. |
 
 There is no plaintext credential fallback. **Retry protected storage** re-probes a locked store and restores valid saved authority disarmed. Corrupt state remains inspectable; **Forget saved pairing** explicitly deletes only this app's saved credential before allowing a new installation identity. Failed deletion preserves existing authority. Forgetting pairing and clearing public panels are separate actions.
 
@@ -57,6 +57,18 @@ pnpm --filter @opensimgear/companion ios:build:dev
 ```
 
 Android needs the configured SDK/NDK/JDK; iOS needs macOS/Xcode and signing/provisioning. Generated projects are ignored and reconstructed from the checked-in Tauri configuration/native plugin. Debug APKs use Android development signing; this is not release qualification. Candidate floors are Android API29 and iOS15. These are configuration choices, not a verified support matrix.
+
+For private device qualification, build with the explicit `mobile-qualification`
+feature and use a test Cockpit host:
+
+```text
+pnpm --filter @opensimgear/companion android:build:dev --features mobile-qualification
+pnpm --filter @opensimgear/companion ios:build:dev --features mobile-qualification
+```
+
+The opt-in only applies to debug builds. It requires the platform's protected
+store and the existing pairing and session checks. Keep these builds private
+while testing the device and signed installation criteria in #55/#56.
 
 Mobile physical install, credential/permission and lifecycle checks remain open in #55/#56. See [C3 verification](../../docs/verification/2026-10-16-companion-c3.md) and [the feature guide](../../docs/companion-uis.md).
 
@@ -109,5 +121,5 @@ runs use these credentials. The IPA uses the App Store Connect export method for
 TestFlight/App Store processing; CI attaches it to the prerelease and does not upload
 it to Apple or make it directly sideloadable. See [Tauri's signing guide](https://v2.tauri.app/distribute/sign/ios/).
 
-These are development artifacts. Mobile authentication remains gated pending #55/#56;
-CI builds and signing do not establish physical-device qualification.
+These are development artifacts. They keep the default mobile session gate pending #55/#56.
+Physical-device qualification requires the device checks above.

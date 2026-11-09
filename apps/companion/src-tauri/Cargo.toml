@@ -26,3 +26,4 @@ tauri-plugin-companion-platform = { path = "../../../crates/companion-platform" 
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+mobile-qualification = ["osg-companion-service/mobile-qualification"]
