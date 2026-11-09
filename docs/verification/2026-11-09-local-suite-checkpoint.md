@@ -1,0 +1,60 @@
+# Local reactive verification on Windows and WSL
+
+Cockpit production sources are from `af78067d1f53e0c5c47a913c3a0a899ef67aba42`.
+The clean frontend export used the pinned installed dependencies and a private
+WebView and database. This checkpoint adds the MCP topic documentation and the
+Nx test ownership correction to that export.
+
+## Cockpit
+
+All applicable `check`, `test` and `build` targets passed across 19 Nx
+projects with caching disabled. They include the portal, browser and
+mobile companion frontend checks, MCP client tests and configured
+TypeScript coverage. The first run found that the Devices coverage
+task and the shell test list both ran the visibility test. Assigning
+the test to Devices leaves one coverage owner. The release tooling
+and shared fixture checks passed once the installed Python runtime
+preceded the Windows Store alias on PATH.
+
+The existing [instrumented Windows suite](2026-11-09-dual-rate-recheck.md#debug-input-capture-to-reducer)
+passed 2,490 tests with 18 existing ignores. The changed native modules met
+the line and function coverage floors. The same dev executable passed the
+[30-minute dual-rate qualification](2026-11-09-dual-rate-recheck.md#sustained-debug-capture-to-reducer-measurement).
+Its SHA-256 is
+`4f66a66d36f49f8aff26ca7cb9bf9da5a6d1107a8bb28ce70a231261132cb31b`.
+
+The live UI fixture passed preference fan-out to two readers, disposal and
+three reloads without a gateway refresh. The live MCP SDK fixture verified
+observation baselines, UI and MCP commits, dirty draft isolation, Activity
+updates and control parity. Its first run found three advertised topics
+missing from the parity table. The documented topic set now matches the
+runtime list and the live rerun passed.
+
+| Live evidence under the local export | SHA-256 |
+| --- | --- |
+| `source/.research/reactive/native-transport.json` | `39416fd82d20e543f19430a535fe2cb12ed895b54ef88060bdbaa4539f560ac5` |
+| `source/.research/reactive/mcp-native-observation.json` | `a410969103d75c2ae19190cd065fac3f51be2cbe974159186f458a57a27d11f` |
+
+## Firmware
+
+| Host suite | Local result |
+| --- | --- |
+| Firmware common `64025cce` | 10 CTest cases passed with the pinned TinyUSB descriptors. Portable core coverage was 99.78% lines. |
+| Device template `c5457884` | 24 CTest cases passed, including native USB event and metadata delivery. |
+| Device gateway `dfd83084` | Six CTest cases passed. Gateway publication passed ASan, UBSan and the per-module GCC coverage gates. |
+| Pico Debug at the same gateway revision | Protocol-3 host tests passed under ASan and UBSan. The debug gateway and virtual device measured 100.00% and 99.38% line coverage. |
+| ESP32 companion | 13 portable suites, 14 packaging and provisioning tests and four export tests passed. Export coverage was 96.83% lines, 95.59% branches and 92.86% functions. |
+
+The [pinned Sunton and Waveshare builds](2026-11-08-esp32-current-qualification.md#waveshare-touch-interrupt-and-held-report-deadline)
+identify the firmware images. The ESP32 sources and shared font assets
+match `2effc3e85bce63c64c1f36388f471e3fdeb299a0`. The locked LVGL tests
+passed for the rich and compact render profiles, and the firmware
+software-client sanitizer smoke passed. The whole-panel compositor
+reached 100% line, 84.31% branch and 100% function coverage. This run
+used portable fixtures and made no writes to physical boards.
+
+The local logs are under `.research/reactive/local-suite-af78067d-42912/`.
+Linux desktop dependency resolution stopped offline on `arbitrary 1.5.0`.
+The macOS desktop and signed Android and iOS applications were unavailable
+in this run. Actual simulator and hardware checks remain in #199 and
+mobile prerequisites remain in #55 and #56. CI remains deferred.

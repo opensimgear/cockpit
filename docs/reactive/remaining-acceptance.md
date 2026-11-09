@@ -5,7 +5,7 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 42 checked and 13
+The original #189–198 acceptance list has 55 criteria, with 43 checked and 12
 open. Six of the open criteria were transferred to #199 for user-operated
 qualification. Some remaining criteria have delivered software and outstanding
 integrated or platform qualification.
@@ -43,6 +43,10 @@ The [30-minute debug capture-to-reducer fixture](../verification/2026-11-09-dual
 matched every frame on both lanes and measured capture to the end of
 the accepted reducer batch. Other acquisition paths and the remaining
 lease boundaries are still open.
+
+The [local suite checkpoint](../verification/2026-11-09-local-suite-checkpoint.md)
+records the #198 local test and coverage results and the unavailable platform
+and hardware checks. The integrated acceptance and CI gates remain open.
 
 ## R7 UI consistency
 

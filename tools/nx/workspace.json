@@ -136,6 +136,7 @@
         "src/lib/usb-metadata-observations.test.mjs",
         "src/lib/persistence/inventory-storage.test.mjs",
         "src/lib/controller-observations.test.mjs",
+        "src/lib/visible-observation.test.mjs",
         "src/lib/controller-read-models/*.test.mjs"
       ],
       "sourcePatterns": [
