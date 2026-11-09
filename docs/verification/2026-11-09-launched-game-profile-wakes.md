@@ -181,6 +181,16 @@ against a 1,000 Hz HTTP target. These rates describe authored HTTP input
 through Windows Raw Input. Physical preview and controller latency remain
 in #199.
 
+The warm-up awaited each HTTP acknowledgement before offering the next
+value on that stream. Its fast lane measured 1.09 / 3.45 / 10.22 ms
+HTTP round-trip p50 / p95 / p99 and 1.81 / 4.08 / 5.61 ms offer-to-Raw
+Input p50 / p95 / p99. The offered and received sequence matched, including
+the release on Stop, and peak pending input was two frames. The serial
+request cadence is therefore a separate limit from Cockpit's output
+timing. The browser gateway dispatches independent requests on separate
+threads, so overlapping same-stream requests would require ordered
+admission to preserve sequence validation.
+
 | Local evidence | SHA-256 |
 | --- | --- |
 | `dcs-browser-replacement/osg-gateway-service.exe` | `822f93b0aa37a2f84402dc45ae6c6d982652e09e1480533273dcd5cd1de227b7` |
