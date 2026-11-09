@@ -30,6 +30,11 @@ pub struct Event {
     pub reason: Reason,
     pub values: BTreeMap<String, Sample>,
 }
+pub(crate) struct Commit {
+    pub cursor: u64,
+    pub captured_us: u64,
+    pub native_read_us: Option<u64>,
+}
 #[derive(Clone, Debug)]
 pub struct SourceSnapshot {
     pub id: String,
@@ -52,6 +57,7 @@ pub struct Page {
     pub events: Vec<Event>,
 }
 struct WatchState {
+    clock_id: uuid::Uuid,
     ids: BTreeSet<String>,
     wake: Arc<dyn Fn() + Send + Sync>,
     read_cursor: AtomicU64,
@@ -113,6 +119,7 @@ impl Journal {
             return Err("Controller report watch limit reached.".into());
         }
         let state = Arc::new(WatchState {
+            clock_id: self.clock_id,
             ids: ids.iter().cloned().collect(),
             wake,
             read_cursor: AtomicU64::new(self.cursor),
@@ -120,8 +127,8 @@ impl Journal {
         self.watches.push(Arc::downgrade(&state));
         Ok(ReportWatch { state })
     }
-    fn notify(&mut self, source: &str, evicted: Option<u64>, exhausted: bool) {
-        self.watches.retain(|watch| {
+    fn notify(watches: &mut Vec<Weak<WatchState>>, source: &str, evicted: Option<u64>, exhausted: bool) {
+        watches.retain(|watch| {
             let Some(watch) = watch.upgrade() else {
                 return false;
             };
@@ -145,24 +152,33 @@ impl Journal {
     pub fn cursor(&self) -> u64 {
         self.cursor
     }
-    pub fn publish(&mut self, mut event: Event) -> Option<Event> {
+    pub fn publish(&mut self, mut event: Event) -> Option<Commit> {
         // Exhaustion faults consumers permanently; it must never reuse a cursor.
         let Some(next) = self.cursor.checked_add(1) else {
             self.events.clear();
-            self.notify(&event.source, None, true);
+            Self::notify(&mut self.watches, &event.source, None, true);
             return None;
         };
         self.cursor = next;
         event.cursor = next;
         event.captured_us = self.now();
+        let commit = Commit { cursor: next, captured_us: event.captured_us, native_read_us: event.native_read_us };
         let evicted =
             (self.events.len() == REPORT_LIMIT).then(|| self.events.pop_front().unwrap().cursor);
-        self.events.push_back(event.clone());
-        self.notify(&event.source, evicted, next == u64::MAX);
-        Some(event)
+        self.events.push_back(event);
+        let source = &self.events.back().expect("committed report").source;
+        Self::notify(&mut self.watches, source, evicted, next == u64::MAX);
+        Some(commit)
     }
     pub fn page(&self, session: &str, expected_session: &str, after: u64) -> Page {
+        self.read_page(session, expected_session, after, None)
+    }
+    pub fn page_for_watch(&self, session: &str, expected_session: &str, after: u64, watch: &ReportWatch) -> Page {
+        self.read_page(session, expected_session, after, Some(&watch.state))
+    }
+    fn read_page(&self, session: &str, expected_session: &str, after: u64, watch: Option<&WatchState>) -> Page {
         let gap = expected_session != session
+            || watch.is_some_and(|watch| watch.clock_id != self.clock_id)
             || after > self.cursor
             || self.cursor == u64::MAX
             || self.events.front().is_some_and(|e| after < e.cursor - 1);
@@ -174,9 +190,12 @@ impl Journal {
             events: if gap {
                 vec![]
             } else {
+                // Global cursors are contiguous, so readers can start at the
+                // unread suffix before checking their source selection.
+                let start = self.events.front().map_or(0, |first| (after - (first.cursor - 1)) as usize);
                 self.events
-                    .iter()
-                    .filter(|e| e.cursor > after)
+                    .range(start..)
+                    .filter(|event| watch.is_none_or(|watch| watch.ids.contains(&event.source)))
                     .cloned()
                     .collect()
             },

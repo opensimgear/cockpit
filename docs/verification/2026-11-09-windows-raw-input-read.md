@@ -134,3 +134,39 @@ closure and profile replacement. All 1,754 portal/script tests passed.
 The production frontend build passed and Svelte reported zero diagnostics.
 Controller preview coverage reached 98.76% line, 96.98% branch and 97.50%
 function coverage.
+
+## Watched HID routing pages
+
+The capture journal takes ownership of each report's value map and gives
+preview publication its commit timestamps and cursor. The profile reader
+starts at the unread suffix and copies only reports selected by its native
+watch. It advances the global cursor even when that suffix contains only
+unrelated controllers. An unread eviction still invalidates the page and
+requires a fresh baseline. A watch from a different capture clock cannot
+supply a page. The HID adapter looks up routed values in the original
+report map.
+
+The running Windows dev app passed Devices preview lifecycle, visibility
+reader retirement and shared capture through profile replacement. The
+output-free profile retained its physical value with the preview closed.
+In a separate test, the same app sent all 65 authored vJoy transitions
+and the Stop release to Windows Raw Input while a preview held its receipt.
+Authored submission to Raw Input receipt p50/p95/p99 was
+1.26/1.52/2.61 ms. Physical raw-input-to-virtual timing remains in #199.
+
+The dev app SHA-256 is
+`ed43c0ead1eeb6d41a06aaee13d1b36a4bbcdb409d07b30235b71863d63536ff`.
+The receiver SHA-256 is
+`5ed395550241f052ac39fff604c347e5d0fe90efd97e8ba2df9b4f47b5d86947`.
+The authored trace is
+`.research/c193-reconnect/hid-route-copy/vjoy-raw-burst-result.json`,
+SHA-256 `8834b0e25f4a1af66fbfeaf129f705d97b6ff51d0be28de032b20f6d9f363e73`.
+The physical profile evidence is under
+`.research/reactive/profile-source-wakes-native/1794201400008/`.
+
+The Windows tests passed 179 controller-input, 183 mapping-host, and
+475 profile-session cases. The profile-session filter had two existing
+ignores. Instrumented line coverage was 100% for the controller journal
+and snapshot reader, 95.00% for registry observation, and 86.97% for the
+native profile HID input adapter. The adapter reached 89.66% function
+coverage.

@@ -36,4 +36,7 @@ impl Registry {
     pub fn stream_page(&self, session: &str, after: u64) -> Page {
         self.journal.page(&self.session, session, after)
     }
+    pub fn stream_page_for_watch(&self, session: &str, after: u64, watch: &crate::stream::ReportWatch) -> Page {
+        self.journal.page_for_watch(&self.session, session, after, watch)
+    }
 }

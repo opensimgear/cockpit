@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 /// capture separate lets continuity tests use actual stream snapshots/pages.
 pub(crate) trait HidCapture {
     fn snapshot(&self, ids: &[String]) -> Result<stream::Snapshot, String>;
-    fn page(&self, session: &str, cursor: u64) -> stream::Page;
+    fn page(&self, session: &str, cursor: u64, watch: Option<&stream::ReportWatch>) -> stream::Page;
     fn watch_reports(&self, ids: &[String], wake: std::sync::Arc<dyn Fn() + Send + Sync>)
         -> Result<Option<stream::ReportWatch>, String>;
 }
@@ -25,8 +25,11 @@ impl HidCapture for osg_controller_input::ControllerService {
     fn snapshot(&self, ids: &[String]) -> Result<stream::Snapshot, String> {
         self.stream_snapshot(ids)
     }
-    fn page(&self, session: &str, cursor: u64) -> stream::Page {
-        self.stream_page(session, cursor)
+    fn page(&self, session: &str, cursor: u64, watch: Option<&stream::ReportWatch>) -> stream::Page {
+        match watch {
+            Some(watch) => self.stream_page_for_watch(session, cursor, watch),
+            None => self.stream_page(session, cursor),
+        }
     }
     fn watch_reports(&self, ids: &[String], wake: std::sync::Arc<dyn Fn() + Send + Sync>)
         -> Result<Option<stream::ReportWatch>, String> {
@@ -231,8 +234,8 @@ impl HidInputs {
         if self.sources.is_empty() {
             return Ok((vec![], vec![]));
         }
-        let page = controllers.page(&self.session, self.cursor);
-        // The page owns copies of every retained report. A later eviction
+        let page = controllers.page(&self.session, self.cursor, self.watch.as_ref());
+        // The page owns the selected reports and the full journal cursor. A later eviction
         // cannot erase that work, even while the reducer is still admitting it.
         if let Some(watch) = &self.watch { watch.advance(page.cursor); }
         let mut frames = vec![];
@@ -343,14 +346,9 @@ impl Source {
                 },
             ).map(Some);
         }
-        let values = event
-            .values
-            .iter()
-            .map(|(id, sample)| (id.as_str(), sample))
-            .collect::<BTreeMap<_, _>>();
         let mut changes = vec![];
         for port in &self.ports {
-            let sample = match values.get(port.observed.as_str()) {
+            let sample = match event.values.get(port.observed.as_str()) {
                 Some(sample) => {
                     let control = self
                         .controls

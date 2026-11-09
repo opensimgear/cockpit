@@ -355,6 +355,13 @@ impl ControllerService {
             .unwrap_or_else(|p| p.into_inner())
             .stream_page(session, after)
     }
+    /// Copy only the watched sources' reports, with the full journal cursor and gap semantics.
+    pub fn stream_page_for_watch(&self, session: &str, after: u64, watch: &stream::ReportWatch) -> stream::Page {
+        self.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .stream_page_for_watch(session, after, watch)
+    }
     /// Runtime admission time in the capture journal's clock domain, without
     /// taking the registry mutex or collecting a report page.
     pub fn monotonic_us(&self) -> u64 { self.clock.now_us() }

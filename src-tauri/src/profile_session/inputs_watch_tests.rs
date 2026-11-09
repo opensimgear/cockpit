@@ -19,8 +19,12 @@ impl HidCapture for NativeCapture {
         }
         registry.stream_snapshot(ids)
     }
-    fn page(&self, session: &str, cursor: u64) -> stream::Page {
-        self.registry.lock().unwrap().stream_page(session, cursor)
+    fn page(&self, session: &str, cursor: u64, watch: Option<&stream::ReportWatch>) -> stream::Page {
+        let registry = self.registry.lock().unwrap();
+        match watch {
+            Some(watch) => registry.stream_page_for_watch(session, cursor, watch),
+            None => registry.stream_page(session, cursor),
+        }
     }
     fn watch_reports(&self, ids: &[String], wake: Arc<dyn Fn() + Send + Sync>)
         -> Result<Option<stream::ReportWatch>, String> {
@@ -146,7 +150,7 @@ fn a_connected_hid_source_stays_known_after_its_last_report_ages() {
     let current = capture.snapshot(&[capture.selected.clone()]).unwrap();
     let quiet = &current.sources[0].baseline;
     assert_eq!(quiet.sequence, original.sequence);
-    assert!(capture.page(&baseline.session, baseline.cursor).events.is_empty());
+    assert!(capture.page(&baseline.session, baseline.cursor, None).events.is_empty());
     assert!(current.captured_us - admitted_at.0 >= 50_000);
     let now = Counter(current.captured_us);
     reader.refresh_verified_liveness(&capture, &mut reducer, now).unwrap();

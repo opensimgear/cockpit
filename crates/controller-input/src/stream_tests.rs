@@ -267,6 +267,62 @@ fn unrelated_evictions_wake_only_watchers_whose_unread_global_history_was_lost()
 }
 
 #[test]
+fn controller_service_reads_only_the_sources_on_its_native_watch() {
+    let service = crate::ControllerService::new(None, false);
+    let (selected, other) = {
+        let mut registry = service.registry.lock().unwrap();
+        (registry.connect(fixture("selected", None)).unwrap(), registry.connect(fixture("other", None)).unwrap())
+    };
+    let watch = service.watch_reports(std::slice::from_ref(&selected), Arc::new(|| {})).unwrap();
+    {
+        let mut registry = service.registry.lock().unwrap();
+        for id in [&selected, &other] {
+            registry.report(id, 1, &BTreeMap::from([(1, 10)])).unwrap();
+            registry.report(id, 2, &BTreeMap::from([(2, 1)])).unwrap();
+        }
+    }
+    let all = service.stream_page("", 0);
+    let page = service.stream_page_for_watch(&all.session, 0, &watch);
+    assert!(!page.gap);
+    assert_eq!(page.cursor, all.cursor);
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].source, selected);
+}
+
+#[test]
+fn watched_pages_keep_selected_order_and_global_loss_boundaries() {
+    let mut journal = Journal::default();
+    let watch = journal.watch(&["selected".into()], Arc::new(|| {})).unwrap();
+    journal.publish(event("noise", Reason::Change));
+    let mut pressed = event("selected", Reason::Change);
+    pressed.native_read_us = Some(1);
+    let commit = journal.publish(pressed).unwrap();
+    journal.publish(event("noise", Reason::Change));
+    journal.publish(event("selected", Reason::Disconnect));
+    journal.publish(event("noise", Reason::Change));
+
+    let page = journal.page_for_watch("session", "session", 0, &watch);
+    assert!(!page.gap);
+    assert_eq!(page.cursor, 5);
+    assert_eq!(page.events.iter().map(|event| event.cursor).collect::<Vec<_>>(), [2, 4]);
+    assert_eq!(page.events[0].captured_us, commit.captured_us);
+    assert_eq!(page.events[0].native_read_us, commit.native_read_us);
+    assert_eq!(page.events[1].reason, Reason::Disconnect);
+    assert_eq!(journal.page("session", "session", 0).events.len(), 5);
+    assert!(journal.page_for_watch("session", "session", 4, &watch).events.is_empty());
+    assert!(Journal::default().page_for_watch("session", "session", 0, &watch).gap);
+
+    for _ in 0..REPORT_LIMIT {
+        journal.publish(event("noise", Reason::Change));
+    }
+    assert!(journal.page_for_watch("session", "session", 4, &watch).gap);
+    let page = journal.page_for_watch("session", "session", 5, &watch);
+    assert!(!page.gap);
+    assert!(page.events.is_empty());
+    assert_eq!(page.cursor, journal.cursor());
+}
+
+#[test]
 fn selected_report_and_unread_eviction_notify_once_per_publication() {
     let mut journal = Journal::default();
     let (notifications, wake) = counter();

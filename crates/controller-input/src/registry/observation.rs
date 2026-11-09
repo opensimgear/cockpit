@@ -85,7 +85,7 @@ impl Registry {
         &mut self,
         id: &str,
         reason: &str,
-        captured: Option<&Event>,
+        captured: Option<&crate::stream::Commit>,
         _descriptors: bool,
     ) {
         if let Some(source) = self.sources.get_mut(id) {

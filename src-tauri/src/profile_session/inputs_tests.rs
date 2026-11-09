@@ -28,7 +28,8 @@ impl HidCapture for Capture {
             sources: self.sources.borrow().clone(),
         })
     }
-    fn page(&self, session: &str, cursor: u64) -> stream::Page {
+    fn page(&self, session: &str, cursor: u64, watch: Option<&stream::ReportWatch>) -> stream::Page {
+        assert!(watch.is_none());
         assert_eq!(session, "native-session");
         assert!(cursor >= 10);
         self.pages.borrow_mut().pop_front().unwrap_or(stream::Page {
