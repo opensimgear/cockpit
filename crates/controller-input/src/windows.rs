@@ -1,6 +1,7 @@
 //! Dedicated background Raw Input owner. Discovery does not acquire controllers or modify HID policy.
 use crate::registry::{Control, Definition, Identity, Kind, Registry, MAX_CONTROLS};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     mem::size_of,
     ptr::{null, null_mut},
@@ -24,6 +25,7 @@ struct Api {
     info: unsafe extern "system" fn(HANDLE, u32, *mut core::ffi::c_void, *mut u32) -> u32,
     list: unsafe extern "system" fn(*mut RAWINPUTDEVICELIST, *mut u32, u32) -> u32,
     raw: unsafe extern "system" fn(HRAWINPUT, u32, *mut core::ffi::c_void, *mut u32, u32) -> u32,
+    input_buffers: RefCell<InputBuffers>,
     caps: unsafe extern "system" fn(isize, *mut HIDP_CAPS) -> i32,
     buttons: unsafe extern "system" fn(i32, *mut HIDP_BUTTON_CAPS, *mut u16, isize) -> i32,
     values: unsafe extern "system" fn(i32, *mut HIDP_VALUE_CAPS, *mut u16, isize) -> i32,
@@ -47,6 +49,7 @@ impl Api {
             info: GetRawInputDeviceInfoW,
             list: GetRawInputDeviceList,
             raw: GetRawInputData,
+            input_buffers: RefCell::new(InputBuffers::new()),
             caps: HidP_GetCaps,
             buttons: HidP_GetButtonCaps,
             values: HidP_GetValueCaps,
@@ -63,7 +66,23 @@ struct Device {
     path: String,
     preparsed: Vec<usize>,
     report_len: usize,
-    controls: Vec<Control>,
+    numbered_reports: bool,
+}
+
+const RAW_INPUT_BYTES: u32 = 256 * 1024;
+
+struct InputBuffers {
+    raw: Vec<usize>,
+    decoded: Vec<HIDP_DATA>,
+}
+
+impl InputBuffers {
+    fn new() -> Self {
+        Self {
+            raw: words(RAW_INPUT_BYTES as usize),
+            decoded: vec![HIDP_DATA::default(); MAX_CONTROLS],
+        }
+    }
 }
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -210,6 +229,7 @@ unsafe fn device(api: &Api, handle: HANDLE) -> Result<Option<(Device, Definition
             .unwrap_or("")
             .to_ascii_lowercase()
     );
+    let numbered_reports = controls.iter().any(|control| control.report_id != 0);
     let definition = Definition {
         identity: Identity {
             backend: "windows-raw-input".into(),
@@ -221,7 +241,7 @@ unsafe fn device(api: &Api, handle: HANDLE) -> Result<Option<(Device, Definition
             path: path_text.clone(),
         },
         name,
-        controls: controls.clone(),
+        controls,
         diagnostics,
     };
     Ok(Some((
@@ -229,7 +249,7 @@ unsafe fn device(api: &Api, handle: HANDLE) -> Result<Option<(Device, Definition
             path: path_text,
             preparsed,
             report_len: caps.InputReportByteLength as usize,
-            controls,
+            numbered_reports,
         },
         definition,
     )))
@@ -391,26 +411,24 @@ unsafe fn input(
     devices: &BTreeMap<usize, Device>,
     shared: &Shared,
 ) -> Result<(), String> {
+    let mut buffers = api.input_buffers.borrow_mut();
+    let InputBuffers { raw: storage, decoded } = &mut *buffers;
     let header_size = size_of::<RAWINPUTHEADER>() as u32;
-    let mut bytes = 0;
-    if (api.raw)(raw, RID_INPUT, null_mut(), &mut bytes, header_size) == u32::MAX
-        || bytes < header_size + 8
-        || bytes > 262144
-    {
-        return Err("Invalid Raw Input buffer length.".into());
-    }
-    let mut storage = words(bytes as usize);
-    if (api.raw)(
+    // The worker already owns a buffer as large as the accepted packet bound.
+    // GetRawInputData returns the actual byte count on the first call.
+    let mut capacity = RAW_INPUT_BYTES;
+    let bytes = (api.raw)(
         raw,
         RID_INPUT,
         storage.as_mut_ptr().cast(),
-        &mut bytes,
+        &mut capacity,
         header_size,
-    ) != bytes
-        || bytes < header_size + 8
-        || bytes as usize > storage.len() * size_of::<usize>()
-    {
+    );
+    if bytes == u32::MAX {
         return Err(win_error("Raw Input report"));
+    }
+    if bytes < header_size + 8 || bytes > RAW_INPUT_BYTES {
+        return Err("Invalid Raw Input buffer length.".into());
     }
     let header = &*(storage.as_ptr() as *const RAWINPUTHEADER);
     if header.dwType != RIM_TYPEHID {
@@ -419,8 +437,8 @@ unsafe fn input(
     let Some(device) = devices.get(&(header.hDevice as usize)) else {
         return Ok(());
     };
-    let raw = std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), bytes as usize);
-    let payload = &raw[header_size as usize..];
+    let raw = std::slice::from_raw_parts_mut(storage.as_mut_ptr().cast::<u8>(), bytes as usize);
+    let payload = &mut raw[header_size as usize..];
     let size = u32::from_ne_bytes(payload[..4].try_into().unwrap()) as usize;
     let count = u32::from_ne_bytes(payload[4..8].try_into().unwrap()) as usize;
     if size != device.report_len
@@ -432,38 +450,36 @@ unsafe fn input(
     {
         return Err("Malformed HID report batch.".into());
     }
-    for report in payload[8..8 + size * count].chunks_exact(size) {
-        let mut report = report.to_vec();
-        let mut data = vec![HIDP_DATA::default(); MAX_CONTROLS];
-        let mut length = data.len() as u32;
+    for report in payload[8..8 + size * count].chunks_exact_mut(size) {
+        let report_id = if device.numbered_reports { report[0] } else { 0 };
+        // HidP can write only the one-byte On member for button entries.
+        decoded.fill(HIDP_DATA::default());
+        let mut length = decoded.len() as u32;
         let status = (api.data)(
             HidP_Input,
-            data.as_mut_ptr(),
+            decoded.as_mut_ptr(),
             &mut length,
             device.preparsed.as_ptr() as isize,
             report.as_mut_ptr(),
             report.len() as u32,
         );
+        let values = (status == HIDP_STATUS_SUCCESS && length as usize <= decoded.len())
+            .then(|| {
+                decoded[..length as usize]
+                    .iter()
+                    .map(|entry| (entry.DataIndex, entry.Anonymous.RawValue))
+                    .collect()
+            });
         let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
         let Some(id) = r.id_for_path(&device.path) else {
             continue;
         };
-        if status != HIDP_STATUS_SUCCESS || length as usize > MAX_CONTROLS {
+        let Some(values) = values else {
             r.fault(
                 &id,
                 "HidP report decoding failed; waiting for a fresh baseline.",
             );
             continue;
-        }
-        let values = data
-            .iter()
-            .take(length as usize)
-            .map(|d| (d.DataIndex, d.Anonymous.RawValue))
-            .collect();
-        let report_id = if device.controls.iter().any(|c| c.report_id != 0) {
-            report[0]
-        } else {
-            0
         };
         if let Err(error) = r.report(&id, report_id, &values) {
             r.fault(&id, &error);

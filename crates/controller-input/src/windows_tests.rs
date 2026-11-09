@@ -10,6 +10,7 @@ struct Fixture {
     buttons: Vec<HIDP_BUTTON_CAPS>,
     values: Vec<HIDP_VALUE_CAPS>,
     packet: Vec<u8>,
+    raw_reads: Vec<(usize, u32)>,
     closed: usize,
     write_requested: bool,
 }
@@ -81,6 +82,7 @@ impl Default for Fixture {
             buttons: vec![buttons],
             values: vec![value(0x30, 2, 1), hat, unknown],
             packet: packet(&[[1, 0xff, 0xff, 0], [2, 0, 0, 0]]),
+            raw_reads: vec![],
             closed: 0,
             write_requested: false,
         }
@@ -198,26 +200,19 @@ unsafe extern "system" fn raw(
     _header: u32,
 ) -> u32 {
     FIXTURE.with(|f| {
-        let f = f.borrow();
-        if output.is_null() {
-            *size = match f.mode {
-                "raw-short" => 1,
-                "raw-large" => 262145,
-                _ => f.packet.len() as u32,
-            };
-            if f.mode == "raw-query" {
-                u32::MAX
-            } else {
-                0
+        let mut f = f.borrow_mut();
+        f.raw_reads.push((output as usize, *size));
+        if output.is_null() || f.packet.len() > *size as usize {
+            return u32::MAX;
+        }
+        match f.mode {
+            "raw-short" => 1,
+            "raw-large" => RAW_INPUT_BYTES + 1,
+            "raw-read" => u32::MAX,
+            _ => {
+                std::ptr::copy_nonoverlapping(f.packet.as_ptr(), output.cast(), f.packet.len());
+                f.packet.len() as u32
             }
-        } else if f.mode == "raw-shrink" {
-            *size = 1;
-            1
-        } else if f.mode == "raw-read" {
-            u32::MAX
-        } else {
-            std::ptr::copy_nonoverlapping(f.packet.as_ptr(), output.cast(), f.packet.len());
-            f.packet.len() as u32
         }
     })
 }
@@ -288,10 +283,16 @@ unsafe extern "system" fn data(
             *count = 257;
             return HIDP_STATUS_SUCCESS;
         }
+        if f.mode == "partial-button-slot" && *report == 2 {
+            *count = 1;
+            (*output).DataIndex = 5;
+            (*output).Anonymous.On = true;
+            return HIDP_STATUS_SUCCESS;
+        }
         let values = if *report == 2 {
             vec![(3, if f.mode == "hat-invalid" { 14 } else { 0 })]
         } else {
-            vec![(0, 1), (2, 0xffff), (4, 7)]
+            vec![(2, 0xffff), (0, 1), (4, 7)]
         };
         *count = values.len() as u32;
         for (index, (field, value)) in values.into_iter().enumerate() {
@@ -358,6 +359,7 @@ fn api() -> Api {
         info,
         list,
         raw,
+        input_buffers: RefCell::new(InputBuffers::new()),
         caps,
         buttons,
         values,
@@ -484,11 +486,12 @@ fn enumeration_reconnects_and_reports_preserve_atomic_control_state() {
         reset("");
         let shared = Arc::new(Mutex::new(Registry::default()));
         let mut devices = BTreeMap::new();
-        enumerate(&api(), &mut devices, &shared).unwrap();
+        let api = api();
+        enumerate(&api, &mut devices, &shared).unwrap();
         assert_eq!(devices.len(), 1);
-        enumerate(&api(), &mut devices, &shared).unwrap();
+        enumerate(&api, &mut devices, &shared).unwrap();
         assert_eq!(shared.lock().unwrap().list(0)["total"], 1);
-        input(&api(), 1usize as HRAWINPUT, &devices, &shared).unwrap();
+        input(&api, 1usize as HRAWINPUT, &devices, &shared).unwrap();
         let id = shared.lock().unwrap().list(0)["sources"][0]["id"]
             .as_str()
             .unwrap()
@@ -501,34 +504,66 @@ fn enumeration_reconnects_and_reports_preserve_atomic_control_state() {
         assert!(detail["controls"][3]["value"]["normalized"].is_null());
         for mode in ["data-error", "data-large"] {
             FIXTURE.with(|f| f.borrow_mut().mode = mode);
-            input(&api(), 1usize as HRAWINPUT, &devices, &shared).unwrap();
+            input(&api, 1usize as HRAWINPUT, &devices, &shared).unwrap();
             assert_eq!(
                 shared.lock().unwrap().inspect(&id, 0).unwrap()["source"]["baselineReady"],
                 false
             );
         }
         FIXTURE.with(|f| {
+            let f = f.borrow();
+            let address = api.input_buffers.borrow().raw.as_ptr() as usize;
+            assert_eq!(f.raw_reads, vec![(address, RAW_INPUT_BYTES); 3]);
+        });
+        FIXTURE.with(|f| {
             let mut f = f.borrow_mut();
             f.mode = "";
             f.present = false;
         });
-        enumerate(&api(), &mut devices, &shared).unwrap();
+        enumerate(&api, &mut devices, &shared).unwrap();
         assert!(devices.is_empty());
         assert_eq!(
             shared.lock().unwrap().inspect(&id, 0).unwrap()["source"]["online"],
             false
         );
         FIXTURE.with(|f| f.borrow_mut().present = true);
-        enumerate(&api(), &mut devices, &shared).unwrap();
+        enumerate(&api, &mut devices, &shared).unwrap();
         assert_eq!(shared.lock().unwrap().list(0)["total"], 1);
         for mode in ["list-error", "list-large", "list-race"] {
             FIXTURE.with(|f| f.borrow_mut().mode = mode);
-            assert!(enumerate(&api(), &mut devices, &shared).is_err());
+            assert!(enumerate(&api, &mut devices, &shared).is_err());
         }
         reset("info-error");
         devices.clear();
-        enumerate(&api(), &mut devices, &shared).unwrap();
+        enumerate(&api, &mut devices, &shared).unwrap();
         assert!(!shared.lock().unwrap().diagnostic.is_empty());
+    }
+}
+#[test]
+fn raw_button_decode_does_not_inherit_bytes_from_the_previous_axis() {
+    unsafe {
+        reset("partial-button-slot");
+        FIXTURE.with(|f| {
+            let mut f = f.borrow_mut();
+            let mut button = f.buttons[0];
+            button.UsagePage = 0xff00;
+            button.ReportID = 2;
+            button.IsRange = false;
+            button.Anonymous.NotRange = HIDP_BUTTON_CAPS_0_1 {
+                Usage: 1,
+                DataIndex: 5,
+                ..Default::default()
+            };
+            f.buttons.push(button);
+        });
+        let shared = Arc::new(Mutex::new(Registry::default()));
+        let mut devices = BTreeMap::new();
+        let api = api();
+        enumerate(&api, &mut devices, &shared).unwrap();
+        input(&api, 1usize as HRAWINPUT, &devices, &shared).unwrap();
+        let buffers = api.input_buffers.borrow();
+        assert_eq!(buffers.decoded[0].DataIndex, 5);
+        assert_eq!(buffers.decoded[0].Anonymous.RawValue, 1);
     }
 }
 #[test]
@@ -537,16 +572,15 @@ fn malformed_raw_input_never_reads_outside_the_frame() {
         reset("");
         let shared = Arc::new(Mutex::new(Registry::default()));
         let mut devices = BTreeMap::new();
-        enumerate(&api(), &mut devices, &shared).unwrap();
-        for mode in [
-            "raw-short",
-            "raw-large",
-            "raw-query",
-            "raw-read",
-            "raw-shrink",
-        ] {
+        let api = api();
+        enumerate(&api, &mut devices, &shared).unwrap();
+        input(&api, 1usize as HRAWINPUT, &devices, &shared).unwrap();
+        FIXTURE.with(|f| f.borrow_mut().packet.pop());
+        assert!(input(&api, 1usize as HRAWINPUT, &devices, &shared).is_err());
+        reset("");
+        for mode in ["raw-short", "raw-large", "raw-read"] {
             FIXTURE.with(|f| f.borrow_mut().mode = mode);
-            assert!(input(&api(), 1usize as HRAWINPUT, &devices, &shared).is_err());
+            assert!(input(&api, 1usize as HRAWINPUT, &devices, &shared).is_err());
         }
         for (field, value) in [(0, 0u32), (0, 5), (4, 4097), (4, 10)] {
             reset("");
@@ -555,15 +589,15 @@ fn malformed_raw_input_never_reads_outside_the_frame() {
                     [size_of::<RAWINPUTHEADER>() + field..size_of::<RAWINPUTHEADER>() + field + 4]
                     .copy_from_slice(&value.to_ne_bytes())
             });
-            assert!(input(&api(), 1usize as HRAWINPUT, &devices, &shared).is_err());
+            assert!(input(&api, 1usize as HRAWINPUT, &devices, &shared).is_err());
         }
         reset("");
         FIXTURE
             .with(|f| f.borrow_mut().packet[..4].copy_from_slice(&RIM_TYPEKEYBOARD.to_ne_bytes()));
-        assert!(input(&api(), 1usize as HRAWINPUT, &devices, &shared).is_ok());
+        assert!(input(&api, 1usize as HRAWINPUT, &devices, &shared).is_ok());
         reset("");
         devices.clear();
-        assert!(input(&api(), 1usize as HRAWINPUT, &devices, &shared).is_ok());
+        assert!(input(&api, 1usize as HRAWINPUT, &devices, &shared).is_ok());
     }
 }
 #[test]
