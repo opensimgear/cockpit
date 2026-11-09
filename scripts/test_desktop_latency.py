@@ -141,7 +141,7 @@ class LatencyTests(unittest.TestCase):
         self.assertEqual(phase["latency"], original["latency"])
         self.assertEqual(phase["firstDispatchBySource"], original["firstDispatchBySource"])
         self.assertEqual(phase["stages"]["intentBeforeEnqueue"]["p95UsCeil"], 4)
-        self.assertIsNone(phase["stages"]["priorReceiptOverlapAfterIssue"])
+        self.assertIsNone(phase["stages"]["priorReceiptOverlapBeforeRequest"])
 
     def test_prior_receipt_counts_only_the_intersection_with_the_next_delivery_wait(self):
         fixture = Fixture()
@@ -156,10 +156,30 @@ class LatencyTests(unittest.TestCase):
         ])
         phase = fixture.run()["phases"][0]
         self.assertTrue(phase["passed"])
-        self.assertEqual(phase["stages"]["priorWriteOverlapAfterIssue"]["totalUsCeil"], 4)
-        self.assertEqual(phase["stages"]["priorReceiptOverlapAfterIssue"]["samples"], 1)
-        self.assertEqual(phase["stages"]["priorReceiptOverlapAfterIssue"]["p95UsCeil"], 4)
+        self.assertEqual(phase["stages"]["priorWriteOverlapBeforeRequest"]["totalUsCeil"], 4)
+        self.assertIsNone(phase["stages"]["priorIntentOverlapBeforeRequest"])
+        self.assertEqual(phase["stages"]["priorReceiptOverlapBeforeRequest"]["samples"], 1)
+        self.assertEqual(phase["stages"]["priorReceiptOverlapBeforeRequest"]["p95UsCeil"], 4)
         self.assertEqual(phase["stages"]["deliveryToRequest"]["p95UsCeil"], 5)
+
+    def test_prior_intent_counts_when_both_deliveries_bind_before_the_first_request(self):
+        fixture = Fixture()
+        # Move only the second input through binding. Leave both requests and
+        # their native acknowledgements at their original timestamps.
+        for row in fixture.parent:
+            if 22000 <= int(row["qpc"]) <= 22035:
+                row["qpc"] = str(int(row["qpc"]) - 20000)
+        fixture.parent.extend([
+            event("JournalPersist", [7, 1, 2040, 2040, 2041, 2042, 2043, 2043, 2044], 2044),
+            event("JournalPersist", [8, 1, 2040, 2040, 2041, 2042, 2043, 2043, 2044], 2044),
+        ])
+        report = fixture.run()
+        self.assertTrue(report["traceValid"])
+        phase = report["phases"][0]
+        self.assertEqual(phase["successfulKeyEdges"], 4)
+        self.assertEqual(phase["stages"]["priorWriteOverlapBeforeRequest"]["totalUsCeil"], 4)
+        self.assertEqual(phase["stages"]["priorIntentOverlapBeforeRequest"]["totalUsCeil"], 4)
+        self.assertIsNone(phase["stages"]["priorReceiptOverlapBeforeRequest"])
 
     def test_inverted_journal_interval_is_not_a_latency_sample(self):
         fixture = Fixture()

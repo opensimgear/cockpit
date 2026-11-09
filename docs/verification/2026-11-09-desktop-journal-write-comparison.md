@@ -305,3 +305,37 @@ checkpoint behavior remain open.
 Local artifacts are under `.research/c193-reconnect/local-wal-mode/`.
 The final Windows dev executable SHA-256 is
 `67fd7e5c07b2168812ecd3eb23b31f6461ca25e215e81b45a27bcd2b93edbd67`.
+
+### Prior intent and receipt writes
+
+The analyzer now includes a preceding request's write even when both
+deliveries bound before that request issued. It intersects each exact
+channel and sequence write with the next delivery's binding-to-issue
+interval. A write completed before parent enqueue is classified as intent.
+A write started after the native worker outcome is classified as receipt.
+
+Replaying both WAL runs matched all 808 deliveries and reproduced all
+eight original latency distributions. In the three sustained phases that
+missed the target, each 198-edge phase had 50 deliveries overlapping the
+preceding intent write and four to seven overlapping the preceding receipt
+write. Among those 50 samples per phase, intent overlap p95 was 2.78–2.89 ms.
+The sustained Profiles phase that met the target had one intent overlap.
+The traces place the larger recurring wait in the previous press's durable
+intent, including pairs that already share a receipt write.
+
+All 30 analyzer and native fixture contract tests passed. Python trace
+measured 91% executable line coverage in the analyzer and exercised every
+line of the write-attribution function. The mixed pointer retry on the
+same native build stopped before Apply or injection. The receiver had no
+unobstructed pointer target because Windows PickerHost owned the hit-tested
+window. The fixture confirmed a stopped profile, no input worker, no
+cleanup errors, and a clean receiver exit.
+
+The running Cockpit also passed the rollback fallback through a temporary
+Windows `SUBST` alias to a private local directory. Both processes reported
+DELETE/FULL at `S:\cockpit.sqlite3`. The portal/MCP backup survived restart,
+restored the saved profile in a new epoch, and invalidated old credentials.
+The fixture verified the backup's standalone rollback format and the
+temporary drive alias was removed after the run. The evidence is under
+`.research/c193-reconnect/local-wal-mode/backup-6896/`. A redirected or
+network-backed path and long-running checkpoint behavior remain untested.

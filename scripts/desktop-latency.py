@@ -228,7 +228,7 @@ def stage_summary(values, frequency):
         maxUsCeil=micros(max(values)), totalUsCeil=micros(sum(values)))
 
 
-def add_journal_stages(stages, writes, issued, worker_events, binding, request, queued):
+def add_journal_stages(stages, writes, issued, parent_queue, worker_events, binding, request, queued):
     channel, sequence = request.f[:2]
     current = writes.get((channel, sequence), ())
     for write in current:
@@ -236,24 +236,29 @@ def add_journal_stages(stages, writes, issued, worker_events, binding, request, 
         if request.qpc <= start < end <= queued.qpc:
             stages["intentBeforeEnqueue"].append(end - start)
 
-    # The prior request may have been logged with a backdated issue stamp
-    # when a merged commit completed. Match channel/sequence, then intersect
-    # actual write intervals with the current delivery's wait before issue.
-    prior = issued.get((channel, sequence - 1), ())
-    if len(prior) != 1 or prior[0].f[3] != 3 or prior[0].qpc >= binding.qpc:
+    # A delivery can bind before the previous request even issues. Intersect
+    # that request's writes with the whole wait from binding to current issue.
+    prior_key = (channel, sequence - 1)
+    prior = issued.get(prior_key, ())
+    if len(prior) != 1 or prior[0].f[3] != 3 or prior[0].qpc >= request.qpc:
         return
+    enqueues = parent_queue.get(prior_key, ())
     receipts = worker_events["WorkerOutcome"].get(prior[0].f[:3], ())
-    prior_wait = receipt_wait = 0
-    for write in writes.get((channel, sequence - 1), ()):
+    prior_wait = intent_wait = receipt_wait = 0
+    for write in writes.get(prior_key, ()):
         start, end = write.f[2], write.f[8]
         overlap = max(0, min(end, request.qpc) - max(start, binding.qpc))
         prior_wait += overlap
+        if len(enqueues) == 1 and prior[0].qpc <= start < end <= enqueues[0].qpc:
+            intent_wait += overlap
         if len(receipts) == 1 and receipts[0].qpc <= start:
             receipt_wait += overlap
     if prior_wait:
-        stages["priorWriteOverlapAfterIssue"].append(prior_wait)
+        stages["priorWriteOverlapBeforeRequest"].append(prior_wait)
+    if intent_wait:
+        stages["priorIntentOverlapBeforeRequest"].append(intent_wait)
     if receipt_wait:
-        stages["priorReceiptOverlapAfterIssue"].append(receipt_wait)
+        stages["priorReceiptOverlapBeforeRequest"].append(receipt_wait)
 
 
 def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_sources=2, parent_report=None):
@@ -387,8 +392,8 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
         samples, joined, target, source_set = [], set(), set(), set()
         dispatches = defaultdict(list)
         stages = {name: [] for name in ("captureToDelivery", "deliveryToRequest",
-            "requestToNative", "intentBeforeEnqueue", "verificationBeforeEnqueue", "priorWriteOverlapAfterIssue",
-            "priorReceiptOverlapAfterIssue")}
+            "requestToNative", "intentBeforeEnqueue", "verificationBeforeEnqueue", "priorWriteOverlapBeforeRequest",
+            "priorIntentOverlapBeforeRequest", "priorReceiptOverlapBeforeRequest")}
         phase_errors = []
         phase_captures = [event for event in by["SourceCapture"] if begin.qpc < event.qpc < end.qpc]
         for capture in phase_captures:
@@ -460,7 +465,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                     require(len(verified) <= 1, "ambiguous pre-enqueue recovery verification")
                     if verified:
                         stages["verificationBeforeEnqueue"].append(verified[0].qpc - verified[0].f[2])
-                    add_journal_stages(stages, journal_writes, issued, worker_index[qf[0]],
+                    add_journal_stages(stages, journal_writes, issued, parent_queues["RequestQueued"], worker_index[qf[0]],
                         binding, request, queue_points[0])
             except AuditError as error:
                 excluded["unacked"] += 1
