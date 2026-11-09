@@ -94,3 +94,43 @@ The two-thread run passed 2,489 tests. After reclaiming an obsolete build
 archive, the Assetto executable bounds test passed by itself with room for
 its 512 MiB fixture. Both runs used test executable SHA-256
 `91afbb3532c2ea8db30ab3324a91e26a582d4449bd96006f9c49ced80121b39c`.
+
+## Immediate preview after an idle frame
+
+The Devices and Profile inspectors present the first ready report immediately
+when no frame is pending. Further reports replace a single pending value.
+The next display callback presents the latest value and holds the next
+frame slot. An empty frame reopens immediate presentation. A hidden view,
+lost source or replaced generation cancels pending work. Other consumers
+receive the shared report independently of the preview frame.
+
+Four alternating Windows runs used the same native executable and stationary
+137-control Gladiator. Each run matched 125 consecutive report sequences,
+with zero gaps. The baseline was frontend revision `21ecd7d1`. The tested
+candidate `controller-observations.ts` SHA-256 was
+`f195c1b8806818452ec2423fa3ca5320bd18eae7cbeb7354dff326d586562f73`.
+
+| Run order | Read to DOM p50/p95/p99 | Observer to matching DOM p95 | DOM clock bracket |
+| --- | ---: | ---: | ---: |
+| Baseline 1 | 7.78/21.81/24.08 ms | 14.10 ms | ±2.25 ms |
+| Candidate 1 | 7.47/9.24/9.77 ms | 0.40 ms | ±2.30 ms |
+| Candidate 2 | 7.55/9.10/10.11 ms | 0.40 ms | ±2.20 ms |
+| Baseline 2 | 7.38/19.04/21.44 ms | 11.90 ms | ±2.35 ms |
+
+These traces measure the Devices DOM. The physical motion-to-screen and
+raw-input-to-virtual checks stay in #199. The local traces are under
+`.research/c193-reconnect/preview-first-report/`.
+
+| Run | Trace SHA-256 |
+| --- | --- |
+| `baseline-1` | `39191eaeca117f1e4a8fde26c28f7337b8598f52eb32a361f34cec11fd455ee8` |
+| `candidate-1` | `52e50c008631ae1c46df3ee75c6abf97a624d2cbcdb2d3c44c9eba9c6c23f34e` |
+| `candidate-2` | `f730ba5d37927b642afbdb23a6a814d404e668024b92224d478559bc73c6aff7` |
+| `baseline-2` | `9212bd51daab284a9712ef5eb85260ea75954ef8a3b79bb6342c87b622a5f982` |
+
+The running Cockpit passed Devices hide/reveal and visibility retirement,
+the passive Profile inspector check, and shared capture through preview
+closure and profile replacement. All 1,754 portal/script tests passed.
+The production frontend build passed and Svelte reported zero diagnostics.
+Controller preview coverage reached 98.76% line, 96.98% branch and 97.50%
+function coverage.

@@ -44,9 +44,9 @@ const timeouts = new Map([
 ]);
 
 const frames = new Map([
-  // A received controller state schedules one frame. The callback performs no reads.
+  // A presented controller state holds one frame slot. The callback performs no reads.
   ['src/lib/controller-observations.ts', [
-    '()=>{frame=undefined;const next=pending;pending=undefined;if(next){rendered=next;this.notify(listener,next);}}',
+    '()=>{frame=undefined;const next=pending;pending=undefined;if(next)present(next);}',
   ]],
   ['packages/companion-ui/src/CompiledWidget.svelte', ['()=>{raf=undefined;tickClock();}']],
   ['src/lib/ProfileCanvas.svelte', [

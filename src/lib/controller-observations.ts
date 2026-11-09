@@ -213,6 +213,18 @@ export class ControllerInputObservations {
       frame = undefined;
       pending = undefined;
     };
+    const present = (state: ControllerInputState): void => {
+      // Present the first report immediately. A trailing presentation uses
+      // the next frame's allowance, and an empty frame reopens the gate.
+      frame = clock.requestAnimationFrame(() => {
+        frame = undefined;
+        const next = pending;
+        pending = undefined;
+        if (next) present(next);
+      });
+      rendered = state;
+      this.notify(listener, state);
+    };
     const demand = visibleSubscription(() => {
       const stop = this.observe(sourceId, state => {
         const previous = rendered?.detail;
@@ -226,16 +238,8 @@ export class ControllerInputObservations {
           this.notify(listener, rendered);
           return;
         }
-        pending = state;
-        frame ??= clock.requestAnimationFrame(() => {
-          frame = undefined;
-          const next = pending;
-          pending = undefined;
-          if (next) {
-            rendered = next;
-            this.notify(listener, next);
-          }
-        });
+        if (frame === undefined) present(state);
+        else pending = state;
       });
       return () => {
         stop();

@@ -98,7 +98,7 @@ test('preserves a validated native read completion timestamp on the immutable so
   }
 });
 
-test('preview renders only the latest continuous report per frame and clears immediately on loss', t => {
+test('preview renders the first report immediately, coalesces bursts and clears immediately on loss', t => {
   previewDocument(t);
   const { client, states, send } = setup();
   const previews = [], frames = new Map();
@@ -111,24 +111,36 @@ test('preview renders only the latest continuous report per frame and clears imm
   assert.equal(previews.at(-1).detail.source.sequence, '1');
   assert.equal(frames.size, 0);
   send(change());
+  assert.equal(previews.at(-1).detail.source.sequence, '2');
   send(change({ source: controller({ sequence: '3' }), cursor: '3', capturedUs: '12' }));
   assert.equal(states.at(-1).detail.source.sequence, '3');
-  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  assert.equal(previews.at(-1).detail.source.sequence, '2');
   assert.equal(frames.size, 1);
-  const present = frames.get(nextFrame);
-  frames.delete(nextFrame);
-  present();
+  const advanceFrame = () => {
+    const present = frames.get(nextFrame);
+    frames.delete(nextFrame);
+    present();
+  };
+  advanceFrame();
   assert.equal(previews.at(-1).detail.source.sequence, '3');
-  assert.equal(frames.size, 0);
   send(change({ source: controller({ sequence: '4' }), cursor: '4', capturedUs: '13' }));
+  send(change({ source: controller({ sequence: '5' }), cursor: '5', capturedUs: '14' }));
+  assert.equal(previews.at(-1).detail.source.sequence, '3');
+  advanceFrame();
+  assert.equal(previews.at(-1).detail.source.sequence, '5');
+  advanceFrame();
+  assert.equal(frames.size, 0);
+  send(change({ source: controller({ sequence: '6' }), cursor: '6', capturedUs: '15' }));
+  assert.equal(previews.at(-1).detail.source.sequence, '6');
+  send(change({ source: controller({ sequence: '7' }), cursor: '7', capturedUs: '16' }));
   assert.equal(frames.size, 1);
   send(undefined, { kind: 'loss', reason: 'overflow' });
   assert.equal(previews.at(-1).status, 'lost');
   assert.equal(previews.at(-1).detail.controls[0].value, null);
   assert.equal(frames.size, 0);
-  send(snapshot({ source: controller({ sequence: '5' }), cursor: '5', capturedUs: '14' }), { kind: 'snapshot' });
-  assert.equal(previews.at(-1).detail.source.sequence, '5');
-  send(change({ source: controller({ sequence: '6' }), cursor: '6', capturedUs: '15' }));
+  send(snapshot({ source: controller({ sequence: '8' }), cursor: '8', capturedUs: '17' }), { kind: 'snapshot' });
+  assert.equal(previews.at(-1).detail.source.sequence, '8');
+  send(change({ source: controller({ sequence: '9' }), cursor: '9', capturedUs: '18' }));
   assert.equal(frames.size, 1);
   stop();
   assert.equal(frames.size, 0);
@@ -148,15 +160,16 @@ test('hidden preview cancels its frame and demand, then renders the current base
   setHidden(false);
   assert.equal(previews.at(-1).detail.source.sequence, '1');
   send(change());
+  send(change({ source: controller({ sequence: '3' }), cursor: '3', capturedUs: '12' }));
   assert.equal(frames.size, 1);
   setHidden(true);
   assert.equal(frames.size, 0);
   assert.equal(opens[0].signal.aborted, false, 'Independent readers keep their demand');
-  send(change({ source: controller({ sequence: '3' }), cursor: '3', capturedUs: '12' }));
-  assert.equal(states.at(-1).detail.source.sequence, '3');
-  assert.equal(previews.at(-1).detail.source.sequence, '1');
+  send(change({ source: controller({ sequence: '4' }), cursor: '4', capturedUs: '13' }));
+  assert.equal(states.at(-1).detail.source.sequence, '4');
+  assert.equal(previews.at(-1).detail.source.sequence, '2');
   setHidden(false);
-  assert.equal(previews.at(-1).detail.source.sequence, '3', 'Shared current state presents without a frame delay');
+  assert.equal(previews.at(-1).detail.source.sequence, '4', 'Shared current state presents without a frame delay');
   assert.equal(frames.size, 0);
 
   setHidden(true);
