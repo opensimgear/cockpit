@@ -126,3 +126,40 @@ Nx projects. The exact final release-tooling target passed all 42 tests.
 The changed controller observation module reached 98.76% lines, 96.98%
 branches and 97.50% functions. Logs and the blocked release report are in
 `.research/c193-reconnect/current-ui-88ee864e/`.
+
+## Current Windows preview and observation transport recheck
+
+Both Windows transports used the clean `88ee864e` frontend. The existing
+native dev executable contains the `cc68085b` production sources. The
+commits through `88ee864e` changed only verification documents. The
+browser-dev gateway was built offline with the same native sources and
+locked dependencies. Each mode used a separate private database.
+
+The live Cockpit paired each of 64 authored controller transitions with
+its preview mutation, next frame opportunity, and Windows Raw Input vJoy
+receipt. Both transports opened and retired exactly two subscriptions,
+reopened with the current value, issued zero runtime inspection requests,
+and released the slot at Stop. Times are from authored submission and
+reported as p50 / p95 / p99 in milliseconds.
+
+| Transport | vJoy receipt upper bound | Preview DOM | Next preview frame opportunity |
+| --- | ---: | ---: | ---: |
+| Windows native | 1.73 / 2.16 / 2.51 | 4.70 / 5.30 / 6.00 | 4.80 / 17.60 / 21.70 |
+| Windows browser-dev | 2.22 / 2.62 / 4.20 | 6.00 / 6.90 / 7.60 | 6.20 / 18.50 / 23.40 |
+
+Each transport also recovered from an injected acknowledgement failure and
+opened a fresh observation for existing and new listeners. Physical device
+acquisition and display scanout remain separate measurements.
+
+Devices and Profiles each recorded zero gateway requests and zero observation
+protocol requests in 60-second idle windows on both transports. All four
+windows were at least 60,101 ms. The complete logs and paired samples are
+under `.research/c193-reconnect/current-ui-88ee864e/`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Native executable | `d452dd8ef5126feb889a37fe9c4725549b45cd1dc01f13ae30b7932c9d6726c3` |
+| Browser-dev gateway executable | `a0a5d4572968e1e4af7b6c8381b8962e3004fdb825bf5c273e662a99ece9dbf7` |
+| Raw Input probe | `6ea93864c16d2897aedc150df5addf45fd65a3dcd89a0f40773a779c88f35e9e` |
+| `native-verified.log` | `0f6537bcf393981c624d9cac826b5c76afab7880abeed371bfe043e63121f220` |
+| `browser-verified.log` | `d4a819033d95a4ea6c2847c1776ba585519f9f92d5482713c41b4dd0aad5cdac` |
