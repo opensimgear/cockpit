@@ -10,6 +10,7 @@ use osg_mapping::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 pub const OUTCOME_LIMIT: usize = 256;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,7 @@ fn tap_durations(program: &Program) -> BTreeMap<String, Counter> {
 pub struct Desktop {
     output: Output,
     scheduler: Scheduler,
+    tap_clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     run: RunToken,
     scope: Option<Scope>,
     focused: bool,
@@ -60,9 +62,13 @@ impl Desktop {
         journal: std::path::PathBuf,
         scope: Option<Scope>,
         wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+        tap_clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     ) -> Result<Self, String> {
-        let scheduler = Scheduler::from_program(run.clone(), program)?;
+        let mut scheduler = Scheduler::from_program(run.clone(), program)?;
         let tap_durations = tap_durations(program);
+        if !tap_durations.is_empty() {
+            scheduler.use_native_tap_timing()?;
+        }
         let output = Coordinator::spawn_with_owned_journal(
             enabled,
             qualified,
@@ -73,6 +79,7 @@ impl Desktop {
         Ok(Self {
             output: Output::threaded(output, wake, tap_durations)?,
             scheduler,
+            tap_clock,
             run,
             scope,
             focused: false,

@@ -17,6 +17,19 @@ fn child_wake_notifies_shared_worker_without_advancing_siblings() {
 }
 
 #[test]
+fn native_signal_observes_parent_and_child_notifications_before_thread_binding() {
+    let signals = Arc::new(AtomicU64::new(0));
+    let count = signals.clone();
+    let worker = Arc::new(NativeWake::with_signal(Arc::new(move || {
+        count.fetch_add(1, Ordering::Relaxed);
+    })));
+    let child = NativeWake::child(worker.clone());
+    worker.notify();
+    child.notify();
+    assert_eq!((worker.observed(), child.observed(), signals.load(Ordering::Relaxed)), (2, 1, 2));
+}
+
+#[test]
 fn notify_without_binding_and_saturation_never_lose_pending_work() {
     let wake = NativeWake::default();
     assert_eq!(wake.observed(), 0);

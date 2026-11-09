@@ -20,13 +20,15 @@ impl NativeProfileHost {
                 }
                 let progress = self.progress.clone();
                 let desktop_wake = self.native_wake.clone();
+                let desktop_clock = self.controllers.capture_clock();
                 let output_wake = self.native_wake.as_ref().map(Arc::downgrade);
                 let state = self.run(&run.owner)?;
                 state.clock_origin = origin;
                 state.panels.acquire(origin)?;
                 if prepared.plan.requirements.desktop_input {
                     Self::emit_progress(progress.as_ref(), state.admission_epoch, "preparing-desktop-bindings", &format!("Preparing {}", Self::desktop_binding_kind(&prepared.plan.program)));
-                    state.desktop = Some(crate::profile_session_desktop::Desktop::acquire(&run.owner, &prepared.plan.program, state.desktop_scope.clone(), desktop_wake)?);
+                    state.desktop = Some(crate::profile_session_desktop::Desktop::acquire(&run.owner, &prepared.plan.program,
+                        state.desktop_scope.clone(), desktop_wake, Arc::new(move || desktop_clock.now_us()))?);
                 }
                 if !state.bindings.is_empty() {
                     if !native || !osg_mapping_host::service::LIVE_OUTPUT_QUALIFIED {

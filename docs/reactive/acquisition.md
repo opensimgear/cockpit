@@ -124,7 +124,7 @@ scope also wakes on committed process changes and worker retirement. It
 schedules the observation's expiry when the shared process owner uses its
 one-second fallback. A stale observation parks the desktop output. A busy
 observer keeps the current exact scope and requests another service pass.
-First-dispatch, burst timing and broader adapter combinations remain open.
+[Keyboard first-dispatch and queued-tap timing](../verification/2026-11-09-desktop-queued-taps.md) pass on Windows. Mixed pointer timing and broader adapter combinations remain open.
 
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. Changes in the serial topology cache,

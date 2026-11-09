@@ -75,6 +75,7 @@ impl Desktop {
         let Some(mut completion) = self.output.take_completion() else { return Ok(()); };
         for (delivery, reason) in std::mem::take(&mut completion.dropped) {
             self.audit_drop_for(&delivery, reason, completion.audit_shadow);
+            self.scheduler.finish_native_tap(&delivery.action_id, delivery.operation_id, None)?;
         }
         for (delivery, acknowledgement) in std::mem::take(&mut completion.outcomes) {
             let cancellation_current = completion.cancellation_current(delivery.operation_id);
@@ -103,7 +104,13 @@ impl Desktop {
                 format!("Desktop action {} expired before submission and was skipped.",delivery.action_id)
             });
         }
-        if acknowledgement.skipped && !acknowledgement.scope_rejected
+        if self.scheduler.uses_native_tap_timing(&delivery.action_id) {
+            if self.scheduler.awaits_tap_receipt(&delivery.action_id, delivery.operation_id) {
+                let accepted = acknowledgement.ok && !acknowledgement.skipped && !acknowledgement.scope_rejected;
+                let at = accepted.then(|| osg_mapping::engine::Counter((self.tap_clock)()));
+                self.scheduler.finish_native_tap(&delivery.action_id, delivery.operation_id, at)?;
+            }
+        } else if acknowledgement.skipped && !acknowledgement.scope_rejected
             && cancellation_current
             && self.scheduler.active()
             && self.output.current(&delivery)

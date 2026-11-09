@@ -101,6 +101,66 @@ fn one_millisecond_taps_keep_both_dwells_and_final_queue_retirement() {
 }
 
 #[test]
+fn queued_native_taps_time_each_dwell_from_its_exact_receipt() {
+    let mut s = scheduler(vec![("tap", tap()), ("other", Action::KeyHold { key: Key(5) })]);
+    s.use_native_tap_timing().unwrap();
+    for _ in 0..2 {
+        accept(&mut s, "tap", PortValue::Boolean(true), 1, false);
+    }
+    let down = s.drain().pop().unwrap();
+    s.advance(Counter(4_000)).unwrap();
+    assert!(s.drain().is_empty());
+    assert_eq!(s.next_deadline_us(), None);
+
+    accept(&mut s, "other", PortValue::Boolean(false), 4_000, true);
+    accept(&mut s, "other", PortValue::Boolean(true), 4_001, false);
+    assert_eq!(s.drain().pop().unwrap().action_id, "other");
+
+    s.finish_native_tap("tap", down.operation_id, Some(Counter(5_000))).unwrap();
+    assert_eq!(s.next_deadline_us(), Some(Counter(6_001)));
+    s.advance(Counter(6_000)).unwrap();
+    assert!(s.drain().is_empty());
+    s.advance(Counter(6_001)).unwrap();
+    let up = s.drain().pop().unwrap();
+    assert!(matches!(&up.intent, Intent::Held { controls } if controls.is_empty()));
+
+    s.advance(Counter(8_000)).unwrap();
+    assert!(s.drain().is_empty());
+    s.finish_native_tap("tap", down.operation_id, Some(Counter(9_000))).unwrap();
+    assert_eq!(s.next_deadline_us(), None);
+    s.finish_native_tap("tap", up.operation_id, Some(Counter(9_000))).unwrap();
+    s.advance(Counter(10_000)).unwrap();
+    assert!(s.drain().is_empty());
+    s.advance(Counter(10_001)).unwrap();
+    let next = s.drain().pop().unwrap();
+    assert!(matches!(&next.intent, Intent::Held { controls } if !controls.is_empty()));
+    assert_eq!(s.trace().replay().unwrap().deliveries.len(), 4);
+}
+
+#[test]
+fn rejected_native_tap_and_scope_pause_discard_pending_receipts() {
+    for scope_pause in [false, true] {
+        let mut s = scheduler(vec![("tap", tap())]);
+        s.use_native_tap_timing().unwrap();
+        for _ in 0..2 {
+            accept(&mut s, "tap", PortValue::Boolean(true), 1, false);
+        }
+        let down = s.drain().pop().unwrap();
+        if scope_pause {
+            s.pause("Scope lost");
+        } else {
+            s.finish_native_tap("tap", down.operation_id, None).unwrap();
+        }
+        assert!(matches!(s.drain().pop().unwrap().intent, Intent::Cleanup));
+        s.finish_native_tap("tap", down.operation_id, Some(Counter(9_000))).unwrap();
+        s.advance(Counter(15_000)).unwrap();
+        assert!(s.drain().is_empty());
+        assert_eq!(s.next_deadline_us(), None);
+        assert_eq!(s.trace().replay().unwrap().deliveries.len(), 2);
+    }
+}
+
+#[test]
 fn repeat_exposes_exact_delay_interval_and_late_reschedule() {
     let mut s = scheduler(vec![("repeat", repeat())]);
     accept(&mut s, "repeat", PortValue::Boolean(false), 0, true);

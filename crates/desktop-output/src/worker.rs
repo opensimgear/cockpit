@@ -386,6 +386,8 @@ mod serve;
 #[path = "worker/wait.rs"]
 mod wait;
 pub use serve::serve;
+#[cfg(windows)]
+pub use wait::DeadlineWait;
 
 #[cfg(test)]
 #[path = "worker/audit_context_tests.rs"]

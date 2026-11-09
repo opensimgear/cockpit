@@ -174,6 +174,7 @@ fn prepared_program_fixture(
     let desktop = Desktop {
         output: Output::inline(output),
         scheduler: Scheduler::from_program(phase.run_token(), &program).unwrap(),
+        tap_clock: Arc::new(|| 0),
         run: phase.run_token(),
         scope: Some(Scope::DesktopWide),
         focused: false,

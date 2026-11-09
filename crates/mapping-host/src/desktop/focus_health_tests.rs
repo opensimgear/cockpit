@@ -38,6 +38,7 @@ fn fixture() -> (Desktop, Phase) {
     let mut desktop = Desktop {
         output: Output::inline(Coordinator::with_channel(Box::new(TestChannel(Worker::new(NoInput))), || 10)),
         scheduler: Scheduler::from_program(run.clone(), &program).unwrap(),
+        tap_clock: Arc::new(|| 0),
         run,
         scope: Some(Scope::DesktopWide),
         focused: false,

@@ -157,9 +157,47 @@ mod native {
 }
 pub(super) use native::NativeWait;
 
+/// The profile owner shares the native one-shot wait with input notifications.
+#[cfg(windows)]
+pub struct DeadlineWait {
+    wait: NativeWait,
+    idle: Receiver<()>,
+    _connected: std::sync::mpsc::Sender<()>,
+}
+
+#[cfg(windows)]
+impl DeadlineWait {
+    pub fn new() -> Result<Self, String> {
+        let (connected, idle) = std::sync::mpsc::channel();
+        Ok(Self { wait: NativeWait::new()?, idle, _connected: connected })
+    }
+
+    pub fn signal(&self) -> std::sync::Arc<dyn Fn() + Send + Sync> {
+        let wake = self.wait.waker();
+        std::sync::Arc::new(move || wake.notify())
+    }
+
+    pub fn wait(&mut self, timeout: Option<Duration>) -> Result<(), String> {
+        let _ = self.wait.receive(&self.idle, timeout)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod notification_tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn deadline_wait_retains_a_signal_sent_before_parking() {
+        let mut wait = DeadlineWait::new().unwrap();
+        let signal = wait.signal();
+        signal();
+        let before = std::time::Instant::now();
+        wait.wait(Some(Duration::from_secs(2))).unwrap();
+        assert!(before.elapsed() < Duration::from_secs(1));
+        wait.wait(Some(Duration::from_millis(1))).unwrap();
+    }
 
     #[test]
     fn retained_event_without_frame_interrupts_an_indefinite_wait() {

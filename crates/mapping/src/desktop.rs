@@ -284,6 +284,8 @@ pub enum Command {
     },
     Drain,
     DrainOne { operation_id: Counter },
+    NativeTapTiming,
+    TapReceipt { action_id: String, operation_id: Counter, at_us: Option<Counter> },
     Stop,
     Fault {
         message: String,
@@ -353,6 +355,9 @@ impl Trace {
                     deliveries.push(delivery);
                     Ok(())
                 }
+                Command::NativeTapTiming => scheduler.use_native_tap_timing(),
+                Command::TapReceipt { action_id, operation_id, at_us } =>
+                    scheduler.finish_native_tap(action_id, *operation_id, *at_us),
                 Command::Stop => {
                     scheduler.stop();
                     Ok(())
@@ -388,6 +393,7 @@ struct State {
     previous: bool,
     taps: VecDeque<Tap>,
     tap_down: bool,
+    tap_pending: Option<Counter>,
     due: Option<u64>,
     repeat: Option<u64>,
     velocity: f64,
@@ -411,7 +417,10 @@ pub struct Scheduler {
     dropped_decisions: u64,
     fault: Option<String>,
     capture: Trace,
+    native_tap_timing: bool,
 }
+mod tap_timing;
+
 impl Scheduler {
     pub fn new(run: RunToken, definitions: Vec<ActionDefinition>) -> Result<Self, String> {
         if run.generation.0 == 0
@@ -457,6 +466,7 @@ impl Scheduler {
             dropped_decisions: 0,
             fault: None,
             capture,
+            native_tap_timing: false,
         })
     }
     pub fn from_program(run: RunToken, program: &Program) -> Result<Self, String> {
@@ -874,7 +884,7 @@ impl Scheduler {
                     state.taps.push_back(Tap {
                         producer: producer.clone(),
                     });
-                    if state.due.is_none() {
+                    if state.taps.len() == 1 {
                         let down_ms = match action {
                             Action::KeyTap { down_ms, .. } | Action::MouseClick { down_ms, .. } => {
                                 down_ms
@@ -883,13 +893,13 @@ impl Scheduler {
                         };
                         state.tap_down = true;
                         state.held = true;
-                        state.due = Some(self.now + down_ms as u64 * 1000);
-                        self.emit(
+                        self.emit_tap(
                             id,
                             producer,
                             Intent::Held {
                                 controls: action.controls(),
                             },
+                            down_ms,
                         )?;
                     }
                 }
@@ -957,14 +967,14 @@ impl Scheduler {
                 if state.tap_down {
                     state.tap_down = false;
                     state.held = false;
-                    state.due = Some(at.0 + up_ms as u64 * 1000);
                     let producer = state.taps.front().unwrap().producer.clone();
-                    self.emit(
+                    self.emit_tap(
                         &id,
                         producer,
                         Intent::Held {
                             controls: Vec::new(),
                         },
+                        up_ms,
                     )?;
                     self.record(Some(&id), "timer", "tap-up");
                 } else {
@@ -973,13 +983,13 @@ impl Scheduler {
                         let producer = tap.producer.clone();
                         state.tap_down = true;
                         state.held = true;
-                        state.due = Some(at.0 + down_ms as u64 * 1000);
-                        self.emit(
+                        self.emit_tap(
                             &id,
                             producer,
                             Intent::Held {
                                 controls: action.controls(),
                             },
+                            down_ms,
                         )?;
                         self.record(Some(&id), "timer", "tap-down");
                     } else {

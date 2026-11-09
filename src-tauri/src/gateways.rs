@@ -352,6 +352,13 @@ impl GatewayManager {
         let root = native.then(|| crate::config_paths::config_path().with_file_name("mappings"));
         let retired_recovery = Arc::new(crate::profile_retired_recovery::Recovery::new(root.clone(), native));
         let companion_clock = controllers.clone();
+        #[cfg(windows)]
+        let profile_deadline_wait = native.then(osg_desktop_output::worker::DeadlineWait::new)
+            .and_then(|wait| wait.map_err(|error| eprintln!("Profile native deadline wait unavailable: {error}")).ok());
+        #[cfg(windows)]
+        let profile_wake = Arc::new(profile_deadline_wait.as_ref()
+            .map(|wait| ProfileWake::with_signal(wait.signal())).unwrap_or_default());
+        #[cfg(not(windows))]
         let profile_wake = Arc::new(ProfileWake::default());
         let companion_wake = profile_wake.clone();
         let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::with_wake(
@@ -477,6 +484,8 @@ impl GatewayManager {
             let activity_session = activity_session.clone();
             let worker = std::thread::spawn(move || {
                 #[cfg(windows)]
+                let mut deadline_wait = profile_deadline_wait;
+                #[cfg(windows)]
                 let mut foreground_watch = crate::profile_session_desktop::start_foreground_observer(wake.clone());
                 while !closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
@@ -491,7 +500,19 @@ impl GatewayManager {
                         activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(runtime.status());
                         (runtime.service_interval(), runtime.next_deadline())
                     };
-                    wake.wait_scheduled(observed, crate::profile_session::scheduling::service_wait(service, deadline, std::time::Instant::now()));
+                    let timeout = crate::profile_session::scheduling::service_wait(service, deadline, std::time::Instant::now());
+                    #[cfg(windows)]
+                    if let Some(wait) = deadline_wait.as_mut() {
+                        let current = wake.observed();
+                        if current == observed && current != u64::MAX {
+                            if let Err(error) = wait.wait(timeout) {
+                                eprintln!("Profile native deadline wait failed: {error}");
+                                deadline_wait = None;
+                            }
+                        }
+                        continue;
+                    }
+                    wake.wait_scheduled(observed, timeout);
                 }
             });
             let _ = profile_wake.bind_thread(worker.thread().clone());

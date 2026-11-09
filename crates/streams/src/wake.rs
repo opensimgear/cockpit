@@ -17,9 +17,16 @@ pub struct NativeWake {
     thread: OnceLock<Thread>,
     epoch: AtomicU64,
     parent: Option<Arc<NativeWake>>,
+    signal: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl NativeWake {
+    /// Also signal the worker's native deadline wait. The bound thread still
+    /// receives a token so it can fall back to the portable wait on error.
+    pub fn with_signal(signal: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self { signal: Some(signal), ..Self::default() }
+    }
+
     /// Track one source's progress while also waking its shared worker.
     pub fn child(parent: Arc<Self>) -> Self {
         Self { parent: Some(parent), ..Self::default() }
@@ -36,8 +43,8 @@ impl NativeWake {
         Ok(())
     }
 
-    /// Only advances an atomic epoch and unparks the bound thread. Never calls
-    /// consumer code, acquires a journal lock, or clones a payload.
+    /// Advances an atomic epoch and signals the bound worker. Never acquires
+    /// a journal lock or clones a payload.
     pub fn notify(&self) {
         // Saturation permanently disables parking rather than wrapping to an
         // already observed epoch and potentially losing a committed change.
@@ -48,6 +55,9 @@ impl NativeWake {
             });
         if let Some(thread) = self.thread.get() {
             thread.unpark();
+        }
+        if let Some(signal) = &self.signal {
+            signal();
         }
         if let Some(parent) = &self.parent {
             parent.notify();

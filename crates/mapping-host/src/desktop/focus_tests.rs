@@ -226,6 +226,7 @@ mod native {
         let run = phase.run_token();
         (Desktop {
             output, scheduler: Scheduler::from_program(run.clone(), &program).unwrap(), run,
+            tap_clock: Arc::new(|| 0),
             scope: None, focused: false, started: false, registered: false, last_error: None,
             outcomes: VecDeque::new(), dropped_outcomes: 0, diagnostics: VecDeque::new(),
             scope_error: None, focus_boundary: None, waiting_neutral: BTreeSet::new(), neutral_arms: BTreeMap::new(),
