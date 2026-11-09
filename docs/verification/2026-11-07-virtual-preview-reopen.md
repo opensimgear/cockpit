@@ -119,3 +119,41 @@ The traces and coverage reports are under
 helper reached 93.26% lines, 84.62% branches and 89.47% functions on both
 transports. The native preview-only mode also passed with the receiver
 disabled. Six adjacent dual-rate and Raw Input timing tests passed.
+
+## Paired Windows preview and vJoy receipts under dual-rate load
+
+The running Windows dev Cockpit used native revision `c8a57cb0`, clean
+frontend `88ee864e`, and a private profile `cbfb0c78-0181-43d6-9cc4-a05229ad5536`
+at revision 2. The qualification source offered 7,201 transitions at
+1,000.02 Hz and 901 at 125.00 Hz to buttons 3 and 4 of the same virtual
+controller. During the 7.2-second overlap, the foreground preview and the
+Windows Raw Input receiver each matched the same 64 authored button-1
+transitions in order. The 0.76 ms clock bracket bounded the receipt timing
+and confirmed every measured preview frame fell within both load lanes.
+
+| Boundary | p50 / p95 / p99 |
+| --- | --- |
+| Button-1 submission to vJoy Raw Input, upper bound | 1.75 / 2.22 / 2.65 ms |
+| Button-1 submission to preview DOM | 5.60 / 7.10 / 12.20 ms |
+| Button-1 submission to next frame opportunity | 14.40 / 21.30 / 24.10 ms |
+| 1 kHz source capture to reducer batch end | 0.20 / 0.30 / 0.30 ms |
+| 125 Hz source capture to reducer batch end | 0.20 / 0.30 / 0.30 ms |
+
+Peak pending input was two frames. The preview retired both subscriptions,
+reopened on current state, and issued zero runtime-inspection reads. Stop
+freed the vJoy slot. The background lanes were paired through reducer batch
+completion. Exact Windows receipt was measured for button 1. The fixture
+used software input and measured the next browser frame opportunity.
+Physical controller capture and display scanout remain in [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `launch-child-wake.exe` | `4933f3a9c9bea2da4106484d24248e39f644095676473091109b7076a7ad4050` |
+| `preview-load-27236.log` | `3534b01df3361a39b1d584090a0cd7f9ca94128f1b892ed6b87440b2f2863555` |
+| `qualification-fast.bin` | `43907c93fef93ec80c7fa531407091d51bf70098e3d0fbb7b3601e3f938731cc` |
+| `qualification-peer.bin` | `535157382f752a59fd97f0794c1a6bc21330558893c97dd75fbe243bc6af38e0` |
+| Private `profile-virtual-preview-reopen.mjs` | `b6cd2ad2343a703e07262fd75eb5ef53a7c44207ef5ad2997c28aee1c0b5fe33` |
+
+The log and `preview-load-trace-27236` directory are under
+`.research/c193-reconnect/dcs-native-stage-timing/`. The Raw Input probe
+has the same fingerprint as the earlier paired run.
