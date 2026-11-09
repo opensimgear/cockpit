@@ -170,3 +170,75 @@ ignores. Instrumented line coverage was 100% for the controller journal
 and snapshot reader, 95.00% for registry observation, and 86.97% for the
 native profile HID input adapter. The adapter reached 89.66% function
 coverage.
+
+## Physical button to vJoy receipt fixture
+
+The Windows dev fixture saves a temporary profile with one observed HID
+button wired directly to button 1 of an explicitly selected free vJoy
+slot. The source trace reads the same ordered native journal as the
+profile. It retains only the selected button's changes and rejects
+missing reads, report gaps and generation replacement. The separate
+Raw Input receiver verifies the slot's neutral baseline and exact
+ordered transitions. Windows QPC brackets the journal clock before and
+after the trace. The result reports lower and upper latency percentiles
+and checks the R0 destination budget using the upper bounds.
+
+Start a private Windows dev Cockpit with the `reactive-qualification`
+Cargo feature and `OSG_REACTIVE_QUALIFICATION=1`. Give that process a
+disposable `OSG_SQLITE_DATABASE` under `.research` and a loopback WebView
+DevTools port. Stop any active profile and close simulators. Compile
+the [receive-only Raw Input probe](../../tests/controller-mapping-m0/README.md).
+In Devices, use the controller inspector's local source ID and the
+chosen button's `data-control-id`. Use the IDs shown by this dev session.
+
+```powershell
+$env:OSG_NATIVE_CDP_URL = 'http://127.0.0.1:9222'
+$env:OSG_PHYSICAL_VJOY_PRIVATE_DATABASE = '1'
+$env:OSG_PHYSICAL_VJOY_APP = '<absolute path to the running dev osg-cockpit.exe>'
+$env:OSG_VJOY_RAW_PROBE = '<absolute path to RawInputProbe.exe>'
+$env:OSG_PHYSICAL_VJOY_SOURCE_ID = '<local controller source ID>'
+$env:OSG_PHYSICAL_VJOY_CONTROL_ID = '<physical button control ID>'
+$env:OSG_PHYSICAL_VJOY_SLOT = '1'
+node scripts/reactive/physical-vjoy-latency.mjs --preflight
+node scripts/reactive/physical-vjoy-latency.mjs
+```
+
+Keep the button released during preflight. In the measurement, wait for
+the tap cue, press and release the selected button at least ten times,
+and finish released. The fixture stops the temporary profile, confirms
+the slot is free and deletes the profile. It writes the exact identities,
+native source edges, receiver timestamps, clock bounds and percentiles
+under `.research/reactive/physical-vjoy-latency/`.
+
+The timed interval starts at Cockpit's physical `GetRawInputData`
+completion and ends at the receiver's virtual `WM_INPUT` callback.
+This includes Windows destination delivery and receiver scheduling.
+Physical actuation, pre-read OS/HID time, display presentation, and
+simulator effects require separate measurements. The qualification trace
+adds one temporary passive journal reader. A stationary preflight
+reports no timing samples.
+
+The live stationary preflight used a VKBsim Gladiator EVO R on
+`hid:0009:0001:1:0:8` and vJoy slot 1, receiver device
+`EC4DE84FA125EBA8`. The exact profile became active, the native trace
+retained nine reports, and the receiver saw its neutral baseline.
+The conservative clock uncertainty was 2.3 µs. Stop cleared the owner,
+the slot returned to free, and the fixture deleted its profile with
+zero cleanup errors. The first setup attempt confused the local source
+ID with the persistent profile resource ID and stopped before Apply.
+The fixture now resolves the exact resource through its HID connection.
+
+The native trace passed four focused tests, including a stationary
+capture with the real controller. LLVM measured 94.92% line and 87.50%
+function coverage for its module. Branch instrumentation was
+unavailable. All five matcher tests passed with 100% line and function
+coverage and 97.73% branch coverage.
+
+The dev executable SHA-256 is
+`787824c23889b119d5feee75d2b729d1d140ae7e0acfc075be1ea108674ca2c9`.
+The receiver SHA-256 is
+`c0075da5274d9f1f0532e7b07dd7293a0f91c8c40ec98227cee8db27eb21f71c`.
+The local evidence is
+`.research/reactive/physical-vjoy-latency/51f89263-c1e6-48fe-9134-54b9ae27c975/evidence.json`,
+SHA-256 `ad429ad5ebbaf7cda5ab000290ad9655486718b608fd05c8ae90ea8c3a5a2522`.
+Physical taps, motion-to-preview, and simulator acceptance stay in #199.

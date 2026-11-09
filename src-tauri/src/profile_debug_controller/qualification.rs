@@ -18,6 +18,8 @@ use std::{
 };
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
+pub(crate) mod physical_button;
+
 const BURST_MS: u64 = 192;
 const MAX_BURST_MS: u64 = 4_800;
 const MAX_TRACE_MS: u64 = 1_800_000;

@@ -343,6 +343,12 @@ async fn gateway_request(
         if request["command"] == "qualification_companion_leases" {
             return service.qualify_companion_leases(request);
         }
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        if request["command"] == "qualification_physical_button" {
+            return profile_debug_controller::qualification::physical_button::run(
+                &service.controllers, request,
+            );
+        }
         Ok(service.request(request))
     })
         .await
