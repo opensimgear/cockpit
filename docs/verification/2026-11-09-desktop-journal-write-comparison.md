@@ -54,3 +54,50 @@ The audited baseline executable SHA-256 is
 `b1eb29dd1c65e128d4084d9bb9584e74b042c33b50c7727dea99f93ba4635966`.
 The audited candidate SHA-256 is
 `3d4fadd3ffa75a11c92b845a1179ff58958b635580c4f5f1737e73583d1e4b37`.
+
+## Windows path check probe
+
+A standalone Windows probe opened an existing regular file using
+`NtOpenFile` with `OBJ_DONT_REPARSE` and validated the returned file's
+attributes. Both absolute and directory-relative opens rejected traversal
+through a disposable NTFS junction. They also rejected a directory in
+place of the file and distinguished a missing leaf from a missing parent.
+The absolute open without the flag followed the junction in the control run.
+
+An optimized Rust 1.90 comparison used the real path of a closed, disposable
+Cockpit database and the current `check_live_path` as its baseline. Each
+row covers two passes of 2,001 observations after warm-up. The probe ran in
+current, native main, native all, native all, native main, current order.
+
+| Path check | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| Current ancestor, main and sidecar checks | 644–651 µs | 719–808 µs | 838–951 µs |
+| Native main open, current sidecar checks | 167–169 µs | 189–190 µs | 210–224 µs |
+| Native opens for main and sidecars | 162–164 µs | 182–186 µs | 223–233 µs |
+
+Most of the measured gain came from replacing the main path's repeated
+ancestor opens. The last row is a cost probe with all sidecars absent.
+It skips the existing rollback journal deletion-race handling. These
+isolated path timings exclude SQLite commit, queueing and desktop dispatch.
+
+The generic Windows attributes contract describes refusal when a name
+is reparsed. The user-mode file-open documentation lists zero and
+`OBJ_CASE_INSENSITIVE` for file object attributes. A passing junction case
+leaves open equivalent treatment of all reparse tags, redirected and
+network storage, access-denied paths and replacement during a live write.
+[Windows object attributes](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes)
+· [Native file-open parameters](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
+
+Local source and results are under `.research/c193-reconnect/nt-path-proof/`.
+All 27 desktop latency analyzer and fixture contract tests passed.
+
+## Mixed pointer preflight
+
+The running dev Cockpit built from `d2eeb7da` retried the mixed keyboard and
+pointer scenario. The exact receiver had keyboard foreground, but the
+pointer target belonged to Windows `PickerHost.exe` (PID 17540, HWND
+24449610). Every proposed position failed the unobstructed-area check.
+The fixture stopped before Apply, sent zero input, and closed the receiver
+with no cleanup errors. This run produced no mixed latency samples.
+Its logs are under
+`.research/c193-reconnect/required-journal-leaf/mixed-current-04348dd2/`.
