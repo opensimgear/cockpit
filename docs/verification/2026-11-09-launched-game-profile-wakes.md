@@ -90,3 +90,39 @@ function coverage. LLVM emitted no branch counters for these files.
 | `.research/dcs-physics-native/1794240564250/evidence.json` | `5dcdadec0c76458d41ed37f81a60fdbb7abe6b7b7c80aa17a13a8fa34c9a57ee` |
 | `dcs-committed-reader/committed-reader-final.exe` | `8241baca6621b207652fbf2d464bfd2a6d22b8c4fede54fa133d8446b3f826bf` |
 | `.research/dcs-physics-native/1794240968311/evidence.json` | `4e28050ddc2b6d297e906c791267d00cbefbf7144abf6ab899e9eceeeb7f656c` |
+
+### Process replacement during browser panel and vJoy load
+
+The Windows dev Cockpit held one profile owner while two authenticated
+browser panels rendered the authored DCS ownship lamp and two debug sources
+drove vJoy at 1,000 and 125 Hz. The two lanes overlapped for 18 seconds.
+Both panels withdrew the lit value and painted the unlit state after the
+fixture process exited. They then received a fresh unlit baseline from the
+replacement, with no replay of the old lit value. A deliberate on/off pair
+changed both canvases while the two input lanes were still running.
+
+The first fixture attempt expected the fresh unlit baseline to repaint a
+canvas that was already unlit. The revised check confirms the fresh
+feedback and current pixel separately, then requires new canvas writes for
+the deliberate color changes.
+
+| Run | Native lane | Measured offer rate | Exact offered edges | Offer to Raw Input p50 / p95 / p99 | Queue peak |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | Fast | 999.999 Hz | 18,001 | 2.7 / 6.4 / 11.9 ms | 17 |
+| 1 | Peer | 125.000 Hz | 2,251 | 2.4 / 6.3 / 10.1 ms | 11 |
+| 2 | Fast | 1,000.000 Hz | 18,001 | 2.8 / 6.6 / 11.8 ms | 17 |
+| 2 | Peer | 125.000 Hz | 2,251 | 2.5 / 6.3 / 9.4 ms | 11 |
+
+Capture-to-reducer p95 was 1.3–1.4 ms. In each run the receiver matched all
+20,252 offered edges and both Stop releases. The releases arrived 2.566–6.288 ms
+after the Stop marker, the slot returned to free, and cleanup completed.
+Panel presentation was observed at the canvas write boundary. Physical
+controller, display scan-out and actual simulator effects stay in #199.
+
+The private fixture and logs are in
+`.research/c193-reconnect/dcs-native-stage-timing/dcs-loaded-replacement/`.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794242001934/evidence.json` | `12da9e91ce435763841691a597cacc9891c6f8b4f7603b225773a00ff807c8fe` |
+| `.research/dcs-physics-native/1794242109596/evidence.json` | `fa3b5fb0a14d3a55386ebb11cc8233274e2a68191c07954b3148dfa2b4b2788b` |
