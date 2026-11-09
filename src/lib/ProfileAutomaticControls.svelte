@@ -2,7 +2,7 @@
   import {observeProfileRuntime} from './profile-read-models/shared';
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
-  import {guardUiSettings} from './ui-settings-guard';
+  import {guardUiSettings,settingsOwnerIdentity} from './ui-settings-guard';
   import {ProfileAutomaticClient} from './profile-automatic';
   import {ProfileAutomaticController} from './profile-automatic-controller';
   import {gameCatalogue,gameName} from './games';
@@ -13,15 +13,36 @@
   const settingsRequest=guardUiSettings(gatewayRequest);
   const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
   let view=$state.raw(controller.state),mounted=$state(false);
-  const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending);
+  let writable=$state(false),settingsError=$state('');
+  const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending||(!provided&&!writable));
   const modeLabel=$derived(!view.status || view.stale && !view.pending ? 'Mode unavailable' : view.status.mode==='automatic' ? 'Auto' : 'Manual');
-  const modeTitle=$derived(view.pending ? 'Saving profile mode…' : view.error || (view.status?.readOnly ? 'Profile mode is read-only. Resolve the native storage error before changing it.' : !view.status || view.stale ? 'Current native profile selection mode is unavailable.' : [
+  const modeTitle=$derived(view.pending ? 'Saving profile mode…' : view.error || settingsError || (view.status?.readOnly ? 'Profile mode is read-only. Resolve the native storage error before changing it.' : !view.status || view.stale ? 'Current native profile selection mode is unavailable.' : !provided&&!writable ? 'Waiting for current profile mode settings.' : [
     `Switch to ${view.status.mode==='automatic'?'Manual':'Auto'} profile selection.`,
     view.status.conflicts.length ? `Conflicting games: ${view.status.conflicts.map(id=>$gameCatalogue.find(game=>game.id===id)?.name??gameName(id)).join(', ')}. Review matching profiles and remembered choices in game settings.` : view.status.status==='failed' ? view.status.message : '',
   ].filter(Boolean).join(' ')));
   function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
   onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
-  function watchStatus(){if(!mounted||!active)return;return observeProfileRuntime(state=>controller.observe(state));}
+  function watchStatus(){
+    if(!mounted||!active)return;
+    let observed:string|null=null,epoch=0;
+    const stop=observeProfileRuntime(state=>{
+      controller.observe(state);
+      if(provided)return;
+      const runtime=state.status==='ready'&&state.value;
+      const eligible=runtime&&!runtime.readOnly&&!runtime.automatic.readOnly ? runtime : null;
+      const next=eligible?JSON.stringify([
+        eligible.automatic.mode,eligible.automatic.manualProfileId,eligible.automatic.rules,
+        eligible.preferredProfiles,settingsOwnerIdentity(eligible.profileSession.owner),
+      ]):null;
+      if(next===observed)return;
+      observed=next;const request=++epoch;writable=false;settingsError='';
+      if(!eligible){settingsRequest.retireSelectionMode();return;}
+      void settingsRequest.observeSelectionMode(eligible.automatic.mode,eligible.profileSession.owner).then(ready=>{
+        if(epoch===request)writable=ready;
+      },error=>{if(epoch===request)settingsError=error instanceof Error?error.message:String(error);});
+    });
+    return()=>{epoch++;writable=false;settingsError='';settingsRequest.retireSelectionMode();stop();};
+  }
   $effect(watchStatus);
   async function select(mode:ProfileSelectionMode){if(blocked)return;if(!await controller.selectionMode(mode))notify(controller.state.error,'error');}
   async function toggleMode(){await select(view.status?.mode==='automatic'?'manual':'automatic');}

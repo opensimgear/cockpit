@@ -50,6 +50,34 @@ test('owner changes reject UI writes even with the same settings revision',async
   await assert.rejects(send({command:'profile_selection_mode',mode:'automatic'}),/owner conflict/);
   assert.equal(h.state.mode,'manual');assert.equal(h.state.revision,1);
 });
+test('observed mode seeds its guard only with matching native settings and ownership',async()=>{
+  const h=native();
+  const send=guardUiSettings(async request=>{
+    const result=await h.send(request);
+    if(result.localSettings)result.localSettings.settings={mode:h.state.mode,readOnly:false};
+    return result;
+  });
+  await assert.rejects(send.observeSelectionMode('automatic',null),/current profile mode/);
+  await assert.rejects(send.observeSelectionMode('manual',owner),/ownership/);
+  await assert.rejects(send({command:'profile_selection_mode',mode:'automatic'}),/Refresh/);
+  assert.equal(await send.observeSelectionMode('manual',null),true);
+  assert.equal((await send({command:'profile_selection_mode',mode:'automatic'})).profiles.automatic.mode,'automatic');
+  const lastRead=h.calls.findLastIndex(call=>call.command==='profile_local_settings_get');
+  assert.equal(h.calls[lastRead+1].command,'profile_local_settings_save');
+});
+test('retiring a mode observation fences an in-flight revision read',async()=>{
+  const h=native();let finish;
+  const send=guardUiSettings(async request=>{
+    const result=await h.send(request);
+    await new Promise(resolve=>finish=resolve);
+    return result;
+  });
+  const seed=send.observeSelectionMode('manual',null);
+  await new Promise(resolve=>setImmediate(resolve));
+  send.retireSelectionMode();finish();
+  assert.equal(await seed,false);
+  await assert.rejects(send({command:'profile_selection_mode',mode:'automatic'}),/Refresh/);
+});
 test('rules and remembered choices use typed guarded edits and independent per-game snapshots',async()=>{
   const h=native(),send=guardUiSettings(h.send);
   await send({command:'profile_automatic_status'});

@@ -9,6 +9,10 @@ export type LocalSettingsSnapshot = {
 };
 type Target = { key: string; scope: LocalSettingsScope; gameId?: GameId; read: GatewayRequest; write: boolean };
 type Send = (request: GatewayRequest) => Promise<GatewayState>;
+type SelectionMode = 'manual' | 'automatic';
+export function settingsOwnerIdentity(owner: NativeProfileOwner | null) {
+  return owner && [owner.session, owner.generation, owner.profileId, owner.profileRevision, owner.gameId];
+}
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const uuid = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
 const positive = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -49,14 +53,18 @@ function editedSettings(request: GatewayRequest): Record<string, unknown> {
  * revision and owner, never a fresh snapshot fetched at the moment of writing.
  * Native admission remains authoritative; conflicts are surfaced without retry.
  */
-export function guardUiSettings(send: Send): Send {
+export function guardUiSettings(send: Send) {
   const snapshots = new Map<string, LocalSettingsSnapshot>();
   const epochs = new Map<string, number>();
-  return async request => {
+  function advance(key: string): number {
+    const epoch = (epochs.get(key) ?? 0) + 1;
+    epochs.set(key, epoch);
+    return epoch;
+  }
+  const requestSettings: Send = async request => {
     const target = targetFor(request);
     if (!target) return send(request);
-    const epoch = (epochs.get(target.key) ?? 0) + 1;
-    epochs.set(target.key, epoch);
+    const epoch = advance(target.key);
     const selector = { scope: target.scope, ...(target.gameId ? { gameId: target.gameId } : {}) };
     if (!target.write) {
       // Capture before the displayed native read. A racing edit can therefore
@@ -80,4 +88,24 @@ export function guardUiSettings(send: Send): Send {
       throw error;
     }
   };
+  return Object.assign(requestSettings, {
+    retireSelectionMode() {
+      advance('automatic');
+      snapshots.delete('automatic');
+    },
+    async observeSelectionMode(mode: SelectionMode, owner: NativeProfileOwner | null): Promise<boolean> {
+      const target = targetFor({command:'profile_automatic_status'})!;
+      const epoch = advance(target.key);
+      snapshots.delete(target.key);
+      const result = await send({command:'profile_local_settings_get',scope:'selection-mode'});
+      if (epochs.get(target.key) !== epoch) return false;
+      const base = capture(result.localSettings, target);
+      if (base.settings.mode !== mode || base.settings.readOnly !== false
+        || JSON.stringify(settingsOwnerIdentity(base.profileSession.owner)) !== JSON.stringify(settingsOwnerIdentity(owner))) {
+        throw new Error('Waiting for current profile mode and ownership before saving.');
+      }
+      snapshots.set(target.key, base);
+      return true;
+    },
+  });
 }
