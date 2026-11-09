@@ -339,3 +339,48 @@ The fixture verified the backup's standalone rollback format and the
 temporary drive alias was removed after the run. The evidence is under
 `.research/c193-reconnect/local-wal-mode/backup-6896/`. A redirected or
 network-backed path and long-running checkpoint behavior remain untested.
+
+### Two queued presses in one native call
+
+All 155 `JournalMerged` pairs from the two previous runs had both
+deliveries bound before the first request issued. The new path accepts
+two already queued and armed KeyHold presses only when both produce one
+distinct native down in the same run. One durable intent contains the
+exact pair, and one native call returns a shared receipt with separate
+logical operation IDs. A declined batch with zero native records falls
+back to the original individual checks. Later arrivals use the existing
+ordered path.
+
+Two running dev Cockpit trials matched all 808 expected transitions and
+proved clean Stop. They submitted 87 and 93 native key pairs. The sustained
+trials recorded these WSS admission-to-SendInput results.
+
+| Run | Idle p50 / p95 / p99 | Profiles p50 / p95 / p99 |
+| --- | ---: | ---: |
+| WAL baseline, same session | 3.64 / 7.32 / 7.75 ms | 3.60 / 7.10 / 7.87 ms |
+| 1 | 3.84 / 5.84 / 6.53 ms | 3.74 / 5.86 / 6.59 ms |
+| 2 | 3.72 / 5.43 / 6.49 ms | 3.75 / 5.58 / 6.20 ms |
+
+Each sustained phase previously showed 50 preceding-intent overlaps
+when it missed the target. The new runs showed four to nine. First-phase
+p95 ranged from 4.85 to 8.69 ms. Sustained and first-dispatch timing
+therefore still need qualification against the strict 5 ms p95 gate.
+
+The whole-app interruption fixture drove KeyA and KeyB from one WSS
+button. Both downs shared helper request 6 and had distinct operation
+IDs. The durable held record remained at revision 9 through restart.
+Explicit recovery produced one up per key, cleared recovery at revision
+15, and left no input worker. The original single-key scenario also
+passed on this build.
+
+All 205 Windows desktop-output tests, 184 mapping-host tests, and 31
+Python audit and workload tests passed. LLVM measured 90.91% lines and
+100% functions for the shared pair projection, 89.40% lines for the
+coordinator delivery module, 83.79% lines for the helper worker, and
+91.71% lines for mapping-host dispatch. Python measured 91% analyzer
+lines. The first mapping-host run hit disk limits when it tried to build
+a second script helper. It passed using the existing local helper.
+
+Evidence is under `.research/c193-reconnect/native-key-pair/`.
+The dev executable SHA-256 is
+`929670b574560c10eee0571f82327a8f7a29e0f9615121bd5e9c46d2f6253896`.

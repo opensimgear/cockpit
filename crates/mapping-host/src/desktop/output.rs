@@ -136,6 +136,7 @@ impl Shared {
         match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => valid(delivery),
             Command::DeliverPointerBatch { deliveries } => deliveries.iter().all(valid),
+            Command::DeliverKeyPair { deliveries } => deliveries.iter().all(valid),
             Command::Arm { producer, action_id } => Self::can_arm(&state, action_id, producer, request.admission),
             _ => true,
         }

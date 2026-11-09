@@ -155,6 +155,10 @@ impl Coordinator {
                     crate::pointer_batch::describe(deliveries)?;
                     validate_run(&deliveries[0].producer.run)?;
                 }
+                Command::DeliverKeyPair { deliveries } => {
+                    crate::key_pair::validate(deliveries)?;
+                    validate_run(&deliveries[0].producer.run)?;
+                }
                 Command::Renew { run } | Command::Pause { run } => validate_run(run)?,
                 Command::Stop | Command::Recover { .. } => {}
             }

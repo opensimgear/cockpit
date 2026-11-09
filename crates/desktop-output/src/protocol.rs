@@ -70,6 +70,7 @@ pub enum Command {
     Deliver { delivery: Delivery },
     /// Native release may run while the parent commits the successful down ACK.
     DeliverGuarded { delivery: Delivery, release_after_us: Counter },
+    DeliverKeyPair { deliveries: Box<[Delivery; 2]> },
     DeliverPointerBatch { deliveries: Vec<Delivery> },
     Renew { run: RunToken },
     Pause { run: RunToken },

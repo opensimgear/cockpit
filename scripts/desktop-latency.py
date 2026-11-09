@@ -21,7 +21,7 @@ SCHEMA = dict(SourceCapture=8, SourceResult=3, SourceBound=8, NativeEnqueue=12,
     DeliveryBound=6, DeliveryDropped=5, ChannelOpened=2, ChannelExited=5, RequestIssued=6,
     RequestQueued=3, RequestDequeued=3, SubmitReturned=6, WorkerOutcome=6,
     ParentOutcome=7, QueueFault=3, NativeGap=4, Marker=2, Fault=1,
-    JournalPersist=9, JournalMerged=3, JournalReleasesMerged=3, JournalVerify=5)
+    JournalPersist=9, JournalMerged=3, JournalReleasesMerged=3, JournalVerify=5, KeyPairConfirmed=4)
 ERROR_COUNTERS = ("queueDrops", "capDrops", "aliasFailures", "qpcFailures", "invalidFields",
     "serializationErrors", "ioErrors", "flushTimeouts", "evidenceFaults", "afterFinish")
 COUNTERS = ("attempted", "enqueued", "written", *ERROR_COUNTERS, "queueHighWater",
@@ -240,7 +240,7 @@ def add_journal_stages(stages, writes, issued, parent_queue, worker_events, bind
     # that request's writes with the whole wait from binding to current issue.
     prior_key = (channel, sequence - 1)
     prior = issued.get(prior_key, ())
-    if len(prior) != 1 or prior[0].f[3] != 3 or prior[0].qpc >= request.qpc:
+    if len(prior) != 1 or prior[0].f[3] not in (3, 9) or prior[0].qpc >= request.qpc:
         return
     enqueues = parent_queue.get(prior_key, ())
     receipts = worker_events["WorkerOutcome"].get(prior[0].f[:3], ())
@@ -322,8 +322,22 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
     dequeued = index("NativeDequeue", lambda f: tuple(f[:7]))
     typed = index("TypedAlias", lambda f: (f[8], f[11], f[9], f[10], f[13]))
     bounds = index("SourceBound", lambda f: (f[0], f[1], f[2], f[3]))
-    requests = index("RequestIssued", lambda f: (f[4], f[5], f[2]))
+    requests = defaultdict(list)
     issued = index("RequestIssued", lambda f: f[:2])
+    paired_requests = set()
+    for event in by["RequestIssued"]:
+        if event.f[3] == 3:
+            requests[event.f[4], event.f[5], event.f[2]].append(event)
+    for event in by["KeyPairConfirmed"]:
+        channel, sequence, first, second = event.f
+        request = one(issued[(channel, sequence)], "exact key pair request")
+        require(request.f[3] == 9 and request.f[2] == first < second
+            and (channel, sequence) not in paired_requests and request.qpc <= event.qpc,
+            "invalid or duplicate confirmed key pair")
+        paired_requests.add((channel, sequence))
+        for operation in (first, second):
+            key = (*request.f[4:6], operation)
+            requests[key].append(request)
     journal_writes = index("JournalPersist", lambda f: f[:2])
     journal_verifications = index("JournalVerify", lambda f: f[:2])
     outcomes = index("ParentOutcome", lambda f: (f[0], f[1], f[2]))
@@ -419,8 +433,9 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                 joined.add(target_key)
                 source_set.add(nf[6])
                 require(len(bindings[tuple(binding.f[2:5])]) == 1, "ambiguous delivery operation")
-                request = one((event for event in requests[tuple(binding.f[2:5])] if event.f[3] == 3), "run-bound delivery request")
+                request = one(requests[tuple(binding.f[2:5])], "run-bound delivery request")
                 qf = request.f
+                expected_native_count = 2 if qf[3] == 9 else 1
                 worker = workers.get(qf[0])
                 require(worker is not None, "missing worker for exact channel")
                 key = (qf[0], qf[1], qf[2])
@@ -450,7 +465,7 @@ def analyze(directory, phases, key_actions=(), key_ports=(), expected_key_source
                 else:
                     send = one(submitted, "successful exact SendInput return")
                     require(send.f[4:] == (attempted, confirmed), "SendInput/ACK count mismatch")
-                    require(attempted == 1, "selected KeyHold must produce exactly one native record")
+                    require(attempted == expected_native_count, "selected KeyHold has incorrect native record count")
                     require(flags & CLEAN, "successful ACK has incomplete cleanup status")
                     causal = [capture, frame, alias, effect, binding, request, *queue_points, send, worker_outcome, parent_outcome]
                     require(all(left.qpc <= right.qpc for left, right in zip(causal, causal[1:])), "causal QPC order violation")

@@ -96,6 +96,7 @@ impl Coordinator {
         let operation = match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => delivery.operation_id.0,
             Command::DeliverPointerBatch { deliveries } => deliveries.first().map_or(0, |d| d.operation_id.0),
+            Command::DeliverKeyPair { deliveries } => deliveries[0].operation_id.0,
             _ => 0,
         };
         crate::audit::record(crate::audit::Kind::ParentOutcome, &[

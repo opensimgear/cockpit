@@ -46,6 +46,19 @@ Journals are regular local files bounded to 128 KiB on both write and read. Reco
 
 Worker EOF, parent loss, lease expiry, Stop and foreground loss attempt owned cleanup. They do not promise cleanup when Windows terminates the whole process tree, the desktop becomes inaccessible or the worker is killed before cleanup. An interrupted record blocks activation. Explicit recovery releases only its validated recorded possible controls and remains stopped. Startup does not send releases or resume actions.
 
+Two adjacent, already queued KeyHold presses can share one private worker
+request when they have the same run and scope admission, are armed, and
+each produces one distinct native key down. The parent syncs one intent
+containing both operations and their possible holds before IPC. The helper
+rechecks scope, the earliest deadline, and both owner projections before
+one ordered `SendInput` call. A healthy decline with zero submitted records
+leaves both operations available for the ordinary ordered path, which
+rechecks each operation's own deadline and authority. A scope rejection
+retires the stale work. One complete native receipt commits the exact held
+set and supplies the two logical operation acknowledgements. Partial or
+uncertain submission retains the pair's recovery evidence and fences
+further dispatch. Explicit recovery releases the recorded possible holds.
+
 ## Foreground eligibility
 
 Default scope is the selected application. Desktop-wide scope is a separate explicit choice. Application eligibility binds executable path, PID and `GetProcessTimes` creation identity; PID reuse does not inherit a scope. Native notifications maintain cached loss evidence; each acquiring batch also checks foreground identity, interactive `Default` desktop availability and target integrity immediately before submission. Unknown identity, focus loss, a locked desktop or a higher-integrity foreground target pauses/refuses output. Returning to the application requires a fresh neutral baseline and never resumes a partial action. Normal Cockpit startup remains unelevated.

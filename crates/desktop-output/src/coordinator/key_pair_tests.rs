@@ -28,6 +28,57 @@ fn pair_fixture() -> (tempfile::TempDir, Coordinator, Arc<Mutex<Vec<Snapshot>>>,
 }
 
 #[test]
+fn native_key_pair_has_one_bounded_intent_and_exact_logical_receipts() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    let before = coordinator.persist_attempts.get();
+    let [first, second] = coordinator.try_submit_native_key_pair([delivery(), second.clone()], 0).unwrap().unwrap();
+    assert_eq!(first.sequence, second.sequence);
+    assert_eq!([first.operation_id, second.operation_id], [Some(Counter(1)), Some(Counter(2))]);
+    assert_eq!([first.confirmed, second.confirmed], [1, 1]);
+    assert_eq!(coordinator.persist_attempts.get() - before, 2);
+    let receipts = seen.lock().unwrap();
+    assert_eq!(receipts.len(), 1);
+    let prepared = &receipts[0];
+    assert!(prepared.held.is_empty());
+    let expected = vec![key(), Control::Key { key: Key(5) }];
+    assert_eq!(crate::reducer::recovery_releases(&prepared.possible_held).unwrap().len(), 2);
+    assert!(expected.iter().all(|control| prepared.possible_held.contains(control)));
+    assert!(matches!(&prepared.in_flight.as_ref().unwrap().command,
+        Command::DeliverKeyPair { deliveries } if deliveries[0].operation_id == Counter(1)
+            && deliveries[1].operation_id == Counter(2)));
+    let durable = Coordinator::inspect_journal(coordinator.journal.as_ref().unwrap()).unwrap();
+    assert_eq!(durable.held, expected);
+    assert_eq!(durable.possible_held, durable.held);
+    assert!(durable.in_flight.is_none());
+}
+
+#[test]
+fn revoked_native_key_pair_leaves_both_operations_available_for_individual_validation() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    coordinator.set_dispatch_gate(Arc::new(|request| !matches!(request.command, Command::DeliverKeyPair { .. })));
+    assert!(coordinator.try_submit_native_key_pair([delivery(), second.clone()], 0).unwrap().is_none());
+    assert!(coordinator.snapshot().held.is_empty());
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(coordinator.submit(delivery(), 0).unwrap().confirmed, 1);
+    assert_eq!(coordinator.submit(second, 0).unwrap().confirmed, 1);
+}
+
+#[test]
+fn failed_native_pair_receipt_leaves_both_exact_operations_in_durable_recovery() {
+    let (_directory, mut coordinator, seen, second) = pair_fixture();
+    let before = coordinator.persist_attempts.get();
+    coordinator.fail_persist_at.set(Some(before + 2));
+    assert!(coordinator.try_submit_native_key_pair([delivery(), second], 0).is_err());
+    assert!(coordinator.snapshot().uncertain);
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    let durable = Coordinator::inspect_journal(coordinator.journal.as_ref().unwrap()).unwrap();
+    assert!(matches!(durable.in_flight.unwrap().command, Command::DeliverKeyPair { .. }));
+    assert_eq!(crate::reducer::recovery_releases(&durable.possible_held).unwrap().len(), 2);
+    coordinator.stop_all().unwrap();
+    assert!(coordinator.snapshot().cleanup_complete);
+}
+
+#[test]
 fn next_native_request_sees_the_previous_receipt_and_its_own_intent() {
     let (_directory, mut coordinator, seen, second) = pair_fixture();
     let before = coordinator.persist_attempts.get();

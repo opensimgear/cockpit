@@ -138,6 +138,7 @@ impl Coordinator {
                 Command::Arm { producer, .. } => (0, 2, Some(&producer.run)),
                 Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
                 Command::DeliverPointerBatch { deliveries } => (deliveries[0].operation_id.0, 8, Some(&deliveries[0].producer.run)),
+                Command::DeliverKeyPair { deliveries } => (deliveries[0].operation_id.0, 9, Some(&deliveries[0].producer.run)),
                 Command::Renew { run } => (0, 4, Some(run)),
                 Command::Pause { run } => (0, 5, Some(run)),
                 Command::Recover { .. } => (0, 6, None),
@@ -198,7 +199,7 @@ impl Coordinator {
         let revocable = match &request.command {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => !matches!(&delivery.intent, Intent::Cleanup)
                 && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),
-            Command::DeliverPointerBatch { .. } | Command::Arm { .. } => true,
+            Command::DeliverPointerBatch { .. } | Command::DeliverKeyPair { .. } | Command::Arm { .. } => true,
             _ => false,
         };
         if revocable && self.dispatch_gate.as_ref().is_some_and(|gate| !gate(&request)) {

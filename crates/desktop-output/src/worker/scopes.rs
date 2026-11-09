@@ -7,6 +7,7 @@ impl<A: Adapter> Worker<A> {
         let token = match command {
             Command::Arm { producer, .. } => &producer.run,
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => &delivery.producer.run,
+            Command::DeliverKeyPair { deliveries } => &deliveries[0].producer.run,
             Command::DeliverPointerBatch { deliveries } => &deliveries.first()?.producer.run,
             _ => return None,
         };
@@ -89,6 +90,7 @@ impl<A: Adapter> Worker<A> {
                 if !matches!(delivery.intent, Intent::Cleanup)
                     && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()) => (&delivery.producer.run, false),
             Command::DeliverPointerBatch { deliveries } => (&deliveries[0].producer.run, false),
+            Command::DeliverKeyPair { deliveries } => (&deliveries[0].producer.run, false),
             _ => return Ok(true),
         };
         if request.admission.is_none() { return Err("Desktop input requires a scope admission proof.".into()); }

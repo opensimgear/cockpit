@@ -135,6 +135,27 @@ pub(super) fn execute(output: &mut Coordinator, shared: &Shared, armed: &mut BTr
                             && Coordinator::can_share_key_journal(&delivery, next)
                             && armed.get(&next.action_id) == Some(&next.producer)
                     });
+                if paired && guard.is_none() && late_press::single_key_press(&delivery) {
+                    let next = pending.front().expect("paired delivery is queued");
+                    if guarded_duration(next, tap_durations).is_none()
+                        && reason(shared, &job, armed, &cancelled, next).is_none()
+                    {
+                        if let Some([first, second]) = output.try_submit_native_key_pair(
+                            [delivery.clone(), next.clone()], source_now(&job),
+                        )? {
+                            rejected |= first.scope_rejected || second.scope_rejected;
+                            record(&mut completion, &mut cancelled, delivery, first);
+                            record(&mut completion, &mut cancelled,
+                                pending.pop_front().expect("paired delivery is queued"), second);
+                            continue;
+                        }
+                        // The attempted pair may have waited on persistence.
+                        if let Some(reason) = reason(shared, &job, armed, &cancelled, &delivery) {
+                            completion.dropped.push((delivery, reason));
+                            continue;
+                        }
+                    }
+                }
                 let accepts_late = pending.is_empty() && guard.is_none()
                     && job.key_holds.contains(&delivery.operation_id) && late_press::single_key_press(&delivery);
                 if accepts_late { shared.open_late_press(&job, &delivery); }

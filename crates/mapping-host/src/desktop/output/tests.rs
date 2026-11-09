@@ -27,6 +27,7 @@ fn kind(request: &Request) -> &'static str {
     match request.command {
         Command::Activate { .. } => "activate", Command::Arm { .. } => "arm",
         Command::Deliver { .. } => "deliver", Command::DeliverGuarded { .. } => "guarded", Command::DeliverPointerBatch { .. } => "pointer",
+        Command::DeliverKeyPair { .. } => "key-pair",
         Command::Pause { .. } => "pause", Command::Renew { .. } => "renew", Command::Stop => "stop",
         Command::Recover { .. } => "recover",
     }
@@ -150,6 +151,39 @@ fn inline_uses_ordered_executor_and_keeps_ticket_until_completion_taken() {
     let kinds: Vec<_> = requests.lock().unwrap().iter().map(kind).collect();
     assert_eq!(kinds, ["activate", "arm", "arm", "pointer", "arm", "deliver", "pointer"]);
     assert_eq!(events.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn two_armed_key_holds_share_one_native_request_and_keep_distinct_outcomes() {
+    let (output, requests, events) = inline();
+    let first = held("a", 1);
+    let second = delivery("b", 2, Intent::Held { controls: vec![Control::Key { key: Key(5) }] });
+    let deliveries = vec![first, second];
+    reconcile(&output, &deliveries);
+    let admission = output.child_scope().map(|receipt| receipt.admission);
+    for delivery in &deliveries {
+        output.dispatch_prepared(vec![], Some((delivery.action_id.clone(), delivery.producer.clone())),
+            10, 0, admission, Default::default()).unwrap();
+        assert!(output.take_completion().unwrap().error.is_none());
+    }
+    output.dispatch_prepared(deliveries.clone(), None, 10, 0, admission,
+        deliveries.iter().map(|delivery| delivery.operation_id).collect()).unwrap();
+    let completion = output.take_completion().unwrap();
+    assert!(completion.error.is_none());
+    assert!(completion.dropped.is_empty());
+    assert_eq!(completion.outcomes.len(), 2);
+    assert_eq!(completion.outcomes[0].1.sequence, completion.outcomes[1].1.sequence);
+    for ((actual, ack), expected) in completion.outcomes.iter().zip(deliveries) {
+        assert_eq!(*actual, expected);
+        assert_eq!(ack.operation_id, Some(expected.operation_id));
+        assert_eq!(ack.confirmed, 1);
+    }
+    assert_eq!(requests.lock().unwrap().iter().map(kind).collect::<Vec<_>>(),
+        ["activate", "arm", "arm", "key-pair"]);
+    assert_eq!(*events.lock().unwrap(), [
+        NativeEvent::Key { usage: 4, down: true, repeat: false },
+        NativeEvent::Key { usage: 5, down: true, repeat: false },
+    ]);
 }
 
 #[test]

@@ -107,6 +107,32 @@ class LatencyTests(unittest.TestCase):
         self.assertEqual(phase["firstDispatchBySource"]["p95UsCeil"], 1000)
         self.assertFalse(report["physicalCaptureMeasured"])
 
+    def test_native_key_pair_joins_two_captures_to_one_exact_submission(self):
+        fixture = Fixture(count=2)
+        command_events = {"RequestIssued", "RequestQueued", "RequestDequeued", "ParentOutcome"}
+        fixture.parent = [row for row in fixture.parent
+            if not (row["kind"] in command_events and row["fields"][:2] == ["7", "2"])]
+        fixture.worker = [row for row in fixture.worker if row["fields"][:2] != ["7", "2"]]
+        for row in fixture.parent:
+            if 22000 <= int(row["qpc"]) <= 22035:
+                row["qpc"] = str(int(row["qpc"]) - 20000)
+            if row["kind"] == "RequestIssued" and row["fields"][:2] == ["7", "1"]:
+                row["fields"][3] = "9"
+        for row in fixture.parent + fixture.worker:
+            if row["kind"] in command_events | {"SubmitReturned", "WorkerOutcome"}:
+                if row["fields"][:2] == ["7", "3"]:
+                    row["fields"][1] = "2"
+                elif row["kind"] in {"ParentOutcome", "SubmitReturned", "WorkerOutcome"}:
+                    row["fields"][4:6] = ["2", "2"]
+        fixture.parent.append(event("KeyPairConfirmed", [7, 1, 1, 2], 3021))
+        report = fixture.run()
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["phases"][0]["successfulKeyEdges"], 2)
+        self.assertEqual(report["phases"][0]["latency"]["p95UsCeil"], 1000)
+
+        fixture.parent[-1]["fields"][-1] = "9"
+        self.assertFalse(fixture.run()["passed"])
+
     def test_nearest_rank_and_strict_thresholds_use_integer_ticks(self):
         self.assertEqual(audit.nearest_rank(list(range(1, 101)), 95), 95)
         self.assertEqual(audit.nearest_rank(list(range(1, 101)), 99), 99)

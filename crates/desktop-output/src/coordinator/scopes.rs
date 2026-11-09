@@ -29,6 +29,7 @@ impl Coordinator {
         let run = match command {
             Command::Arm { producer, .. } => &producer.run,
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => &delivery.producer.run,
+            Command::DeliverKeyPair { deliveries } => &deliveries[0].producer.run,
             Command::DeliverPointerBatch { deliveries } => {
                 let Some(first) = deliveries.first() else { return false }; &first.producer.run
             }
@@ -51,6 +52,7 @@ impl Coordinator {
         let run = match command {
             Command::Arm { producer, .. } => &producer.run,
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => &delivery.producer.run,
+            Command::DeliverKeyPair { deliveries } => &deliveries[0].producer.run,
             Command::DeliverPointerBatch { deliveries } => &deliveries.first()?.producer.run,
             _ => return None,
         };
@@ -61,7 +63,7 @@ impl Coordinator {
             return Err("Desktop scope receipt budget exceeded.".into());
         }
         let rejectable = match &request.command {
-            Command::Arm { .. } | Command::DeliverPointerBatch { .. } => true,
+            Command::Arm { .. } | Command::DeliverPointerBatch { .. } | Command::DeliverKeyPair { .. } => true,
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } =>
                 !matches!(delivery.intent, Intent::Cleanup)
                     && !matches!(&delivery.intent, Intent::Held { controls } if controls.is_empty()),

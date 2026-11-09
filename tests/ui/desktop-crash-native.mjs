@@ -1,5 +1,5 @@
 // Explicitly opt-in: interrupt one verified running development app tree while
-// its private native worker holds only KeyA, then restart and explicitly recover.
+// its private native worker holds the fixture keys, then restart and recover.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -10,6 +10,7 @@ import {isAbsolute, relative, resolve, sep} from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
 import {recoveryRecord} from './sqlite-recovery-record.mjs';
 const enabled=process.env.OSG_DESKTOP_CRASH_NATIVE==='1'&&process.env.OSG_DESKTOP_NATIVE_INJECT==='1';
+const keyPair=process.env.OSG_DESKTOP_CRASH_KEY_PAIR==='1';
 const root=resolve('.');
 const allowed=new Set(['companion_status','companion_enable','companion_disable','companion_pair_offer','companion_approve','companion_revoke','companion_assign','companion_unassign','companion_publish_begin','companion_publish_chunk','companion_publish_commit','profile_status','profile_resources_list','profile_resources_inspect','profile_editor_save','profile_compile','profile_apply','profile_stop','profile_recover','profile_delete','profile_desktop_status','profile_desktop_configure','profile_desktop_capture_application']);
 
@@ -20,7 +21,7 @@ async function privatePath(path, parent) {
  return actual;
 }
 
-test('actual whole dev app interruption requires explicit owned KeyA recovery',{skip:!enabled,timeout:300_000},async()=>{
+test('actual whole dev app interruption requires explicit owned key recovery',{skip:!enabled,timeout:300_000},async()=>{
  assert.equal(process.platform,'win32');
  const research=await realpath(resolve('.research'));
  const artifacts=await privatePath(process.env.OSG_DESKTOP_CRASH_ARTIFACTS,research);
@@ -88,7 +89,7 @@ test('actual whole dev app interruption requires explicit owned KeyA recovery',{
   await writeFile(resolve(artifacts,'run.log'),output);assert.equal(code,0,output);
   const evidence=JSON.parse(await readFile(evidenceFile,'utf8'));
   assert.ok(evidence.actualNativeCockpit&&evidence.actualWholeAppInterruption&&evidence.injected&&evidence.explicitRecovery);
-  assert.equal(evidence.virtualControllers,0);assert.equal(evidence.receiverEvents.length,2);assert.deepEqual(evidence.cleanupErrors,[]);
+  assert.equal(evidence.keyPair,keyPair);assert.equal(evidence.virtualControllers,0);assert.equal(evidence.receiverEvents.length,keyPair?4:2);assert.deepEqual(evidence.cleanupErrors,[]);
   assert.equal(evidence.cleanupProven,true);
   await writeFile(resolve(artifacts,'run-manifest.json'),JSON.stringify({database,executable,executableSha256,receiver:target},null,2)+'\n');
  }finally{

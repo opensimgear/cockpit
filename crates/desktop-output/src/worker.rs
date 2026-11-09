@@ -148,6 +148,7 @@ impl<A: Adapter> Worker<A> {
             Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => (delivery.operation_id.0,
                 if matches!(delivery.intent, Intent::Cleanup) { 6 } else { 1 }),
             Command::DeliverPointerBatch { deliveries } => (deliveries.first().map_or(0, |d| d.operation_id.0), 1),
+            Command::DeliverKeyPair { deliveries } => (deliveries[0].operation_id.0, 1),
             Command::Recover { .. } => (0, 3),
             _ => (0, 2),
         };
@@ -187,6 +188,10 @@ impl<A: Adapter> Worker<A> {
             match &request.command {
                 Command::Deliver { delivery } | Command::DeliverGuarded { delivery, .. } => ack.operation_id = Some(delivery.operation_id),
                 Command::DeliverPointerBatch { deliveries } => ack.pointer_batch = Some(crate::pointer_batch::describe(deliveries)?),
+                Command::DeliverKeyPair { deliveries } => {
+                    crate::key_pair::validate(deliveries)?;
+                    ack.operation_id = Some(deliveries[0].operation_id);
+                }
                 _ => {}
             }
             if !self.admit(&request, now, &mut ack)? { return Ok(()); }
@@ -269,6 +274,15 @@ impl<A: Adapter> Worker<A> {
                 }
                 Command::DeliverPointerBatch { deliveries } => {
                     events = self.pointer_batch(deliveries, request.deadline_us, now, &mut ack)?;
+                }
+                Command::DeliverKeyPair { deliveries } => {
+                    if request.deadline_us.is_none_or(|deadline| now < deadline.0) {
+                        if let Some((next, presses)) = crate::key_pair::project(&self.reducer, &deliveries)? {
+                            self.reducer = next;
+                            events = presses;
+                        }
+                    }
+                    ack.skipped = events.is_empty();
                 }
                 Command::Pause { run } => {
                     events = self.reducer.pause(&run);

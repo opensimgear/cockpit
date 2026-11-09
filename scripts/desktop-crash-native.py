@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in whole-development-app interruption and explicit owned KeyA recovery.
+"""Opt-in whole-development-app interruption and explicit owned key recovery.
 
 Only the applied native ProfileSession submits input. The receive-only window,
 this harness and its CDP bridge remain outside the interrupted application tree.
@@ -150,11 +150,11 @@ def desktop(service):
     return mapping.state(service, "profile_desktop_status", "desktop")
 
 
-def key_events(path, start=0):
+def key_events(path, start, scan_codes):
     events = native.injected_events(path)[start:]
-    # TranslateMessage can derive WM_CHAR from the injected KeyA message. It is
+    # TranslateMessage can derive WM_CHAR from an injected key message. It is
     # not a second native submission; preserve it in raw receiver evidence.
-    assert all(event["message"] in (256, 257, 258) and event.get("scanCode") == 30 and event.get("extended") == 0 for event in events), "Unexpected injected control in bounded KeyA acceptance"
+    assert all(event["message"] in (256, 257, 258) and event.get("scanCode") in scan_codes and event.get("extended") == 0 for event in events), "Unexpected injected control in bounded key acceptance"
     return [event for event in events if event["message"] in (256, 257)]
 
 
@@ -196,12 +196,20 @@ def main():
     assert before["qualified"] and not before["enabled"] and profile_before["state"] == "stopped" and profile_before["owner"] is None
     assert service.profiles("profile_status")["session"]["selectionMode"] == "manual"
     publication = latency.compiled_publication()
+    paired = os.environ.get("OSG_DESKTOP_CRASH_KEY_PAIR") == "1"
+    controls = [KEY_A, {"kind": "key", "key": 5}] if paired else [KEY_A]
+    scan_codes = (30, 48) if paired else (30,)
     evidence = dict(actualNativeCockpit=True, actualWholeAppInterruption=False, injected=False, explicitRecovery=False,
         virtualControllers=0, productionQualified=False, hardwareTested=False, gameTested=False,
-        measurement="Native ACK counts, exact Win32 process ownership, durable journal and receiver-observed injected KeyA edges. No latency or hardware claim.", checks=[], desktopBefore=before, appBefore=app_before)
+        measurement="Native ACK counts, exact Win32 process ownership, durable journal and receiver-observed injected key edges.", keyPair=paired, checks=[], desktopBefore=before, appBefore=app_before)
     peer, interrupted, recovered, listener_enabled, owner, saved = None, False, False, None, None, None
     instance = "desktop-crash-" + uuid.uuid4().hex[:12]
     event_start = len(native.injected_events(args.receiver))
+    def edges():
+        return key_events(args.receiver, event_start, scan_codes)
+    def observed(*messages):
+        return sorted((event["scanCode"], event["message"]) for event in edges()) == sorted(
+            (scan, message) for scan in scan_codes for message in messages)
     try:
         listener_before = companion.operator(service, "companion_status").get("listener", {})
         listener_enabled = listener_before.get("enabled", False)
@@ -216,7 +224,13 @@ def main():
         companion.operator(service, "companion_assign", companionId=instance, instanceId=instance, publicationHash=publication["publicationHash"])
         peer.open(instance, publication)
         document, assignments = latency.profile_for(service, [instance], publication, keys_only=True)
-        document["name"] = "Actual crash KeyA recovery " + uuid.uuid4().hex[:8]
+        document["name"] = "Actual crash key recovery " + uuid.uuid4().hex[:8]
+        if paired:
+            output = document["desktopOutputs"][0]
+            output["ports"].append({**output["ports"][0], "id": "key-b", "name": "key-b"})
+            output["actions"].append(dict(portId="key-b", action=dict(kind="key-hold", key=5)))
+            binding = document["bindings"][0]
+            document["bindings"].append({**binding, "id": "key-b", "to": {**binding["to"], "portId": "key-b"}})
         saved = mapping.save(service, document, assignments)
         target = mapping.wait_for(lambda: report if (report := native.receiver(args.receiver)).get("identity") else None, "Receive-only target is not ready")
         target["window"] = args.receiver_window
@@ -230,23 +244,28 @@ def main():
         latency.ownership.position_receiver(service, args.receiver, receiver_identity, keyboard_window=target["window"])
         latency.send(peer, [dict(controlId=latency.BUTTON, value=False)])
         mapping.wait_for(lambda: desktop(service)["runtime"]["state"] == "active" and desktop(service)["runtime"]["waitingNeutral"] == [], "Neutral scoped desktop route did not arm")
-        assert key_events(args.receiver, event_start) == []
+        assert edges() == []
         exact_foreground(windows, target)
         latency.send(peer, [dict(controlId=latency.BUTTON, value=True)])
         def held():
             status = desktop(service)
-            outcomes = [outcome for outcome in status["runtime"].get("outcomes", []) if outcome["delivery"]["intent"] == {"kind": "held", "controls": [KEY_A]} and outcome["acknowledgement"]["attempted"] > 0]
-            return (status, outcomes[-1]["acknowledgement"]) if status["runtime"]["backend"]["held"] == [KEY_A] and outcomes else None
-        held_status, ack = mapping.wait_for(held, "No acknowledged native KeyA hold")
-        assert ack["ok"] and ack["attempted"] == ack["confirmed"] == 1 and not ack["uncertain"] and not ack["skipped"]
-        mapping.wait_for(lambda: len(key_events(args.receiver, event_start)) == 1 and key_events(args.receiver, event_start)[0]["message"] == 256, "Receiver did not observe exactly one KeyA down")
+            outcomes = status["runtime"].get("outcomes", [])
+            acks = [next((outcome["acknowledgement"] for outcome in reversed(outcomes)
+                if outcome["delivery"]["intent"] == {"kind": "held", "controls": [control]}
+                and outcome["acknowledgement"]["attempted"] > 0), None) for control in controls]
+            return acks if status["runtime"]["backend"]["held"] == controls and all(acks) else None
+        acks = mapping.wait_for(held, "No acknowledged native key holds")
+        for ack in acks:
+            assert ack["ok"] and ack["attempted"] == ack["confirmed"] == 1 and not ack["uncertain"] and not ack["skipped"]
+        assert len({ack["sequence"] for ack in acks}) == 1, "Both paired presses must share one native request"
+        mapping.wait_for(lambda: observed(256), "Receiver did not observe the exact key downs")
         record = journal(service, owner)
         journal_before = record["payload"]
-        assert journal_before["held"] == [KEY_A] and journal_before["journalOwner"] == {"session": owner["session"], "generation": str(owner["generation"])}
+        assert journal_before["held"] == controls and journal_before["journalOwner"] == {"session": owner["session"], "generation": str(owner["generation"])}
         assert journal_before["journalScope"] == {"kind": "application", "identity": receiver_identity}
-        evidence.update(appliedOwner=owner, heldAcknowledgement=ack, receiverIdentity=receiver_identity, journalBefore=record, profile=saved, assignments=assignments)
+        evidence.update(appliedOwner=owner, heldAcknowledgement=acks[0], heldAcknowledgements=acks, receiverIdentity=receiver_identity, journalBefore=record, profile=saved, assignments=assignments)
         evidence["injected"] = True
-        evidence["checks"].append("One authenticated real WSS button produced exactly one receiver-observed and natively acknowledged application-scoped KeyA hold with durable exact run ownership")
+        evidence["checks"].append("One authenticated WSS button produced the exact receiver-observed and acknowledged application-scoped holds with durable run ownership")
         # No live peer request is sent after this boundary. Socket EOF after the
         # worker and app are gone cannot cause graceful input cleanup.
         peer.paused.set()
@@ -269,25 +288,25 @@ def main():
         evidence["appAfter"] = restart_identity
         verify_app(service, restart_identity)
         assert interrupted_record == record, "Crash altered the committed exact-owner recovery record"
-        assert windows.exact(receiver_identity) and [event["message"] for event in key_events(args.receiver, event_start)] == [256]
-        evidence["checks"].append("Exact private worker, main dev app and owned WebView descendants were forcibly terminated without Drop; the receiver and external harness survived and held KeyA remained durably recorded")
+        assert windows.exact(receiver_identity) and observed(256)
+        evidence["checks"].append("The private worker, dev app and owned WebView processes terminated without Drop. The receiver survived and the exact holds remained recorded.")
         restart_status = service.profiles("profile_status")["profileSession"]
         restart_desktop = desktop(service)
         assert restart_status["state"] == "recovery-needed" and restart_status["owner"] is None and restart_status["appliedSnapshot"] is None
         assert restart_desktop["runtime"]["state"] == "recovery-needed"
         time.sleep(.3)
         assert len(windows.matching(executable)) == 1, "Ordinary startup spawned an input worker"
-        assert len(key_events(args.receiver, event_start)) == 1, "Ordinary startup released or replayed KeyA"
+        assert observed(256), "Ordinary startup released or replayed keys"
         restart_record = journal(service, owner)
         assert restart_record == interrupted_record, "Startup mutated the recovery record before explicit recovery"
-        evidence["ordinaryRestart"] = dict(profileSession=restart_status, desktop=restart_desktop, journal=restart_record, receiverEvents=key_events(args.receiver, event_start))
+        evidence["ordinaryRestart"] = dict(profileSession=restart_status, desktop=restart_desktop, journal=restart_record, receiverEvents=edges())
         evidence["checks"].append("Ordinary whole-app restart exposes RecoveryNeeded with no owner, applied snapshot, input worker, release or replay")
         if windows.foreground()["window"] != int(target["window"]):
             args.receiver.with_suffix(".focus").write_text("focus")
             mapping.wait_for(lambda: windows.foreground()["window"] == int(target["window"]), "Cannot focus exact surviving receiver for recorded recovery")
         exact_foreground(windows, target)
         result = service.profiles("profile_recover")["profileSession"]
-        mapping.wait_for(lambda: len(key_events(args.receiver, event_start)) == 2 and key_events(args.receiver, event_start)[1]["message"] == 257, "Explicit recovery did not release only recorded KeyA")
+        mapping.wait_for(lambda: observed(256, 257), "Explicit recovery did not release exactly the recorded keys")
         recovered_record = journal(service, owner)
         assert recovered_record["revision"] > restart_record["revision"]
         journal_after = recovered_record["payload"]
@@ -296,10 +315,10 @@ def main():
         assert journal_after["cleanupComplete"] and not journal_after["uncertain"] and journal_after["owners"] == [] and journal_after["runs"] == []
         assert journal_after["journalOwner"] == journal_before["journalOwner"] and journal_after["journalScope"] == journal_before["journalScope"]
         time.sleep(.2)
-        assert len(key_events(args.receiver, event_start)) == 2 and len(windows.matching(executable)) == 1
+        assert observed(256, 257) and len(windows.matching(executable)) == 1
         recovered = True
-        evidence.update(explicitRecovery=True, recovery=dict(profileSession=result, desktop=desktop(service), journal=recovered_record), receiverEvents=key_events(args.receiver, event_start), receiverRaw=native.receiver(args.receiver))
-        evidence["checks"].append("Explicit profile recovery releases exactly recorded KeyA once, preserves journal owner/scope, clears held/possible/in-flight ownership, leaves ProfileSession stopped and terminates its recovery worker")
+        evidence.update(explicitRecovery=True, recovery=dict(profileSession=result, desktop=desktop(service), journal=recovered_record), receiverEvents=edges(), receiverRaw=native.receiver(args.receiver))
+        evidence["checks"].append("Explicit recovery released only the recorded keys, preserved journal owner and scope, and left a clean stopped ProfileSession.")
     except Exception as error:
         interrupted = windows.interrupted
         evidence["actualWholeAppInterruption"] = interrupted
@@ -336,8 +355,7 @@ def main():
                     state = journal(service, owner)["payload"]
                     assert state["held"] == state["possibleHeld"] == state["owners"] == state["runs"] == [], state
                     assert state["cleanupComplete"] and not state["uncertain"] and state["inFlight"] is None, state
-                    edges = key_events(args.receiver, event_start)
-                    assert not edges or [edge["message"] for edge in edges] == [256, 257], edges
+                    assert not edges() or observed(256, 257), edges()
                 evidence["cleanupProven"] = True
                 evidence["finalStatus"] = dict(profileSession=run, desktop=native.compact_desktop(status), listener=listener, nativeApps=apps)
             cleanup("Verify stopped restored dev app without input workers", verify)

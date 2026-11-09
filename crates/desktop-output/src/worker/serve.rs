@@ -87,7 +87,7 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
                     crate::audit::record(crate::audit::Kind::RequestDequeued, &[channel, request.sequence.0, depth as u64]);
                 }
                 let stop = matches!(request.command, Command::Stop);
-                let delivery = matches!(request.command, Command::Deliver { .. } | Command::DeliverGuarded { .. } | Command::DeliverPointerBatch { .. });
+                let delivery = matches!(request.command, Command::Deliver { .. } | Command::DeliverGuarded { .. } | Command::DeliverPointerBatch { .. } | Command::DeliverKeyPair { .. });
                 let ack = worker.receive(request, clock());
                 worker.anchor_release_guard(&ack, clock());
                 if let Some(channel) = audit_channel {

@@ -50,6 +50,73 @@ impl Coordinator {
         self.submit_inner(delivery, source_now_us, None, JournalMode::Immediate)
     }
 
+    /// Try two already queued presses as one native submission. A healthy
+    /// decline leaves both operations untouched for ordinary ordered dispatch.
+    pub fn try_submit_native_key_pair(
+        &mut self,
+        deliveries: [Delivery; 2],
+        source_now_us: u64,
+    ) -> Result<Option<[Ack; 2]>, String> {
+        if crate::key_pair::validate(&deliveries).is_err() {
+            return Ok(None);
+        }
+        let source_deadline = deliveries.iter().filter_map(|delivery| delivery.deadline_us).min_by_key(|deadline| deadline.0);
+        if source_deadline.is_some_and(|deadline| source_now_us >= deadline.0) {
+            return Ok(None);
+        }
+        let command = Command::DeliverKeyPair { deliveries: Box::new(deliveries.clone()) };
+        if self.admission_is_stale(&command) {
+            return Ok(None);
+        }
+        let Some((projected, _)) = crate::key_pair::project(&self.reducer, &deliveries)? else {
+            return Ok(None);
+        };
+        let operations = deliveries.each_ref().map(|delivery| delivery.operation_id);
+        let revision = self.projection_revision;
+        let deadline = source_deadline.map(|deadline| Counter((self.clock)().saturating_add(deadline.0 - source_now_us)));
+        let envelope = Request {
+            sequence: Counter(self.sequence.saturating_add(1)),
+            deadline_us: Some(Counter(u64::MAX)),
+            admission: self.request_admission(&command),
+            command: command.clone(),
+        };
+        if serde_json::to_vec(&envelope).map_err(|error| error.to_string())?.len() > FRAME_LIMIT {
+            return Ok(None);
+        }
+        let ack = self.send_with_commit(command, deadline, projected.held(), |coordinator, ack| {
+            let expected = if ack.skipped { 0 } else { 2 };
+            if ack.operation_id != Some(operations[0]) || ack.attempted != expected || ack.collision {
+                return Err("Desktop key pair acknowledgement has invalid identity or native counts.".into());
+            }
+            if ack.skipped {
+                return Ok(false);
+            }
+            coordinator.reducer = if revision == coordinator.projection_revision {
+                projected
+            } else {
+                crate::key_pair::project(&coordinator.reducer, &deliveries)?
+                    .ok_or("Desktop key pair no longer matches its owner projection.")?.0
+            };
+            Ok(coordinator.update_owners())
+        })?;
+        if ack.skipped && !ack.scope_rejected {
+            return Ok(None);
+        }
+        if !ack.skipped {
+            if let Some(channel) = self.channel.audit_id() {
+                crate::audit::record(crate::audit::Kind::KeyPairConfirmed,
+                    &[channel, ack.sequence.0, operations[0].0, operations[1].0]);
+            }
+        }
+        Ok(Some(operations.map(|operation| {
+            let mut logical = ack.clone();
+            logical.operation_id = Some(operation);
+            logical.attempted /= 2;
+            logical.confirmed /= 2;
+            logical
+        })))
+    }
+
     /// An already queued KeyHold edge may share the previous receipt's durable
     /// write. Each request retains its own scope gate and ACK.
     pub fn submit_key_pair(
