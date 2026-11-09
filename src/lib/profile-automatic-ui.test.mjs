@@ -8,11 +8,11 @@ const status=()=>({schemaVersion:1,mode:'manual',manualProfileId:DEFAULT_PROFILE
 const profiles=()=>[{id:DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:hash},{id,name:'Unified DCS rig',revision:4,isDefault:false,semanticHash:hash},{id:other,name:'Unified hardware',revision:2,isDefault:false,semanticHash:hash}];
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 function harness(initial=status()){const calls=[];let native=initial;const client=new ProfileAutomaticClient(async request=>{calls.push(plain(request));if(request.command==='profile_list')return{profiles:profiles()};if(request.command==='profile_selection_mode')native={...native,mode:request.mode};return{automatic:native};});return{calls,client,controller:new ProfileAutomaticController(client),setStatus(value){native=value;}};}
-async function component(name){
+async function component(name,gatewayRequest=()=>{throw new Error('SSR must not call native.');}){
   const models=readModelFixture();const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8');
   source=source.replace('</script>',`captureAutomatic({select,toggleMode,mountStatus,watchStatus,get view(){return view;}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;const notices=[],destroyers=[],timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,callback){events.set(name,callback);},removeEventListener(name,callback){if(events.get(name)===callback)events.delete(name);}},window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
-  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,document,window,captureAutomatic(value){handlers=value;},require(name){if(name==='./profile-read-models/shared')return models;if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onDestroy(callback){destroyers.push(callback);}};if(modules.has(name))return modules.get(name);if(name==='./Icon.svelte')return{default:()=>{}};if(name==='./notifications')return{notify(...args){notices.push(args);}};if(name==='./gateway')return{gatewayRequest(){throw new Error('SSR must not call native.');}};throw new Error(`Unexpected automatic UI dependency ${name}`);}},{filename:filename.pathname});
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,document,window,captureAutomatic(value){handlers=value;},require(name){if(name==='./profile-read-models/shared')return models;if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onDestroy(callback){destroyers.push(callback);}};if(modules.has(name))return modules.get(name);if(name==='./Icon.svelte')return{default:()=>{}};if(name==='./notifications')return{notify(...args){notices.push(args);}};if(name==='./gateway')return{gatewayRequest};throw new Error(`Unexpected automatic UI dependency ${name}`);}},{filename:filename.pathname});
   return{models,render(props){return{html:render(exports.default,{props}).body,get handlers(){return handlers;}};},notices,timers,events,document,destroy(){for(const callback of destroyers)callback();}};
 }
 const modeBadge=html=>html.match(/<button\b[^>]*class="[^"]*profile-mode-status[^"]*"[^>]*>/)?.[0]??'';
@@ -32,6 +32,37 @@ test('automatic status observes one runtime stream while active and disposal nev
  view.models.emit('runtime',{status:'ready',value:{automatic:{...status(),mode:'automatic'},readOnly:false}});assert.equal(h.controller.state.status.mode,'automatic');assert.equal(h.controller.state.stale,false);
  assert.equal(view.timers.size,0);assert.equal(view.events.size,0);cleanup();unmount();assert.equal(view.models.count('runtime'),0);assert.deepEqual(h.calls,[]);
  const inactive=view.render({active:false,controller:h.controller});await inactive.handlers.select('manual');assert.equal(inactive.handlers.watchStatus(),undefined);assert.deepEqual(h.calls,[]);
+});
+
+test('default header requests a settings revision for each observed owner',async()=>{
+  const calls=[],first=deferred(),second=deferred();
+  const owner={session:other,generation:1,profileId:id,profileRevision:4,gameId:null};
+  const currentRevision=`sha256:${'2'.repeat(64)}`;
+  const snapshot=(mode,revision,active)=>({localSettings:{scope:'selection-mode',gameId:null,
+    settings:{mode,readOnly:false},revision,profileSession:{owner:active}}});
+  let reads=0;
+  const badge=await component('./ProfileAutomaticControls.svelte',async request=>{
+    calls.push(plain(request));
+    assert.equal(request.command,'profile_local_settings_get');
+    return (++reads===1?first:second).promise;
+  });
+  const {handlers}=badge.render({});
+  const unmount=handlers.mountStatus(),stop=handlers.watchStatus();
+  const emit=message=>badge.models.emit('runtime',{status:'ready',value:{automatic:{...status(),message},
+    readOnly:false,preferredProfiles:{},profileSession:{owner}}});
+  try {
+    assert.equal(reads,1);
+    emit('New active owner');
+    emit('Unrelated runtime message');
+    assert.equal(reads,2);
+    first.resolve(snapshot('manual',hash,null));
+    await settle();
+    assert.equal(calls.length,2);
+    second.resolve(snapshot('manual',currentRevision,owner));
+    await settle();
+    assert.deepEqual(calls,[{command:'profile_local_settings_get',scope:'selection-mode'},
+      {command:'profile_local_settings_get',scope:'selection-mode'}]);
+  } finally { stop();unmount();badge.destroy(); }
 });
 
 test('failed header mode save notifies once and keeps stale mode disabled until native refresh',async()=>{
