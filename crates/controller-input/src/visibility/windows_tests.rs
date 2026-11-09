@@ -36,7 +36,7 @@ fn absent_unsupported_and_installed_dependency_inspection_never_mutates() {
             .into_iter()
             .find_map(|(function, list)| {
                 let size = driver.0.raw(function, None, &mut []).unwrap();
-                (size > policy::LIMIT).then_some((list, size))
+                (size > policy::READBACK_LIMIT).then_some((list, size))
             });
         if let Some((list, size)) = oversized {
             let error = driver.read().unwrap_err();

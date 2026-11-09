@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub const LIMIT: usize = 65_536;
+// The pinned driver's collection copy accepts at most 32,767 WCHARs.
+pub(super) const READBACK_LIMIT: usize = 32_767 * 2;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct State {
@@ -88,8 +90,8 @@ impl State {
             let readback_bytes = 2 + values.iter()
                 .map(|value| value.encode_utf16().count() * 4 + 2)
                 .sum::<usize>();
-            if readback_bytes > LIMIT {
-                return Err(format!("HidHide policy would exceed the supported {LIMIT}-byte driver readback limit."));
+            if readback_bytes > READBACK_LIMIT {
+                return Err(format!("HidHide policy would exceed the pinned driver's {READBACK_LIMIT}-byte readback limit."));
             }
         }
         Ok(())

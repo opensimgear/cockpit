@@ -99,14 +99,16 @@ fn self_access_never_writes_a_policy_that_exceeds_the_driver_readback_limit() {
     before.applications = (0..16).map(|index| {
         let prefix = format!(r"\Device\Volume1\{index:02}");
         let suffix = ".exe";
-        format!("{prefix}{}{suffix}", "x".repeat(1023 - prefix.len() - suffix.len()))
+        // Adding IMAGE makes the pinned driver report exactly 65,536 bytes.
+        let length = if index == 0 { 1003 } else { 1023 };
+        format!("{prefix}{}{suffix}", "x".repeat(length - prefix.len() - suffix.len()))
     }).collect();
     before.validate_readback_limit().unwrap();
     let mut driver = Fixture::new(before.clone());
     let result = reconcile(&mut driver, IMAGE.into(), || panic!("No mutation was admitted"));
     assert_eq!(result.status, "error");
     assert_eq!(result.changed, Some(false));
-    assert!(result.message.contains("driver readback limit"));
+    assert!(result.message.contains("65534-byte readback limit"));
     assert_eq!(driver.writes, 0);
     assert_eq!(driver.state, before);
 
@@ -121,7 +123,7 @@ fn self_access_never_writes_a_policy_that_exceeds_the_driver_readback_limit() {
     let recovered = super::super::journal::restore(&mut driver, &mut store, &record.id).unwrap();
     assert!(recovered.clean);
     let error = super::super::journal::apply(&mut driver, &mut store, plan, || Ok(())).unwrap_err();
-    assert!(error.contains("driver readback limit"));
+    assert!(error.contains("65534-byte readback limit"));
     assert_eq!(driver.writes, 0);
     assert!(store.read().unwrap().unwrap().clean);
 }

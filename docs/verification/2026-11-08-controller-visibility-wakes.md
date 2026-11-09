@@ -217,3 +217,29 @@ The rebuilt Cockpit passed the two passive controller checks and reported
 the installed driver's oversized-list refusal with `changed: false`.
 Executable SHA-256
 `38cc6d5a33b5677317c26f5f1452dc4877ceed28e881df0cd5000cd035a667bc`.
+
+### Exact pinned-driver boundary
+
+The installed release driver advertises 65,654 bytes for the current
+application list. On two read-only passes, a 65,534-byte buffer returned
+`ERROR_INSUFFICIENT_BUFFER` (122), and the full 65,654-byte buffer returned
+`ERROR_INVALID_PARAMETER` (87). The device list returned two bytes, and
+the driver reported active visibility with inverse mode off. The installed
+binary's string copy checks for a destination of at most 32,767 UTF-16
+code units. [Pinned collection copy](https://github.com/nefarius/HidHide/blob/v1.5.230.0/HidHide/src/Config.c#L675-L716)
+
+Cockpit now caps driver replies and preflights the driver's padded size at
+65,534 bytes. The serialized policy and setter bound remains 65,536 bytes.
+The wire fixture accepts a 65,534-byte reply and refuses the next even size
+before a second IOCTL. The journal and startup fixtures use a 65,426-byte
+reported list whose next write would make the driver report 65,536 bytes.
+Both refuse the write, and recovery still handles a journal saved before
+its first write.
+
+All 180 Windows controller tests and 38 production coverage checks passed.
+The running dev Cockpit passed passive catalogue and delayed-preview
+checks. Its visibility status named the 65,654-byte application list and
+the 65,534-byte driver limit, with `ready: false` and `changed: false`.
+The physical HidHide check in #199 requires a driver and policy that can
+return an exact snapshot. Dev executable SHA-256
+`c628a650ddad47381842f0c8f681469cb03a98ef79cd3667624acd027522476a`.

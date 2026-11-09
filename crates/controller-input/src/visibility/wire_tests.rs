@@ -54,10 +54,6 @@ fn native_exchange_rejects_invalid_frames_and_inconsistent_counts() {
     for size in [0, 1, 3] {
         assert!(exchange(2050, None, |_, _, _| Ok(size)).is_err());
     }
-    assert_eq!(
-        exchange(2048, None, |_, _, _| Ok(LIMIT + 118)).unwrap_err(),
-        "HidHide application list reports 65654 bytes, above the supported 65536-byte read limit."
-    );
     assert!(
         exchange(2050, None, |_, _, output| Ok(if output.is_empty() {
             2
@@ -72,6 +68,30 @@ fn native_exchange_rejects_invalid_frames_and_inconsistent_counts() {
         .unwrap()
         .is_empty());
     assert!(exchange(2048, None, |_, _, _| Err("native failure".into())).is_err());
+}
+
+#[test]
+fn native_list_reads_respect_the_pinned_driver_copy_boundary() {
+    for (function, list) in [(2048, "application"), (2050, "device")] {
+        let mut reads = 0;
+        let accepted = exchange(function, None, |_, _, output| {
+            assert_eq!(output.len(), if reads == 0 { 0 } else { 65_534 });
+            reads += 1;
+            Ok(65_534)
+        })
+        .unwrap();
+        assert_eq!(accepted.len(), 65_534);
+        assert_eq!(reads, 2);
+        for size in [65_536, 65_654] {
+            let error = exchange(function, None, |_, _, output| {
+                assert!(output.is_empty(), "Oversized lists must never reach the driver copy");
+                Ok(size)
+            })
+            .unwrap_err();
+            assert!(error.contains(&format!("HidHide {list} list reports {size} bytes")));
+            assert!(error.contains("65534-byte readback limit"));
+        }
+    }
 }
 struct Fake {
     state: State,

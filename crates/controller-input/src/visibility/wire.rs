@@ -3,6 +3,8 @@ use super::{
     journal::Backend,
     policy::{State, LIMIT},
 };
+#[cfg(any(windows, test))]
+use super::policy::READBACK_LIMIT;
 pub trait Io {
     fn call(&mut self, function: u32, input: Option<&[u8]>) -> Result<Vec<u8>, String>;
 }
@@ -24,9 +26,9 @@ pub(crate) fn exchange(
     }
     let length = if matches!(function, 2048 | 2050) {
         let size = raw(function, None, &mut [])?;
-        if size > LIMIT {
+        if size > READBACK_LIMIT {
             let list = if function == 2048 { "application" } else { "device" };
-            return Err(format!("HidHide {list} list reports {size} bytes, above the supported {LIMIT}-byte read limit."));
+            return Err(format!("HidHide {list} list reports {size} bytes, above the pinned driver's {READBACK_LIMIT}-byte readback limit. Visibility changes require an exact policy snapshot."));
         }
         // An empty driver collection is a single terminating WCHAR.
         if size < 2 || size % 2 != 0 {
