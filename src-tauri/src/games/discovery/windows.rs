@@ -1,7 +1,7 @@
 #[cfg(windows)]
 mod native {
     use super::*;
-    use std::{ffi::c_void, mem, ptr};
+    use std::{ffi::c_void, mem, ptr, sync::OnceLock};
     type RawHandle = *mut c_void;
     #[repr(C)]
     #[derive(Default)]
@@ -22,6 +22,21 @@ mod native {
         flags: u32,
         executable: [u16; 260],
     }
+    // SystemBasicProcessInformation is available on current Windows 11.
+    // Older releases continue to use the Tool Help process list.
+    #[repr(C)]
+    struct BasicProcessEntry {
+        next: u32,
+        pid: usize,
+        parent: usize,
+        sequence: u64,
+        name_bytes: u16,
+        name_capacity: u16,
+        name_address: usize,
+    }
+    type QuerySystem = unsafe extern "system" fn(u32, *mut c_void, u32, *mut u32) -> i32;
+    const BASIC_PROCESS_INFORMATION: u32 = 252;
+    const LENGTH_MISMATCH: i32 = 0xc0000004u32 as i32;
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> RawHandle;
@@ -43,6 +58,8 @@ mod native {
         ) -> i32;
         fn WaitForSingleObject(handle: RawHandle, milliseconds: u32) -> u32;
         fn CloseHandle(handle: RawHandle) -> i32;
+        fn GetModuleHandleW(name: *const u16) -> RawHandle;
+        fn GetProcAddress(module: RawHandle, name: *const u8) -> *const c_void;
     }
     #[link(name = "advapi32")]
     unsafe extern "system" {
@@ -198,14 +215,93 @@ mod native {
     }
     pub(super) fn find(paths: &[String]) -> Result<Option<ProcessIdentity>, String> {
         let exclusive = paths == ["X-Plane.exe"];
-        inventory(paths)?.inspect(paths, exclusive).map_err(|error| error.to_string())
+        inventory(paths)?
+            .inspect(paths, exclusive)
+            .map_err(|error| error.to_string())
     }
-    pub(super) fn inventory(paths: &[String]) -> Result<ProcessInventory, String> {
-        if paths.is_empty() {
-            return Ok(ProcessInventory::default());
+    fn process_query() -> Option<QuerySystem> {
+        static QUERY: OnceLock<Option<QuerySystem>> = OnceLock::new();
+        *QUERY.get_or_init(|| unsafe {
+            let module = GetModuleHandleW(wide("ntdll.dll").as_ptr());
+            if module.is_null() {
+                return None;
+            }
+            let address = GetProcAddress(module, c"NtQuerySystemInformation".as_ptr().cast());
+            (!address.is_null()).then(|| mem::transmute::<*const c_void, QuerySystem>(address))
+        })
+    }
+    fn basic_processes() -> Option<Vec<(u32, u32, String)>> {
+        let query = process_query()?;
+        const MAX_BYTES: usize = 16 * 1024 * 1024;
+        let mut bytes = 64 * 1024usize;
+        loop {
+            // The documented records are aligned and contain pointers into this allocation.
+            let mut buffer = vec![0u64; bytes.div_ceil(mem::size_of::<u64>())];
+            let mut written = 0;
+            let status = unsafe {
+                query(
+                    BASIC_PROCESS_INFORMATION,
+                    buffer.as_mut_ptr().cast(),
+                    bytes as u32,
+                    &mut written,
+                )
+            };
+            if status == 0 && written as usize <= bytes {
+                return decode_basic_processes(&buffer, written as usize);
+            }
+            if status != LENGTH_MISMATCH {
+                return None;
+            }
+            bytes = (bytes * 2).max(written as usize);
+            if bytes > MAX_BYTES {
+                return None;
+            }
         }
-        let exclusive = paths == ["X-Plane.exe"];
-        let mut inventory = ProcessInventory::default();
+    }
+    fn decode_basic_processes(buffer: &[u64], written: usize) -> Option<Vec<(u32, u32, String)>> {
+        if written > mem::size_of_val(buffer) {
+            return None;
+        }
+        let base = buffer.as_ptr().cast::<u8>();
+        let mut rows = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            if offset % mem::align_of::<BasicProcessEntry>() != 0
+                || offset.checked_add(mem::size_of::<BasicProcessEntry>())? > written
+            {
+                return None;
+            }
+            // The size and alignment checks cover the header. Its fields are all integers.
+            let entry = unsafe { &*base.add(offset).cast::<BasicProcessEntry>() };
+            if entry.name_bytes != 0 {
+                let start = entry.name_address.checked_sub(base as usize)?;
+                let length = entry.name_bytes as usize;
+                if start % mem::align_of::<u16>() != 0
+                    || length % 2 != 0
+                    || entry.name_bytes > entry.name_capacity
+                    || start.checked_add(length)? > written
+                {
+                    return None;
+                }
+                let name = unsafe {
+                    std::slice::from_raw_parts(base.add(start).cast::<u16>(), length / 2)
+                };
+                rows.push((
+                    entry.pid.try_into().ok()?,
+                    entry.parent.try_into().ok()?,
+                    String::from_utf16_lossy(name),
+                ));
+            }
+            if entry.next == 0 {
+                return Some(rows);
+            }
+            if (entry.next as usize) < mem::size_of::<BasicProcessEntry>() {
+                return None;
+            }
+            offset = offset.checked_add(entry.next as usize)?;
+        }
+    }
+    fn toolhelp_processes(mut visit: impl FnMut(u32, u32, &str)) -> Result<(), String> {
         let raw = unsafe { CreateToolhelp32Snapshot(2, 0) };
         if raw as isize == -1 {
             return Err(format!(
@@ -226,30 +322,11 @@ mod native {
         }
         while available {
             let length = entry.executable.iter().position(|c| *c == 0).unwrap_or(260);
-            let basename = String::from_utf16_lossy(&entry.executable[..length]);
-            if paths.iter().any(|p| {
-                p.rsplit(['\\', '/'])
-                    .next()
-                    .is_some_and(|s| s.eq_ignore_ascii_case(&basename))
-            }) {
-                match open(entry.pid).and_then(|handle| match handle {
-                    Some(handle) => identity(&handle, entry.pid),
-                    None => Ok(None),
-                }) {
-                    Ok(Some(identity))
-                        if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) =>
-                    {
-                        inventory.processes.push((identity, entry.parent))
-                    }
-                    Err(error) => {
-                        inventory
-                            .errors
-                            .entry(basename.to_lowercase())
-                            .or_insert(error);
-                    }
-                    _ => {}
-                }
-            }
+            visit(
+                entry.pid,
+                entry.parent,
+                &String::from_utf16_lossy(&entry.executable[..length]),
+            );
             available = unsafe { Process32NextW(snapshot.0, &mut entry) } != 0;
             if !available && std::io::Error::last_os_error().raw_os_error() != Some(18) {
                 return Err(format!(
@@ -257,6 +334,47 @@ mod native {
                     std::io::Error::last_os_error()
                 ));
             }
+        }
+        Ok(())
+    }
+    pub(super) fn inventory(paths: &[String]) -> Result<ProcessInventory, String> {
+        let mut inventory = ProcessInventory::default();
+        if paths.is_empty() {
+            return Ok(inventory);
+        }
+        let exclusive = paths == ["X-Plane.exe"];
+        let names = paths
+            .iter()
+            .filter_map(|path| path.rsplit(['\\', '/']).next())
+            .collect::<Vec<_>>();
+        let mut visit = |pid, parent, basename: &str| {
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(basename)) {
+                return;
+            }
+            match open(pid).and_then(|handle| match handle {
+                Some(handle) => identity(&handle, pid),
+                None => Ok(None),
+            }) {
+                Ok(Some(identity))
+                    if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) =>
+                {
+                    inventory.processes.push((identity, parent));
+                }
+                Err(error) => {
+                    inventory
+                        .errors
+                        .entry(basename.to_lowercase())
+                        .or_insert(error);
+                }
+                _ => {}
+            }
+        };
+        if let Some(rows) = basic_processes() {
+            for (pid, parent, basename) in rows {
+                visit(pid, parent, &basename);
+            }
+        } else {
+            toolhelp_processes(visit)?;
         }
         Ok(inventory)
     }
@@ -267,5 +385,29 @@ mod native {
         Ok(identity(&handle, expected.pid)?.is_some_and(|actual| {
             actual.epoch == expected.epoch && paths_match(&actual.path, &expected.path)
         }))
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn basic_process_snapshot_matches_toolhelp_for_the_running_test_process() {
+        let Some(query) = process_query() else {
+            return;
+        };
+        let mut bytes = 0;
+        let status = unsafe { query(BASIC_PROCESS_INFORMATION, ptr::null_mut(), 0, &mut bytes) };
+        if status != LENGTH_MISMATCH {
+            return;
+        }
+        let pid = std::process::id();
+        let mut expected = None;
+        toolhelp_processes(|id, parent, name| {
+            if id == pid {
+                expected = Some((pid, parent, name.to_owned()));
+            }
+        })
+        .unwrap();
+        let expected = expected.expect("Tool Help test process row");
+        let rows = basic_processes().expect("supported Windows basic process snapshot");
+        assert_eq!(rows.iter().find(|(id, _, _)| *id == pid), Some(&expected));
     }
 }
