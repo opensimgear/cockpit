@@ -202,13 +202,13 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     assert.equal(debugController.sequence,sent);
     return debugController.pendingFrames;
   }
-
   async function soak(options) {
     const openMcp=async()=>observation=await mcpVjoyObservation(cdp,options.owner,{nodeId:outputNode,
       capturePhysical:false,streamTimeoutMs:seconds*1000+120000});
     const beginDualRates=nativeRates?async()=>dualRateSoak=await startDualRateSoak(cdp,probeExecutable,slot.slot,
       options.owner,options.directory,seconds):undefined;
-    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,openMcp,beginDualRates,nodeId:outputNode,...options});
+    const runCommands=commands&&((start,duration,signal)=>commands.runSoak(options.owner,start,duration,page,signal));
+    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,openMcp,beginDualRates,runCommands,nodeId:outputNode,...options});
     await Promise.all(panels.map(({page})=>page.evaluate(()=>{
       const baseline=window.__combinedLamp.findLast(sample=>sample.status==='fresh'&&sample.value===false);
       window.__combinedLamp.splice(0,window.__combinedLamp.length,...(baseline?[baseline]:[]));

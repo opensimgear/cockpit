@@ -56,7 +56,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
   if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
   if (nativeCommands) assert.ok(nativeRates, 'The DCS command fixture requires native rates');
-  if (seconds) assert.ok(observeMcp && !nativeCommands, 'Soak requires combined desktop MCP without the short DCS command burst');
+  if (seconds) assert.ok(observeMcp && (!nativeCommands || nativeRates), 'Command soak requires native dual-rate MCP');
   const dualRateSoak = seconds > 0 && nativeRates;
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');

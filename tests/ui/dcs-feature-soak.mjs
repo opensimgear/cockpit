@@ -109,7 +109,7 @@ function checkMemory(samples) {
 }
 
 export async function runDcsSoak({cdp, request, panels, owner, seconds, directory, status, live,
-  setAirborne, submitOwnship, sendDebug, openMcp, nodeId, fixtureClientId, biosId, beginDualRates}) {
+  setAirborne, submitOwnship, sendDebug, openMcp, nodeId, fixtureClientId, biosId, beginDualRates, runCommands}) {
   assert.equal(panels.length, 2);
   const root = resolve(directory, 'discovery-root');
   await mkdir(root);
@@ -149,7 +149,8 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
   evidence.instances = await instances();
   if (!beginDualRates) await sendDebug(owner, false);
   await startReaders(cdp, owner, nodeId, biosId);
-  let traffic, presentation;
+  let traffic, presentation, commandTask, commandFailure;
+  const commandAbort = new AbortController();
   try {
     const firstReader = await until(async () => {
       const state = await readerStatus(cdp);
@@ -170,6 +171,11 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     presentation = await traceSoakPresentation(panels);
     traffic = await traceSoakRequests(cdp, fixtureClientId);
     const rates = await beginDualRates?.();
+    if (runCommands) {
+      assert.ok(rates);
+      commandTask = runCommands(rates.startNs, Number(rates.endNs-rates.startNs)/1e6, commandAbort.signal);
+      void commandTask.catch(error => { commandFailure = error; });
+    }
     if (rates) {
       mcp.drainFast();
       await delay(Math.max(0, Number(rates.startNs-process.hrtime.bigint())/1e6));
@@ -210,6 +216,7 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
       }
       value = !value;
       rates?.check();
+      if (commandFailure) throw commandFailure;
       const [submission] = await Promise.all([submitOwnship(value), !rates && sendDebug(owner, value)]);
       const rows = await ready(value);
       presentation.record(submission, value, rows);
@@ -261,6 +268,7 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     }
     if (rates) {
       await rates.offered;
+      if (commandTask) evidence.dcsCommands = await commandTask;
       assert.ok(evidence.mcpSamples > 0 && lastFast > firstReader.fast);
       const leaseRequest = {
         command: 'qualification_companion_leases', clientId: fixtureClientId, sessions: evidence.instances,
@@ -330,6 +338,8 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     }, null, 2) + '\n');
     throw error;
   } finally {
+    commandAbort.abort();
+    await commandTask?.catch(() => {});
     traffic?.stop();
     await cdp.evaluate('window.__dcsSoakReaders.close(); delete window.__dcsSoakReaders');
   }

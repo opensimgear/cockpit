@@ -87,6 +87,53 @@ Both live Windows dev trials retained the dual-rate vJoy workload and matched al
 
 The diagnostic executable SHA-256 is `55485a40fb4cf0857daea6d3842cf2d84d60d8e825605441ecf93017558e023a`. The paired reports under `.research/c193-reconnect/dcs-native-stage-timing` are `command-lease-stages-1.json` and `command-lease-stages-2.json`, SHA-256 `9c59af5fc6c2822166ff9503b2f0baa9cb827919c037bd5216283173a2e781b4` and `26c5c64304494840a1f7f1fa76430ea1f5b75bea35846779c470055226910624`. They contain the per-command margins and hashes of the native traces and workload evidence.
 
+### Sustained command and feeder timing on the same owner
+
+A private diagnostic build of `44217e01` ran the combined Windows workload
+for 120 seconds. The fixture offered one debug and one compiled-panel
+command per second after a one-second lead. It sent `A102_HMCS_PW INC` and
+`AAP_CDUPWR DEC` to its private UDP receiver. Two vJoy lanes, two loopback
+panels, a stalled telemetry reader and an unread MCP response stayed active.
+The same profile owner completed four inventory and discovery cycles.
+
+| Command source | Matched receipts | Capture cadence p50 | Capture to reducer p50 / p95 / p99 | Capture to UDP p50 / p95 / p99 | Minimum command / decoder / reader margin |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Debug controller | 119 | 1,000.86 ms | 1.39 / 2.44 / 2.75 ms | 5.72 / 7.28 / 7.53 ms | 95.84 / 560.73 / 560.73 ms |
+| Compiled browser panel | 119 | 1,001.14 ms | 1.85 / 2.95 / 3.50 ms | 5.83 / 7.46 / 8.80 ms | 96.42 / 558.34 / 554.37 ms |
+
+The analyzer paired all 238 receipts to the exact source generation,
+sequence and effect, with positive margins for every command. The fixture
+verified quiet reapply after Stop. The two vJoy lanes offered 120,001 and
+15,001 edges at 1,000.00 and 125.00 Hz, peaking at 32 and 29 pending frames.
+Raw Input matched every edge and both Stop releases. Its offer-to-receipt
+p95 was 2.6 and 2.7 ms. Panel presentation p95 was 27.25 and 35.75 ms, with
+clock uncertainty under 0.27 ms. Both panel input leases retained at least
+1,233 ms and the vJoy feeder retained at least 166.81 ms. The slot returned
+to free and cleanup passed.
+
+The fixture supports the sustained variant with `OSG_DCS_COMMANDS_NATIVE=1`
+and `OSG_DCS_COMBINED_SOAK_SECONDS` alongside the native dual-rate options.
+The command sequence is bounded and spread across the workload window.
+Actual DCS effects and physical and LAN paths remain in #199.
+
+The stock Windows build repeated the 120-second workload and matched all
+238 command receipts and 135,002 vJoy offers, with no replay, timing misses
+or cleanup errors. Command offer-to-receipt p95 was 8.58 ms for debug and
+7.63 ms for the panel. The feeder retained at least 172.22 ms. The live
+fixture covered 89.02% of the soak helper's lines and 96.57% of the command
+helper's lines. Branch coverage was 78.95% and 92.86%, respectively.
+The separate 24-pair burst also passed on the stock build with all 48
+command receipts and no cleanup errors.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `sustained-command-lease/osg-cockpit.exe` | `4375933ea3570d05a16d6fc50644b40510b1da18e365d81de9e3262e5bf4ea95` |
+| `sustained-command-lease/stages.json` | `84f8257bbacf0e6c7eab9ba180ccbbf9ee6fdac1fb4e98f207b06a00a57879e4` |
+| `.research/dcs-physics-native/1794248637110/evidence.json` | `7c868fdd7749efcda0c36b676d2cfcc47fc1a8549602fa9cfcd0a1ecc0209e07` |
+| Stock `virtual-lease-candidate/osg-cockpit.exe` | `e21ae9c5c789edc6fbeee1a56283e13ed4d893919875a2ecbe2a14d4c3ce9b2f` |
+| `.research/dcs-physics-native/1794248930783/evidence.json` | `68f3afc87f81cb4084961ba6f4b36b43bb0a937b765acf54a9fe25ab4fd7841a` |
+| `.research/dcs-physics-native/1794249138349/evidence.json` | `914cf0bdd8968faab7e7ce18f779910ac491658ada28025aa8a20c6817ab11aa` |
+
 ## Concurrent command producers under dual-rate vJoy load
 
 The private Windows fixture offered a debug press and a compiled browser

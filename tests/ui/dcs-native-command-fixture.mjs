@@ -12,6 +12,7 @@ const state={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:
 const event={delivery:'event',schema:{type:'boolean'}};
 const port=(id,direction,contract)=>({id,name:id,direction,contract});
 const extendedPairs=24;
+const soakPairLimit=180;
 const pairIntervalMs=180;
 const nodeMs=ns=>Number(ns)/1e6;
 const digest=value=>createHash('sha256').update(value).digest('hex');
@@ -47,10 +48,10 @@ export async function commandPanelPublication(original) {
   return {canonicalDocument,assets,publicationHash,capabilityFingerprint};
 }
 
-async function waitUntil(target) {
+async function waitUntil(target,signal) {
   let remaining=target-process.hrtime.bigint();
   while(remaining>0n) {
-    await delay(Math.max(1,nodeMs(remaining)));
+    await delay(Math.max(1,nodeMs(remaining)),undefined,{signal});
     remaining=target-process.hrtime.bigint();
   }
 }
@@ -79,7 +80,7 @@ export function nativeDcsCommands(cdp,request) {
   const socket=createSocket('udp4'), datagrams=[], expected=[], sent=[];
   let bound=false, ran=false, observedResource;
   socket.on('message',message=>{
-    if(datagrams.length<=2*extendedPairs)datagrams.push({text:message.toString('utf8'),atNs:String(process.hrtime.bigint())});
+    if(datagrams.length<=2*soakPairLimit)datagrams.push({text:message.toString('utf8'),atNs:String(process.hrtime.bigint())});
   });
 
   return {
@@ -165,14 +166,20 @@ export function nativeDcsCommands(cdp,request) {
       }
     },
 
-    async run(owner,start,durationMs,page) {
+    runSoak(owner,start,durationMs,page,signal) {
+      const leadMs=1000;
+      const intervalMs=Math.max(1000,Math.ceil((durationMs-leadMs)/soakPairLimit));
+      return this.run(owner,start,durationMs,page,{signal,intervalMs,leadMs,pairLimit:soakPairLimit});
+    },
+
+    async run(owner,start,durationMs,page,{signal,intervalMs=pairIntervalMs,leadMs=0,pairLimit=extendedPairs}={}) {
       assert.equal(bound,true);
       assert.deepEqual(datagrams,[],'One-shot commands must stay quiet at baseline');
       assert.notEqual(expected[0],expected[1],'The two sources need distinct command receipts');
       const button=page.getByRole('button',{name:'probe: press',exact:true});
       const initial=await alignClock(page), streamId=randomUUID();
       const debugSamples=[], panelSamples=[];
-      const pairs=Math.min(extendedPairs,Math.floor(durationMs/pairIntervalMs));
+      const pairs=Math.min(pairLimit,Math.floor((durationMs-leadMs)/intervalMs));
       assert.ok(pairs>0,'The mixed workload needs room for a command pair');
       const deadline=start+BigInt(durationMs)*1_000_000n;
       let sequence=0;
@@ -181,20 +188,21 @@ export function nativeDcsCommands(cdp,request) {
       const receipt=async (source,offeredAtMs)=>{
         const index=sent.length;
         sent.push(expected[source]);
-        while(datagrams.length<=index&&process.hrtime.bigint()<deadline)await delay(2);
+        while(datagrams.length<=index&&process.hrtime.bigint()<deadline)await delay(2,undefined,{signal});
         assert.equal(datagrams[index]?.text,expected[source],`Missing or out-of-order DCS command at index ${index}`);
         assert.equal(datagrams.length,index+1,'A command must have exactly one receipt');
         return {offeredAtMs,receivedAtNs:datagrams[index].atNs,text:datagrams[index].text};
       };
       try {
         for(let index=0;index<pairs;index++) {
-          const pairStart=start+BigInt(index*pairIntervalMs)*1_000_000n;
-          await waitUntil(pairStart+25_000_000n);
+          signal?.throwIfAborted();
+          const pairStart=start+BigInt(leadMs+index*intervalMs)*1_000_000n;
+          await waitUntil(pairStart+25_000_000n,signal);
           const debugAtMs=nodeMs(process.hrtime.bigint());
           await debugInput(true);
           debugSamples.push(await receipt(0,debugAtMs));
           await debugInput(false);
-          await waitUntil(pairStart+65_000_000n);
+          await waitUntil(pairStart+65_000_000n,signal);
           const panelAtMs=await sendPanelKey(button,'keydown');
           try {panelSamples.push(await receipt(1,panelAtMs));}
           finally {await sendPanelKey(button,'keyup');}
