@@ -129,3 +129,31 @@ SHA-256 `0448e9a8f46eda6d90b2cbcdf40e2ced786d669a2495a4ecaa9aa1348958650b`.
 Android compilation, the system dialog, denial, regrant and signed
 device behavior remain in [#55](https://github.com/opensimgear/cockpit/issues/55)
 and [#199](https://github.com/opensimgear/cockpit/issues/199).
+
+## Linux transport and POSIX packaging — 9 November 2026
+
+All 12 mobile packaging helper tests passed under Ubuntu WSL2, including
+the simulator archive's POSIX executable permissions check. Android SDK
+and Xcode builds and signed mobile shell qualification remain in #55 and
+#56. This run exercised the packaging helpers and transport library.
+
+The Linux suite used an isolated D-Bus session and temporary Secret Service
+store. The original backpressure regression failed because TCP accepted
+one byte after the earlier write timed out. The fixture now continues
+writing until it reaches backpressure again and then checks cancellation.
+The socket implementation is unchanged. The locked Linux suite passed
+232 tests with one explicit ignore. The locked Windows suite passed 246
+tests. LLVM measured 94.37% line coverage and 100% function coverage in
+`server/socket_io.rs` on both platforms. These runs measured regions, lines
+and functions.
+
+The opt-in multicast discovery, short-code pairing, presence and revocation
+test passed on Windows. It also passed as a separate Ubuntu probe with the
+fixture's Windows-only build guard removed in the temporary source copy.
+
+The Windows native probe passed pairing, presence handoff, blocked TLS
+cancellation and Forget against the running dev Cockpit built at `ec7348da`.
+The trace is `.research/reactive/companion-client-io-native/1794220887352/evidence.json`,
+SHA-256 `195df8cdeb1be55670d869a2bdafb754b39a6c96029347548f85347b0eb78d25`.
+Local transport and coverage outputs are under
+`.research/c193-reconnect/linux-companion-local/`.
