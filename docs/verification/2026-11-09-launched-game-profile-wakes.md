@@ -22,3 +22,32 @@ The focused profile-session and automatic-launch runs passed 499 tests with two 
 | `dcs-physics-native/1794229000138/evidence.json` | `e8090d0623946d2d164559ac6ec0113ba6a482c9894ae5d92530f55e0b8e4b6c` |
 | `launch-child-live.log` | `08843cd4be309e92d6845aa806f1835ed3ecff6f72928216143431e9aeaf34fd` |
 | Private `dcs-physics-native.mjs` fixture | `4b9aedd1ed9500b7b618d05150b5e0249ca14596d3c054e0615b8a0a1adc4ca4` |
+
+## Selected-game process replacement
+
+The Windows neutral fixture exercised process exit and replacement under
+the same profile owner. One stock dev run withdrew both telemetry families,
+retired the desktop helper, and resumed profile telemetry on the new PID.
+In another stock run, the inspector reported fresh ownship and BIOS from a
+verified replacement, while all six assigned profile inputs stayed stale
+through the 8.5-second recovery check. The profile retained its owner and
+reported that game routes were waiting for a fresh context. Both runs
+cleaned up successfully.
+
+A private diagnostic build recovered after two successive reader claims
+were accepted. It bound a healthy helper to the replacement PID and kept
+the profile service interval off through 1,100 ms without gateway reads.
+This run proves the replacement can reattach under the same owner. The
+reason the earlier stock run stayed stale is still under investigation.
+
+The held-key variant stopped before sending input when PickerHost took
+foreground. The exact receiver recorded zero marked keyboard events and
+cleanup completed. Release with a held key and no replay after replacement
+remain open in #198.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `.research/dcs-physics-native/1794239592182/evidence.json` | `c81d06806ef970984645a433f50f420d7e016579c619c1ef22ba824940f63ba3` |
+| `.research/dcs-physics-native/1794239709617/evidence.json` | `0fb33f92085c4166c8175f63f4bb5180f0a6a41edd1df7eedfa0e63c1b1a6a8b` |
+| `.research/dcs-physics-native/1794239959823/evidence.json` | `ba0e8d5922ca94501b6a920c18cea41b4ed3df7fd33911aac80cbc68f40ec2bc` |
+| `.research/c193-reconnect/dcs-native-stage-timing/native-45904-native.err` | `e54ad8f581b9a6fb766fe7a8ecb491881b18e655d87e2e87291ffe52e0d6d4a1` |
