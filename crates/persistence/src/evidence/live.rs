@@ -115,16 +115,9 @@ impl LiveEvidence {
 }
 
 fn storage_path(_connection: &Connection, path: &Path) -> Result<(), String> {
-    // Ancestors are shared by all sidecars: inspect them once, then each
-    // leaf. Reusing a connection must not silently follow new indirection.
-    crate::check_path(path, false)?;
-    if !path
-        .try_exists()
-        .map_err(|_| "Cannot inspect persistence path.")?
-    {
-        return Err("Recovery evidence storage was removed or replaced.".into());
-    }
-    crate::path::check_sidecars(path)?;
+    // Require a regular database leaf using the same no-follow inspection
+    // that validates its type. Inspect sidecars before using the live handle.
+    crate::path::check_live_path(path)?;
     #[cfg(unix)]
     {
         let mut moved: std::ffi::c_int = 0;

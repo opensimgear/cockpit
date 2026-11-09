@@ -3,18 +3,29 @@
 //! access denial. The successful inspection still rejects every reparse point.
 use std::{fs::Metadata, io, path::Path, time::Duration};
 
-pub(super) fn check(database: &Path, journal: &Path) -> Result<(), String> {
-    check_with(database, || std::fs::symlink_metadata(journal), std::thread::sleep)
+pub(super) fn check(
+    journal: &Path,
+    revalidate: impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
+    check_with(
+        || std::fs::symlink_metadata(journal),
+        std::thread::sleep,
+        revalidate,
+    )
 }
 
-fn check_with(database: &Path, mut inspect: impl FnMut() -> io::Result<Metadata>, mut wait: impl FnMut(Duration)) -> Result<(), String> {
+fn check_with(
+    mut inspect: impl FnMut() -> io::Result<Metadata>,
+    mut wait: impl FnMut(Duration),
+    revalidate: impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
     let mut result = inspect();
     for milliseconds in [1, 2, 4] {
         if !result.as_ref().err().is_some_and(transient) { break; }
         wait(Duration::from_millis(milliseconds));
         // Do not probe the journal again through a stale ancestor/main proof.
         // Their errors and indirection remain immediately fatal after any wait.
-        super::check_path(database, false)?;
+        revalidate()?;
         result = inspect();
     }
     match result {

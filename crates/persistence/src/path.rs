@@ -4,18 +4,52 @@ mod journal;
 /// The caller has checked the database and its ancestors. Only the exact
 /// rollback-journal leaf receives the Windows deletion-race recheck.
 pub(crate) fn check_sidecars(database: &Path) -> Result<(), String> {
+    check_sidecars_with(database, || check_path(database, false))
+}
+
+pub(crate) fn check_live_path(database: &Path) -> Result<(), String> {
+    require_file(database)?;
+    check_sidecars_with(database, || require_file(database))
+}
+
+fn require_file(path: &Path) -> Result<(), String> {
+    inspect_path(path, Missing::Reject)
+}
+
+fn check_sidecars_with(
+    database: &Path,
+    revalidate: impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
     for suffix in ["-journal", "-wal", "-shm"] {
         let mut sidecar = database.as_os_str().to_os_string();
         sidecar.push(suffix);
         let path = Path::new(&sidecar);
-        if suffix == "-journal" { journal::check(database, path)?; }
-        else { check_leaf(path)?; }
+        if suffix == "-journal" {
+            journal::check(path, &revalidate)?;
+        } else {
+            check_leaf(path)?;
+        }
     }
     Ok(())
 }
 
 /// Reject symlinks/reparse points for the database and its parents/sidecars.
 pub fn check_path(path: &Path, create: bool) -> Result<(), String> {
+    let missing = if create {
+        Missing::CreateParents
+    } else {
+        Missing::Allow
+    };
+    inspect_path(path, missing)
+}
+
+enum Missing {
+    Allow,
+    CreateParents,
+    Reject,
+}
+
+fn inspect_path(path: &Path, missing: Missing) -> Result<(), String> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err("Persistence requires an absolute path without traversal.".into());
     }
@@ -29,12 +63,20 @@ pub fn check_path(path: &Path, create: bool) -> Result<(), String> {
             continue;
         }
         let parent = components.peek().is_some();
-        match std::fs::symlink_metadata(&current) {
+        let metadata = if !parent && matches!(missing, Missing::Reject) {
+            live_file_metadata(&current)
+        } else {
+            std::fs::symlink_metadata(&current)
+        };
+        match metadata {
             Ok(meta) => {
                 validate(&meta, parent)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if parent && create {
+                if matches!(missing, Missing::Reject) {
+                    return Err("Recovery evidence storage was removed or replaced.".into());
+                }
+                if parent && matches!(missing, Missing::CreateParents) {
                     std::fs::create_dir(&current)
                         .map_err(|_| "Cannot create persistence directory.")?;
                     #[cfg(unix)]
@@ -49,6 +91,26 @@ pub fn check_path(path: &Path, create: bool) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn live_file_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    // Require an actual open. Windows symlink_metadata can fall back to
+    // cached directory attributes when opening the leaf is denied.
+    std::fs::File::options()
+        .access_mode(0)
+        .custom_flags(OPEN_REPARSE_POINT | BACKUP_SEMANTICS)
+        .open(path)?
+        .metadata()
+}
+
+#[cfg(not(windows))]
+fn live_file_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    std::fs::symlink_metadata(path)
 }
 
 pub(crate) fn check_leaf(path: &Path) -> Result<(), String> {

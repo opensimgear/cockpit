@@ -1,6 +1,40 @@
 use super::*;
 use std::cell::Cell;
 
+fn check_with(
+    database: &Path,
+    inspect: impl FnMut() -> io::Result<Metadata>,
+    wait: impl FnMut(Duration),
+) -> Result<(), String> {
+    super::check_with(inspect, wait, || super::super::check_path(database, false))
+}
+
+#[cfg(windows)]
+#[test]
+fn live_retry_requires_the_main_file_after_a_transient_error() {
+    let directory = crate::test_directory();
+    let database = directory.path().join("cockpit.sqlite3");
+    std::fs::write(&database, b"main").unwrap();
+    super::super::check_live_path(&database).unwrap();
+    let calls = Cell::new(0);
+    let result = super::check_with(
+        || {
+            calls.set(calls.get() + 1);
+            Err(io::Error::from_raw_os_error(5))
+        },
+        |_| std::fs::remove_file(&database).unwrap(),
+        || super::super::require_file(&database),
+    );
+    assert!(result.unwrap_err().contains("removed or replaced"));
+    assert_eq!(calls.get(), 1);
+    super::super::check_path(&database, false).unwrap();
+    assert!(super::super::check_live_path(&database).is_err());
+    std::fs::create_dir(&database).unwrap();
+    assert!(super::super::check_live_path(&database)
+        .unwrap_err()
+        .contains("wrong type"));
+}
+
 #[test]
 fn ordinary_files_absence_and_unrelated_errors_never_wait() {
     let directory = crate::test_directory();
@@ -91,6 +125,9 @@ fn reparse_journal_after_a_transient_error_is_rejected() {
     std::fs::write(&database, b"main").unwrap();std::fs::create_dir(&target).unwrap();
     let output = std::process::Command::new("cmd.exe").args(["/D","/C","mklink","/J"]).arg(&journal).arg(&target).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(super::super::check_live_path(&journal)
+        .unwrap_err()
+        .contains("reparse"));
     let metadata = std::fs::symlink_metadata(&journal).unwrap();
     let calls = Cell::new(0);
     let error = check_with(&database, || {

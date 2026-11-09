@@ -209,3 +209,74 @@ explicit signed conversion. The pointer fixture supplies the production
 receiver's window fields and rejects marked events from the wrong
 foreground window or with mouse capture. All 27 desktop script tests
 and 14 qualification script tests passed after those corrections.
+
+### Live recovery file proof
+
+Live recovery requires the database file during the same no-follow
+inspection that checks its type. On Windows this uses one actual file
+open and reads metadata from that handle. It avoids the extra
+`try_exists` open and the cached directory fallback used by
+`symlink_metadata` after a denied open. A transient rollback-journal
+metadata retry also requires the main file again before it probes the
+journal. The four write checkpoints and SQLite durability policy still
+apply. [Rust 1.90 Windows filesystem implementation](https://raw.githubusercontent.com/rust-lang/rust/1.90.0/library/std/src/sys/fs/windows.rs)
+
+The Windows persistence suite passed 68 tests with one existing ignore.
+The new regression removes the main file during a rollback-journal retry
+and checks that the next probe cannot run. The fixture also rejects a
+directory and a junction as the live file. LLVM line/function coverage
+was 95.24%/83.33% for the path validator, 96.30%/100% for the journal
+retry, and 100%/100% for the live evidence writer. Branch instrumentation
+was unavailable.
+
+An isolated path benchmark used the private database from the stopped
+baseline Cockpit. Each run measured 512 path and sidecar checks without
+an active SQLite writer, in baseline, candidate, candidate, baseline
+order. It used the actual path code and excluded SQL and dispatch.
+
+| Run | Proof p50 / p95 / p99 |
+| --- | ---: |
+| Baseline 1 | 676.7 / 719.2 / 798.7 µs |
+| Candidate 1 | 639.8 / 688.8 / 829.8 µs |
+| Candidate 2 | 636.9 / 741.6 / 1,031.1 µs |
+| Baseline 2 | 697.9 / 797.7 / 996.3 µs |
+
+The local benchmark is
+`.research/c193-reconnect/required-journal-leaf/proof-cost.txt`, SHA-256
+`aa401550786654c13329d9e322a94c854cec98b1bd72b3f1210b83e061da9c5b`.
+
+The running Windows dev Cockpit delivered all 1,206 marked keyboard
+transitions across the baseline and two candidate runs, including
+first edges. Every run passed the exact receipt, final audit checkpoint
+and Stop cleanup checks.
+
+| Run | Steady idle p95 / p99 | Steady Profiles p95 / p99 | Profiles intent write p95 |
+| --- | ---: | ---: | ---: |
+| Baseline | 10.29 / 10.73 ms | 9.56 / 10.40 ms | 4.04 ms |
+| Candidate 1 | 10.19 / 11.10 ms | 13.21 / 31.37 ms | 7.70 ms |
+| Candidate 2 | 10.00 / 10.39 ms | 9.80 / 10.89 ms | 4.08 ms |
+
+The isolated path proof was faster at the median in both comparisons.
+The live runs did not show an end-to-end improvement. The strict desktop
+timing and mixed-pointer gates remain open.
+
+The candidate also passed abrupt helper loss with a held key, exact
+recovery, and a fresh baseline after re-Apply. A preflight launch without
+the compile-time audit flag stopped before input. The first worker-loss
+launcher also needed the bundled Python for the read-only SQLite check.
+It stopped before killing the helper and the wrapper confirmed Stop.
+
+The baseline executable from `cbedec2f` has SHA-256
+`ed43c0ead1eeb6d41a06aaee13d1b36a4bbcdb409d07b30235b71863d63536ff`.
+The candidate built from `1080cdec` and the live path change has SHA-256
+`b5020360bfc6219393d9914d0ccb68043dd08ec7ab52e00ea7dfa422d35a454b`.
+The native build emitted the executable and Rust library to fit the
+available disk space. The receive-only helper is the executable recorded
+in the late-press comparison above.
+
+| File under `.research/c193-reconnect/required-journal-leaf/` | SHA-256 |
+| --- | --- |
+| `baseline/desktop-stage-analysis.json` | `806085cfc33df3c17bac2eb0377d9eb25795facf5ac98fd0e1ee675f7f2d236a` |
+| `candidate-audited/desktop-stage-analysis.json` | `5fd1ebdaa4194511885f38a47e0ab75921639e91621730bc3d7740a9bc26fb88` |
+| `candidate-repeat/desktop-stage-analysis.json` | `0e9c6459e8f14722c915e6bc1d962413e80b193a4d874266105b9e5c9a0e604c` |
+| `candidate-recovery/evidence.json` | `ba74ffcd1fdcce52ff358fa688fd0901abc3a8bc93d86c778835189ae4f9f4a` |
