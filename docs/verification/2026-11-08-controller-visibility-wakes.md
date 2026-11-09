@@ -146,8 +146,8 @@ probe did. The fixture removed its mapping and temporary directories.
 A volume-root watcher can observe ordinary filesystem changes without the
 descendant handle's rename interference. It cannot serve as complete continuity
 proof for executable paths that pass through remappable drive aliases. The
-current active-session audit remains the fallback pending an explicit decision
-in #189. The probes made no HidHide driver writes.
+active-session audit covers that gap under the operator decision below.
+The probes made no HidHide driver writes.
 
 The controller fixture uses the real Windows executable resolver with a
 private executable path and a fixture driver. After the worker reaches
@@ -178,14 +178,23 @@ Mount Manager documents this notification for its persistent symbolic-link
 database. The separate drive-alias probe above used a session-local DOS
 mapping whose change broadcast was suppressed. Those two boundaries keep
 the documented notification from qualifying as a replacement for the
-active executable audit on the normal Cockpit account. The HidHide
-acquisition decision remains open in #189. [Mount Manager change notification](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/mountmgr/ni-mountmgr-ioctl_mountmgr_change_notify) · [DOS device mappings](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-definedosdevicew)
+active executable audit on the normal Cockpit account. [Mount Manager change notification](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/mountmgr/ni-mountmgr-ioctl_mountmgr_change_notify) · [DOS device mappings](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-definedosdevicew)
 
 Local probe `mount-manager-access.ps1` SHA-256 is
 `ce78c2c532bb06f2ceca3976e3d1e7ae82d65cbedb4315d7b8c874bf138c64f0`.
 Output `mount-manager-access.json` SHA-256 is
 `f74341e54cef0475e124d7151d5bbc1c6d748337f3cc5c3ee02922ec03b52f5d`.
 Both are under `.research/reactive/hidhide-volume-watch/`.
+
+### Active HidHide safety check decision
+
+The operator approved retaining the existing 250 ms executable-path check
+while HidHide is active. A changed path triggers restoration of the
+previous visibility policy. The active worker still wakes immediately
+for inventory changes, driver policy notifications, handoff requests and
+Stop. The ordinary account probes and the ancestor-rename recovery
+fixture above establish the scope of the exception. Physical HidHide
+qualification remains in #199.
 
 ## Driver readback limit
 

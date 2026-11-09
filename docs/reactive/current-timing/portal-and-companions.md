@@ -16,7 +16,7 @@
 | `apps/browser-companion/src/transport.ts:63` | Startup deadline | Switch to the direct transport once if the worker fails its startup handshake. |
 | `apps/companion-esp32/boards/sunton-3248s035r/board.c:93,103` | Hardware startup | Display power-on command settling delays in the board initialization sequence. |
 | `apps/companion-esp32/boards/waveshare-lcd7/board.c:177,179,181,183` | Hardware startup | Display and touch pin/reset settling during board initialization. |
-| `apps/companion-esp32/main/app_main.c:56` | Acquisition boundary | Both boards require GPIO interrupts for touch. Waveshare waits for INT, an early-report or fault retry, or the remaining 200 ms held-report deadline. Sunton samples held coordinates at 20 ms. Both use 200 ms quiet lease checks. |
+| `apps/companion-esp32/main/app_main.c:56` | Acquisition boundary | Both boards require GPIO interrupts for touch. Waveshare waits for INT, an early-report or fault retry, or the remaining 200 ms held-report deadline. Sunton samples held coordinates at 20 ms and remains unqualified pending a future hardware or firmware change. Both use 200 ms quiet lease checks. |
 | `apps/companion-esp32/main/app_main.c:124` | Source wake | Display waits indefinitely for a committed notification when no drawing deadline is due. |
 | `apps/companion-esp32/main/app_main.c:127` | Display deadline | The same display notification also wakes early during an exact feedback expiry or failed-render retry wait. |
 | `apps/companion-esp32/network/client.c:938` | Network deadline | The network owner waits for UART and producer notifications or the next state-dependent link, lease or retry deadline. |
