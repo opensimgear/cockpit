@@ -165,6 +165,28 @@ The test used the dev executable from
 Local probe and test results are under
 `.research/reactive/hidhide-volume-watch/`.
 
+### Mount Manager access on 9 November 2026
+
+On Windows build `10.0.26200.0`, the unelevated Cockpit account opened
+`\\.\MountPointManager` with zero requested access. Opening the same device
+with either `GENERIC_READ` or `FILE_READ_DATA` returned Win32 error 5.
+`IOCTL_MOUNTMGR_CHANGE_NOTIFY` also returned error 5 on the zero-access
+handle. This probe only opened the device and requested a notification.
+It changed no mount points or HidHide policy.
+
+Mount Manager documents this notification for its persistent symbolic-link
+database. The separate drive-alias probe above used a session-local DOS
+mapping whose change broadcast was suppressed. Those two boundaries keep
+the documented notification from qualifying as a replacement for the
+active executable audit on the normal Cockpit account. The HidHide
+acquisition decision remains open in #189. [Mount Manager change notification](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/mountmgr/ni-mountmgr-ioctl_mountmgr_change_notify) · [DOS device mappings](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-definedosdevicew)
+
+Local probe `mount-manager-access.ps1` SHA-256 is
+`ce78c2c532bb06f2ceca3976e3d1e7ae82d65cbedb4315d7b8c874bf138c64f0`.
+Output `mount-manager-access.json` SHA-256 is
+`f74341e54cef0475e124d7151d5bbc1c6d748337f3cc5c3ee02922ec03b52f5d`.
+Both are under `.research/reactive/hidhide-volume-watch/`.
+
 ## Driver readback limit
 
 HidHide 1.5.230 sizes its list response using the byte length of each
