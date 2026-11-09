@@ -24,7 +24,12 @@ fn document_supported(document: &osg_profiles::ProfileDocument, watched_game: bo
 }
 
 pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &OwnedRun) -> bool {
-    let game = run.owner.game_id.as_deref();
+    let game = match state.child_game_owner.as_ref() {
+        Some(child) if state.launch_context_installed && run.owner.game_id.is_none()
+            && game_child_matches_run(child, &run.owner) => child.game_id.as_deref(),
+        Some(_) => return false,
+        None => run.owner.game_id.as_deref(),
+    };
     let watched_game = game.is_some() && state.game.watched_game_source()
         && state.game.provider_identity().is_some_and(|(provider, _)| Some(provider) == game)
         && state.game_preparation.as_ref().is_some_and(|prepared| Some(prepared.proof.game_id.as_str()) == game)
@@ -60,9 +65,17 @@ pub(super) fn capture_driven(host: &NativeProfileHost, state: &NativeRun, run: &
                     && state.actions.owns_endpoint(&sink.endpoint))
         })
         && (watched_game || game.is_none() && state.game_preparation.is_none())
-        && state.child_game_owner.is_none() && state.game_resume.is_none()
+        && state.game_resume.is_none()
         && desktop_notifications(state) && state.actions.notification_driven() && state.publication.notification_driven()
         && state.companions.notification_driven()
+}
+
+pub(super) fn game_child_matches_run(child: &crate::game_context::ProfileOwner, owner: &RunOwner) -> bool {
+    child.session == owner.session
+        && child.profile_id == owner.profile_id
+        && child.applied_revision == owner.profile_revision
+        && child.run_generation == owner.generation
+        && child.game_id.is_some()
 }
 
 fn desktop_notifications(state: &NativeRun) -> bool {

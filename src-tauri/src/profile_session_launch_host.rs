@@ -209,12 +209,7 @@ impl NativeProfileHost {
             .filter(|run| run.owner == *owner)
             .and_then(|run| run.child_game_owner.as_ref())
         {
-            if child.session != owner.session
-                || child.profile_id != owner.profile_id
-                || child.applied_revision != owner.profile_revision
-                || child.run_generation != owner.generation
-                || child.game_id.is_none()
-            {
+            if !host_scheduling::game_child_matches_run(child, owner) {
                 return Err("The game child does not belong to this exact hardware owner.".into());
             }
             return Ok(Some(child.clone()));

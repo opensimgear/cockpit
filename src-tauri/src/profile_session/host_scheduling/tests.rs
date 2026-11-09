@@ -206,8 +206,28 @@ fn capture_service_requires_retained_wakes_and_rejects_external_adapter_document
     assert!(host.service_interval(&run).is_some(), "Other integrations cannot qualify a simulator command sink");
     let state = host.prepared.get_mut(&key(&owner)).unwrap();
     state.game_preparation.as_mut().unwrap().integration_key = integration;
+    state.child_game_owner = Some(crate::game_context::ProfileOwner {
+        session: run.owner.session.clone(),
+        profile_id: run.owner.profile_id.clone(),
+        applied_revision: run.owner.profile_revision,
+        run_generation: run.owner.generation,
+        game_id: run.owner.game_id.take(),
+    });
+    state.owner.game_id = None;
+    assert!(host.service_interval(&run).is_some(), "A child must finish installing its launch context");
+    host.prepared.get_mut(&key(&owner)).unwrap().launch_context_installed = true;
+    assert_eq!(host.service_interval(&run).is_none(), cfg!(windows));
+    host.prepared.get_mut(&key(&owner)).unwrap().child_game_owner.as_mut().unwrap().run_generation += 1;
+    assert!(host.service_interval(&run).is_some(), "A different run cannot qualify the child wake");
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    let child = state.child_game_owner.as_mut().unwrap();
+    child.run_generation = run.owner.generation;
+    let game_id = child.game_id.replace("other-game".into());
+    assert!(host.service_interval(&run).is_some(), "Child game and watched reader must match");
+    let state = host.prepared.get_mut(&key(&owner)).unwrap();
+    state.child_game_owner.as_mut().unwrap().game_id = game_id;
     state.game.stop();
-    assert!(host.service_interval(&run).is_some(), "Losing the DCS watch restores fallback service");
+    assert!(host.service_interval(&run).is_some(), "Losing the child DCS watch restores fallback service");
     host.prepared.clear();
     games.shutdown(); companions.shutdown(); resources.shutdown(); controllers.shutdown();
 }
