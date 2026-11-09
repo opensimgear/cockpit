@@ -15,6 +15,7 @@ import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
 import {nativeDcsCommands} from './dcs-native-command-fixture.mjs';
 import {runDcsSoak} from './dcs-feature-soak.mjs';
+import {startDualRateSoak} from './dcs-dual-rate-soak.mjs';
 import {installSoakPanel} from './dcs-soak-panel.mjs';
 import {dualRateLanes,dualRateResults,submitBrowserRate,summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 
@@ -28,7 +29,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   const listener = async () => (await companion('companion_inventory')).listener;
   const inventory = async () => (await request({command:'system_inventory'})).systemInventory.virtualDevices;
   let browser, page, slot, probe, report, probeStart, probeReady, listenerEnabled=false, dualSubmissions, presentation;
-  let observation, nativeSubmissions;
+  let observation, nativeSubmissions, dualRateSoak;
   const commands=process.env.OSG_DCS_COMMANDS_NATIVE==='1'?nativeDcsCommands(cdp,request):null;
   const paired=Boolean(browserUrl || observeMcp);
   const panels=[];
@@ -201,7 +202,9 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   async function soak(options) {
     const openMcp=async()=>observation=await mcpVjoyObservation(cdp,options.owner,{nodeId:outputNode,
       capturePhysical:false,streamTimeoutMs:seconds*1000+120000});
-    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,openMcp,nodeId:outputNode,...options});
+    const beginDualRates=nativeRates?async()=>dualRateSoak=await startDualRateSoak(cdp,probeExecutable,slot.slot,
+      options.owner,options.directory,seconds):undefined;
+    const evidence=await runDcsSoak({cdp,request,panels,seconds,sendDebug,openMcp,beginDualRates,nodeId:outputNode,...options});
     await Promise.all(panels.map(({page})=>page.evaluate(()=>{
       const baseline=window.__combinedLamp.findLast(sample=>sample.status==='fresh'&&sample.value===false);
       window.__combinedLamp.splice(0,window.__combinedLamp.length,...(baseline?[baseline]:[]));
@@ -407,6 +410,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
 
   async function stopped(stopNs) {
     await until(inventory,rows=>rows.find(row=>row.slot===slot.slot)?.status==='free');
+    if(dualRateSoak)return {...await dualRateSoak.stopped(stopNs),slot:slot.slot,slotFree:true};
     const raw=await report;
     assert.ok(!raw.captureOverflow,'Raw Input capture exceeded the event bound');
     const events=raw.buttonEvents.filter(event=>event.report===slot.slot);
@@ -455,6 +459,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   }
   async function close() {
     probe?.kill();
+    dualRateSoak?.close();
     stopTrace?.();
     try {await observation?.close();} finally {try {await closePanels();} finally {await commands?.close();}}
   }

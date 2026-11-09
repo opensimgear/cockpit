@@ -15,7 +15,7 @@ export async function traceSoakRequests(cdp, fixtureClientId) {
     let payload;
     try { payload = JSON.parse(request.postData).request; } catch {}
     const command = payload?.command ?? 'unparsed';
-    if (payload?.clientId === fixtureClientId) {
+    if (payload?.clientId === fixtureClientId || command === 'qualification_debug_burst') {
       increment(counts.fixture, command);
       return;
     }

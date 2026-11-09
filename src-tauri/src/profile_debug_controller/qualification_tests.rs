@@ -6,11 +6,40 @@ use osg_profiles::{
 
 #[test]
 fn qualification_duration_preserves_both_stop_edges_within_the_capture_window() {
-    assert_eq!(burst_duration(None), Ok(192));
-    assert_eq!(burst_duration(Some(4_800)), Ok(4_800));
+    assert_eq!(burst_duration(None, false), Ok(192));
+    assert_eq!(burst_duration(Some(4_800), false), Ok(4_800));
     for duration in [0, 176, 200, 4_816, u64::MAX] {
-        assert!(burst_duration(Some(duration)).is_err());
+        assert!(burst_duration(Some(duration), false).is_err());
     }
+    assert_eq!(burst_duration(Some(1_800_000), true), Ok(1_800_000));
+    assert!(burst_duration(Some(1_800_016), true).is_err());
+    assert!(burst_duration(Some(1_799_999), true).is_err());
+}
+
+#[test]
+fn trace_records_keep_little_endian_timing_and_never_replace_an_existing_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(TRACE_FILES[0]);
+    let mut capture = Capture::open(Some(directory.path()), 0, BURST_MS).unwrap();
+    capture.record(Submission {
+        at_ns: 4_294_967_296,
+        dispatch_at_ns: 4_294_967_297,
+        admitted_at_ns: 4_294_967_298,
+        round_trip_ms: 0.0,
+        coordinator_wait_ms: 0.0,
+        coordinator_work_ms: 0.0,
+        batch_index: 3,
+        pending_frames: 4,
+        value: true,
+    }).unwrap();
+    assert_eq!(capture.finish().unwrap(), json!(1));
+    assert!(Capture::open(Some(directory.path()), 0, BURST_MS).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), [
+        0, 0, 0, 0, 1, 0, 0, 0,
+        1, 0, 0, 0, 1, 0, 0, 0,
+        2, 0, 0, 0, 1, 0, 0, 0,
+        4, 0, 0, 0, 3, 0, 0, 0,
+    ]);
 }
 
 #[test]

@@ -109,7 +109,7 @@ function checkMemory(samples) {
 }
 
 export async function runDcsSoak({cdp, request, panels, owner, seconds, directory, status, live,
-  setAirborne, submitOwnship, sendDebug, openMcp, nodeId, fixtureClientId, biosId}) {
+  setAirborne, submitOwnship, sendDebug, openMcp, nodeId, fixtureClientId, biosId, beginDualRates}) {
   assert.equal(panels.length, 2);
   const root = resolve(directory, 'discovery-root');
   await mkdir(root);
@@ -147,7 +147,7 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     Boolean, 90000).catch(error => {throw new Error('Initial discovery did not finish before the soak', {cause:error});});
   const baseline = await ready(false);
   evidence.instances = await instances();
-  await sendDebug(owner, false);
+  if (!beginDualRates) await sendDebug(owner, false);
   await startReaders(cdp, owner, nodeId, biosId);
   let traffic, presentation;
   try {
@@ -169,8 +169,13 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
     };
     presentation = await traceSoakPresentation(panels);
     traffic = await traceSoakRequests(cdp, fixtureClientId);
+    const rates = await beginDualRates?.();
+    if (rates) {
+      mcp.drainFast();
+      await delay(Math.max(0, Number(rates.startNs-process.hrtime.bigint())/1e6));
+    }
     const start = performance.now();
-    let nextActivity = 0, nextMemory = 0, round = 0, scan, value = false, lastFast = firstReader.fast;
+    let nextActivity = 0, nextMemory = 0, round = 0, scan, value = false, lastFast = firstReader.fast, lastMcpCount = 0;
     const views = ['Devices', 'Games', 'Debug', 'Overview'];
     while (performance.now() - start < seconds * 1000 || scan) {
       const elapsed = performance.now() - start;
@@ -204,11 +209,14 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
         }
       }
       value = !value;
-      const [submission] = await Promise.all([submitOwnship(value), sendDebug(owner, value)]);
+      rates?.check();
+      const [submission] = await Promise.all([submitOwnship(value), !rates && sendDebug(owner, value)]);
       const rows = await ready(value);
       presentation.record(submission, value, rows);
-      await readMcp(value);
-      evidence.mcpSamples++;
+      if (!rates) {
+        await readMcp(value);
+        evidence.mcpSamples++;
+      }
       rows.forEach((row, index) => {
         for (const key of ['nonFreshAfterFirstFresh','identityChanges','bindingGenerationAdvances',
           'bindingGenerationRegressions','sequenceRegressions','feedbackClosures','workerErrors','invalidCounters']) {
@@ -221,13 +229,23 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
       assert.ok(!session.fault, JSON.stringify(session));
       assert.deepEqual(session.owner, owner);
       assert.deepEqual(await instances(), evidence.instances);
-      const readers = await until(async () => {
+      const checkReaders = async () => {
         const state = await readerStatus(cdp);
         assert.equal(state.error, null);
         assert.equal(state.ownerError, null, JSON.stringify(state.ownerError));
         assert.equal(state.slow, 1);
+        if (rates) {
+          const updates = mcp.fastUpdates();
+          if (process.hrtime.bigint() < rates.endNs && (state.fast <= lastFast || updates <= lastMcpCount)) return null;
+          lastMcpCount = updates;
+          evidence.mcpSamples = updates;
+          return state;
+        }
         return state.fast > lastFast && state.value === value && state;
-      }, Boolean, 3000).catch(error => {throw new Error(`Fast vJoy sample reader stalled at ${lastFast} waiting for ${value}`, {cause:error});});
+      };
+      const readers = await until(checkReaders, Boolean, 3000).catch(error => {
+        throw new Error(`Fast vJoy sample reader stalled at ${lastFast}`, {cause:error});
+      });
       lastFast = readers.fast;
       evidence.samples++;
       if (elapsed >= nextMemory) {
@@ -240,6 +258,10 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
         round++;
       }
       if (!finishing) await delay(Math.min(1800, Math.max(0, seconds * 1000 - (performance.now() - start))));
+    }
+    if (rates) {
+      await rates.offered;
+      assert.ok(evidence.mcpSamples > 0 && lastFast > firstReader.fast);
     }
     evidence.elapsedMs = Math.round(performance.now() - start);
     traffic.stop();
@@ -269,8 +291,10 @@ export async function runDcsSoak({cdp, request, panels, owner, seconds, director
       evidence.qualifiedDuration = true;
     }
     setAirborne(false);
-    await sendDebug(owner, false);
-    if (value) await readMcp(false);
+    if (!rates) {
+      await sendDebug(owner, false);
+      if (value) await readMcp(false);
+    }
     await live();
     await ready(false);
     return evidence;

@@ -19,7 +19,7 @@
 | `src-tauri/src/persistence/ui/window_writer.rs:147,148` | Fixture | Bound the geometry coalescing test's commit barrier. |
 | `src-tauri/src/profile_activation_progress/observation.rs:72` | Source wake and expiry | Committed activation and companion work wake the progress projector. The nearest presentation or retained operation expiry also wakes it. |
 | `src-tauri/src/profile_automatic.rs:861` | Source wake and retry | Reconcile after process, provider or profile changes. Outstanding vehicle and peripheral retries supply the next deadline for the current owner. |
-| `src-tauri/src/profile_debug_controller/qualification.rs:92,234,243` | Fixture | An explicitly enabled desktop qualification burst offers edges at Windows performance-counter deadlines for at most 4.8 seconds. Two bounded lane workers submit already available edges through the owner-fenced debug queue. |
+| `src-tauri/src/profile_debug_controller/qualification.rs:158,308,317` | Fixture | An explicitly enabled desktop qualification run offers edges at Windows performance-counter deadlines. Two bounded lane workers submit available edges through the owner-fenced debug queue. The 30-minute mode writes bounded binary traces outside admission. |
 | `src-tauri/src/profile_game_launch.rs:339` | Owned startup deadline | Wait for a process observation, launch control notification or startup expiry. A spurious wake reuses the original deadline. The shared observer owns discovery. |
 | `src-tauri/src/profile_game_orchestration_runtime.rs:380` | Operation deadline | Wait for the started process proof and ownership changes until the held launch expires. |
 | `src-tauri/src/profile_input_learning.rs:503` | Source wake | Park when no active learning operation has capture work. |

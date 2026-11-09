@@ -56,7 +56,8 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   if (observeMcp) assert.ok(!browserUrl && combinedProbe, 'Combined MCP requires desktop Cockpit and a vJoy probe');
   if (nativeRates) assert.ok(!browserUrl && observeMcp && combinedProbe, 'Native rates require desktop Cockpit, combined MCP and a vJoy probe');
   if (nativeCommands) assert.ok(nativeRates, 'The DCS command fixture requires native rates');
-  if (seconds) assert.ok(observeMcp && !nativeRates, 'Soak requires combined desktop MCP with the debug and panel input profile');
+  if (seconds) assert.ok(observeMcp && !nativeCommands, 'Soak requires combined desktop MCP without the short DCS command burst');
+  const dualRateSoak = seconds > 0 && nativeRates;
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
   const userFolder = resolve(directory, 'private-user'), script = resolve(userFolder, 'Scripts/OpenSimGear/DCSPhysics.lua');
   const biosTarget = resolve(userFolder, 'Scripts/DCS-BIOS');
@@ -344,7 +345,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
       if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship);
       const before = (await readers()).fast;
-      const [, burst] = await Promise.all([sleep(1250), combined?.burst(owner, {
+      const [, burst] = await Promise.all([sleep(1250), dualRateSoak ? null : combined?.burst(owner, {
         setAirborne,
         setPaused(paused) { mode = paused ? 'paused' : 'live'; },
       })]);
@@ -390,10 +391,10 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       setAirborne(false);
     }
     const stopNs = process.hrtime.bigint();
-    if (combined) Object.assign(evidence.phases.combined, await combined.stop(stopNs));
+    if (combined) Object.assign(evidence.phases.combined ??= {}, await combined.stop(stopNs));
     else await request({command: 'profile_stop'});
-    const budgetMisses = [...(evidence.phases.soak?.budgetMisses ?? []), ...evidence.phases.telemetryTiming.budgetMisses, ...(combined ? combinedTimingMisses(
-      evidence.phases.panelPresentation, browserUrl || nativeRates ? evidence.phases.combined : null,
+    const budgetMisses = [...(evidence.phases.soak?.budgetMisses ?? []), ...(evidence.phases.combined?.budgetMisses ?? []), ...evidence.phases.telemetryTiming.budgetMisses, ...(combined ? combinedTimingMisses(
+      evidence.phases.panelPresentation, browserUrl || nativeRates && !dualRateSoak ? evidence.phases.combined : null,
     ) : [])];
     evidence.budgetMisses = budgetMisses;
     if (nativeCommands) biosMode = 'full';

@@ -6,10 +6,12 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.IO;
 using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
 class RawInputProbe {
+    const int MaximumTraceDurationMs = 32 * 60 * 1000, MaximumTraceEvents = 4000000;
     const uint RID_INPUT = 0x10000003, RIDI_PREPARSEDDATA = 0x20000005,
         RIDI_DEVICENAME = 0x20000007, RIDI_DEVICEINFO = 0x2000000b;
     [StructLayout(LayoutKind.Sequential)] struct Device { public IntPtr handle; public uint type; }
@@ -52,6 +54,12 @@ class RawInputProbe {
     static bool observeSecondButton;
     static int vjoyEventLimit = 256;
     static bool vjoyCaptureOverflow;
+    static bool traceCapture;
+    static volatile bool traceStopRequested;
+    static int traceSlot = -1, traceEvents;
+    static string traceDevice, tracePath;
+    static BinaryWriter traceWriter;
+    static ManualResetEvent traceStop = new ManualResetEvent(false);
     static WndProc callback = Handle;
     static long vjoyCaptureStarted;
     static uint HeaderSize { get { return (uint)(8 + IntPtr.Size * 2); } }
@@ -80,7 +88,24 @@ class RawInputProbe {
                         vjoyCaptureOverflow = true;
                         return;
                     }
-                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, peerPressed=peerPressed, status=status, receivedTicks=receivedTicks });
+                    if (traceCapture && report[0] == traceSlot) {
+                        if (traceEvents == MaximumTraceEvents || (traceDevice != null && traceDevice != name)) {
+                            vjoyCaptureOverflow = true;
+                            return;
+                        }
+                        try {
+                            traceWriter.Write(report[0]);
+                            traceWriter.Write((byte)buttons);
+                            traceWriter.Write(status);
+                            traceWriter.Write(vjoyCaptureStarted + receivedTicks);
+                            traceEvents++;
+                            traceDevice = name;
+                        } catch {
+                            vjoyCaptureOverflow = true;
+                        }
+                    } else if (!traceCapture) {
+                        vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, peerPressed=peerPressed, status=status, receivedTicks=receivedTicks });
+                    }
                     lastButtons[device] = buttons;
                 }
             }
@@ -168,10 +193,23 @@ class RawInputProbe {
         observeSecondButton = args.Length > 0 && args[0] == "--vjoy-buttons";
         bool observeVjoy = observeSecondButton || (args.Length == 1 && args[0] == "--vjoy-button");
         int captureMs = 5000;
-        if ((args.Length > 0 && !observeVjoy) || args.Length > 2 ||
+        if (args.Length > 0 && args[0] == "--vjoy-trace") {
+            int slot;
+            if (args.Length != 4 || !int.TryParse(args[2], out captureMs) || captureMs < 5000
+                || captureMs > MaximumTraceDurationMs || !int.TryParse(args[3], out slot)
+                || slot < 1 || slot > 16 || String.IsNullOrWhiteSpace(args[1]) || args[1].Length > 240)
+                throw new ArgumentException("Expected --vjoy-trace <file> <captureMs 5000–1920000> <slot 1–16>.");
+            observeSecondButton = true;
+            observeVjoy = true;
+            traceCapture = true;
+            traceSlot = slot;
+            tracePath = Path.GetFullPath(args[1]);
+            vjoyEventLimit = MaximumTraceEvents;
+        }
+        if (!traceCapture && ((args.Length > 0 && !observeVjoy) || args.Length > 2 ||
             (args.Length == 2 && (!observeSecondButton || !int.TryParse(args[1], out captureMs)
-                || captureMs < 5000 || captureMs > 15000)))
-            throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons [5000–15000 ms], or no arguments.");
+                || captureMs < 5000 || captureMs > 15000))))
+            throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons [5000–15000 ms], --vjoy-trace <file> <captureMs> <slot>, or no arguments.");
         if (args.Length == 2) vjoyEventLimit = 8192;
         var devices = new List<object>();
         uint count = 0;
@@ -215,11 +253,22 @@ class RawInputProbe {
         IntPtr hwnd=CreateWindowEx(0,cls.name,"",0,0,0,0,0,new IntPtr(-3),IntPtr.Zero,IntPtr.Zero,IntPtr.Zero);
         if (hwnd == IntPtr.Zero) throw new Exception("Could not create message-only window.");
         var registrations = new Registration[3];
+        IntPtr stopHandles = IntPtr.Zero;
         ushort[] usages = {4,5,8};
         for(int i=0;i<3;++i) registrations[i]=new Registration {page=1,usage=usages[i],flags=0x100,target=hwnd};
         try {
             if(!RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration))))
                 throw new Exception("Background controller registration failed: "+Marshal.GetLastWin32Error());
+            if (traceCapture) {
+                stopHandles = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(stopHandles, traceStop.SafeWaitHandle.DangerousGetHandle());
+                traceWriter = new BinaryWriter(new FileStream(tracePath, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.Read, 64 * 1024));
+                traceWriter.Write(Encoding.ASCII.GetBytes("OSGVJOY1"));
+                traceWriter.Write((ulong)Stopwatch.Frequency);
+                traceWriter.Write((long)0);
+                traceWriter.Flush();
+            }
             uint foregroundPid;
             GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
             string foreground = "unavailable";
@@ -228,28 +277,55 @@ class RawInputProbe {
             if (observeVjoy) {
                 // The writer may submit immediately after this signal.
                 vjoyCaptureStarted = Stopwatch.GetTimestamp();
+                if (traceCapture) {
+                    traceWriter.BaseStream.Seek(16, SeekOrigin.Begin);
+                    traceWriter.Write(vjoyCaptureStarted);
+                    traceWriter.Flush();
+                    traceWriter.BaseStream.Seek(0, SeekOrigin.End);
+                }
                 Console.WriteLine("ready");
                 Console.Out.Flush();
+                if (traceCapture) {
+                    var stopReader = new Thread(delegate() {
+                        if (String.Equals(Console.In.ReadLine(), "stop", StringComparison.OrdinalIgnoreCase)) {
+                            traceStopRequested = true;
+                            traceStop.Set();
+                        }
+                    });
+                    stopReader.IsBackground = true;
+                    stopReader.Start();
+                }
             }
             while(clock.ElapsedMilliseconds < captureMs) {
                 Message message;
                 // Bound one drain to ensure a flood cannot keep the probe alive forever.
                 for(int i=0;i<256 && PeekMessage(out message,IntPtr.Zero,0,0,1);++i) DispatchMessage(ref message);
+                if (traceCapture && traceStopRequested) break;
                 if (observeVjoy) {
                     uint remaining = (uint)Math.Max(0, captureMs - clock.ElapsedMilliseconds);
                     const uint allInput = 0x04ff, inputAvailable = 4;
-                    if (MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, remaining, allInput, inputAvailable) == uint.MaxValue)
+                    if (MsgWaitForMultipleObjectsEx(traceCapture ? 1u : 0u, stopHandles, remaining, allInput, inputAvailable) == uint.MaxValue)
                         throw new Exception("Raw Input message wait failed: " + Marshal.GetLastWin32Error());
                 } else {
                     Thread.Sleep(1);
                 }
             }
+            if (traceCapture) traceWriter.Flush();
+            long endedTicks = Stopwatch.GetTimestamp();
             var serializer = new JavaScriptSerializer();
             if (observeVjoy) {
-                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons,
+                if (traceCapture) {
+                    traceWriter.Dispose();
+                    traceWriter = null;
+                    Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports,
+                        traceFile=tracePath, traceSlot=traceSlot, traceDevice=traceDevice, traceEvents=traceEvents,
+                        captureOverflow=vjoyCaptureOverflow, stopRequested=traceStopRequested,
+                        receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString(),
+                        receiverEndedTicks=endedTicks.ToString()}));
+                } else Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons,
                     captureOverflow=vjoyCaptureOverflow,
                     receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString(),
-                    receiverEndedTicks=Stopwatch.GetTimestamp().ToString()}));
+                    receiverEndedTicks=endedTicks.ToString()}));
             } else {
                 Console.WriteLine(serializer.Serialize(new {
                     devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,
@@ -257,6 +333,8 @@ class RawInputProbe {
                 }));
             }
         } finally {
+            if (traceWriter != null) traceWriter.Dispose();
+            if (stopHandles != IntPtr.Zero) Marshal.FreeHGlobal(stopHandles);
             for(int i=0;i<3;++i) { registrations[i].flags=1; registrations[i].target=IntPtr.Zero; }
             RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration)));
             DestroyWindow(hwnd);

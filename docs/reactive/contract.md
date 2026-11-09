@@ -92,6 +92,12 @@ with source/generation/sequence correlation. Report p50/p95/p99, event/loss coun
 queue/byte peaks, owner continuity and minimum lease margin. Compare clocks only
 within a monotonic domain or with measured clock correlation and uncertainty.
 
+The [running Windows baseline](../verification/2026-11-09-dual-rate-recheck.md#30-minute-windows-baseline)
+confirms these software timing targets for two authored input lanes through
+vJoy, the loaded controller journal-to-preview path and both loopback
+panels. Physical timing, LAN, simulator effects, complete segment tracing
+and lease margins remain in the integrated and operator acceptance work.
+
 ## Gates
 
 R0 remains open until the acquisition inventory is complete, conformance fixtures

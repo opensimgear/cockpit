@@ -86,3 +86,104 @@ disabled. LLVM measured 80.88% line and 76.00% function coverage for
 the native qualification module. Branch instrumentation was unavailable.
 The 30-minute soak uses a different input workload. Sustained dual-rate
 load and the physical latency in #199 remain open.
+
+## Sustained dual-rate fixture
+
+Set `OSG_DCS_COMBINED_SOAK_SECONDS=1800` in addition to the native
+dual-rate flags above. Use `15` for the live smoke. Set
+`OSG_DCS_SOAK_COCKPIT_PID` to the disposable Cockpit PID for private-memory
+samples, and use the current `RawInputProbe.cs` built with .NET Framework
+`csc.exe` and `System.Web.Extensions.dll`. The existing one-source soak
+runs when `OSG_DCS_COMBINED_NATIVE_RATES` is off.
+
+The two native lanes write 32-byte records into separate, exclusively
+created files. The independent Windows receiver writes 14-byte Raw Input
+records for the selected vJoy slot and signals its QPC start and end. The
+fixture joins the traces in bounded chunks, checks every ordered edge and
+both Stop releases, and summarizes timing in 0.1 ms bins. Processing uses
+fixed-size buffers, and the duration and event limits cap disk use. Panel identities,
+owner health, gateway attribution, telemetry and readers use the existing
+soak checks.
+
+The 15-second live smoke overlapped the two schedules for 15,007.98 ms.
+Windows received all 16,886 offered edges and both Stop releases. The
+offer-to-Raw-Input p95 / p99 was 9.40 / 17.20 ms at 1 kHz and
+9.60 / 15.20 ms at 125 Hz. Both releases arrived 43.25 ms after Stop.
+Both panels stayed armed, 2,686 fast MCP updates arrived, the held
+native reader resumed, and one inventory and discovery cycle completed.
+There were no budget misses or cleanup errors. The smoke trace is
+`.research/dcs-physics-native/1794181213067/evidence.json`, SHA-256
+`87069e6a5af51f25ea5c21fab343ae5bcc0c3e3c3224388ceac128bc8b841ed6`.
+
+For this fixture the Windows dev executable SHA-256 is
+`0f3a320ccb98dddc80fb995fdc2eef94e5245b3363ba79281a8e2273c701f58e`.
+The Raw Input receiver SHA-256 is
+`0a66dca7c5355cafe6e1bc12fc52e00e06af9fda9b16baa1c27eea6f44a0bee5`.
+
+### 30-minute Windows baseline
+
+The same build ran the two native sources together for 1,800,000.20 ms
+under authored DCS BIOS and ownship telemetry, two loopback Edge panels,
+the Cockpit WebView, and fast and stalled subscribers. The working
+profile was `53352cfe-d34f-4043-91bc-cb9e8a623e67` revision 2, owner
+generation 1. Both panels retained publication
+`sha256:e2e2deb75ccfb202722302ea4ca9491d02a5bca3a09982276e648ba88114621a`.
+
+| Source | Offered / received including Stop | Actual offer / dispatch / admission rate | Offer to Raw Input p50 / p95 / p99 | Peak pending frames / batch |
+| --- | ---: | ---: | ---: | ---: |
+| 1 kHz | 1,800,001 / 1,800,002 | 1,000.00 / 1,000.00 / 1,000.00 Hz | 3.90 / 8.70 / 14.80 ms | 28 / 8 |
+| 125 Hz | 225,001 / 225,002 | 125.00 / 125.00 / 125.00 Hz | 4.10 / 9.00 / 13.60 ms | 25 / 5 |
+
+The receiver matched every transition in order. Both releases reached
+Raw Input 41.99 ms after MCP Stop and the vJoy slot returned to free.
+The separate offer-to-dispatch p95 was 5.30 / 0.10 ms for the two lanes.
+Dispatch-to-admission p95 was 4.50 / 6.30 ms. The independent receiver
+can observe an edge before admission returns, so those timings are
+reported as separate segments.
+
+| Presentation | Samples | p50 / p95 / p99 | Clock uncertainty |
+| --- | ---: | ---: | ---: |
+| Authored UDP to panel 1 canvas, upper bound | 906 | 4.67 / 12.03 / 44.31 ms | 0.26 ms |
+| Authored UDP to panel 2 canvas, upper bound | 906 | 7.40 / 42.65 / 48.31 ms | 0.26 ms |
+| Stationary VKB axis-capable reports, journal to visible Devices DOM | 125 | 9.92 / 10.85 / 11.32 ms | ±2.75 ms |
+| Same controller reports, journal to next render opportunity | 125 | 14.36 / 17.98 / 18.72 ms | ±2.75 ms |
+
+The VKB measurement opened the preview during a normal gap between soak
+navigation cycles. It correlates native capture sequence to the visible
+DOM, starting at the journal commit. Movement, hardware capture latency,
+display scanout and LAN presentation remain separate acceptance.
+
+The same owner and both armed panels stayed healthy through 906 checks,
+60 inventory reads and 60 discovery scans. The fast native and MCP
+readers received 335,917 and 336,306 updates. The held native reader
+resumed after acknowledgement. The fast MCP reader received retirement
+at Stop and the unread response closed. Sixty memory samples showed a
+1.45 MiB increase between the measured Cockpit private-memory peaks and
+lower closing peaks for both panel heaps. The trace recorded no timing
+misses, owner or panel fault, or cleanup error.
+
+The active gateway trace attributed 1,812 profile status reads, 906
+runtime inspections and 906 companion status reads to the fixture. App
+traffic included 1,619 game page reads, 1,510 of them in Games during
+discovery. The separate preview diagnostic accounts for the 20 app-tagged
+controller-list reads. The raw evidence contains the remaining per-view
+counts and the timing distributions.
+
+This confirms the R0 Windows software baseline budgets of 20 ms p95 and
+50 ms p99 to vJoy receipt, 100 ms p95 for foreground UI presentation,
+and 150 ms p95 for the loopback panels. The full R9 timing matrix still
+requires capture-to-reducer and lease-margin evidence across its paths.
+Real simulator, physical controller and LAN checks remain in #199.
+
+Local evidence is under `.research/dcs-physics-native/1794181324677/`.
+`evidence.json` SHA-256 is
+`3ef50665db787dc4de2bfac3b8ec61f4d5433bfd7d62975217a5104b65334449`.
+`controller-preview-latency.json` SHA-256 is
+`1cc8ebb590379c2d1848f329e727198d483763394fdc99169f1667cdff43fdc9`.
+
+The three focused native tests passed with the dev source both enabled
+and disabled. The full Windows native suite passed 2,486 tests, with 18
+existing explicit ignores. LLVM measured 81.53% line and 72.73% function coverage for
+the qualification module. The build did not instrument branches. The
+binary trace decoder regression, fixture module checks, and UI timer
+tests passed locally.

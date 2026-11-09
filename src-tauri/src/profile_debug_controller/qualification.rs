@@ -3,9 +3,12 @@ use super::Change;
 use crate::{gateways::GatewayManager, profile_session::RunOwner};
 use osg_mapping::engine::Counter;
 use osg_profiles::PortValue;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{
+    fs::{File, OpenOptions},
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Mutex,
@@ -17,9 +20,11 @@ use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerf
 
 const BURST_MS: u64 = 192;
 const MAX_BURST_MS: u64 = 4_800;
+const MAX_TRACE_MS: u64 = 1_800_000;
 const NS_PER_MS: u64 = 1_000_000;
 const MAX_ADMISSION_BATCH: usize = 8;
 const CLIENT_ID: &str = "desktop-reactive-qualification";
+const TRACE_FILES: [&str; 2] = ["qualification-fast.bin", "qualification-peer.bin"];
 static BURST: Mutex<()> = Mutex::new(());
 
 #[derive(Deserialize)]
@@ -30,13 +35,17 @@ struct Request {
     nodes: [String; 2],
     start_ns: String,
     duration_ms: Option<u64>,
+    trace_directory: Option<PathBuf>,
 }
 
-fn burst_duration(requested: Option<u64>) -> Result<u64, String> {
+fn burst_duration(requested: Option<u64>, tracing: bool) -> Result<u64, String> {
     let duration = requested.unwrap_or(BURST_MS);
+    let maximum = if tracing { MAX_TRACE_MS } else { MAX_BURST_MS };
     // Both lanes must finish pressed so the receiver can verify Stop releases.
-    if !(BURST_MS..=MAX_BURST_MS).contains(&duration) || duration % 16 != 0 {
-        return Err("Qualification duration must be a multiple of 16 ms from 192 to 4800 ms.".into());
+    if !(BURST_MS..=maximum).contains(&duration) || duration % 16 != 0 {
+        return Err(format!(
+            "Qualification duration must be a multiple of 16 ms from 192 to {maximum} ms."
+        ));
     }
     Ok(duration)
 }
@@ -44,15 +53,72 @@ fn burst_duration(requested: Option<u64>) -> Result<u64, String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Submission {
-    at_ns: String,
-    dispatch_at_ns: String,
-    admitted_at_ns: String,
+    #[serde(serialize_with = "serialize_timestamp")]
+    at_ns: u64,
+    #[serde(serialize_with = "serialize_timestamp")]
+    dispatch_at_ns: u64,
+    #[serde(serialize_with = "serialize_timestamp")]
+    admitted_at_ns: u64,
     round_trip_ms: f64,
     coordinator_wait_ms: f64,
     coordinator_work_ms: f64,
-    batch_index: usize,
-    pending_frames: u64,
+    batch_index: u32,
+    pending_frames: u32,
     value: bool,
+}
+
+fn serialize_timestamp<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(value)
+}
+
+enum Capture {
+    Inline(Vec<Submission>),
+    Trace { writer: BufWriter<File>, count: u64 },
+}
+
+impl Capture {
+    fn open(directory: Option<&Path>, lane: usize, duration: u64) -> Result<Self, String> {
+        let Some(directory) = directory else {
+            let count = (duration / [1, 8][lane] + 1) as usize;
+            return Ok(Self::Inline(Vec::with_capacity(count)));
+        };
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(TRACE_FILES[lane]))
+            .map_err(|error| format!("Could not create qualification lane {lane} trace: {error}"))?;
+        Ok(Self::Trace {
+            writer: BufWriter::with_capacity(64 * 1024, file),
+            count: 0,
+        })
+    }
+
+    fn record(&mut self, row: Submission) -> std::io::Result<()> {
+        match self {
+            Self::Inline(rows) => rows.push(row),
+            Self::Trace { writer, count } => {
+                let mut bytes = [0; 32];
+                bytes[..8].copy_from_slice(&row.at_ns.to_le_bytes());
+                bytes[8..16].copy_from_slice(&row.dispatch_at_ns.to_le_bytes());
+                bytes[16..24].copy_from_slice(&row.admitted_at_ns.to_le_bytes());
+                bytes[24..28].copy_from_slice(&row.pending_frames.to_le_bytes());
+                bytes[28..].copy_from_slice(&row.batch_index.to_le_bytes());
+                writer.write_all(&bytes)?;
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> std::io::Result<Value> {
+        match self {
+            Self::Inline(rows) => Ok(json!(rows)),
+            Self::Trace { mut writer, count } => {
+                writer.flush()?;
+                Ok(json!(count))
+            }
+        }
+    }
 }
 
 struct Offer {
@@ -118,9 +184,10 @@ impl Burst<'_> {
         &self,
         lane: usize,
         offers: mpsc::Receiver<Offer>,
-    ) -> Result<Vec<Submission>, String> {
+        mut capture: Capture,
+    ) -> Result<Value, String> {
         let result = (|| {
-            let mut submissions = Vec::with_capacity((self.duration / [1, 8][lane] + 1) as usize);
+            let mut submissions = Vec::with_capacity(MAX_ADMISSION_BATCH);
             while let Ok(first) = offers.recv() {
                 if self.cancelled.load(Ordering::Acquire) {
                     break;
@@ -172,9 +239,9 @@ impl Burst<'_> {
                             .filter(|count| (1..=256).contains(count))
                             .ok_or("Qualification frame did not enter the ordered queue.")?;
                         submissions.push(Submission {
-                            at_ns: offer.at.to_string(),
-                            dispatch_at_ns: dispatch.to_string(),
-                            admitted_at_ns: admitted.to_string(),
+                            at_ns: offer.at,
+                            dispatch_at_ns: dispatch,
+                            admitted_at_ns: admitted,
                             round_trip_ms: (admitted - dispatch) as f64 / NS_PER_MS as f64,
                             coordinator_wait_ms: if batch_index == 0 {
                                 wait.as_secs_f64() * 1000.0
@@ -182,15 +249,22 @@ impl Burst<'_> {
                                 0.0
                             },
                             coordinator_work_ms: work.as_secs_f64() * 1000.0,
-                            batch_index,
-                            pending_frames,
+                            batch_index: batch_index as u32,
+                            pending_frames: pending_frames as u32,
                             value: offer.value,
                         });
                     }
                     Ok(())
                 })?;
+                for submission in submissions.drain(..) {
+                    capture.record(submission).map_err(|error| {
+                        format!("Could not write qualification lane {lane} trace: {error}")
+                    })?;
+                }
             }
-            Ok(submissions)
+            capture.finish().map_err(|error| {
+                format!("Could not flush qualification lane {lane} trace: {error}")
+            })
         })();
         if result.is_err() {
             self.cancelled.store(true, Ordering::Release);
@@ -248,7 +322,7 @@ impl Clock {
     }
 }
 
-fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission>; 2], String> {
+fn run_burst(manager: &GatewayManager, request: Value) -> Result<Value, String> {
     if !matches!(
         std::env::var("OSG_REACTIVE_QUALIFICATION").as_deref(),
         Ok("1")
@@ -262,7 +336,12 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
     if request.command != "qualification_debug_burst" || request.nodes[0] == request.nodes[1] {
         return Err("Choose two distinct applied debug controllers.".into());
     }
-    let duration = burst_duration(request.duration_ms)?;
+    let directory = request.trace_directory.as_deref();
+    let tracing = directory.is_some();
+    if directory.is_some_and(|path| !path.is_absolute()) {
+        return Err("Qualification trace directory must be absolute.".into());
+    }
+    let duration = burst_duration(request.duration_ms, tracing)?;
     for node in &request.nodes {
         let reply = manager.request(json!({
             "command":"profile_debug_controller_status", "clientId":CLIENT_ID,
@@ -294,6 +373,8 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
     if !(now..=now.saturating_add(500 * NS_PER_MS)).contains(&start) {
         return Err("Qualification start must be within the next 500 ms.".into());
     }
+    let fast_capture = Capture::open(directory, 0, duration)?;
+    let peer_capture = Capture::open(directory, 1, duration)?;
     let burst = Burst {
         manager,
         request,
@@ -306,9 +387,9 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
     };
     let (fast_tx, fast_rx) = mpsc::sync_channel(193);
     let (peer_tx, peer_rx) = mpsc::sync_channel(25);
-    let result = thread::scope(|scope| {
-        let fast = scope.spawn(|| burst.submit(0, fast_rx));
-        let peer = scope.spawn(|| burst.submit(1, peer_rx));
+    let result = thread::scope(|scope| -> Result<[Value; 2], String> {
+        let fast = scope.spawn(|| burst.submit(0, fast_rx, fast_capture));
+        let peer = scope.spawn(|| burst.submit(1, peer_rx, peer_capture));
         let offered = burst.offer(start, [fast_tx, peer_tx]);
         if offered.is_err() {
             burst.cancelled.store(true, Ordering::Release);
@@ -328,12 +409,17 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<[Vec<Submission
         // remains the fallback if the queue is full or the owner is retired.
         burst.release();
     }
-    result
+    let lanes = result?;
+    Ok(if tracing {
+        json!({"qualificationTrace":lanes})
+    } else {
+        json!({"qualificationBurst":lanes})
+    })
 }
 
 pub(crate) fn run(manager: &GatewayManager, request: Value) -> Value {
     match run_burst(manager, request) {
-        Ok(lanes) => json!({"ok":true,"state":{"qualificationBurst":lanes}}),
+        Ok(state) => json!({"ok":true,"state":state}),
         Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
     }
 }
