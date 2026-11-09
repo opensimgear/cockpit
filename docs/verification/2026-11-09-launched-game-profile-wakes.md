@@ -197,3 +197,50 @@ admission to preserve sequence validation.
 | `.research/dcs-physics-native/1794243040777/evidence.json` | `93e949d6433661a10bb408f7508cf5e2fb7581ce87e465194531597f4e09314d` |
 | `1794243040777/loaded-replacement/browser-rate-raw.json` | `7fd7934a35714087140008c697e164c047417280a2faae6120d903b23972f335` |
 | `1794243040777/loaded-replacement/browser-rate-offers.json` | `a3f3c77e0dd7d5d5a2abc8ef036559fe449c911ba318579741277529e6d09e35` |
+
+### Browser gateway timing under light and DCS load
+
+The same native gateway binary sustained 1,001.25 Hz and 125.01 Hz in
+the browser-dev vJoy fixture without DCS or active panels. Windows Raw
+Input matched all 218 offered edges and both Stop releases. The fast lane
+had 0.68 ms median HTTP round trip and 1.00 ms p95 to Raw Input.
+
+With two DCS panels active, a private Vite bridge trace measured the fast
+lane at 597.02 Hz. The gateway and Raw Input received every offered edge.
+For each request, the bridge measured request-body parsing, the interval
+from before its write to native stdin until its native reply, and the
+remainder of the client HTTP round trip outside the bridge callback.
+
+| Fast-lane interval under DCS load | p50 / p95 / p99 |
+| --- | ---: |
+| Full HTTP round trip | 1.11 / 3.64 / 6.14 ms |
+| Native pipe and service round trip | 0.76 / 3.18 / 4.35 ms |
+| HTTP round trip outside the bridge callback | 0.29 / 0.46 / 2.39 ms |
+| Vite request-body parsing | 0.044 / 0.056 / 0.065 ms |
+| Offer to Windows Raw Input | 1.84 / 4.39 / 5.81 ms |
+
+The native round trip includes pipe scheduling, gateway dispatch and
+response writing. The bridge trace gives an upper bound for their combined
+cost. Each lane had at most two pending frames and both buttons released
+0.94 ms after the short warm-up Stop marker. The 125 Hz and 50 Hz
+replacement workload again matched all 2,452 edges and both releases,
+kept the profile owner and had no cleanup errors. The integrated 1 kHz
+HTTP check remains open. All 25 local gateway bridge and observation
+transport tests passed.
+
+A second private trace joined Vite timing with native gateway timestamps.
+The fast lane offered 475.66 Hz and kept every edge. Native request
+handling measured 0.72 / 4.10 / 5.59 ms at p50 / p95 / p99, while the
+request thread's enqueue-to-dispatch interval measured 0.09 / 0.11 /
+0.13 ms. Native request handling includes gateway admission, session lock
+waits and the debug dispatch. The trace isolates those together and leaves
+their individual contributions unmeasured. It points to measuring within
+the request before changing worker scheduling. The replacement workload
+again passed at 125 Hz and 50 Hz with clean teardown.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `dcs-browser-replacement/current-light.json` | `7d81a464879c9d774e999f76636d1c1b51294971b5b27d2b0883a66aaec92881` |
+| `.research/dcs-physics-native/1794244459214/evidence.json` | `96b0f2f770f93483fb79cf874a4ce95367a5cfc4aa2f056af52aa9f70f26e722` |
+| `.research/dcs-physics-native/1794244640227/evidence.json` | `e1df5facd4a2661f4e86f50f34dea215cf41d9a74136de29a22d56a16c20edfe` |
+| `dcs-browser-replacement/instrumented-gateway/osg-gateway-service.exe` | `344ca6e35f67289658c695445f911190d19eefe1fb7ad00c40f2e19972c0adf1` |
