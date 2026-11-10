@@ -18,6 +18,12 @@ pub(in crate::engine::typed) struct Binding {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::engine::typed) enum Authority {
     Sampled(u64),
+    GuardedSampled {
+        valid_until: u64,
+        domain: String,
+        generation: u64,
+        freshness: u64,
+    },
     Latched {
         domain: String,
         generation: u64,
@@ -45,8 +51,26 @@ impl NativeProof {
                 binding
                     .captures
                     .iter()
-                    .map(move |(_, _, authority)| match authority {
+                    .map(move |(_, capture, authority)| match authority {
                         Authority::Sampled(deadline) => *deadline,
+                        Authority::GuardedSampled {
+                            valid_until,
+                            domain,
+                            generation,
+                            freshness,
+                        } => ledger
+                            .leases
+                            .get(&(
+                                binding.endpoint.node_id.clone(),
+                                domain.clone(),
+                                *generation,
+                            ))
+                            .filter(|(observation, _)| capture.same_acquisition_domain(observation))
+                            .map_or(0, |(_, deadline)| {
+                                (*deadline)
+                                    .min(*valid_until)
+                                    .min(capture.captured_us.0.saturating_add(*freshness))
+                            }),
                         Authority::Latched {
                             domain,
                             generation,

@@ -431,3 +431,60 @@ fn same_sampled_acquisition_cannot_hide_changed_validity_in_a_noop_envelope() {
 
 #[path = "native_lifecycle_tests.rs"]
 mod lifecycle;
+
+#[test]
+fn guarded_sample_renews_context_without_replaying_the_original_acquisition() {
+    use osg_mapping::{
+        engine::typed::Phase,
+        program::{Endpoint, Program, SourcePort as ProgramPort},
+    };
+
+    let mut sources = setup();
+    let port = &mut sources.sources.get_mut("game").unwrap().ports[2];
+    port.family = "xplane".into();
+    let endpoint = Endpoint { node_id: "game".into(), port_id: port.logical.clone() };
+    let program = Program {
+        sources: vec![ProgramPort { endpoint: endpoint.clone(), contract: port.contract.clone() }],
+        nodes: vec![], sinks: vec![], controllers: vec![],
+    };
+    sources.sources.get_mut("game").unwrap().ports.drain(..2);
+    let mut phase = Phase::new(program, Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
+    phase.pin_native_clock(&sources.clock.id().to_string()).unwrap();
+    phase.register_native_source(sources.native_registrations().remove(0)).unwrap();
+
+    let old_guard = capture("xplane", 1);
+    let stamp = Stamp { sequence: 2, captured_at: old_guard.captured_at + Duration::from_millis(1), ..old_guard.clone() };
+    let new_guard = Stamp { sequence: 3, captured_at: stamp.captured_at + Duration::from_millis(1), ..stamp.clone() };
+    std::thread::sleep(Duration::from_millis(2));
+    let make_snapshot = |observation: Stamp| {
+        let input = CapturedValue::native(json!(1), vec![Arc::new(Contribution {
+            input: InputId::Channel("airspeed".into()),
+            capture: stamp.clone(),
+            validity: Validity::GuardedSampled {
+                valid_until: stamp.captured_at + Duration::from_secs(1),
+                guard: Arc::new(Lease {
+                    domain_id: "xplane:live-context".into(), generation: 1,
+                    valid_until: observation.captured_at + Duration::from_millis(100),
+                    observation,
+                }),
+            },
+        })], Instant::now()).unwrap();
+        snapshot(None, Some(input), true)
+    };
+    let now = sources.clock.now_us();
+    let first = sources.frames(make_snapshot(old_guard.clone()), now);
+    assert_eq!(native(&first).changes.len(), 1);
+    phase.accept_admissions(first.frames, Counter(now)).unwrap();
+    let now = sources.clock.now_us();
+    let second = sources.frames(make_snapshot(new_guard), now);
+    assert!(second.fatal.is_none() && !second.context_lost);
+    assert!(native(&second).changes.is_empty());
+    assert_eq!(native(&second).leases.len(), 1);
+    phase.accept_admissions(second.frames, Counter(now)).unwrap();
+
+    let deadline = |at| Counter(sources.clock.deadline_us(at + Duration::from_millis(100)).unwrap());
+    phase.advance(deadline(old_guard.captured_at)).unwrap();
+    assert!(matches!(phase.sample(&endpoint), Some(SignalSample::Known(_))));
+    phase.advance(deadline(stamp.captured_at)).unwrap();
+    assert_eq!(phase.sample(&endpoint), Some(&SignalSample::Stale));
+}

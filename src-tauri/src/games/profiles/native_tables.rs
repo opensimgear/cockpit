@@ -1,6 +1,6 @@
 //! Bounded conversion of original native captures into portable table references.
 use super::*;
-use crate::native_capture::{Contribution, InputId, Stamp, Validity};
+use crate::native_capture::{Contribution, InputId, Lease, Stamp, Validity};
 use std::time::Duration;
 
 pub(super) struct Tables {
@@ -64,6 +64,31 @@ impl Tables {
         self.captures.push(capture);
         Ok(index)
     }
+    fn lease(&mut self, lease: &Lease) -> Result<u32, String> {
+        let value = NativeLease {
+            domain_id: lease.domain_id.to_string(),
+            generation: Counter(lease.generation),
+            observation: self.capture(&lease.observation)?,
+            valid_until_us: Counter(self.clock.deadline_us(lease.valid_until)?),
+        };
+        if let Some(index) = self.leases.iter().position(|old| old == &value) {
+            return u32::try_from(index).map_err(|_| "Native lease reference overflow".into());
+        }
+        if value.domain_id.len() > MAX_NATIVE_ID_BYTES || self.leases.len() >= MAX_NATIVE_LEASES {
+            return Err("Native lease table limit".into());
+        }
+        self.charge(512 + value.domain_id.len() * 6)?;
+        let index = u32::try_from(self.leases.len()).map_err(|_| "Native lease reference overflow")?;
+        self.leases.push(value);
+        Ok(index)
+    }
+
+    fn sampled_deadline(&self, stamp: &Stamp, valid_until: Instant, freshness: u64) -> Result<Counter, String> {
+        let policy_end = stamp.captured_at.checked_add(Duration::from_millis(freshness))
+            .ok_or("Native freshness overflow")?;
+        Ok(Counter(self.clock.deadline_us(valid_until.min(policy_end))?))
+    }
+
     pub fn contributors(
         &mut self,
         items: &[std::sync::Arc<Contribution>],
@@ -81,46 +106,16 @@ impl Tables {
             }
             let capture = self.capture(&item.capture)?;
             let validity = match (&item.validity, policy) {
-                (Validity::Sampled { valid_until }, NativePolicy::Sampled) => {
-                    let policy_end = item
-                        .capture
-                        .captured_at
-                        .checked_add(Duration::from_millis(freshness))
-                        .ok_or("Native freshness overflow")?;
-                    NativeValidity::Sampled {
-                        valid_until_us: Counter(
-                            self.clock.deadline_us((*valid_until).min(policy_end))?,
-                        ),
-                    }
-                }
-                (Validity::Latched(lease), NativePolicy::Latched) => {
-                    let observation = self.capture(&lease.observation)?;
-                    let value = NativeLease {
-                        domain_id: lease.domain_id.to_string(),
-                        generation: Counter(lease.generation),
-                        observation,
-                        valid_until_us: Counter(
-                            self.clock.deadline_us(lease.valid_until)?,
-                        ),
-                    };
-                    let index =
-                        if let Some(index) = self.leases.iter().position(|old| old == &value) {
-                            index
-                        } else {
-                            if value.domain_id.len() > MAX_NATIVE_ID_BYTES
-                                || self.leases.len() >= MAX_NATIVE_LEASES
-                            {
-                                return Err("Native lease table limit".into());
-                            }
-                            self.charge(512 + value.domain_id.len() * 6)?;
-                            self.leases.push(value);
-                            self.leases.len() - 1
-                        };
-                    NativeValidity::Latched {
-                        lease: u32::try_from(index)
-                            .map_err(|_| "Native lease reference overflow")?,
-                    }
-                }
+                (Validity::Sampled { valid_until }, NativePolicy::Sampled) => NativeValidity::Sampled {
+                    valid_until_us: self.sampled_deadline(&item.capture, *valid_until, freshness)?,
+                },
+                (Validity::GuardedSampled { valid_until, guard }, NativePolicy::Sampled) => NativeValidity::GuardedSampled {
+                    valid_until_us: self.sampled_deadline(&item.capture, *valid_until, freshness)?,
+                    lease: self.lease(guard)?,
+                },
+                (Validity::Latched(lease), NativePolicy::Latched) => NativeValidity::Latched {
+                    lease: self.lease(lease)?,
+                },
                 _ => return Err("Native validity differs from prepared policy".into()),
             };
             let input = match &item.input {

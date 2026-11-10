@@ -388,6 +388,8 @@ fn lease_only_genuine_renewal_retains_original_capture_without_callback_or_rearm
 
 #[path = "causal_tests.rs"]
 mod causal;
+#[path = "guarded_sample_tests.rs"]
+mod guarded_sample;
 #[path = "recovery_tests.rs"]
 mod recovery;
 #[path = "retained_bytes_tests.rs"]

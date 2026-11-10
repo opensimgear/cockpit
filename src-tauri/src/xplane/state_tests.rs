@@ -49,7 +49,7 @@ fn native_projection_preserves_zero_false_aliases_and_original_capture() {
     assert_eq!(snapshot.captured_at, Some(now));
     assert_eq!(snapshot.channels["airspeed_kts"].captured_at, Some(now));
     assert_eq!(snapshot.channels["airspeed_kts"].capture_sequence, 2);
-    assert_eq!(session.advanced, Some(now));
+    assert_eq!(session.advanced.map(|sample| sample.captured_at), Some(now));
     assert_eq!(second.age_ms, Some(100));
     assert!(snapshot
         .project(now + session.freshness, &outputs, &[])
@@ -93,6 +93,44 @@ fn native_component_sequence_changes_only_on_its_own_accepted_capture() {
     assert_eq!(selected.channels["airspeed_kts"].capture_sequence, 4);
     assert_eq!(selected.channels["airspeed_kts"].captured_at, Some(refreshed));
     assert_eq!(selected.channels["gear_unsafe"].capture_sequence, 2);
+}
+
+#[test]
+fn context_renewal_keeps_the_original_component_deadline() {
+    use crate::native_capture::Validity;
+
+    let now = Instant::now();
+    let (mut session, _) = live(now);
+    let captured = now + Duration::from_millis(100);
+    let renewed = now + Duration::from_millis(200);
+    let ttl = session.freshness;
+    let inspection = ["airspeed_kts".into()];
+    session.ingest(vec![(GUARDS.len() + PATH_BYTES, 32.)], captured);
+    let (before, _) = session.native_snapshot(captured, Some(captured), 3, "producer", false);
+    session.ingest(evidence(3.), renewed);
+    let (after, _) = session.native_snapshot(renewed, Some(renewed), 4, "producer", false);
+    let old = before.project(renewed, &[], &inspection).0.values;
+    let new = after.project(renewed, &[], &inspection).0.values;
+    let old_value = &old["airspeed_kts"];
+    let new_value = &new["airspeed_kts"];
+    let old = &old_value.contributors().unwrap()[0];
+    let new = &new_value.contributors().unwrap()[0];
+    assert_eq!(old.capture, new.capture);
+    assert_eq!(new.capture.captured_at, captured);
+    assert_eq!(new.capture.sequence, 3);
+    for (item, expected_observation, expected_sequence) in [(old, now, 2), (new, renewed, 4)] {
+        let Validity::GuardedSampled { valid_until, guard } = &item.validity else {
+            panic!("Missing separate component and context evidence");
+        };
+        assert_eq!(*valid_until, captured + ttl);
+        assert_eq!(guard.observation.captured_at, expected_observation);
+        assert_eq!(guard.observation.sequence, expected_sequence);
+        assert_eq!(guard.valid_until, expected_observation + ttl);
+    }
+    assert!(!old_value.is_current(now + ttl));
+    assert!(new_value.is_current(now + ttl));
+    assert!(!new_value.is_current(captured + ttl));
+    assert!(after.fresh_at(captured + ttl));
 }
 
 #[test]
@@ -142,7 +180,7 @@ fn frozen_clock_updates_cannot_renew_simulator_progress() {
     session.ingest(evidence(2.), later);
     let (snapshot, _) = session.native_snapshot(later, Some(later), 3, "producer", false);
     assert_eq!(snapshot.advanced_at, Some(now));
-    assert_eq!(snapshot.valid_until, Some(now + session.freshness));
+    assert_eq!(snapshot.guard.unwrap().valid_until, now + session.freshness);
     assert_eq!(session.deadline(later), Some(now + session.freshness));
 }
 #[test]
@@ -151,7 +189,7 @@ fn baseline_initialization_and_epoch_exhaustion_fail_closed() {
     let mut session = Session::new(&defaults(12));
     let (empty, _) = session.native_snapshot(now, None, 0, "producer", false);
     assert!(!empty.fresh_at(now));
-    assert_eq!(empty.valid_until, None);
+    assert!(empty.guard.is_none());
     assert_eq!(session.deadline(now), None);
     let (mut session, _) = live(now);
     let (initializing, _) = session.native_snapshot(now, Some(now), 2, "producer", true);

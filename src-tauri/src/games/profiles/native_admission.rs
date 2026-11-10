@@ -1,6 +1,6 @@
 //! Per-family admission preserves independent native acquisition continuity.
 use super::*;
-use crate::native_capture::CapturedValue;
+use crate::native_capture::{CapturedValue, Validity};
 
 #[derive(Default)]
 pub(super) struct FamilyState {
@@ -35,6 +35,25 @@ fn same_level(
             _ => false,
         }
 }
+
+fn sampled_renewal(previous: Option<&CapturedValue>, current: Option<&CapturedValue>) -> bool {
+    // The caller has already matched the sample and original captures.
+    previous
+        .and_then(CapturedValue::contributors)
+        .zip(current.and_then(CapturedValue::contributors))
+        .is_some_and(|(previous, current)| {
+            previous.iter().zip(current).all(|(old, new)| {
+                old.validity == new.validity
+                    || matches!((&old.validity, &new.validity),
+                        (
+                            Validity::GuardedSampled { valid_until: old_end, guard: old_guard },
+                            Validity::GuardedSampled { valid_until: new_end, guard: new_guard },
+                        ) if old_end == new_end && old_guard.domain_id == new_guard.domain_id
+                            && old_guard.generation == new_guard.generation)
+            })
+        })
+}
+
 impl GameSources {
     pub(super) fn read_ready(&self) -> bool {
         #[cfg(test)]
@@ -116,10 +135,7 @@ impl GameSources {
                             (
                                 item.capture.producer_id.to_string(),
                                 item.capture.generation,
-                                match &item.validity {
-                                    crate::native_capture::Validity::Latched(lease) => Some((lease.domain_id.to_string(), lease.generation)),
-                                    crate::native_capture::Validity::Sampled { .. } => None,
-                                },
+                                item.validity.lease().map(|lease| (lease.domain_id.to_string(), lease.generation)),
                             )
                         });
                     let available = ready;
@@ -203,7 +219,9 @@ impl GameSources {
                         if !baseline && !changed {
                             let previous = family.previous.get(&port.logical).unwrap();
                             if previous == &current { continue; }
-                            if port.policy == NativePolicy::Sampled {
+                            if port.policy == NativePolicy::Sampled
+                                && !sampled_renewal(previous.1.as_ref(), current.1.as_ref())
+                            {
                                 return Err("An original sampled acquisition cannot renew its validity".into());
                             }
                         }

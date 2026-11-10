@@ -30,7 +30,7 @@ pub(crate) struct NativeSnapshot {
     pub captured_at: Option<Instant>,
     pub producer_id: String,
     pub freshness: Duration,
-    pub valid_until: Option<Instant>,
+    pub guard: Option<std::sync::Arc<crate::native_capture::Lease>>,
     pub advanced_at: Option<Instant>,
     pub fresh: bool,
     pub status: String,
@@ -39,7 +39,7 @@ pub(crate) struct NativeSnapshot {
 impl NativeSnapshot {
     pub(crate) fn fresh_at(&self, now: Instant) -> bool {
         self.fresh
-            && self.valid_until.is_some_and(|until| now < until)
+            && self.guard.as_ref().is_some_and(|guard| now < guard.valid_until)
             && self.captured_at.is_some_and(|at| at <= now)
             && self.advanced_at.is_some_and(|at| at <= now)
     }
@@ -149,12 +149,13 @@ impl NativeSnapshot {
         use crate::native_capture::{CapturedValue, Contribution, InputId, Stamp, Validity};
         let sample = self.channels.get(id)?;
         let captured_at = sample.captured_at?;
-        let valid_until = captured_at.checked_add(self.freshness)?.min(self.valid_until?);
+        let valid_until = captured_at.checked_add(self.freshness)?;
+        let guard = self.guard.as_ref()?.clone();
         CapturedValue::native(value.json(), vec![std::sync::Arc::new(Contribution {
             input: InputId::Channel(sample.native_input.as_deref().unwrap_or(id).into()), capture: Stamp {
                 producer_id: self.producer_id.as_str().into(), generation: self.epoch,
                 sequence: sample.capture_sequence, byte_offset: None, captured_at,
-            }, validity: Validity::Sampled { valid_until },
+            }, validity: Validity::GuardedSampled { valid_until, guard },
         })],now)
     }
 }
@@ -168,6 +169,7 @@ impl osg_streams::RetainedBytes for NativeSnapshot {
             + self.producer_id.capacity()
             + self.status.capacity()
             + self.aircraft.as_ref().map_or(0, String::capacity)
+            + self.guard.as_ref().map_or(0, |guard| guard.retained_bytes())
             + self
                 .channels
                 .iter()

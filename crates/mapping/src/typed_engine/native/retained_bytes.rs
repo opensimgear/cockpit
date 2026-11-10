@@ -103,7 +103,9 @@ impl Bytes {
             for (input, capture, authority) in &binding.captures {
                 self.input(input)?;
                 self.text(&capture.producer_id)?;
-                if let proof::Authority::Latched { domain, .. } = authority {
+                if let proof::Authority::GuardedSampled { domain, .. }
+                | proof::Authority::Latched { domain, .. } = authority
+                {
                     self.text(domain)?;
                 }
             }

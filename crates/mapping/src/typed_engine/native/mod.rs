@@ -59,6 +59,13 @@ pub struct NativeCapture {
     pub byte_offset: Option<u32>,
     pub captured_us: Counter,
 }
+impl NativeCapture {
+    fn same_acquisition_domain(&self, other: &Self) -> bool {
+        self.producer_id == other.producer_id
+            && self.generation == other.generation
+            && self.byte_offset.is_some() == other.byte_offset.is_some()
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeLease {
@@ -82,8 +89,17 @@ pub enum NativeInput {
     deny_unknown_fields
 )]
 pub enum NativeValidity {
-    Sampled { valid_until_us: Counter },
-    Latched { lease: u32 },
+    Sampled {
+        valid_until_us: Counter,
+    },
+    /// A fixed sample deadline and a separately renewable prerequisite.
+    GuardedSampled {
+        valid_until_us: Counter,
+        lease: u32,
+    },
+    Latched {
+        lease: u32,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

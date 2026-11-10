@@ -46,10 +46,37 @@ pub(crate) struct Lease {
     pub observation: Stamp,
     pub valid_until: Instant,
 }
+
+impl Lease {
+    pub fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + 2 * std::mem::size_of::<usize>()
+            + arc_bytes(&self.domain_id)
+            + arc_bytes(&self.observation.producer_id)
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Validity {
     Sampled { valid_until: Instant },
+    GuardedSampled { valid_until: Instant, guard: Arc<Lease> },
     Latched(Arc<Lease>),
+}
+
+impl Validity {
+    pub fn lease(&self) -> Option<&Lease> {
+        match self {
+            Self::Sampled { .. } => None,
+            Self::GuardedSampled { guard, .. } | Self::Latched(guard) => Some(guard),
+        }
+    }
+
+    pub fn deadline(&self) -> Instant {
+        match self {
+            Self::Sampled { valid_until } => *valid_until,
+            Self::GuardedSampled { valid_until, guard } => (*valid_until).min(guard.valid_until),
+            Self::Latched(lease) => lease.valid_until,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Contribution {
@@ -73,21 +100,30 @@ impl Contribution {
             Validity::Sampled { valid_until } => {
                 interval(self.capture.captured_at, *valid_until) && now < *valid_until
             }
+            Validity::GuardedSampled { valid_until, guard } => {
+                interval(self.capture.captured_at, *valid_until)
+                    && now < *valid_until
+                    && self.lease_current(guard, now)
+            }
             Validity::Latched(lease) => {
-                id(&lease.domain_id)
-                    && lease.generation > 0
-                    && lease.observation.valid()
-                    && self.capture.same_owner(&lease.observation)
-                    && self.capture.byte_offset.is_some() == lease.observation.byte_offset.is_some()
+                self.lease_current(lease, now)
                     && self.capture.position() <= lease.observation.position()
-                    && (self.capture.position() != lease.observation.position()
-                        || self.capture.captured_at == lease.observation.captured_at)
                     && self.capture.captured_at <= lease.observation.captured_at
-                    && lease.observation.captured_at <= now
-                    && interval(lease.observation.captured_at, lease.valid_until)
-                    && now < lease.valid_until
             }
         }
+    }
+
+    fn lease_current(&self, lease: &Lease, now: Instant) -> bool {
+        id(&lease.domain_id)
+            && lease.generation > 0
+            && lease.observation.valid()
+            && self.capture.same_owner(&lease.observation)
+            && self.capture.byte_offset.is_some() == lease.observation.byte_offset.is_some()
+            && (self.capture.position() != lease.observation.position()
+                || self.capture.captured_at == lease.observation.captured_at)
+            && lease.observation.captured_at <= now
+            && interval(lease.observation.captured_at, lease.valid_until)
+            && now < lease.valid_until
     }
 }
 
@@ -144,7 +180,7 @@ impl CapturedValue {
     pub fn authority_age_ms(&self, now: Instant) -> Option<u64> {
         self.contributors.as_ref()?.iter().try_fold(0, |old, c| {
             let at = match &c.validity {
-                Validity::Sampled { .. } => c.capture.captured_at,
+                Validity::Sampled { .. } | Validity::GuardedSampled { .. } => c.capture.captured_at,
                 Validity::Latched(lease) => lease.observation.captured_at,
             };
             now.checked_duration_since(at)
@@ -198,13 +234,8 @@ impl CapturedValue {
                 if let InputId::Channel(name) = &c.input {
                     bytes = bytes.saturating_add(arc_bytes(name));
                 }
-                if let Validity::Latched(lease) = &c.validity {
-                    bytes = bytes
-                        .saturating_add(
-                            std::mem::size_of::<Lease>() + 2 * std::mem::size_of::<usize>(),
-                        )
-                        .saturating_add(arc_bytes(&lease.domain_id))
-                        .saturating_add(arc_bytes(&lease.observation.producer_id));
+                if let Some(lease) = c.validity.lease() {
+                    bytes = bytes.saturating_add(lease.retained_bytes());
                 }
             }
         }
@@ -242,41 +273,10 @@ fn merge(a: &Contribution, b: &Contribution) -> Option<Contribution> {
                 valid_until: (*a).min(*b),
             }
         }
-        (Validity::Latched(a), Validity::Latched(b)) => {
-            if a.domain_id != b.domain_id
-                || a.generation != b.generation
-                || !a.observation.same_owner(&b.observation)
-            {
-                return None;
-            }
-            if a.observation.position() == b.observation.position()
-                && a.observation != b.observation
-            {
-                return None;
-            }
-            let latest = if a.observation.position() >= b.observation.position() {
-                a
-            } else {
-                b
-            };
-            let earlier = if Arc::ptr_eq(latest, a) { b } else { a };
-            if latest.observation.captured_at < earlier.observation.captured_at {
-                return None;
-            }
-            let ttl = a
-                .valid_until
-                .checked_duration_since(a.observation.captured_at)?
-                .min(
-                    b.valid_until
-                        .checked_duration_since(b.observation.captured_at)?,
-                );
-            Validity::Latched(Arc::new(Lease {
-                domain_id: latest.domain_id.clone(),
-                generation: latest.generation,
-                observation: latest.observation.clone(),
-                valid_until: latest.observation.captured_at.checked_add(ttl)?,
-            }))
-        }
+        (Validity::GuardedSampled { valid_until: a, guard: ga },
+         Validity::GuardedSampled { valid_until: b, guard: gb }) if a == b =>
+            Validity::GuardedSampled { valid_until: *a, guard: merge_lease(ga, gb)? },
+        (Validity::Latched(a), Validity::Latched(b)) => Validity::Latched(merge_lease(a, b)?),
         _ => return None,
     };
     Some(Contribution {
@@ -284,6 +284,28 @@ fn merge(a: &Contribution, b: &Contribution) -> Option<Contribution> {
         capture: a.capture.clone(),
         validity,
     })
+}
+
+fn merge_lease(a: &Arc<Lease>, b: &Arc<Lease>) -> Option<Arc<Lease>> {
+    if a.domain_id != b.domain_id
+        || a.generation != b.generation
+        || !a.observation.same_owner(&b.observation)
+        || (a.observation.position() == b.observation.position() && a.observation != b.observation)
+    {
+        return None;
+    }
+    let (latest, earlier) = if a.observation.position() >= b.observation.position() { (a, b) } else { (b, a) };
+    if latest.observation.captured_at < earlier.observation.captured_at {
+        return None;
+    }
+    let ttl = a.valid_until.checked_duration_since(a.observation.captured_at)?
+        .min(b.valid_until.checked_duration_since(b.observation.captured_at)?);
+    Some(Arc::new(Lease {
+        domain_id: latest.domain_id.clone(),
+        generation: latest.generation,
+        observation: latest.observation.clone(),
+        valid_until: latest.observation.captured_at.checked_add(ttl)?,
+    }))
 }
 fn id(value: &str) -> bool {
     !value.is_empty() && value.len() <= MAX_ID && !value.chars().any(char::is_control)

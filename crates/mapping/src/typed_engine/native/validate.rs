@@ -269,18 +269,45 @@ impl Ledger {
                     }
                 }
                 let (authority, domain) = match (&contributor.validity, registration.policy) {
-                    (NativeValidity::Sampled { valid_until_us }, NativePolicy::Sampled)
-                        if valid_until_us.0 > capture.captured_us.0
-                            && valid_until_us.0 - capture.captured_us.0 <= MAX_NATIVE_VALIDITY_US =>
+                    (
+                        NativeValidity::Sampled { valid_until_us }
+                        | NativeValidity::GuardedSampled { valid_until_us, .. },
+                        NativePolicy::Sampled,
+                    ) if valid_until_us.0 > capture.captured_us.0
+                        && valid_until_us.0 - capture.captured_us.0 <= MAX_NATIVE_VALIDITY_US =>
                     {
-                        (
-                            Authority::Sampled(
-                                valid_until_us
-                                    .0
-                                    .min(capture.captured_us.0.saturating_add(freshness)),
-                            ),
-                            None,
-                        )
+                        if let NativeValidity::GuardedSampled { lease, .. } = &contributor.validity
+                        {
+                            let lease = frame
+                                .leases
+                                .get(*lease as usize)
+                                .ok_or("Native guard lease reference is out of range.")?;
+                            let observation = &frame.captures[lease.observation as usize];
+                            if !capture.same_acquisition_domain(observation) {
+                                return Err(
+                                    "Native guard lease does not belong to the input acquisition domain."
+                                        .into(),
+                                );
+                            }
+                            (
+                                Authority::GuardedSampled {
+                                    valid_until: valid_until_us.0,
+                                    domain: lease.domain_id.clone(),
+                                    generation: lease.generation.0,
+                                    freshness,
+                                },
+                                Some((lease.domain_id.clone(), lease.generation.0)),
+                            )
+                        } else {
+                            (
+                                Authority::Sampled(
+                                    valid_until_us
+                                        .0
+                                        .min(capture.captured_us.0.saturating_add(freshness)),
+                                ),
+                                None,
+                            )
+                        }
                     }
                     (NativeValidity::Latched { lease }, NativePolicy::Latched) => {
                         let lease = frame
@@ -288,9 +315,7 @@ impl Ledger {
                             .get(*lease as usize)
                             .ok_or("Native lease reference is out of range.")?;
                         let observation = &frame.captures[lease.observation as usize];
-                        if observation.producer_id != capture.producer_id
-                            || observation.generation != capture.generation
-                            || observation.byte_offset.is_some() != capture.byte_offset.is_some()
+                        if !capture.same_acquisition_domain(observation)
                             || observation.captured_us < capture.captured_us
                             || position(&capture) > position(observation)
                         {
@@ -332,11 +357,27 @@ impl Ledger {
             let owner = owner.or_else(|| old.owner.clone());
             captures.sort_by(|a, b| a.0.cmp(&b.0));
             for (_, capture, authority) in &captures {
-                if let Authority::Sampled(deadline) = authority {
-                    if old.proof.bindings.iter().flat_map(|binding| &binding.captures).any(|(_,old_capture,old_authority)|
-                        old_capture == capture && matches!(old_authority,Authority::Sampled(old_deadline) if old_deadline != deadline)) {
-                        return Err("An original sampled acquisition cannot renew its original authority deadline.".into());
-                    }
+                if matches!(
+                    authority,
+                    Authority::Sampled(_) | Authority::GuardedSampled { .. }
+                ) && old
+                    .proof
+                    .bindings
+                    .iter()
+                    .flat_map(|binding| &binding.captures)
+                    .any(|(_, old_capture, old_authority)| {
+                        old_capture == capture
+                            && matches!(
+                                old_authority,
+                                Authority::Sampled(_) | Authority::GuardedSampled { .. }
+                            )
+                            && old_authority != authority
+                    })
+                {
+                    return Err(
+                        "An original sampled acquisition cannot change its sampled authority."
+                            .into(),
+                    );
                 }
             }
             let mut proof = NativeProof {

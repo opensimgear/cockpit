@@ -84,7 +84,6 @@ impl Capture {
     }
 
     pub(crate) fn next_deadline(&self, process: Option<Instant>, now: Instant) -> Option<Instant> {
-        use crate::native_capture::Validity;
         // Both existing age fences include equality. Native contributor leases
         // are exclusive and must withdraw at their exact original deadline.
         let inclusive = Duration::from_secs(2) + Duration::from_nanos(1);
@@ -95,10 +94,7 @@ impl Capture {
         if self.status == "live" {
             for value in self.values.values().filter(|value| value.is_current(now)) {
                 for contribution in value.contributors().into_iter().flatten() {
-                    let expires = match &contribution.validity {
-                        Validity::Sampled { valid_until } => *valid_until,
-                        Validity::Latched(lease) => lease.valid_until,
-                    };
+                    let expires = contribution.validity.deadline();
                     deadline = deadline.min(expires);
                 }
             }

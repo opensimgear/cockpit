@@ -12,7 +12,7 @@ struct Session {
     version: u64,
     context: Option<String>,
     clock: Option<f64>,
-    advanced: Option<Instant>,
+    advanced: Option<CapturedDataref>,
     baseline: bool,
     epoch: u64,
     exhausted: bool,
@@ -116,7 +116,7 @@ impl Session {
         self.values
             .values()
             .map(|sample| sample.captured_at)
-            .chain(self.advanced)
+            .chain(self.advanced.map(|sample| sample.captured_at))
             .filter_map(|at| at.checked_add(self.freshness))
             .filter(|at| *at > now)
             .min()
@@ -177,7 +177,7 @@ impl Session {
         } else {
             if self.clock.is_some_and(|old| clock.unwrap() > old) {
                 self.baseline = true;
-                self.advanced = self.values.get(&3).map(|sample| sample.captured_at);
+                self.advanced = self.values.get(&3).copied();
                 self.counter = self.counter.wrapping_add(1);
             }
             self.context = aircraft;
@@ -185,19 +185,33 @@ impl Session {
         }
         if self
             .advanced
-            .is_some_and(|at| now.saturating_duration_since(at) >= self.freshness)
+            .is_some_and(|sample| now.saturating_duration_since(sample.captured_at) >= self.freshness)
         {
             self.reset("Simulator clock stopped; awaiting a new baseline.");
             rotate = true;
         }
         let fresh = guards && !rotate && self.baseline && !initializing && !self.exhausted;
-        let valid_until = if fresh {
+        let guard = if fresh {
+            // The oldest required observation controls when the live context expires.
             required
                 .iter()
-                .filter_map(|i| self.values.get(i).map(|sample| sample.captured_at))
+                .filter_map(|i| self.values.get(i).copied())
                 .chain(self.advanced)
-                .filter_map(|at| at.checked_add(self.freshness))
-                .min()
+                .min_by_key(|sample| (sample.captured_at, sample.capture_sequence))
+                .and_then(|sample| {
+                    Some(std::sync::Arc::new(crate::native_capture::Lease {
+                        domain_id: "xplane:live-context".into(),
+                        generation: self.epoch,
+                        observation: crate::native_capture::Stamp {
+                            producer_id: producer_id.into(),
+                            generation: self.epoch,
+                            sequence: sample.capture_sequence,
+                            byte_offset: None,
+                            captured_at: sample.captured_at,
+                        },
+                        valid_until: sample.captured_at.checked_add(self.freshness)?,
+                    }))
+                })
         } else {
             None
         };
@@ -270,8 +284,8 @@ impl Session {
                 captured_at,
                 producer_id: producer_id.to_owned(),
                 freshness: self.freshness,
-                valid_until,
-                advanced_at: self.advanced,
+                guard,
+                advanced_at: self.advanced.map(|sample| sample.captured_at),
                 fresh,
                 status: self.status.clone(),
                 channels: std::sync::Arc::new(channels),
