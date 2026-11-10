@@ -50,9 +50,9 @@ impl Producer {
     }
     fn packet(&self, value: u32) {
         assert!(self.length >= 4);
-        for (index, byte) in value.to_le_bytes().iter().enumerate() {
-            unsafe { ptr::write_volatile(self.view.add(index), *byte) };
-        }
+        // Mapped views are page-aligned, so a packet ID has one store even
+        // when the value carries across a byte boundary.
+        unsafe { ptr::write_volatile(self.view.cast::<u32>(), value.to_le()) };
     }
 }
 impl Drop for Producer {
@@ -152,3 +152,6 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
         assert!(Pages::open_named(game, &prefix).is_err());
     }
 }
+
+#[path = "platform_timing_tests.rs"]
+mod timing;

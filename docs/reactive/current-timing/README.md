@@ -1,11 +1,12 @@
 # Current timing migration matrix
 
-The current scan covers Cockpit `c2432f5d`, device-gateway `dfd83084`,
+The baseline scan covers Cockpit `c2432f5d`, device-gateway `dfd83084`,
 device-template `c5457884` and firmware-common `64025cce`. The five tables
-record each of its 471 sites, including inline fixtures and declarations that
-the scanner finds in production files.
+record 473 current sites, including inline fixtures and declarations that
+the scanner finds in production files. Windows Assetto acquisition now
+has a dedicated high-resolution wait and keeps the portable fixture wait.
 
-The reconciliation found the same 471 current sites and 247 historical
+The baseline reconciliation found 471 current sites and 247 historical
 dispositions. The source review also covered owner behavior outside the
 scanner's named primitives. The agreed recurring checks are recorded in
 [Acquisition](../acquisition.md#unresolved-acquisition-boundaries), including

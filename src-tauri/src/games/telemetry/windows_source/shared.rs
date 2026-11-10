@@ -6,9 +6,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
-    thread::{self, Thread},
+    thread,
     time::{Duration, Instant},
 };
+#[cfg(not(windows))]
+use std::thread::Thread;
+
+#[cfg(windows)]
+pub(super) mod wait;
 
 const SAMPLE_PERIOD: Duration = Duration::from_millis(2);
 const RETRY_PERIOD: Duration = Duration::from_millis(50);
@@ -67,7 +72,12 @@ struct Owner {
     identity: ProcessIdentity,
     stream: Stream,
     stop: Arc<AtomicBool>,
+    #[cfg(not(windows))]
     worker: Thread,
+    #[cfg(windows)]
+    capture_wait: wait::CaptureWait,
+    #[cfg(all(test, windows))]
+    worker_handle: std::thread::JoinHandle<()>,
     terminal_error: Arc<OnceLock<String>>,
     done: Arc<AtomicBool>,
     monitor: Option<Weak<crate::xplane::process_events::Monitor>>,
@@ -116,6 +126,10 @@ impl Owner {
         let stop = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
         let terminal_error = Arc::new(OnceLock::new());
+        #[cfg(windows)]
+        let capture_wait = wait::CaptureWait::new()?;
+        #[cfg(windows)]
+        let worker_wait = capture_wait.clone();
         let worker_error = terminal_error.clone();
         let shutdown = Shutdown {
             stream: stream.clone(),
@@ -193,16 +207,29 @@ impl Owner {
                     } else {
                         SAMPLE_PERIOD
                     };
+                    #[cfg(windows)]
+                    if let Err(error) = worker_wait.wait(period.saturating_sub(began.elapsed())) {
+                        let _ = worker_error.set(error);
+                        break;
+                    }
+                    #[cfg(not(windows))]
                     thread::park_timeout(period.saturating_sub(began.elapsed()));
                 }
                 source.close();
             })
             .map_err(|error| error.to_string())?;
+        #[cfg(all(windows, not(test)))]
+        drop(worker);
         Ok(Self {
             identity,
             stream,
             stop,
+            #[cfg(not(windows))]
             worker: worker.thread().clone(),
+            #[cfg(windows)]
+            capture_wait,
+            #[cfg(all(test, windows))]
+            worker_handle: worker,
             terminal_error,
             done,
             monitor,
@@ -213,6 +240,9 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        #[cfg(windows)]
+        self.capture_wait.cancel();
+        #[cfg(not(windows))]
         self.worker.unpark();
     }
 }
@@ -224,6 +254,22 @@ pub(crate) struct SharedSource {
 }
 
 impl SharedSource {
+    #[cfg(all(test, windows))]
+    pub(super) fn fixture(
+        identity: &ProcessIdentity,
+        game: Game,
+        source: impl Source + 'static,
+    ) -> Result<Self, String> {
+        Self::attach(&OwnerSlots::default(), identity, game, false, || Ok(source))
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn fixture_worker_handle(&self) -> std::os::windows::io::RawHandle {
+        use std::os::windows::io::AsRawHandle;
+
+        self.owner.worker_handle.as_raw_handle()
+    }
+
     pub(crate) fn open(identity: &ProcessIdentity, game: Game) -> Result<Self, String> {
         Self::attach(OWNERS.get_or_init(OwnerSlots::default), identity, game, false, || {
             WindowsSource::exact(identity, game)
