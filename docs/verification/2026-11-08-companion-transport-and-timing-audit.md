@@ -86,3 +86,52 @@ SHA-256 `8c90233df48f0f3ee35170b33601a50567eedfa50d6c8849d344dde1006f2b5f`.
 This Windows run verified the shared client library and mobile frontend.
 Native Android and iOS builds, signing, LAN and device lifecycle
 qualification remain open in #55, #56 and #199.
+
+## Current software transport lifecycle on 10 November 2026
+
+The same authored DCS source and paired-panel fixture passed through
+Windows WebView2 and the browser-dev stdio gateway. Each portal opened
+two exact telemetry subscriptions and retired both, with zero inspector
+reads while hidden. The replacement reader received a fresh snapshot,
+and its predecessor rejected further reads. The reopened companion
+received the current feedback snapshot in a new session before ordered
+deltas. The second companion retained its original session and received
+updates during the replacement. Both runs retained one shared DCS BIOS
+endpoint and one ownship endpoint.
+
+Each run matched all 220 expected Windows Raw Input edges, including
+both Stop releases. The slot returned to free, the installation was
+restored, and both runs recorded zero budget misses and cleanup errors.
+The first browser launch used the desktop executable where the bridge
+requires the stdio gateway, and timed out during private fixture setup.
+The corrected launch used the gateway rebuilt from the same source.
+
+| Transport | Binary SHA-256 | Local evidence directory | Evidence SHA-256 |
+| --- | --- | --- | --- |
+| WebView2 | `55dfb0fe7c60472af2cdc71259ea127a1e2d3b372e4981cd422d23cc62754553` | `1794281918840` | `976b7c85a5ba1d69650572b6ee8b40a03664ee29bf0591e5fa387d1ae58b510d` |
+| Browser-dev | `82c7dd1ec8484bb1a39090e2130e04ec5c71ec66ccff71776746d31636440df8` | `1794282066068` | `1cd8fb75c203578f156ebe6ced30dc56c66614c7dcc6f928c4a6dcd195a054dd` |
+
+Both directories are under
+`.research/c193-reconnect/reader-budget-max/windows-source-22590390/.research/dcs-physics-native/`.
+The production source matches `51330cd2`, the last code change before
+the `669592c3` documentation checkpoint. The portal transport suite
+passed 50 tests with 97.20% lines, 88.21% branches and 94.94% functions.
+The lifecycle fixture reached 100% lines, 90% branches and 96% functions
+in both running transports.
+
+The current ESP32 network harness passed all six sanitizer binaries and
+nine coverage gates, including fresh snapshots after Wi-Fi
+and direct USB session replacement. The shared native companion
+library passed 234 unit tests with one ignored and both ESP32 transport
+integration tests in Ubuntu with `mobile-qualification` enabled. The mobile UI
+passed its type check and 35 tests with coverage. Together with
+[live native client pairing](#companion-transport-and-timing-audit), these
+checks verify the supported software transport contract.
+
+The [default mobile packages](2026-10-16-companion-c3.md#native-mobile-build-artifacts-on-10-november-2026)
+compiled on both native toolchains. Local Android setup installed the
+Rust arm64 target and prepared the isolated JDK, command-line tools and
+exact source export. The SDK package installer stopped at Google's
+license prompt before it could install the platform, build tools and
+NDK. The opt-in APK and authenticated signed-device runtime remain
+under #195, #55, #56 and #199.
