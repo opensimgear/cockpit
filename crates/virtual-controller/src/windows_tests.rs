@@ -25,7 +25,7 @@ unsafe extern "C" fn status(_: u32) -> i32 {
         3 => 3,
         4 => 4,
         5 => 2,
-        6 => 0,
+        6 | 13 => 0,
         _ => 1,
     }
 }
@@ -82,12 +82,14 @@ unsafe extern "C" fn acquire(_: u32) -> i32 {
     }
 }
 unsafe extern "C" fn submit(_: u32, _: *mut Position) -> i32 {
-    0
+    i32::from(MODE.load(Ordering::Relaxed) == 13)
 }
 unsafe extern "C" fn release(_: u32) {}
 #[test]
 fn sdk_boundary_distinguishes_absence_negative_errors_and_ownership() {
     let mut native = Native {
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        acceptance_trace: None,
         api: Api {
             module: std::ptr::null_mut(),
             enabled,
@@ -144,6 +146,22 @@ fn sdk_boundary_distinguishes_absence_negative_errors_and_ownership() {
     assert!(native.submit(1, &report).is_err());
     MODE.store(6, Ordering::Relaxed);
     assert!(native.submit(1, &report).is_err());
+    MODE.store(13, Ordering::Relaxed);
+    assert!(native.submit(1, &report).is_ok());
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("acceptance.bin");
+        native.acceptance_trace = Some(acceptance_trace::Trace::create(&path).unwrap());
+        let mut report = report;
+        report.words[18] = 1;
+        assert!(native.submit(1, &report).is_ok());
+        native.release(1);
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(&bytes[..10], b"OSGVJAC1\x01\x01");
+        assert_eq!(bytes.len(), 26);
+        native.acceptance_trace = None;
+    }
     native.release(1);
     native.release(0);
     MODE.store(0, Ordering::Relaxed);

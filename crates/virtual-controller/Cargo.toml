@@ -6,7 +6,7 @@ edition = "2021"
 rust-version = "1.90"
 
 [features]
-reactive-qualification = []
+reactive-qualification = ["windows-sys/Win32_System_Performance"]
 
 [dependencies]
 osg-persistence = { path = "../persistence" }

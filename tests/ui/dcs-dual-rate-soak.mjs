@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {closeSync, fstatSync, openSync, readSync} from 'node:fs';
+import {closeSync, copyFileSync, fstatSync, openSync, readdirSync, readSync, statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -12,6 +12,8 @@ const hidSuccess = 0x00110000;
 const sourceFiles = ['qualification-fast.bin', 'qualification-peer.bin'];
 const sourceHeaderSize = 8;
 const sourceRowSize = 56;
+const acceptanceHeaderSize = 8;
+const acceptanceRowSize = 18;
 
 function records(path, width, headerSize, count) {
   const file = openSync(path, 'r');
@@ -48,16 +50,15 @@ function records(path, width, headerSize, count) {
   }
 }
 
-function timingDistribution(roundDown = false) {
-  // One tenth of a millisecond bins. The overflow bucket reports its upper
-  // bound as the exact maximum, so it cannot conceal a budget miss.
+function timingDistribution(roundDown = false, binNs = 100_000n) {
+  // The overflow bucket reports its upper bound as the exact maximum.
   const buckets = new Uint32Array(5001);
   let count = 0, max = 0;
   return {
     add(ns) {
       assert.ok(ns >= 0n, 'Timing must be monotonic');
       const ms = Number(ns) / 1e6;
-      const bin = Number((ns + (roundDown ? 0n : 99_999n)) / 100_000n);
+      const bin = Number((ns + (roundDown ? 0n : binNs - 1n)) / binNs);
       buckets[Math.min(bin, buckets.length - 1)]++;
       count++;
       max = Math.max(max, ms);
@@ -68,7 +69,7 @@ function timingDistribution(roundDown = false) {
         let cumulative = 0;
         for (const [index, value] of buckets.entries()) {
           cumulative += value;
-          if (cumulative >= rank) return index === buckets.length - 1 && !roundDown ? max : Math.min(max, index / 10);
+          if (cumulative >= rank) return index === buckets.length - 1 && !roundDown ? max : Math.min(max, Number(BigInt(index) * binNs) / 1e6);
         }
         throw new Error('Trace percentile is missing');
       };
@@ -78,7 +79,61 @@ function timingDistribution(roundDown = false) {
   };
 }
 
-export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
+function* acceptanceEdges(reader, slot, bit) {
+  assert.equal(reader.header.toString('ascii'), 'OSGVJAC1');
+  let mask = 0, previousReturn = 0n;
+  for (let row = reader.next(); row; row = reader.next()) {
+    const nextMask = row[1];
+    const entry = row.readBigUInt64LE(2), returned = row.readBigUInt64LE(10);
+    assert.equal(row[0], slot, 'Acceptance trace slot does not match');
+    assert.ok(nextMask <= 3, 'Acceptance trace has unsupported button bits');
+    assert.ok(nextMask !== mask, 'Acceptance trace contains an unchanged accepted mask');
+    assert.ok(entry <= returned, 'Accepted UpdateVJD call timestamps must be ordered');
+    assert.ok(entry >= previousReturn, 'Accepted UpdateVJD calls must be sequential and monotonic');
+    if ((mask ^ nextMask) & bit) yield {entry, returned, down:Boolean(nextMask & bit)};
+    mask = nextMask;
+    previousReturn = returned;
+  }
+}
+
+function acceptanceMetrics(edges) {
+  const captureToCallEntryUpper = timingDistribution();
+  const captureToDllReturnUpper = timingDistribution();
+  const dllCallDuration = timingDistribution(false, 1_000n);
+  const apiToRawInputLower = timingDistribution(true);
+  const apiToRawInputUpper = timingDistribution();
+  let receivedBeforeReturn = 0, stopToDllReturnMs;
+  return {
+    match(down, received, captureBefore, captureAfter) {
+      const {value:call} = edges.next();
+      assert.ok(call, 'Missing accepted driver edges');
+      assert.equal(call.down, down, 'Accepted driver edge order does not match lane requests');
+      assert.ok(call.entry >= captureAfter, 'UpdateVJD call entry must follow capture or Stop');
+      assert.ok(received >= call.entry, 'Raw Input must follow UpdateVJD call entry');
+      if (captureBefore === undefined) {
+        stopToDllReturnMs = Number(call.returned - captureAfter) / 1e6;
+        return;
+      }
+      if (received < call.returned) receivedBeforeReturn++;
+      captureToCallEntryUpper.add(call.entry - captureBefore);
+      captureToDllReturnUpper.add(call.returned - captureBefore);
+      dllCallDuration.add(call.returned - call.entry);
+      apiToRawInputLower.add(received > call.returned ? received - call.returned : 0n);
+      apiToRawInputUpper.add(received - call.entry);
+    },
+    summarize() {
+      assert.ok(edges.next().done, 'Unexpected extra accepted driver edge');
+      return {captureToCallEntryUpperMs:captureToCallEntryUpper.summarize(),
+        captureToDllReturnUpperMs:captureToDllReturnUpper.summarize(),
+        dllCallDurationMs:dllCallDuration.summarize(),
+        apiToRawInputLowerMs:apiToRawInputLower.summarize(),
+        apiToRawInputUpperMs:apiToRawInputUpper.summarize(),
+        receivedBeforeReturn, stopToDllReturnMs};
+    },
+  };
+}
+
+export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs, acceptancePath) {
   const readers = [];
   const open = (...args) => {
     const reader = records(...args);
@@ -100,6 +155,12 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
     const qpcNs = ticks => ticks * 1_000_000_000n / hz;
     const end = BigInt(raw.receiverEndedTicks);
     assert.ok(qpcNs(end) > stopNs, 'Receiver must stay active through Stop');
+    const acceptedRows = acceptancePath ?
+      (statSync(acceptancePath).size - acceptanceHeaderSize) / acceptanceRowSize : 0;
+    if (acceptancePath) {
+      assert.ok(Number.isInteger(acceptedRows) && acceptedRows > 0 &&
+        acceptedRows <= counts[0] + counts[1] + 2, 'Invalid acceptance trace size');
+    }
     const lanes = counts.map((count,index) => ({count, index,
       source:open(resolve(directory,sourceFiles[index]),sourceRowSize,sourceHeaderSize,count),
       offerToReceipt:timingDistribution(), offerToDispatch:timingDistribution(),
@@ -107,6 +168,9 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
       captureToReceiptUpper:timingDistribution(), admissionToReceipt:timingDistribution(),
       captureToAdmissionUpper:timingDistribution(),
       captureBracket:timingDistribution(), offerIntervals:timingDistribution(), receiverIntervals:timingDistribution(),
+      acceptance:acceptancePath ?
+        acceptanceMetrics(acceptanceEdges(
+          open(acceptancePath,acceptanceRowSize,acceptanceHeaderSize,acceptedRows), slot, 1 << index)) : null,
       edges:0, sampledSharedPendingFramesPeak:0, sampledSharedPendingOwnedBytesPeak:0, batchSizePeak:0,
     }));
     for (const lane of lanes) assert.equal(lane.source.header.toString('ascii'), 'OSGDBG02');
@@ -131,6 +195,7 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
           assert.equal(lane.edges, lane.count, 'Unexpected extra vJoy edge');
           assert.ok(received >= stopNs && !(mask & bit), 'Expected a release after Stop');
           lane.stopReleaseMs = Number(received - stopNs) / 1e6;
+          lane.acceptance?.match(false, received, undefined, stopNs);
         } else {
           const at = offer.readBigUInt64LE(0);
           const dispatched = offer.readBigUInt64LE(8);
@@ -151,6 +216,7 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
           assert.ok(admitted >= captureAfter, 'Admission timestamp must follow capture');
           assert.ok(received >= captureAfter && received >= admitted,
             'Raw Input receipt must follow capture and native admission');
+          lane.acceptance?.match(Boolean(mask & bit), received, captureBefore, captureAfter);
           lane.offerToReceipt.add(received - at);
           lane.offerToDispatch.add(dispatched - at);
           lane.dispatchToAdmission.add(admitted - dispatched);
@@ -193,7 +259,8 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
         receiverIntervalsMs:lane.receiverIntervals.summarize(),
         sampledSharedPendingFramesPeak:lane.sampledSharedPendingFramesPeak,
         sampledSharedPendingOwnedBytesPeak:lane.sampledSharedPendingOwnedBytesPeak,
-        batchSizePeak:lane.batchSizePeak,stopReleaseMs:lane.stopReleaseMs};
+        batchSizePeak:lane.batchSizePeak,stopReleaseMs:lane.stopReleaseMs,
+        ...(lane.acceptance && {driverAcceptance:lane.acceptance.summarize()})};
     });
     const first = lanes[0].firstOffer > lanes[1].firstOffer ? lanes[0].firstOffer : lanes[1].firstOffer;
     const last = lanes[0].lastOffer < lanes[1].lastOffer ? lanes[0].lastOffer : lanes[1].lastOffer;
@@ -208,6 +275,7 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
 
 export async function startDualRateSoak(cdp, executable, slot, owner, directory, seconds) {
   const durationMs = Math.ceil(seconds * 1000 / 16) * 16;
+  const acceptanceDirectory = process.env.OSG_VJOY_ACCEPTANCE_TRACE_DIR;
   const beforeReady = process.hrtime.bigint();
   const probe = spawn(executable, ['--vjoy-trace',resolve(directory,'vjoy-raw.bin'),String(durationMs+110000),String(slot)],
     {windowsHide:true});
@@ -255,7 +323,17 @@ export async function startDualRateSoak(cdp, executable, slot, owner, directory,
         const raw = await report;
         const originNs = BigInt(raw.receiverStartedTicks)*1_000_000_000n/BigInt(raw.receiverTickHz);
         assert.ok(originNs >= beforeReady && originNs <= afterReady,'Raw Input must share the Node monotonic clock');
-        const result = summarizeDualRateTrace(directory,slot,counts,raw,stopNs);
+        let acceptancePath;
+        if (acceptanceDirectory) {
+          // Neutral-only feeder runs do not contribute any accepted edges.
+          const traces = readdirSync(acceptanceDirectory)
+            .filter(name => /^vjoy-acceptance-\d+\.bin$/.test(name) &&
+              statSync(resolve(acceptanceDirectory,name)).size > acceptanceHeaderSize);
+          assert.equal(traces.length, 1, 'Expected one vJoy acceptance trace for the active owner');
+          acceptancePath = resolve(directory, traces[0]);
+          copyFileSync(resolve(acceptanceDirectory,traces[0]), acceptancePath);
+        }
+        const result = summarizeDualRateTrace(directory,slot,counts,raw,stopNs,acceptancePath);
         result.lanes.forEach((lane, index) => { lane.captureToReducerBatchMs = reducer[index]; });
         assert.ok(result.overlapMs >= durationMs - 20,'The two native schedules must overlap throughout the soak');
         const budgetMisses = result.lanes.flatMap(lane => {

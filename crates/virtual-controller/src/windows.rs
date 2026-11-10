@@ -15,6 +15,10 @@ use windows_sys::Win32::{
         LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
     },
 };
+#[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+#[path = "windows_acceptance_trace.rs"]
+mod acceptance_trace;
+
 pub const DLL_HASH: &str = "199316aaefac95118e869c07e7f332ce492dd9a8b6dac5a3ca20b1d5bb5058a1";
 pub const DRIVER_HASH: &str = "540ac46bc529001798068bd402bb4c36891d4c0e63b9dac9761b14bd38667d7d";
 type Query = unsafe extern "C" fn(u32) -> i32;
@@ -129,8 +133,20 @@ unsafe fn load_api(path: &Path) -> Result<Api, String> {
 }
 pub struct Native {
     api: Api,
+    #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+    acceptance_trace: Option<acceptance_trace::Trace>,
 }
 impl Native {
+    pub fn open_feeder() -> Result<Self, String> {
+        let native = Self::open()?;
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        let native = Self {
+            acceptance_trace: acceptance_trace::Trace::open()?,
+            ..native
+        };
+        Ok(native)
+    }
+
     pub fn open() -> Result<Self, String> {
         if !cfg!(target_arch = "x86_64") {
             return Err("Only the qualified Windows x64 vJoy artifact is supported.".into());
@@ -141,6 +157,8 @@ impl Native {
         let _driver_guard = pinned_file(driver, DRIVER_HASH)?;
         let mut native = Self {
             api: unsafe { load_api(dll)? },
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            acceptance_trace: None,
         };
         native.check()?;
         Ok(native)
@@ -268,8 +286,22 @@ impl Driver for Native {
         if unsafe { (self.api.status)(u32::from(slot)) } != 0 {
             return Err("Feeder no longer owns the vJoy target.".into());
         }
-        let mut position = position.clone();
-        if unsafe { (self.api.submit)(u32::from(slot), &mut position) } != 1 {
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        let button_mask = (position.words[18] & 3) as u8;
+        let position = position.clone();
+        let submit = self.api.submit;
+        let update = move || {
+            let mut position = position;
+            unsafe { submit(u32::from(slot), &mut position) }
+        };
+        #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+        let accepted = match &mut self.acceptance_trace {
+            Some(trace) => trace.submit(slot, button_mask, update),
+            None => update(),
+        };
+        #[cfg(not(all(debug_assertions, feature = "reactive-qualification")))]
+        let accepted = update();
+        if accepted != 1 {
             return Err("Full vJoy report submission failed.".into());
         }
         Ok(())
@@ -278,6 +310,10 @@ impl Driver for Native {
         if (1..=16).contains(&slot) {
             unsafe {
                 (self.api.release)(u32::from(slot));
+            }
+            #[cfg(all(debug_assertions, feature = "reactive-qualification"))]
+            if let Some(trace) = &mut self.acceptance_trace {
+                trace.flush();
             }
         }
     }

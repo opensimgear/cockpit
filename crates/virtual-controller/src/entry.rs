@@ -66,7 +66,7 @@ fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
 }
 fn run() -> i32 {
     #[cfg(windows)]
-    match crate::windows::Native::open() {
+    match crate::windows::Native::open_feeder() {
         Ok(driver) => serve(driver, BufReader::new(io::stdin()), io::stdout()),
         Err(error) => failure(io::stdout().lock(), &error),
     }

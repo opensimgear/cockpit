@@ -40,6 +40,19 @@ function receiverTrace(events) {
   return bytes;
 }
 
+function acceptanceTrace(rows) {
+  const bytes = Buffer.alloc(8 + rows.length * 18);
+  bytes.write('OSGVJAC1');
+  rows.forEach(([mask, entry, returned], index) => {
+    const offset = 8 + index * 18;
+    bytes[offset] = 1;
+    bytes[offset+1] = mask;
+    bytes.writeBigUInt64LE(entry, offset+2);
+    bytes.writeBigUInt64LE(returned, offset+10);
+  });
+  return bytes;
+}
+
 test('bounded dual-rate trace matches both lanes and requires releases after Stop', () => {
   const directory = mkdtempSync(join(tmpdir(), 'dual-rate-trace-'));
   try {
@@ -50,7 +63,11 @@ test('bounded dual-rate trace matches both lanes and requires releases after Sto
     const raw = {traceEvents:5, traceSlot:1, traceDevice:'fixture-vjoy', captureOverflow:false,
       stopRequested:true, receiverStartedTicks:String(ms), receiverEndedTicks:String(10n*ms), receiverTickHz:1e9};
     writeFileSync(receiver, receiverTrace([[1n,0],[3n,3],[4n,0],[5n,3],[8n,0]]));
-    const result = summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms);
+    const accepted = join(directory, 'vjoy-acceptance-123.bin');
+    const acceptedRows = [[3,2_500_000n,3_200_000n],[0,3_500_000n,3_800_000n],
+      [3,4_500_000n,5_100_000n],[0,7_500_000n,7_600_000n]];
+    writeFileSync(accepted, acceptanceTrace(acceptedRows));
+    const result = summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms, accepted);
     assert.equal(result.overlapMs, 2);
     assert.deepEqual(result.lanes.map(lane => [lane.received,lane.offerToReceiptMs.p95,lane.stopReleaseMs]),
       [[4,1,1],[4,1,1]]);
@@ -59,6 +76,25 @@ test('bounded dual-rate trace matches both lanes and requires releases after Sto
       lane.sampledSharedPendingOwnedBytesPeak]),
     [[.6,.8,.11,.2,2,1280],[.6,.8,.11,.2,3,1344]]);
     assert.deepEqual(result.sampledSharedQueuePeaks, {pendingFrames:3,pendingOwnedBytes:1344});
+    assert.deepEqual(result.lanes.map(({driverAcceptance:driver}) => [driver.captureToDllReturnUpperMs.p50,
+      driver.captureToCallEntryUpperMs.p50, driver.dllCallDurationMs.p50, driver.apiToRawInputUpperMs.p50]),
+    [[.9,.3,.6,.5],[.9,.3,.6,.5]]);
+    assert.deepEqual(result.lanes.map(({driverAcceptance:driver}) => [driver.apiToRawInputLowerMs.max,
+      driver.apiToRawInputUpperMs.max,driver.receivedBeforeReturn,driver.stopToDllReturnMs]),
+    [[.2,.5,2,.6],[.2,.5,2,.6]]);
+    assert.equal(summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms).lanes[0].driverAcceptance, undefined);
+    const missing = join(directory, 'missing.bin');
+    writeFileSync(missing, acceptanceTrace(acceptedRows.slice(0,-1)));
+    assert.throws(() => summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms, missing), /Missing accepted driver edges/);
+    const extra = join(directory, 'extra.bin');
+    writeFileSync(extra, acceptanceTrace([...acceptedRows,[1,8_100_000n,8_200_000n]]));
+    assert.throws(() => summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms, extra), /Unexpected extra accepted driver edge/);
+    const unordered = join(directory, 'unordered.bin');
+    writeFileSync(unordered, acceptanceTrace([[3,3_500_000n,2_500_000n]]));
+    assert.throws(() => summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms, unordered), /timestamps must be ordered/);
+    const earlyReceipt = join(directory, 'early-receipt.bin');
+    writeFileSync(earlyReceipt, acceptanceTrace([[3,3_100_000n,3_200_000n],...acceptedRows.slice(1)]));
+    assert.throws(() => summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms, earlyReceipt), /Raw Input must follow/);
     writeFileSync(receiver, receiverTrace([[1n,0],[3n,3],[4n,0],[5n,3],[6n,0]]));
     assert.throws(() => summarizeDualRateTrace(directory, 1, [3,3], raw, 7n*ms), /release after Stop/);
     const invalidSequence = sourceTrace([2n*ms, 3n*ms, 4n*ms]);

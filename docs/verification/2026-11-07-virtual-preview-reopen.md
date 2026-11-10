@@ -212,3 +212,54 @@ has SHA-256
 
 Physical controller capture and display scanout, plus actual simulator
 confirmation, remain in #199.
+
+## Successful vJoy API calls under the dual-rate workload
+
+The Windows dev feeder optionally brackets each successful
+`UpdateVJD` call that changes either of the two authored buttons.
+The timestamps use the same Windows counter as the native capture
+and Raw Input traces. The decoder joins every ordered button edge and
+both Stop releases, and checks the shared clock and the configured slot.
+The successful return bounds completion at the API. Six Raw Input
+edges arrived during their call in the two-minute run.
+
+| Segment | 1,000 Hz p50 / p95 / p99 | 125 Hz p50 / p95 / p99 |
+| --- | ---: | ---: |
+| Native capture to DLL call entry, upper bound | 1.5 / 2.5 / 5.7 ms | 1.6 / 2.6 / 5.3 ms |
+| Native capture to successful DLL return, upper bound | 1.5 / 2.5 / 5.7 ms | 1.7 / 2.7 / 5.3 ms |
+| DLL call duration | 15 / 19 / 24 µs | 15 / 20 / 25 µs |
+| DLL call entry to Raw Input receipt | 0.1 / 0.1 / 0.2 ms | 0.1 / 0.1 / 0.2 ms |
+| Native capture to Raw Input receipt, upper bound | 1.5 / 2.6 / 5.8 ms | 1.7 / 2.7 / 5.4 ms |
+
+The two-minute run matched 135,002 offers, both Stop releases and
+238 private DCS command receipts. The shared debug queue reached
+40 pending frames and 12,700 owned bytes. The neutral driver report
+returned 31.55 ms after Stop and Raw Input recorded both releases
+at 31.65 ms. The slot returned to free. The vJoy feeder retained
+165.20 ms of lease margin and both panels retained 1,233 ms.
+The fixture recorded zero budget misses or cleanup errors.
+
+The evidence is under `.research/c193-reconnect/reader-budget-max/`.
+The two-minute fixture was decoded offline from its recorded streams.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| `vjoy-acceptance-initial-decoded.json` | `b304a6260c6f522036bd59fa90ddd98ba73649bcb5806991ddbfcaea3271e560` |
+| `osg-cockpit-vjoy-acceptance.exe` | `f1c749d78accec4f8c44c835336c46ed64be31a297988f5a4133028c3ffd1808` |
+| `vjoy-acceptance-7956.bin` in the isolated driver trace directory | `e8a5a939e13e16752428dd87c06e65db5408104ec77f7febbd862e3167efca40` |
+| `windows-source-22590390/.research/dcs-physics-native/1794280137919/evidence.json` | `263ca37175257bd28c29e50707b8e3f5bc3eb2f08e4324d2933569b909bc6344` |
+
+The final 15-second dev run matched 16,886 offers and both Stop releases
+with the decoder enabled in the fixture. Capture to successful return
+was 2.6 and 2.7 ms p95, and the call itself was 19 µs p95 on both lanes.
+The run had zero budget misses or cleanup errors. The
+`1794280471401/evidence.json` in the same parent directory has SHA-256
+`456f893d9618d0cbcf2b93b9dfb490f00a40adc3209282d3cb26526d992c31c2`.
+The dev binary SHA-256 is
+`55dfb0fe7c60472af2cdc71259ea127a1e2d3b372e4981cd422d23cc62754553`.
+
+The Windows host suite passed 2,510 tests with 19 ignored, and all
+114 virtual-controller tests passed. LLVM measured 76.77% lines
+and 77.78% functions in the trace module, and 73.68% lines and 71.43%
+functions in the Windows driver module. The running fixture measured
+98.02% lines, 80.77% branches and 89.74% functions in the decoder module.
