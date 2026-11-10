@@ -16,6 +16,8 @@ import {airborneChannel,withInspectorPresentation} from './dcs-inspector-present
 import {mcpVjoyObservation} from './mcp-vjoy-observation.mjs';
 import {createNativeRateBurst,extendedNativeRates} from './dcs-native-rate-burst.mjs';
 import {commandPanelPublication,nativeDcsCommands} from './dcs-native-command-fixture.mjs';
+import {withBiosFeedback} from './dcs-feedback-family-publication.mjs';
+import {assignDcsPanel,installFeedbackFamilyProbe,verifyDcsFeedbackFamilies} from './dcs-feedback-family-timing.mjs';
 import {runDcsSoak} from './dcs-feature-soak.mjs';
 import {startDualRateSoak} from './dcs-dual-rate-soak.mjs';
 import {installSoakPanel} from './dcs-soak-panel.mjs';
@@ -26,15 +28,17 @@ const debugNode = 'combined-debug';
 const outputNode = 'combined-vjoy';
 export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, observeMcp=false, nativeRates=false, seconds=0}={}) {
   const inspectorTiming=process.env.OSG_DCS_INSPECTOR_PRESENTATION==='1';
+  const feedbackIsolation=process.env.OSG_DCS_FEEDBACK_FAMILIES==='1';
   const checkLifecycle=process.env.OSG_DCS_TRANSPORT_LIFECYCLE==='1';
   const extendedProbe=seconds||nativeRates||checkLifecycle;
   if(inspectorTiming)assert.ok(nativeRates&&extendedNativeRates&&!seconds,'Inspector timing requires the extended native dual-rate burst');
+  if(feedbackIsolation)assert.ok(!browserUrl&&observeMcp&&!seconds,'Feedback family isolation requires a paired Windows fixture');
   const companion = async (command, params={}) =>
     (await request({command, companion:params})).companions;
   const listener = async () => (await companion('companion_inventory')).listener;
   const inventory = async () => (await request({command:'system_inventory'})).systemInventory.virtualDevices;
   let browser, page, slot, probe, report, probeStart, probeReady, listenerEnabled=false, dualSubmissions, presentation;
-  let observation, nativeSubmissions, dualRateSoak;
+  let observation, nativeSubmissions, dualRateSoak, feedbackFamilies;
   const commands=process.env.OSG_DCS_COMMANDS_NATIVE==='1'?nativeDcsCommands(cdp,request):null;
   const paired=Boolean(browserUrl || observeMcp);
   const panels=[];
@@ -80,6 +84,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     }
     const panel=await browser.newPage();
     await tracePanelCanvas(panel);
+    if(feedbackIsolation)await installFeedbackFamilyProbe(panel);
     if(seconds)await installSoakPanel(panel);
     await panel.addInitScript(()=>{
       window.__combinedLamp=[];
@@ -111,8 +116,10 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
   }
   async function publishPanel() {
     const original=await readFile(new URL('../../scripts/fixtures/compiled-flight-timing-publication.json',import.meta.url));
-    const publication=commands?await commandPanelPublication(JSON.parse(original)):JSON.parse(original);
-    const bytes=commands?Buffer.from(JSON.stringify(publication)):original;
+    let publication=JSON.parse(original);
+    if(feedbackIsolation)publication=await withBiosFeedback(publication);
+    if(commands)publication=await commandPanelPublication(publication);
+    const bytes=commands||feedbackIsolation?Buffer.from(JSON.stringify(publication)):original;
     const {uploadId}=await companion('companion_publish_begin',{size:bytes.length});
     for(let offset=0;offset<bytes.length;offset+=8192){
       await companion('companion_publish_chunk',{uploadId,offset,bytes:[...bytes.subarray(offset,offset+8192)]});
@@ -120,42 +127,15 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     await companion('companion_publish_commit',{uploadId,saveAsLatest:false});
     return publication.publicationHash;
   }
-  async function assignPanel(document, assignments, publicationHash, {page,peer}, nodeId) {
-    const resource=await until(async()=>(await request({command:'profile_resources_list',limit:128}))
-      .profileResources.resources.find(row=>row.attributes?.companionId===peer.companionId
-        &&row.attributes.componentKind==='paired-companion'));
-    const {ports}=(await request({command:'profile_companion_inspect',resourceId:resource.id,
-      publicationHash,offset:0,limit:64})).profileCompanionAuthoring;
-    const selected=['flight-input-0','feedback:flight-channel-0:flight-output-0'].map(id=>{
-      const port=ports.find(row=>row.descriptor.id===id);
-      assert.ok(port,`Missing panel port ${id}`);
-      return port;
-    });
-    await companion('companion_assign',{companionId:peer.companionId,instanceId:'combined-'+randomUUID(),publicationHash});
-    await page.getByText('Connected · panel active',{exact:true}).waitFor();
-    await until(async()=>{
-      const current=(await request({command:'profile_resources_inspect',resourceId:resource.id,limit:64}))
-        .profileResources.ports;
-      return selected.every(port=>current.some(live=>live.current&&live.descriptor.id===port.descriptor.id
-        &&live.contractHash===port.contractHash));
-    });
-    const mapped=selected.map((port,index)=>({...port.descriptor,id:['press','lamp'][index]}));
-    document.resources.push({id:nodeId,name:'Combined browser panel '+panels.length,kind:'companion',required:false,ports:mapped});
-    document.companionAssignments.push({resourceId:nodeId,publicationHash});
-    document.bindings.push({id:nodeId+'-lamp',from:{nodeId:'telemetry',portId:'flight.ownship.inAir'},
-      to:{nodeId,portId:'lamp'}});
-    assignments.push({resourceId:nodeId,sourceId:resource.id,ports:selected.map((port,index)=>({
-      profilePortId:mapped[index].id,observedPortId:port.descriptor.id,expectedContractHash:port.contractHash,
-    }))});
-  }
-
-  async function prepare(document, assignments, aircraft) {
+  async function prepare(document, assignments, aircraft, biosPortId) {
     await enableListener();
     const first=await connectPanel();
     page=first.page;
     const publicationHash=await publishPanel();
-    await assignPanel(document,assignments,publicationHash,first,panelNode);
-    if(paired)await assignPanel(document,assignments,publicationHash,await connectPanel(),panelNode+'-peer');
+    const assign = (panel, nodeId) => assignDcsPanel({request, companion, document, assignments, publicationHash,
+      panel, nodeId, panelNumber:panels.length, biosPortId:feedbackIsolation ? biosPortId : undefined});
+    await assign(first,panelNode);
+    if(paired)await assign(await connectPanel(),panelNode+'-peer');
     slot=await until(async()=>(await inventory()).find(device=>device.status==='free'&&device.buttons>=2
       &&Array.isArray(device.axes)&&!device.discreteHats&&!device.forceFeedback
       &&device.buttons+device.axes.length+device.continuousHats<=128));
@@ -183,9 +163,10 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
       nodeId:outputNode,slot:slot.slot});
   }
 
-  async function measurePresentation(owner,submitOwnship) {
+  async function measurePresentation(owner,submitOwnship,traffic) {
     await Promise.all(panels.map(panel=>waitLamp(0,sample=>sample.status==='fresh'&&sample.value===false,panel.page)));
     if(observeMcp&&!observation)observation=await mcpVjoyObservation(cdp,owner,{nodeId:outputNode,capturePhysical:false});
+    if(feedbackIsolation)feedbackFamilies=await verifyDcsFeedbackFamilies(panels,submitOwnship,traffic);
     presentation=await measurePanelPresentation(paired?panels.map(panel=>panel.page):page,submitOwnship);
     return presentation;
   }
@@ -492,7 +473,7 @@ export function combinedDcsFixture(cdp, request, probeExecutable, {browserUrl, o
     const fastUpdates=observation.fastUpdates();
     await observation.close();
     observation=undefined;
-    return {...await stopped(stopNs),mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:retired,fastUpdates}};
+    return {...await stopped(stopNs),feedbackFamilies,mcp:{stopReplyMs,unreadMs,fastRetired:true,slowRetired:retired,fastUpdates}};
   }
   return {prepare,bind,openInspector,measurePresentation,burst,withPreviewsClosed,stop,soak,close,openCommands:()=>commands?.open()};
 }

@@ -4,6 +4,19 @@ import {summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 import {openMcpTelemetryTiming} from './dcs-mcp-telemetry-timing.mjs';
 import {openReducerTiming} from './native-reducer-timing.mjs';
 
+export function biosBlock(address, bytes) {
+  const header = Buffer.alloc(4);
+  header.writeUInt16LE(address);
+  header.writeUInt16LE(bytes.length, 2);
+  return Buffer.concat([header, bytes]);
+}
+
+export function biosIntegerBlock(output, value) {
+  const bytes = Buffer.alloc(2);
+  bytes.writeUInt16LE((value << output.shift_by) & output.mask);
+  return biosBlock(output.address, bytes);
+}
+
 export function ownshipSubmission() {
   let pending;
   return {

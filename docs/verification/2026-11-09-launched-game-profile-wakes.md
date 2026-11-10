@@ -399,3 +399,45 @@ branch counters.
 | --- | --- |
 | `.research/dcs-physics-native/1794250759513/evidence.json` | `d07a25e2a162f9bdefacba5b59d227f47de82f4138363c31e7ba8d3334d57255` |
 | `.research/dcs-physics-native/1794250834269/evidence.json` | `85b0680eafe47eb839b82349f6b8809f39edcf64271cb0555f5a606f8808b086` |
+
+## Independent DCS feedback in the same browser panel on 10 November 2026
+
+The Windows dev Cockpit at `dee6a5f7` drove two identical compiled
+browser panels through real loopback WSS. Each had a BIOS altitude
+indicator and an ownship indicator. A fixture held one SharedWorker
+feedback acknowledgement on the first panel. The second panel
+continued to receive and paint fresh ownship values when BIOS stopped.
+
+The held panel received one in-flight delivery. On acknowledgement,
+its first subsequent message was a complete snapshot with stale BIOS
+and the latest ownship value. Both indicators painted the corresponding
+state. A different BIOS value then established a fresh baseline.
+With ownship stopped instead, the BIOS indicator changed while the
+ownship indicator stayed neutral. Ownship recovered with a different
+fresh value. Both panels retained their original session, generation and
+publication.
+
+The fast panel showed BIOS withdrawal 606.5 ms after the fixture
+stopped the source with a 600 ms freshness window. Ownship withdrawal
+took 1,069.9 ms with the native 1,000 ms window. These are one measured
+transition each, including the fixture's 50 ms observation interval.
+The fixture enforces the source freshness window plus the 150 ms panel
+budget and one observation interval.
+
+The opt-in fixture and the ordinary paired-panel transport replacement
+fixture both matched all 5,402 offered vJoy edges and both Stop releases.
+The vJoy slot returned to free, the held MCP reader retired, and neither
+run recorded a timing budget miss or cleanup error. All 17 focused
+browser transport and feedback tests and seven compiled-panel tests
+passed. Node reported 100% line coverage for the publication helper and
+70.37% for the timing helper. The timing helper's injected observer
+runs in the browser and is outside the Node coverage report.
+
+Use `OSG_DCS_FEEDBACK_FAMILIES=1` with the paired Windows DCS fixture.
+The scope is authored simulator traffic and loopback presentation.
+Live DCS, physical control, display and LAN qualification remain in #199.
+
+| Local trace directory under `.research/dcs-physics-native` | SHA-256 of `evidence.json` |
+| --- | --- |
+| `1794278738757` | `a905cab97cd073e663adf522260f275d1f6972ec8afe5c6bff4abe8e59a3da36` |
+| `1794278663740` | `0624bf5fb8926e0e039acfc6103794357c94595e2dbecfdab403ecb7e3678536` |

@@ -10,7 +10,7 @@ import {browserPage, nativePage} from '../../scripts/reactive/cdp.mjs';
 import {combinedDcsFixture, combinedTimingMisses} from './dcs-companion-vjoy-fixture.mjs';
 import {soakSeconds} from './dcs-feature-soak.mjs';
 import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
-import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders, ownshipSubmission, verifyOwnshipTransitions} from './dcs-telemetry-backpressure.mjs';
+import {biosBlock as block, biosIntegerBlock as integerBlock, measureDcsTelemetryBackpressure, openDcsTelemetryReaders, ownshipSubmission, verifyOwnshipTransitions} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
 import {restoreDcsCommandVehicle, verifyActiveDcsCatalogue, verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
@@ -25,14 +25,6 @@ const nodeId = id => `value-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 const near = (actual, expected) => typeof expected === 'number'
   ? typeof actual === 'number' && Math.abs(actual - expected) < 1e-7
   : actual === expected;
-function block(address, bytes) {
-  const header = Buffer.alloc(4); header.writeUInt16LE(address); header.writeUInt16LE(bytes.length, 2);
-  return Buffer.concat([header, bytes]);
-}
-function integerBlock(output, value) {
-  const bytes = Buffer.alloc(2); bytes.writeUInt16LE((value << output.shift_by) & output.mask);
-  return block(output.address, bytes);
-}
 function control(document, id) {
   return Object.values(document).flatMap(category => Object.values(category)).find(item => item.identifier === id);
 }
@@ -107,6 +99,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
   }
   let initialGames, initialProfiles, before, installationBefore, fixtureInstallation, profile, child, producer, timer, fixtureSetup = false;
   let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true, biosMode = 'full';
+  let biosAltitude = 1000;
   const {submit:submitOwnshipUpdate, pending:ownshipPending, sent:ownshipSent} = ownshipSubmission();
   let dropNextOwnship = false;
   const aircraft = 'A-10C_2', biosId = 'common:CommonData:ALT_MSL_FT:0';
@@ -223,7 +216,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     timer = setInterval(() => {
       const name = Buffer.alloc(24); name.write(aircraft);
       if (biosMode !== 'off') {
-        const fields = biosMode === 'full' ? [block(0, name), integerBlock(commonOutput, 1000), integerBlock(aircraftOutput, 1)] : [];
+        const fields = biosMode === 'full' ? [block(0, name), integerBlock(commonOutput, biosAltitude), integerBlock(aircraftOutput, 1)] : [];
         const tick = Buffer.alloc(2); tick.writeUInt16LE(counter++ % 65536);
         producer.send(Buffer.concat([Buffer.from([85, 85, 85, 85]), ...fields, block(65534, tick)]), 5010, '239.255.50.10');
       }
@@ -309,7 +302,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     document.resources.push({id: 'telemetry', name: 'Private DCS telemetry', kind: 'game', required: true, ports: chosen.map(row => ({...row.descriptor, id: row.descriptor.id.slice(8)}))});
     for (const row of chosen) { const id = row.descriptor.id.slice(8), node = nodeId(id); document.processingNodes.push(identity(node, row.descriptor.contract)); document.bindings.push({id: `route-${node}`, from: {nodeId: 'telemetry', portId: id}, to: {nodeId: node, portId: 'in'}}); }
     const assignments = [{resourceId: 'telemetry', sourceId: resource.id, ports: chosen.map(row => ({profilePortId: row.descriptor.id.slice(8), observedPortId: row.descriptor.id, expectedContractHash: row.contractHash}))}];
-    await combined?.prepare(document, assignments, aircraft);
+    await combined?.prepare(document, assignments, aircraft, biosId);
     await desktop?.prepare(document);
     const saved = (await request({command: 'profile_editor_save', document, assignments, expectedRevision: document.revision})).profiles.document; profile.revision = saved.revision;
     await combined?.bind(profile);
@@ -343,7 +336,11 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
     try {
       const readers = () => cdp.evaluate(`(({fast,slow,error})=>({fast,slow,error}))(window.__dcsSlowReader)`);
       await until(async () => { const state = await readers(); return state.slow === 1 && state.fast > 0; }, 'Telemetry readers did not receive a baseline');
-      if(combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship);
+      if (combined) evidence.phases.panelPresentation = await combined.measurePresentation(owner, submitOwnship, {
+        setAirborne,
+        setPhysics(active) { emitPhysics = active; },
+        setBios(mode, altitude = 1000) { biosMode = mode; biosAltitude = altitude; },
+      });
       const before = (await readers()).fast;
       const [, burst] = await Promise.all([sleep(1250), dualRateSoak ? null : combined?.burst(owner, {setAirborne, submitOwnship,
         setPaused(paused) { mode = paused ? 'paused' : 'live'; },
