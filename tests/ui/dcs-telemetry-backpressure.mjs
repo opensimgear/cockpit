@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {summarizeMilliseconds} from './vjoy-rate-transport.mjs';
+import {openMcpTelemetryTiming} from './dcs-mcp-telemetry-timing.mjs';
 
 export function ownshipSubmission() {
   let pending;
@@ -120,6 +121,9 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
   const initial = await clockBracket(cdp);
   const original = nativeValues[timingChannel];
   const samples = [];
+  const mcpSamples = [];
+  const mcp = process.env.OSG_DCS_MCP_TELEMETRY_TIMING === '1'
+    ? await openMcpTelemetryTiming(cdp, timingChannel) : undefined;
   try {
     await cdp.evaluate(`(async () => {
       const {GameTelemetryClient,GameTelemetryController} = await import('/src/lib/game-telemetry.ts');
@@ -168,17 +172,18 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
         return trace.fast;
       })()`);
       const submission = await submitOwnship(() => { nativeValues[timingChannel] = value; });
-      const received = await until(async () => {
+      const [received, mcpSample] = await Promise.all([until(async () => {
         const state = await cdp.evaluate(`(({slow,error,timedSample}) => ({slow,error,timedSample}))(window.__dcsSlowReader)`);
         assert.equal(state.slow, 1, 'The slow receipt must stay held throughout the timing sample');
         assert.equal(state.error, null);
         return state.timedSample;
-      }, Boolean, 1500);
+      }, Boolean, 1500), mcp?.sample(submission, value)]);
       assert.equal(received.value, value);
       assert.ok(received.fast > fastBefore, 'A fast notification must advance the timed read');
       assert.ok(received.notification.receivedMs <= received.requestedMs);
       if (samples.length) assert.ok(submission.packetSequence > samples.at(-1).packetSequence);
       samples.push({...submission, ...received, fastBefore});
+      if (mcpSample) mcpSamples.push(mcpSample);
     }
     const final = await clockBracket(cdp);
     const low = Math.max(initial.low, final.low);
@@ -196,10 +201,15 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
     const offeredPacketHz = (last.packetSequence - first.packetSequence) * 1000 / (last.submittedMs - first.submittedMs);
     const budgetMisses = upperMs.p95 <= 100 ? [] :
       [`Observation-driven telemetry read p95 exceeded 100 ms: ${upperMs.p95.toFixed(2)} ms`];
-    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs, notificationToRequestMs,
+    const mcpTiming = mcp && {samples:mcpSamples,
+      submissionToValueMs:summarizeMilliseconds(mcpSamples.map(sample => sample.receivedMs - sample.submittedMs)),
+      matchingReadMs:summarizeMilliseconds(mcpSamples.map(sample => sample.receivedMs - sample.requestedMs))};
+    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs, notificationToRequestMs, mcpTiming,
       alignmentWidthMs:high - low, samples, budgetMisses};
   } finally {
     nativeValues[timingChannel] = original;
-    await cdp.evaluate('window.__dcsSlowReader.stopTiming?.(); delete window.__dcsSlowReader.stopTiming;');
+    try {
+      await cdp.evaluate('window.__dcsSlowReader.stopTiming?.(); delete window.__dcsSlowReader.stopTiming;');
+    } finally { await mcp?.close(); }
   }
 }

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 
-function frames(response) {
+export function readMcpEvents(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -91,7 +91,7 @@ export async function mcpVjoyObservation(page, owner, {nodeId = 'fixture-vjoy', 
       const response = await post('subscriptions/listen', {notifications:{resourceSubscriptions:[uri]}});
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /text\/event-stream/);
-      const stream = frames(response);
+      const stream = readMcpEvents(response);
       streams.push(stream);
       await stream.next(event => event.method === 'notifications/subscriptions/acknowledged');
       await stream.next(event => event.params?.uri === uri && sampleFrame(event)?.kind === 'snapshot');

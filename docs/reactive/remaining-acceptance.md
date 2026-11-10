@@ -44,6 +44,11 @@ matched every frame on both lanes and measured capture to the end of
 the accepted reducer batch. Other acquisition paths and the remaining
 lease boundaries are still open.
 
+The [authored DCS telemetry trace](../verification/2026-11-07-dcs-telemetry-backpressure.md#authored-ownship-to-a-read-only-mcp-client-on-november-10)
+measures UDP submission to the matching value through the MCP and WebView
+read paths while a second WebView reader is stalled. It separates the
+matching MCP request time from end-to-end read latency.
+
 The [dated evidence index](../verification/2026-11-09-reactive-evidence-index.md)
 records app, firmware and profile identities, scoped workloads, results and
 trace hashes. The parent evidence-record criterion is separate from the

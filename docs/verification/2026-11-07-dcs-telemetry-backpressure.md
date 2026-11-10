@@ -238,3 +238,38 @@ and `.research/dcs-physics-native/1794133981077/evidence.json`.
 The native and browser-dev binary hashes were
 `14DB1C1E8FE9065A42558F00F04936E0648E473A6D63CF83F5862B5DE1389F59`
 and `F36023CC415E49F7B7A9FF3DBFE5ECFBD3A1013C5AA7E375D24732A246EFDAAA`.
+
+## Authored ownship to a read-only MCP client on November 10
+
+The Windows dev fixture added a real MCP HTTP subscriber to
+`cockpit://observations/games.telemetry` while the WebView held its first
+telemetry receipt. The MCP client calls `game_telemetry_inspect` after an
+invalidation and matches the exact known wind marker in the reply. The
+client and the authored UDP sender use the same monotonic clock. The
+notification revision orders the invalidations. The marker identifies the
+sample, and its packet sequence identifies the first authored submission.
+
+All 48 markers matched on their first MCP read. The authored packet rate
+was 21.37 Hz. The existing WebView telemetry client observed the same
+markers with a 0.254 ms clock bracket.
+
+| Timing boundary | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| UDP submission to matching MCP value | 45.02 ms | 54.04 ms | 55.11 ms |
+| Matching MCP tool request and reply | 44.28 ms | 53.88 ms | 54.89 ms |
+| UDP submission to matching WebView value, conservative bound | 16.83 ms | 20.01 ms | 21.71 ms |
+
+The run measures host-side submission to readable state under a stalled
+WebView reader. Simulator export, reducer admission and display paint
+are separate timing boundaries. The fixture revoked the temporary MCP read
+credential, restored the listener setting and recorded zero cleanup errors.
+
+Run the private Windows fixture with `OSG_DCS_MCP_TELEMETRY_TIMING=1`
+in addition to `OSG_DCS_PHYSICS_NATIVE=1`. The native binary at local
+revision `22590390` has SHA-256
+`72f653981b1779b9802752f50ba0d40b97ea01a89714ad0f5334974532f5cdc2`.
+The local record `1794272479725/evidence.json` has SHA-256
+`e4abdc787c5effb87dc6c9730b43412f4411f2daec20724daa110bdf6fff22bc`.
+The MCP timing helper reached 96.84% lines, 89.47% branches and 87.50%
+functions in the live fixture. The default Windows fixture also passed, as
+did all 18 focused telemetry and trace tests.
