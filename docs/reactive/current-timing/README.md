@@ -1,12 +1,17 @@
 # Current timing migration matrix
 
-The current scan covers Cockpit `22590390`, device-gateway `dfd83084`,
+The current scan covers Cockpit `c2432f5d`, device-gateway `dfd83084`,
 device-template `c5457884` and firmware-common `64025cce`. The five tables
 record each of its 471 sites, including inline fixtures and declarations that
 the scanner finds in production files.
 
-Since the previous scan, five site references moved in the browser gateway
-and native stdout fixtures. Their waits and dispositions remain the same.
+The reconciliation found the same 471 current sites and 247 historical
+dispositions. The source review also covered owner behavior outside the
+scanner's named primitives. The agreed recurring checks are recorded in
+[Acquisition](../acquisition.md#unresolved-acquisition-boundaries), including
+the shared Assetto reader, visible vJoy status, Windows process discovery
+fallback and active HidHide safety check. Sunton held-touch sampling remains
+a documented hardware qualification gate.
 
 - [Portal, browser workers, native companion and ESP32](portal-and-companions.md)
 - [Application and profile workers](application-workers.md)
