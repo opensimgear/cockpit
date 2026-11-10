@@ -37,6 +37,13 @@ function text(value: unknown, max = 256): value is string {
   return typeof value === 'string' && value.length > 0 && encoder.encode(value).length <= max;
 }
 
+function finiteNumber(_key: string, value: unknown): unknown {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error('Observation payload contains a nonfinite number');
+  }
+  return value;
+}
+
 /** Validate the entire boundary before exposing any state to consumers. */
 export function validateDelivery(value: unknown, topic: string): asserts value is DeliveryEnvelope {
   if (!record(value) || !text(value.subscriptionId) || !uint64(value.delivery) || !record(value.frame)) {
@@ -57,15 +64,11 @@ export function validateDelivery(value: unknown, topic: string): asserts value i
       || (frame.kind === 'loss' && frame.continuity !== 'lost')) {
     throw new Error('Invalid observation continuity');
   }
-  const encoded = JSON.stringify(value, (_key, item) => {
-    if (typeof item === 'number' && !Number.isFinite(item)) {
-      throw new Error('Observation payload contains a nonfinite number');
-    }
-    return item;
-  });
+  const frameBytes = encoder.encode(JSON.stringify(frame, finiteNumber)).length;
+  // Measure the JSON envelope with a four-byte placeholder for its frame.
+  const envelopeOverhead = encoder.encode(JSON.stringify({ ...value, frame: null }, finiteNumber)).length - 4;
   const limit = frame.kind === 'snapshot' ? MAX_SNAPSHOT_BYTES : MAX_CHANGE_BYTES;
-  if (encoder.encode(encoded).length > MAX_LINE_BYTES
-      || encoder.encode(JSON.stringify(frame)).length > limit
+  if (envelopeOverhead + frameBytes > MAX_LINE_BYTES || frameBytes > limit
       || encoder.encode(JSON.stringify({ ...frame, payload: undefined })).length > 8192) {
     throw new Error('Observation frame exceeds byte budget');
   }

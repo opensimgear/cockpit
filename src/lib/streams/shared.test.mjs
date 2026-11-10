@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SharedObservations } from './shared.ts';
-import { parseDelivery, uint64, MAX_SNAPSHOT_BYTES, MAX_CHANGE_BYTES } from './protocol.ts';
+import { parseDelivery, uint64, MAX_SNAPSHOT_BYTES, MAX_CHANGE_BYTES, MAX_LINE_BYTES } from './protocol.ts';
 import { delivery, turn } from './fixtures.mjs';
 
 function setup() {
@@ -53,6 +53,24 @@ test('sharing, late state, isolated listeners and ACK ordering', () => {
   opens[0].observer.frame(delivery(), async () => assert.fail('disposed ACK'));
   client.close(); client.dispose();
   assert.throws(() => client.subscribe('preferences', () => {}), /disposed/);
+});
+
+test('frame and envelope byte limits hold independently for UTF-8 JSON', () => {
+  const packet = { ...delivery({ payload: { text: 'é🛩"' } }), extension: { frame: 'é' } };
+  const framePadding = MAX_SNAPSHOT_BYTES - Buffer.byteLength(JSON.stringify(packet.frame));
+  packet.frame.payload.text += 'x'.repeat(framePadding);
+  assert.doesNotThrow(() => parseDelivery(packet, 'preferences'));
+  packet.frame.payload.text += 'x';
+  assert.throws(() => parseDelivery(packet, 'preferences'), /exceeds byte budget/);
+  packet.frame.payload.text = packet.frame.payload.text.slice(0, -1);
+
+  const envelopePadding = MAX_LINE_BYTES - Buffer.byteLength(JSON.stringify(packet));
+  packet.extension.frame += 'x'.repeat(envelopePadding);
+  assert.doesNotThrow(() => parseDelivery(packet, 'preferences'));
+  packet.extension.frame += 'x';
+  assert.throws(() => parseDelivery(packet, 'preferences'), /exceeds byte budget/);
+  packet.extension.frame = Infinity;
+  assert.throws(() => parseDelivery(packet, 'preferences'), /nonfinite number/);
 });
 
 test('gaps withdraw values and only a fresh baseline restores readiness', () => {

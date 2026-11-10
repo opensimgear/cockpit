@@ -58,3 +58,47 @@ frontend build passed. The 52 focused stream and controller tests passed
 with all configured stream coverage floors met. Across the four changed
 modules, coverage was at least 97.89% lines, 87.83% branches and 86.36%
 functions.
+
+## Reuse frame byte counts on 10 November 2026
+
+The observation transport now serializes each JSON frame once for
+the wire budget check. Its UTF-8 byte length counts toward both the
+frame and the complete envelope. The envelope accounting includes
+extension fields, and the metadata limit remains independent. The
+regression exercises exact acceptance and one-byte rejection for
+both limits with multibyte characters and escaped JSON text.
+
+Three alternating Node runs per version delivered 4,000 measured
+reports per format through the native transport and controller reducer
+with two listeners. Every report retained the expected value and ACK.
+
+| Snapshot format | Baseline p50 / p95 / p99 | Updated p50 / p95 / p99 |
+| --- | ---: | ---: |
+| Compact reports | 359.5 / 451.0 / 625.8 µs | 294.2 / 411.6 / 496.6 µs |
+| Full snapshots | 642.3 / 910.5 / 1,234.6 µs | 584.1 / 770.7 / 1,050.5 µs |
+
+Each cell uses the median of the three run percentiles. The live
+Windows comparisons used the same dev executable and the stationary
+VKBsim Gladiator EVO R. The initial automatic selection picked the
+VKB pedals for one run. The table uses the two comparable pairs,
+including a repeat pinned to the Gladiator model.
+
+| Run | Reports | Native read to DOM p50 / p95 / p99 | Clock bracket |
+| --- | ---: | ---: | ---: |
+| Updated 2 | 125 | 7.61 / 9.10 / 9.60 ms | ±2.55 ms |
+| Baseline 2 | 125 | 7.66 / 9.47 / 9.74 ms | ±2.65 ms |
+| Baseline 3 | 125 | 7.50 / 9.07 / 10.26 ms | ±2.65 ms |
+| Updated 3 | 125 | 7.40 / 9.35 / 10.15 ms | ±2.60 ms |
+
+The live differences fall inside clock uncertainty. Native WebView2
+and browser-dev passed hidden preview retirement and reopened on
+fresh baselines with zero `controller_inspect` queries. All 39
+stream and 19 controller tests passed, along with the bridge tests,
+Svelte checking and the production frontend build. The protocol
+module measured 97.96% lines, 98.04% branches and 100% functions.
+
+The raw traces are under
+`.research/reactive/preview-delivery-handoff/validation-reuse/`.
+The Node benchmark result `alternating-node.jsonl` has SHA-256
+`6ec59d97c6af629e216749120a6efec496e7b0f7ac5785476f7254ef4429c16c`.
+Physical sweep and display scanout remain in #199.
