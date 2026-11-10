@@ -2,6 +2,7 @@
 // Open its physical controller block and set OSG_CONTROLLER_SOURCE_ID explicitly.
 // Set OSG_DESKTOP_NATIVE_APP when Cockpit is running from a copied executable.
 import {nativePage} from './cdp.mjs';
+import {calibrateControllerClock} from './controller-clock.mjs';
 import {profileAxisRanges} from './profile-axis-ranges.mjs';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -18,18 +19,8 @@ try{
   const inspector=document.querySelector('[aria-label="Selected block inspector"] .controller-inputs');
   if(!inspector?.querySelector('[data-control-id] .axis'))throw Error('Open the physical controller profile inspector with ready axes.');
   if(inspector.dataset.controllerSourceId!==sourceId)throw Error('The selected profile inspector belongs to a different controller.');
-  const calibrate=async()=>{
-   const rows=[];
-   for(let i=0;i<20;i++){
-    const before=performance.now(),response=await gatewayRequest({command:'controller_list',offset:0}),after=performance.now();
-    const clock=response.controllers?.captureClock;
-    if(!clock)throw Error('Native capture clock unavailable.');
-    rows.push({before,after,native:Number(BigInt(clock.nowUs))/1000,id:clock.id,rtt:after-before});
-   }
-   const best=rows.reduce((a,b)=>a.rtt<b.rtt?a:b);
-   return {rows,offset:(best.before+best.after)/2-best.native,uncertainty:best.rtt/2,id:best.id};
-  };
-  const before=await calibrate(),samples=[],dom=[],errors=[],controller=new AbortController();
+  const calibrate=(${calibrateControllerClock.toString()});
+  const before=await calibrate(gatewayRequest),samples=[],dom=[],errors=[],controller=new AbortController();
   let snapshotCount=0,changeCount=0;
   let axes=[],generation,backend,previousWire,previousDom,previousFrame,subscriptionId,delivery,nativeSequence,limited=false;
   let reportCount=0,coalescedPreviewReports=0,previousRead;
@@ -144,7 +135,7 @@ try{
    },controller.signal);
    await new Promise(resolve=>setTimeout(resolve,preflight?3000:15000));
   }finally{controller.abort();mutation.disconnect();document.removeEventListener('visibilitychange',changedVisibility);window.removeEventListener('blur',blurred);}
-  const after=await calibrate();
+  const after=await calibrate(gatewayRequest);
   if(!inspector.isConnected||inspector.dataset.controllerSourceId!==sourceId)errors.push('Visible inspector was replaced.');
   if(before.id!==after.id||Math.abs(after.offset-before.offset)>before.uncertainty+after.uncertainty)errors.push('Capture-clock correlation changed beyond its brackets.');
   const counts=rows=>{const map=new Map();for(const row of rows)map.set(row.signature,(map.get(row.signature)??0)+1);return map;};
@@ -166,7 +157,7 @@ try{
   if(matched.some(row=>row.dom-row.captured < -before.uncertainty))errors.push('DOM predates correlated capture beyond clock uncertainty.');
   return {at:new Date().toISOString(),durationMs:performance.now()-started,scope:'profile-controller-inspector',
    sourceId,generation,backend,axes,axisRanges:ranges.evidence(),visibility,focused,preflight,reportCount,coalescedPreviewReports,nativeReadCount:readToJournal.length,
-   clockUncertaintyMs:before.uncertainty,
+   clockUncertaintyMs:before.uncertainty,clockCalibration:before.method,
    clockOffsetDriftMs:after.offset-before.offset,snapshotCount,changeCount,changedReportCount:rows.length,domTransitionCount:dom.length,
    journalToObserverMs:summarize('received'),journalToDomMs:summarize('dom'),journalToFrameOpportunityMs:summarize('frameOpportunity'),
    nativeReportIntervalMs:percentiles(nativeReadIntervals),nativeReadToJournalMs:percentiles(readToJournal),

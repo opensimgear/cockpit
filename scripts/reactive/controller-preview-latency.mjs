@@ -3,6 +3,7 @@
 // OSG_CONTROLLER_TRACE_IPC=1 also measures large WebView channel fetches.
 // OSG_CONTROLLER_TRACE_DIRECTORY can separate comparison runs.
 import {nativePage} from './cdp.mjs';
+import {calibrateControllerClock} from './controller-clock.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 const page=await nativePage();
@@ -38,19 +39,12 @@ try{
     if(!detail)throw Error('Open the native controller inspector before measuring.');
     const sourceId=detail.querySelector('.controller-identity code')?.textContent?.trim();
     if(!sourceId)throw Error('The inspector must identify its selected controller.');
-    let clocks=[],selected;
-    for(let i=0;i<20;i++){
-      const before=performance.now();
-      const response=await gatewayRequest({command:'controller_list',offset:0});
-      const after=performance.now(),data=response.controllers;
-      selected??=data?.sources?.find(source=>source.online&&source.id===sourceId);
-      if(!data?.captureClock)throw Error('Rebuild the native service with captureClock metadata.');
-      const native=Number(BigInt(data.captureClock.nowUs))/1000;
-      clocks.push({before,after,native,id:data.captureClock.id,rtt:after-before});
-    }
+    const inventory=await gatewayRequest({command:'controller_list',offset:0});
+    const selected=inventory.controllers?.sources?.find(source=>source.online&&source.id===sourceId);
     if(!selected)throw Error('The visible inspector needs an observed physical controller.');
-    const best=clocks.reduce((best,item)=>item.rtt<best.rtt?item:best);
-    const offset=(best.before+best.after)/2-best.native;
+    const calibrate=(${calibrateControllerClock.toString()});
+    const clock=await calibrate(gatewayRequest);
+    const offset=clock.offset;
     const samples=[],dom=new Map(),errors=[];
     const sequence=()=>{
       const parts=detail.querySelector('.controller-status')?.textContent?.match(/Connection ([0-9]+).*report ([0-9]+)/);
@@ -75,7 +69,7 @@ try{
         }
         return;
       }
-      if('controllers:'+current.session!==best.id||current.source.id!==sourceId||current.source.generation!==selected.generation){
+      if('controllers:'+current.session!==clock.id||current.source.id!==sourceId||current.source.generation!==selected.generation){
         errors.push('Controller observation changed capture clock or source identity.');
         return;
       }
@@ -90,6 +84,10 @@ try{
     });
     try{await new Promise(resolve=>setTimeout(resolve,10000));}
     finally{stop();mutation.disconnect();}
+    const after=await calibrate(gatewayRequest);
+    if(clock.id!==after.id||Math.abs(after.offset-clock.offset)>clock.uncertainty+after.uncertainty){
+      errors.push('Capture-clock correlation changed beyond its brackets.');
+    }
     const rows=samples.map(row=>({...row,...dom.get(row.sequence)}));
     if(!detail.isConnected||!rows.some(row=>Number.isFinite(row.dom))){
       errors.push('No matching reports were rendered by the selected inspector.');
@@ -106,13 +104,14 @@ try{
     return {at:new Date().toISOString(),durationMs:started===undefined?0:performance.now()-started,visibility,
       observer:'shared-inspector',
       source:{name:selected.name,backend:selected.backend,controls:selected.controlCount},
-      clockUncertaintyMs:best.rtt/2,clockRoundTripMs:best.rtt,
+      clockUncertaintyMs:clock.uncertainty,clockRoundTripMs:clock.rtt,clockCalibration:clock.method,
+      clockOffsetDriftMs:after.offset-clock.offset,
       journalToObserverMs:summary('received'),journalToDomMs:summary('dom'),
       nativeReadToJournalMs:summary('captured','nativeRead'),nativeReadToDomMs:summary('dom','nativeRead'),
       // Separate readers can receive the same report in either order.
       diagnosticObserverToDomOffsetMs:summary('dom','received'),
       journalToFrameOpportunityMs:summary('frame'),journalToFollowingFrameMs:summary('nextFrame'),
-      errors,clocks,samples:rows};
+      errors,clocks:clock.rows,clockAfter:after.rows,samples:rows};
   })()`);
   stopTrace();
   await Promise.all(reads);
@@ -130,6 +129,6 @@ try{
   const artifact=traceIpc?'controller-preview-latency-ipc':'controller-preview-latency';
   await writeFile(join(directory,`${artifact}.json`),JSON.stringify(result,null,2));
   if(result.errors.length)throw Error('Timing run invalid: '+result.errors.join('; '));
-  const {samples,clocks,channelFetches,...summary}=result;
+  const {samples,clocks,clockAfter,channelFetches,...summary}=result;
   console.log(JSON.stringify(summary,null,2));
 }finally{stopTrace();page.close();}

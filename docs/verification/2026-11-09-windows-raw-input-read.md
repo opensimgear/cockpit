@@ -339,3 +339,40 @@ The preflight trace is
 `d7f9d59d39342656e202599228bb9c328d3443c24c1308cbb2f5605037d271ed`.
 The two focused tests exercised all lines, branches and functions of the
 range collector.
+
+## Tighter WebView clock alignment on 10 November 2026
+
+The Windows qualification build can sample the controller journal
+clock directly through native IPC. The sample reads the same clock
+identity and monotonic microseconds as the inventory response without
+acquiring the capture mutex. The existing opt-in gates the command.
+Both preview diagnostics now bracket the capture clock before and after
+their observations and record the chosen calibration method. The bound
+includes 0.101 ms for the observed WebView and native timestamp rounding.
+
+| Same-WebView comparison | Shortest round trip | Clock alignment bound |
+| --- | ---: | ---: |
+| Inventory before | 5.0 ms | ±2.601 ms |
+| Qualification first | 0.8 ms | ±0.501 ms |
+| Qualification second | 0.8 ms | ±0.501 ms |
+| Inventory after | 5.2 ms | ±2.701 ms |
+
+The Devices inspector matched 125 stationary Gladiator reports with
+no timing errors. Its native-read-to-DOM p50/p95/p99 were
+5.46/7.22/7.38 ms with a ±0.551 ms clock bound. The Profiles inspector
+preflight was visible and focused, received 37 continuing reports with
+no coalescing and measured a ±0.601 ms clock bound. Stationary axes
+produced no motion transitions for the Profiles DOM measurement.
+
+The running dev executable rejected the direct command with its opt-in
+unset. The Windows host suite passed 2,510 tests with 19 ignored, and
+the focused diagnostics suite passed ten tests. The calibration helper
+reached 100% lines, 100% branches and 71.43% functions.
+Physical actuation, display scanout and actual simulator effects remain
+separate in #199.
+
+| Local evidence | SHA-256 |
+| --- | --- |
+| `.research/reactive/preview-delivery-handoff/clock-calibration/comparison.json` | `d065fa6532a9deaeff0d418ce13ce1763bdb5bb134e507a1123d44c18ec8931a` |
+| `.research/reactive/preview-delivery-handoff/clock-calibration/controller-preview-latency.json` | `6459f56ddd02fb9e7e7b6f769fa03a6948a37e97798dc9ba77c11da0bbd62bad` |
+| `.research/reactive/profile-preview-latency/1794283731984.json` | `d78dc41fe2eaa669aed13359f8af5b39862fa7af666f9d4e9f60666fe7b24dd1` |

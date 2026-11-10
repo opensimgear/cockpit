@@ -333,6 +333,17 @@ async fn gateway_request(
     request: Value,
     state: tauri::State<'_, NativeGateway>,
 ) -> Result<Value, String> {
+    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+    if request["command"] == "qualification_controller_clock" {
+        if std::env::var("OSG_REACTIVE_QUALIFICATION").as_deref() != Ok("1") {
+            return Err("Desktop qualification is disabled.".into());
+        }
+        let clock = state.0.controllers.capture_clock();
+        return Ok(serde_json::json!({
+            "id": format!("controllers:{}", clock.id()),
+            "nowUs": clock.now_us().to_string(),
+        }));
+    }
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
