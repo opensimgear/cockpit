@@ -10,6 +10,8 @@ import {dualRateLanes} from './vjoy-rate-transport.mjs';
 const nsPerMs = 1_000_000n;
 const hidSuccess = 0x00110000;
 const sourceFiles = ['qualification-fast.bin', 'qualification-peer.bin'];
+const sourceHeaderSize = 8;
+const sourceRowSize = 56;
 
 function records(path, width, headerSize, count) {
   const file = openSync(path, 'r');
@@ -46,7 +48,7 @@ function records(path, width, headerSize, count) {
   }
 }
 
-function timingDistribution() {
+function timingDistribution(roundDown = false) {
   // One tenth of a millisecond bins. The overflow bucket reports its upper
   // bound as the exact maximum, so it cannot conceal a budget miss.
   const buckets = new Uint32Array(5001);
@@ -55,7 +57,8 @@ function timingDistribution() {
     add(ns) {
       assert.ok(ns >= 0n, 'Timing must be monotonic');
       const ms = Number(ns) / 1e6;
-      buckets[Math.min(Math.ceil(ms * 10), buckets.length - 1)]++;
+      const bin = Number((ns + (roundDown ? 0n : 99_999n)) / 100_000n);
+      buckets[Math.min(bin, buckets.length - 1)]++;
       count++;
       max = Math.max(max, ms);
     },
@@ -65,7 +68,7 @@ function timingDistribution() {
         let cumulative = 0;
         for (const [index, value] of buckets.entries()) {
           cumulative += value;
-          if (cumulative >= rank) return index === buckets.length - 1 ? max : Math.min(max, index / 10);
+          if (cumulative >= rank) return index === buckets.length - 1 && !roundDown ? max : Math.min(max, index / 10);
         }
         throw new Error('Trace percentile is missing');
       };
@@ -98,11 +101,15 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
     const end = BigInt(raw.receiverEndedTicks);
     assert.ok(qpcNs(end) > stopNs, 'Receiver must stay active through Stop');
     const lanes = counts.map((count,index) => ({count, index,
-      source:open(resolve(directory,sourceFiles[index]),32,0,count),
+      source:open(resolve(directory,sourceFiles[index]),sourceRowSize,sourceHeaderSize,count),
       offerToReceipt:timingDistribution(), offerToDispatch:timingDistribution(),
-      dispatchToAdmission:timingDistribution(), offerIntervals:timingDistribution(), receiverIntervals:timingDistribution(),
-      edges:0, pendingFramesPeak:0, batchSizePeak:0,
+      dispatchToAdmission:timingDistribution(), captureToReceiptLower:timingDistribution(true),
+      captureToReceiptUpper:timingDistribution(), admissionToReceipt:timingDistribution(),
+      captureToAdmissionUpper:timingDistribution(),
+      captureBracket:timingDistribution(), offerIntervals:timingDistribution(), receiverIntervals:timingDistribution(),
+      edges:0, sampledSharedPendingFramesPeak:0, sampledSharedPendingOwnedBytesPeak:0, batchSizePeak:0,
     }));
+    for (const lane of lanes) assert.equal(lane.source.header.toString('ascii'), 'OSGDBG02');
     let buttons = 0, ticks = origin;
     for (let event = receiver.next(); event; event = receiver.next()) {
       const nextTicks = event.readBigInt64LE(6);
@@ -127,12 +134,31 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
         } else {
           const at = offer.readBigUInt64LE(0);
           const dispatched = offer.readBigUInt64LE(8);
-          const admitted = offer.readBigUInt64LE(16);
-          const pending = offer.readUInt32LE(24), batchIndex = offer.readUInt32LE(28);
-          assert.ok(at >= qpcNs(origin) && received < stopNs && pending > 0 && pending <= 256 && batchIndex < 8);
+          const captureBefore = offer.readBigUInt64LE(16);
+          const captureAfter = offer.readBigUInt64LE(24);
+          const admitted = offer.readBigUInt64LE(32);
+          const sequence = offer.readUInt32LE(40);
+          const pendingFrames = offer.readUInt32LE(44);
+          const pendingOwnedBytes = offer.readUInt32LE(48);
+          const batchIndex = offer.readUInt32LE(52);
+          assert.ok(at >= qpcNs(origin) && received < stopNs);
+          assert.ok(pendingFrames > 0 && pendingFrames <= 256, 'Shared queue pending frame sample is out of range');
+          assert.ok(pendingOwnedBytes > 0, 'Shared queue byte sample is missing');
+          assert.ok(batchIndex < 8, 'Batch index is out of range');
+          assert.equal(sequence, lane.edges + 1, 'Native debug rows must preserve exact per-lane request sequence');
+          assert.ok(at <= dispatched && dispatched <= captureBefore && captureBefore <= captureAfter,
+            'Offer, dispatch and capture timestamps must be ordered');
+          assert.ok(admitted >= captureAfter, 'Admission timestamp must follow capture');
+          assert.ok(received >= captureAfter && received >= admitted,
+            'Raw Input receipt must follow capture and native admission');
           lane.offerToReceipt.add(received - at);
           lane.offerToDispatch.add(dispatched - at);
           lane.dispatchToAdmission.add(admitted - dispatched);
+          lane.captureToReceiptLower.add(received - captureAfter);
+          lane.captureToReceiptUpper.add(received - captureBefore);
+          lane.captureToAdmissionUpper.add(admitted - captureBefore);
+          lane.admissionToReceipt.add(received - admitted);
+          lane.captureBracket.add(captureAfter - captureBefore);
           if (lane.lastOffer !== undefined) lane.offerIntervals.add(at - lane.lastOffer);
           if (lane.lastReceipt !== undefined) lane.receiverIntervals.add(received - lane.lastReceipt);
           lane.firstOffer ??= at;
@@ -142,7 +168,8 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
           lane.lastDispatch = dispatched;
           lane.lastAdmission = admitted;
           lane.lastReceipt = received;
-          lane.pendingFramesPeak = Math.max(lane.pendingFramesPeak, pending);
+          lane.sampledSharedPendingFramesPeak = Math.max(lane.sampledSharedPendingFramesPeak, pendingFrames);
+          lane.sampledSharedPendingOwnedBytesPeak = Math.max(lane.sampledSharedPendingOwnedBytesPeak, pendingOwnedBytes);
           lane.batchSizePeak = Math.max(lane.batchSizePeak, batchIndex + 1);
         }
         lane.edges++;
@@ -157,13 +184,22 @@ export function summarizeDualRateTrace(directory, slot, counts, raw, stopNs) {
         actualHz:cadence(lane.firstOffer,lane.lastOffer), dispatchHz:cadence(lane.firstDispatch,lane.lastDispatch),
         admissionHz:cadence(lane.firstAdmission,lane.lastAdmission),
         offerToReceiptMs:lane.offerToReceipt.summarize(), offerToDispatchMs:lane.offerToDispatch.summarize(),
-        dispatchToAdmissionMs:lane.dispatchToAdmission.summarize(), offerIntervalsMs:lane.offerIntervals.summarize(),
+        dispatchToAdmissionMs:lane.dispatchToAdmission.summarize(),
+        captureToReceiptLowerMs:lane.captureToReceiptLower.summarize(),
+        captureToReceiptUpperMs:lane.captureToReceiptUpper.summarize(),
+        captureToAdmissionUpperMs:lane.captureToAdmissionUpper.summarize(),
+        captureBracketMs:lane.captureBracket.summarize(), admissionToReceiptMs:lane.admissionToReceipt.summarize(),
+        offerIntervalsMs:lane.offerIntervals.summarize(),
         receiverIntervalsMs:lane.receiverIntervals.summarize(),
-        pendingFramesPeak:lane.pendingFramesPeak,batchSizePeak:lane.batchSizePeak,stopReleaseMs:lane.stopReleaseMs};
+        sampledSharedPendingFramesPeak:lane.sampledSharedPendingFramesPeak,
+        sampledSharedPendingOwnedBytesPeak:lane.sampledSharedPendingOwnedBytesPeak,
+        batchSizePeak:lane.batchSizePeak,stopReleaseMs:lane.stopReleaseMs};
     });
     const first = lanes[0].firstOffer > lanes[1].firstOffer ? lanes[0].firstOffer : lanes[1].firstOffer;
     const last = lanes[0].lastOffer < lanes[1].lastOffer ? lanes[0].lastOffer : lanes[1].lastOffer;
     return {lanes:results, overlapMs:Number(last-first)/1e6,
+      sampledSharedQueuePeaks:{pendingFrames:Math.max(...results.map(lane=>lane.sampledSharedPendingFramesPeak)),
+        pendingOwnedBytes:Math.max(...results.map(lane=>lane.sampledSharedPendingOwnedBytesPeak))},
       probeAfterStopMs:Number(qpcNs(end)-stopNs)/1e6, traceEvents:raw.traceEvents, device:raw.traceDevice};
   } finally {
     for (const reader of readers) reader.close();
@@ -225,7 +261,8 @@ export async function startDualRateSoak(cdp, executable, slot, owner, directory,
         const budgetMisses = result.lanes.flatMap(lane => {
           const misses=[];
           if (Math.abs(lane.actualHz/lane.targetHz-1)>.05) misses.push(`${lane.nodeId} missed the offer rate`);
-          if (lane.offerToReceiptMs.p95>20||lane.offerToReceiptMs.p99>50) misses.push(`${lane.nodeId} missed the Raw Input budget`);
+          if (lane.offerToReceiptMs.p95>20||lane.offerToReceiptMs.p99>50) misses.push(`${lane.nodeId} missed the offer-to-Raw Input budget`);
+          if (lane.captureToReceiptUpperMs.p95>20||lane.captureToReceiptUpperMs.p99>50) misses.push(`${lane.nodeId} missed the capture-to-Raw Input budget`);
           return misses;
         });
         return {...result,budgetMisses};

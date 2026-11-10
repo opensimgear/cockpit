@@ -1,5 +1,7 @@
 use super::*;
 use crate::profile_debug_controller::Request;
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+use crate::profile_debug_controller::{ingress::QualifiedAdmission, qualification::Clock};
 
 #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
 impl GatewayManager {
@@ -70,12 +72,12 @@ impl GatewayManager {
     #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
     pub(crate) fn qualify_debug_controller_batch<T>(
         &self,
+        clock: &Clock,
         offer: impl FnOnce(
-            &mut dyn FnMut(&Request) -> Result<(Value, std::time::Duration), String>,
+            &mut dyn FnMut(&Request) -> Result<QualifiedAdmission, String>,
             std::time::Duration,
         ) -> Result<T, String>,
     ) -> Result<T, String> {
-        use std::time::Instant;
         // Use the same admission order as the ordinary non-mutating gateway route.
         let _profile = self
             .profile_admission
@@ -89,18 +91,23 @@ impl GatewayManager {
             return Err("Cockpit gateway manager has closed.".into());
         }
         let (mut queued, mut changed) = (false, false);
-        let result = self.debug_ingress.batch(|| self.controllers.monotonic_us(), |admit, wait| offer(
-            &mut |request| {
-                let entered = Instant::now();
-                let mut state = admit(request)?;
-                let work = entered.elapsed();
-                let (frame_queued, frame_changed) = debug_controller_flags(&mut state);
-                queued |= frame_queued;
-                changed |= frame_changed;
-                Ok((state, work))
+        let source_clock = self.controllers.capture_clock();
+        let result = self.debug_ingress.batch(
+            |floor| clock.capture(source_clock, floor),
+            |admit, wait| {
+                offer(
+                    &mut |request| {
+                        let mut admitted = admit(request)?;
+                        let (frame_queued, frame_changed) =
+                            debug_controller_flags(&mut admitted.state);
+                        queued |= frame_queued;
+                        changed |= frame_changed;
+                        Ok(admitted)
+                    },
+                    wait,
+                )
             },
-            wait,
-        ));
+        );
         self.notify_debug_controller(queued, changed);
         result
     }
@@ -145,7 +152,9 @@ mod tests {
             .contains("owner expired"));
         #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
         assert!(manager
-            .qualify_debug_controller_batch(|admit, _| admit(&request))
+            .qualify_debug_controller_batch(&Clock::new().unwrap(), |admit, _| {
+                admit(&request).map(|_| ())
+            })
             .unwrap_err()
             .contains("owner expired"));
         manager.shutdown();

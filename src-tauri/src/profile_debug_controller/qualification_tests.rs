@@ -24,22 +24,43 @@ fn trace_records_keep_little_endian_timing_and_never_replace_an_existing_capture
     capture.record(Submission {
         at_ns: 4_294_967_296,
         dispatch_at_ns: 4_294_967_297,
-        admitted_at_ns: 4_294_967_298,
+        capture_before_ns: 4_294_967_298,
+        capture_after_ns: 4_294_967_299,
+        admitted_at_ns: 4_294_967_300,
         round_trip_ms: 0.0,
         ingress_wait_ms: 0.0,
         ingress_work_ms: 0.0,
         batch_index: 3,
+        sequence: 8,
         pending_frames: 4,
+        pending_owned_bytes: 0x0102_0304,
         value: true,
     }).unwrap();
     assert_eq!(capture.finish().unwrap(), json!(1));
     assert!(Capture::open(Some(directory.path()), 0, BURST_MS).is_err());
-    assert_eq!(std::fs::read(path).unwrap(), [
+    let trace = std::fs::read(path).unwrap();
+    assert_eq!(&trace[..8], b"OSGDBG02");
+    assert_eq!(&trace[8..], [
         0, 0, 0, 0, 1, 0, 0, 0,
         1, 0, 0, 0, 1, 0, 0, 0,
         2, 0, 0, 0, 1, 0, 0, 0,
-        4, 0, 0, 0, 3, 0, 0, 0,
+        3, 0, 0, 0, 1, 0, 0, 0,
+        4, 0, 0, 0, 1, 0, 0, 0,
+        8, 0, 0, 0, 4, 0, 0, 0,
+        4, 3, 2, 1, 3, 0, 0, 0,
     ]);
+}
+
+#[test]
+fn capture_bracket_uses_the_exact_host_clock_and_rejects_a_future_floor() {
+    let qpc = Clock::new().unwrap();
+    let controllers = osg_controller_input::ControllerService::new(None, false);
+    let source = controllers.capture_clock();
+    let floor = source.now_us();
+    let capture = qpc.capture(source, floor).unwrap();
+    assert!(capture.before_ns <= capture.after_ns);
+    assert!(capture.native_us >= floor && capture.native_us <= source.now_us());
+    assert!(qpc.capture(source, u64::MAX).is_err());
 }
 
 #[test]
@@ -143,6 +164,24 @@ fn qualification_requires_explicit_enable_and_the_current_neutral_owner() {
         held["error"],
         "Both qualification lanes require an applied neutral debug button."
     );
+    let cleanup = Burst {
+        manager: &manager,
+        request: serde_json::from_value(request()).unwrap(),
+        clock: Clock(0),
+        duration: BURST_MS,
+        expires: 0,
+        streams: std::array::from_fn(|_| uuid::Uuid::new_v4().to_string()),
+        cancelled: AtomicBool::new(true),
+        attempted: std::array::from_fn(|_| AtomicU64::new(1)),
+    };
+    cleanup.release();
+    for node in nodes {
+        let status = manager.request(json!({
+            "command":"profile_debug_controller_status", "clientId":CLIENT_ID,
+            "owner":owner, "nodeId":node,
+        }));
+        assert_eq!(status["state"]["debugController"]["values"][0]["value"], false);
+    }
     let stopped = manager.request(json!({"command":"profile_stop", "clientId":CLIENT_ID}));
     assert_eq!(stopped["ok"], true, "{stopped}");
     assert_eq!(run(&manager, request())["ok"], false);

@@ -1,5 +1,5 @@
 //! Fixed software workload for the explicitly enabled desktop qualification build.
-use super::Change;
+use super::{ingress::QualifiedAdmission, Change};
 use crate::{gateways::GatewayManager, profile_session::RunOwner};
 use osg_mapping::engine::Counter;
 use osg_profiles::PortValue;
@@ -27,6 +27,7 @@ const NS_PER_MS: u64 = 1_000_000;
 const MAX_ADMISSION_BATCH: usize = 8;
 const CLIENT_ID: &str = "desktop-reactive-qualification";
 const TRACE_FILES: [&str; 2] = ["qualification-fast.bin", "qualification-peer.bin"];
+const TRACE_MAGIC: &[u8; 8] = b"OSGDBG02";
 static BURST: Mutex<()> = Mutex::new(());
 
 #[derive(Deserialize)]
@@ -60,12 +61,18 @@ struct Submission {
     #[serde(serialize_with = "serialize_timestamp")]
     dispatch_at_ns: u64,
     #[serde(serialize_with = "serialize_timestamp")]
+    capture_before_ns: u64,
+    #[serde(serialize_with = "serialize_timestamp")]
+    capture_after_ns: u64,
+    #[serde(serialize_with = "serialize_timestamp")]
     admitted_at_ns: u64,
     round_trip_ms: f64,
     ingress_wait_ms: f64,
     ingress_work_ms: f64,
     batch_index: u32,
+    sequence: u32,
     pending_frames: u32,
+    pending_owned_bytes: u32,
     value: bool,
 }
 
@@ -88,23 +95,30 @@ impl Capture {
             .write(true)
             .create_new(true)
             .open(directory.join(TRACE_FILES[lane]))
-            .map_err(|error| format!("Could not create qualification lane {lane} trace: {error}"))?;
-        Ok(Self::Trace {
-            writer: BufWriter::with_capacity(64 * 1024, file),
-            count: 0,
-        })
+            .map_err(|error| {
+                format!("Could not create qualification lane {lane} trace: {error}")
+            })?;
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
+        writer.write_all(TRACE_MAGIC).map_err(|error| {
+            format!("Could not write qualification lane {lane} trace header: {error}")
+        })?;
+        Ok(Self::Trace { writer, count: 0 })
     }
 
     fn record(&mut self, row: Submission) -> std::io::Result<()> {
         match self {
             Self::Inline(rows) => rows.push(row),
             Self::Trace { writer, count } => {
-                let mut bytes = [0; 32];
+                let mut bytes = [0; 56];
                 bytes[..8].copy_from_slice(&row.at_ns.to_le_bytes());
                 bytes[8..16].copy_from_slice(&row.dispatch_at_ns.to_le_bytes());
-                bytes[16..24].copy_from_slice(&row.admitted_at_ns.to_le_bytes());
-                bytes[24..28].copy_from_slice(&row.pending_frames.to_le_bytes());
-                bytes[28..].copy_from_slice(&row.batch_index.to_le_bytes());
+                bytes[16..24].copy_from_slice(&row.capture_before_ns.to_le_bytes());
+                bytes[24..32].copy_from_slice(&row.capture_after_ns.to_le_bytes());
+                bytes[32..40].copy_from_slice(&row.admitted_at_ns.to_le_bytes());
+                bytes[40..44].copy_from_slice(&row.sequence.to_le_bytes());
+                bytes[44..48].copy_from_slice(&row.pending_frames.to_le_bytes());
+                bytes[48..52].copy_from_slice(&row.pending_owned_bytes.to_le_bytes());
+                bytes[52..].copy_from_slice(&row.batch_index.to_le_bytes());
                 writer.write_all(&bytes)?;
                 *count += 1;
             }
@@ -195,69 +209,80 @@ impl Burst<'_> {
                     break;
                 }
                 let first_dispatch = self.clock.now()?;
-                self.manager.qualify_debug_controller_batch(|admit, wait| {
-                    // Drain only edges already waiting after admission opens.
-                    let ready = std::iter::once(first)
-                        .chain(offers.try_iter().take(MAX_ADMISSION_BATCH - 1));
-                    for (batch_index, offer) in ready.enumerate() {
-                        if self.cancelled.load(Ordering::Acquire) {
-                            break;
-                        }
-                        let now = self.clock.now()?;
-                        if now >= self.expires {
-                            return Err(
-                                "The qualification burst exceeded its delivery window.".into()
-                            );
-                        }
-                        let dispatch = if batch_index == 0 {
-                            first_dispatch
-                        } else {
-                            now
-                        };
-                        self.attempted[lane].store(offer.sequence, Ordering::Release);
-                        let frame = self.frame(lane, offer.sequence, offer.value);
-                        let (state, work) = admit(&frame).map_err(|error| {
-                            format!(
-                                "Qualification lane {lane} frame {}: {error}",
-                                offer.sequence
-                            )
-                        })?;
-                        let admitted = self.clock.now()?;
-                        if admitted >= self.expires {
-                            return Err(
-                                "The qualification burst exceeded its delivery window.".into()
-                            );
-                        }
-                        if state["sequence"] != offer.sequence.to_string()
-                            || state["replayed"] != false
-                        {
-                            return Err(format!(
-                                "Qualification lane {lane} did not accept frame {}.",
-                                offer.sequence
-                            ));
-                        }
-                        let pending_frames = state["pendingFrames"]
-                            .as_u64()
-                            .filter(|count| (1..=256).contains(count))
-                            .ok_or("Qualification frame did not enter the ordered queue.")?;
-                        submissions.push(Submission {
-                            at_ns: offer.at,
-                            dispatch_at_ns: dispatch,
-                            admitted_at_ns: admitted,
-                            round_trip_ms: (admitted - dispatch) as f64 / NS_PER_MS as f64,
-                            ingress_wait_ms: if batch_index == 0 {
-                                wait.as_secs_f64() * 1000.0
+                self.manager
+                    .qualify_debug_controller_batch(&self.clock, |admit, wait| {
+                        // Drain only edges already waiting after admission opens.
+                        let ready = std::iter::once(first)
+                            .chain(offers.try_iter().take(MAX_ADMISSION_BATCH - 1));
+                        for (batch_index, offer) in ready.enumerate() {
+                            if self.cancelled.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let now = self.clock.now()?;
+                            if now >= self.expires {
+                                return Err(
+                                    "The qualification burst exceeded its delivery window.".into(),
+                                );
+                            }
+                            let dispatch = if batch_index == 0 {
+                                first_dispatch
                             } else {
-                                0.0
-                            },
-                            ingress_work_ms: work.as_secs_f64() * 1000.0,
-                            batch_index: batch_index as u32,
-                            pending_frames: pending_frames as u32,
-                            value: offer.value,
-                        });
-                    }
-                    Ok(())
-                })?;
+                                now
+                            };
+                            self.attempted[lane].store(offer.sequence, Ordering::Release);
+                            let frame = self.frame(lane, offer.sequence, offer.value);
+                            let QualifiedAdmission {
+                                state,
+                                capture,
+                                pending_owned_bytes,
+                                work,
+                            } = admit(&frame).map_err(|error| {
+                                format!(
+                                    "Qualification lane {lane} frame {}: {error}",
+                                    offer.sequence
+                                )
+                            })?;
+                            let admitted = self.clock.now()?;
+                            if admitted >= self.expires {
+                                return Err(
+                                    "The qualification burst exceeded its delivery window.".into(),
+                                );
+                            }
+                            if state["sequence"] != offer.sequence.to_string()
+                                || state["replayed"] != false
+                            {
+                                return Err(format!(
+                                    "Qualification lane {lane} did not accept frame {}.",
+                                    offer.sequence
+                                ));
+                            }
+                            let pending_frames = state["pendingFrames"]
+                                .as_u64()
+                                .filter(|count| (1..=256).contains(count))
+                                .ok_or("Qualification frame did not enter the ordered queue.")?;
+                            submissions.push(Submission {
+                                at_ns: offer.at,
+                                dispatch_at_ns: dispatch,
+                                capture_before_ns: capture.before_ns,
+                                capture_after_ns: capture.after_ns,
+                                admitted_at_ns: admitted,
+                                round_trip_ms: (admitted - dispatch) as f64 / NS_PER_MS as f64,
+                                ingress_wait_ms: if batch_index == 0 {
+                                    wait.as_secs_f64() * 1000.0
+                                } else {
+                                    0.0
+                                },
+                                ingress_work_ms: work.as_secs_f64() * 1000.0,
+                                batch_index: batch_index as u32,
+                                sequence: u32::try_from(offer.sequence)
+                                    .map_err(|_| "Qualification trace sequence overflowed.")?,
+                                pending_frames: pending_frames as u32,
+                                pending_owned_bytes,
+                                value: offer.value,
+                            });
+                        }
+                        Ok(())
+                    })?;
                 for submission in submissions.drain(..) {
                     capture.record(submission).map_err(|error| {
                         format!("Could not write qualification lane {lane} trace: {error}")
@@ -278,19 +303,29 @@ impl Burst<'_> {
         for (lane, attempted) in self.attempted.iter().enumerate() {
             let sequence = attempted.load(Ordering::Acquire);
             if sequence > 0 {
-                let frame = self.frame(lane, sequence + 1, false);
-                let _ = self
-                    .manager
-                    .qualify_debug_controller_batch(|admit, _| admit(&frame));
+                // Cleanup must still be able to release a held button if the
+                // qualification clock fails. Use ordinary owner-fenced input.
+                let _ = self.manager.request(json!({
+                    "command":"profile_debug_controller_input", "clientId":CLIENT_ID,
+                    "owner":self.request.owner, "nodeId":self.request.nodes[lane],
+                    "streamId":self.streams[lane], "sequence":Counter(sequence + 1),
+                    "changes":[{"portId":"button-1", "value":false}],
+                }));
             }
         }
     }
 }
 
-struct Clock(u64);
+pub(crate) struct CaptureBracket {
+    pub native_us: u64,
+    before_ns: u64,
+    after_ns: u64,
+}
+
+pub(crate) struct Clock(u64);
 
 impl Clock {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         let mut frequency = 0;
         if unsafe { QueryPerformanceFrequency(&mut frequency) } == 0 || frequency <= 0 {
             return Err("Windows performance counter frequency is unavailable.".into());
@@ -305,6 +340,24 @@ impl Clock {
         }
         u64::try_from(ticks as u128 * 1_000_000_000 / u128::from(self.0))
             .map_err(|_| "Windows performance counter timestamp overflowed.".into())
+    }
+
+    pub(crate) fn capture(
+        &self,
+        source: osg_controller_input::stream::Clock,
+        floor: u64,
+    ) -> Result<CaptureBracket, String> {
+        let before_ns = self.now()?;
+        let native_us = source.now_us();
+        let after_ns = self.now()?;
+        if native_us < floor || after_ns < before_ns {
+            return Err("Qualification capture fell outside the active monotonic clock.".into());
+        }
+        Ok(CaptureBracket {
+            native_us,
+            before_ns,
+            after_ns,
+        })
     }
 
     fn wait_until(&self, deadline: u64) -> Result<(), String> {
@@ -388,7 +441,9 @@ fn run_burst(manager: &GatewayManager, request: Value) -> Result<Value, String> 
         attempted: std::array::from_fn(|_| AtomicU64::new(0)),
     };
     let reducer = super::qualification_reducer::Scope::start(
-        burst.request.owner.clone(), burst.request.nodes.clone(), burst.streams.clone(),
+        burst.request.owner.clone(),
+        burst.request.nodes.clone(),
+        burst.streams.clone(),
         [duration + 1, duration / 8 + 1],
     );
     let (fast_tx, fast_rx) = mpsc::sync_channel(193);

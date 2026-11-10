@@ -294,6 +294,25 @@ impl DebugInputs {
     pub(crate) fn poll(&mut self) -> Vec<Frame> {
         self.pending.drain(..).collect()
     }
+    #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+    fn qualification_pending_owned_bytes(&self) -> usize {
+        use osg_mapping::program::SignalValue;
+        use std::mem::size_of;
+
+        // Count occupied frame slots and their owned allocations. Spare queue
+        // slots and allocator bookkeeping are outside this payload measure.
+        self.pending.iter().map(|frame| {
+            size_of::<Frame>() + frame.source.capacity()
+                + frame.changes.capacity() * size_of::<FrameChange>()
+                + frame.changes.iter().map(|change| {
+                    let text = match &change.sample {
+                        SignalSample::Known(SignalValue::Scalar(PortValue::Text(text))) => text.capacity(),
+                        _ => 0,
+                    };
+                    change.port_id.capacity() + text
+                }).sum::<usize>()
+        }).sum()
+    }
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
     }

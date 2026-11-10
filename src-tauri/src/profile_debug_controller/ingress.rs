@@ -1,4 +1,6 @@
 use super::{DebugInputs, Request};
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+use super::qualification::CaptureBracket;
 use crate::profile_session::RunOwner;
 use osg_mapping::engine::{typed::{Frame, Phase}, Counter};
 use serde_json::Value;
@@ -19,6 +21,14 @@ pub(crate) struct Drain {
     pub(crate) frames: Vec<Frame>,
     sources: Arc<[String]>,
     generation: Counter,
+}
+
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+pub(crate) struct QualifiedAdmission {
+    pub state: Value,
+    pub capture: CaptureBracket,
+    pub pending_owned_bytes: u32,
+    pub work: std::time::Duration,
 }
 
 impl Drain {
@@ -75,19 +85,39 @@ impl Ingress {
     #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
     pub(crate) fn batch<T>(
         &self,
-        mut now: impl FnMut() -> u64,
-        offer: impl FnOnce(&mut dyn FnMut(&Request) -> Result<Value, String>, std::time::Duration) -> T,
+        mut capture: impl FnMut(u64) -> Result<CaptureBracket, String>,
+        offer: impl FnOnce(
+            &mut dyn FnMut(&Request) -> Result<QualifiedAdmission, String>,
+            std::time::Duration,
+        ) -> T,
     ) -> T {
         let waiting = std::time::Instant::now();
         let mut slot = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let wait = waiting.elapsed();
-        offer(&mut |request| admit(&mut slot, request, &mut now), wait)
+        offer(
+            &mut |request| {
+                let entered = std::time::Instant::now();
+                let (inputs, floor) = active_inputs(&mut slot, request)?;
+                let capture = capture(floor)?;
+                let state = inputs.request(request, capture.native_us)?;
+                let work = entered.elapsed();
+                let pending_owned_bytes = u32::try_from(inputs.qualification_pending_owned_bytes())
+                    .map_err(|_| "Qualification pending byte count overflowed.")?;
+                Ok(QualifiedAdmission { state, capture, pending_owned_bytes, work })
+            },
+            wait,
+        )
     }
 }
 
 fn admit(slot: &mut Option<Active>, request: &Request, now: impl FnOnce() -> u64) -> Result<Value, String> {
+    let (inputs, floor) = active_inputs(slot, request)?;
+    inputs.request(request, now().max(floor))
+}
+
+fn active_inputs<'a>(slot: &'a mut Option<Active>, request: &Request) -> Result<(&'a mut DebugInputs, u64), String> {
     let active = slot.as_mut().filter(|active| active.owner == request.owner)
         .ok_or("The requested debug controller owner expired; inspect the current running revision.")?;
     let inputs = active.inputs.as_mut().ok_or("Wait for the active vehicle profile variant.")?;
-    inputs.request(request, now().max(active.clock_floor))
+    Ok((inputs, active.clock_floor))
 }

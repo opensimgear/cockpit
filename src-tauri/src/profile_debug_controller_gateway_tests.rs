@@ -118,7 +118,12 @@ fn debug_gateway_admits_while_the_profile_worker_owns_the_session() {
             next["sequence"] = json!("2");
             next["changes"][0]["value"] = json!(43);
             let next = crate::profile_debug_controller::Request::parse(&next).unwrap();
-            let (state, _) = worker_manager.qualify_debug_controller_batch(|admit, _| admit(&next)).unwrap();
+            let clock = crate::profile_debug_controller::qualification::Clock::new().unwrap();
+            let admitted = worker_manager
+                .qualify_debug_controller_batch(&clock, |admit, _| admit(&next))
+                .unwrap();
+            assert!(admitted.pending_owned_bytes > 0);
+            let state = admitted.state;
             assert_eq!(state["sequence"], "2");
             assert_eq!(state["replayed"], false);
             assert_eq!(state["pendingFrames"], 2);

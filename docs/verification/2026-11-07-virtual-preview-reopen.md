@@ -157,3 +157,58 @@ Physical controller capture and display scanout remain in [#199](https://github.
 The log and `preview-load-trace-27236` directory are under
 `.research/c193-reconnect/dcs-native-stage-timing/`. The Raw Input probe
 has the same fingerprint as the earlier paired run.
+
+## Native debug capture to Windows Raw Input on 10 November 2026
+
+The Windows dev Cockpit ran the two-minute authored DCS workload with
+two paired panels, a stalled MCP reader, and concurrent debug and
+panel commands. Each debug trace row records the exact request
+sequence and brackets the native capture clock read with Windows
+performance-counter timestamps. The Raw Input probe uses the same
+counter. The decoder checks the clock order and joins each lane's
+ordered captures to matching vJoy button edges. The longest capture
+bracket was 9.8 microseconds. Lower percentiles round down and upper
+percentiles round up to the reporting bins.
+
+| Segment | 1,000 Hz p50 / p95 / p99 | 125 Hz p50 / p95 / p99 |
+| --- | ---: | ---: |
+| Authored offer to vJoy Raw Input receipt | 1.5 / 2.6 / 5.2 ms | 1.7 / 2.7 / 5.4 ms |
+| Native capture to admission, upper bound | 0.1 / 0.1 / 0.1 ms | 0.1 / 0.1 / 0.1 ms |
+| Native capture to reducer batch end | 1.2 / 2.2 / 4.4 ms | 1.2 / 2.2 / 4.4 ms |
+| Native capture to vJoy Raw Input, lower bound | 1.4 / 2.5 / 5.1 ms | 1.6 / 2.6 / 5.2 ms |
+| Native capture to vJoy Raw Input, upper bound | 1.5 / 2.6 / 5.2 ms | 1.7 / 2.7 / 5.3 ms |
+| Admission to vJoy Raw Input receipt | 1.5 / 2.5 / 5.2 ms | 1.6 / 2.6 / 5.3 ms |
+
+All 135,002 offered edges and both Stop releases matched. Stop
+released both buttons within 31.91 ms and returned the slot to free.
+The two lanes overlapped for 119,999.99 ms. The run also matched 238
+private DCS command receipts. Minimum lease margins were 165.03 ms
+for the vJoy feeder and 1,234 ms for the paired panels. There were
+zero budget misses and zero cleanup errors.
+
+The shared debug input queue reached 38 pending frames and 12,066
+owned bytes across the two lanes. Each admission samples the queue
+while it is locked, counting occupied frame slots, owned strings,
+and allocated change vectors. This measure excludes empty queue
+slots, allocator bookkeeping and downstream queues. Qualification
+instrumentation is included in the observed timing.
+
+The local run is
+`.research/c193-reconnect/reader-budget-max/windows-source-22590390/.research/dcs-physics-native/1794279325275/evidence.json`,
+SHA-256 `91405b2b380ccd0e307eb5a9ef46f541436151cfd860f3cb2e322b873f7f3091`.
+The dev binary SHA-256 is
+`612e5f2cd4780bd9c09fe3966e97d3ec612cab11f9eaeebc1c7ce8f8dc3da7cc`.
+
+The final build adds a cleanup regression that releases the buttons
+through ordinary owner-fenced input even with an unusable qualification
+clock. It passed all 2,510 Windows native tests and the trace decoder
+regression. The 15-second dev rerun matched 16,886 offers, both Stop
+releases and 28 private DCS commands. The capture-to-Raw-Input p95
+upper bounds were 2.7 and 2.8 ms. The shared queue reached 42 frames
+and 13,339 owned bytes. The run had zero budget misses or cleanup
+errors. Its `1794279663650/evidence.json` in the same parent directory
+has SHA-256
+`4899a1fcedb4b60b9d0acd55b7776181b80940bea4ab01f12bf346d99a8cee8d`.
+
+Physical controller capture and display scanout, plus actual simulator
+confirmation, remain in #199.
