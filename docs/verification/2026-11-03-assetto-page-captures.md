@@ -67,3 +67,39 @@ canonical dependency unions, independent per-port recovery and reducer/ticket
 integration remain implementation work. This milestone does not qualify physical
 preview/raw-to-virtual latency or actual simulator effects; user acceptance stays
 in #199.
+
+## Physics packet and reducer trace
+
+The native regression feeds authored captures with a supported page layout
+for each of the four adapters into the production decoder and reducer. It
+checks that the retained `physics.packetId` value, the original physics-page
+capture sequence and the converted host timestamp match. This fixture starts
+at the decoder input and exercises native capture provenance through the
+reducer.
+
+The Windows live fixture can also trace the same endpoint with
+`OSG_ASSETTO_CAPTURE_NATIVE=1`, `OSG_ASSETTO_NATIVE_REDUCER_TIMING=1` and
+`OSG_REACTIVE_QUALIFICATION=1` in a dev build with
+`--features reactive-qualification`. It reports capture cadence and
+capture-to-batch percentiles separately. Packet gaps use the authored
+publisher's counter between the first and last retained packets. The native
+page-copy sequence advances during graphics and static reads and stability
+checks.
+
+On November 10, Windows denied the scoped process watcher during the live
+timing setup with error `0x80041003`. The denial fixture passed on all four
+titles in the rebuilt Cockpit. Shared discovery found each authored process,
+telemetry remained withheld, and the scoped **Allow** action was visible.
+Live Assetto timing requires the consent check already tracked in #199.
+
+The full Windows library suite passed 2,506 tests with 18 existing ignores.
+All 14 focused native and 17 JavaScript tests passed. The native timing module
+reached 89.37% line and 73.68% function coverage. The rebuilt Cockpit also ran
+the DCS fixture with the shared timing helper. It matched 96 captures with
+zero gaps and zero cleanup errors.
+
+| Local artifact | SHA-256 |
+| --- | --- |
+| Windows qualification executable | `bcd2b4e09707fd7e986b2831bed584e41a58ed0d0a8ecde3d518a8672608ec4b` |
+| Assetto permission denial `1794273952372/evidence.json` | `bd8e93a20aa040d904a3c82693328aed6049253acd6f6acb1c6c2318d3510c8f` |
+| DCS regression `1794273971059/evidence.json` | `cbdf7403ebd12dce39d3881479a98dd0d900e5b99e54ba0cb2b1b1c813cb1085` |

@@ -1235,7 +1235,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
 
 #[test]
 fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_channels() {
-    use crate::game_telemetry::{FixtureSource, Game, RawSample, SourceIdentity};
+    use crate::game_telemetry::{FixtureSource, Game};
     for game in [Game::Corsa, Game::Competizione, Game::Evo] {
         let id = game.id();
         let prepared = prepared(
@@ -1251,26 +1251,7 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
         let mut acquired = authored_sources(&plan, Some(prepared)).unwrap();
         acquired.acquired = true;
         let mut queue = FixtureSource::new_for_game(game);
-        let mut sample = RawSample {
-            source: SourceIdentity {
-                id: game.source_id(42),
-                epoch: 1,
-            },
-            physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
-            graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
-            statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
-            capture: None,
-        };
-        if game == Game::Evo {
-            sample.physics.resize(592, 0);
-            sample.physics[588..592].copy_from_slice(&7500i32.to_le_bytes());
-            sample.graphics.resize(3119, 0);
-            sample.graphics[3086..3094].copy_from_slice(b"evo-car\0");
-            sample.statics.fill(0);
-            sample.statics[0..4].copy_from_slice(b"1.0\0");
-            sample.statics[15..21].copy_from_slice(b"0.9.1\0");
-            sample.statics[136..142].copy_from_slice(b"imola\0");
-        }
+        let mut sample = assetto_fixture_sample(game);
         for packet in 10u32..13 {
             sample.physics[..4].copy_from_slice(&packet.to_le_bytes());
             queue.push(sample.clone()).unwrap();
@@ -1801,5 +1782,6 @@ fn direct_frame(admission: &Admission) -> &Frame {
 }
 include!("games/profiles/native_transport_tests.rs");
 include!("games/profiles/native_expiry_recovery_tests.rs");
+include!("games/profiles/assetto_timing_tests.rs");
 
 include!("games/profiles/source_wake_tests.rs");

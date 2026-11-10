@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {until} from '../../scripts/reactive/cdp.mjs';
 import {summarizeMilliseconds} from './vjoy-rate-transport.mjs';
 import {openMcpTelemetryTiming} from './dcs-mcp-telemetry-timing.mjs';
+import {openReducerTiming} from './native-reducer-timing.mjs';
 
 export function ownshipSubmission() {
   let pending;
@@ -115,40 +116,6 @@ async function clockBracket(cdp) {
   return best;
 }
 
-async function openReducerTiming(cdp) {
-  const invoke = request => cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{
-    request:${JSON.stringify(request)}
-  })`);
-  const status = await invoke({command:'profile_status', clientId:'dcs-native-timing'});
-  assert.equal(status.ok, true, status.error);
-  const {owner} = status.state.profiles.profileSession;
-  const command = 'qualification_native_timing', source = 'telemetry', port = 'flight.airspeed.true';
-  await invoke({command, action:'start', owner, source, port});
-  return async () => {
-    const {rows} = await invoke({command, action:'finish', owner});
-    const durations = [], cadence = [];
-    let gaps = 0n;
-    for (const [index, row] of rows.entries()) {
-      const elapsed = BigInt(row.appliedUs) - BigInt(row.capturedUs);
-      assert.ok(elapsed >= 0n);
-      durations.push(Number(elapsed) / 1000);
-      if (index === 0) continue;
-      const previous = rows[index - 1];
-      assert.equal(row.clockId, previous.clockId);
-      assert.equal(row.producer, previous.producer);
-      assert.equal(row.generation, previous.generation);
-      const gap = BigInt(row.sequence) - BigInt(previous.sequence);
-      const interval = BigInt(row.capturedUs) - BigInt(previous.capturedUs);
-      assert.ok(gap > 0n && interval > 0n);
-      gaps += gap - 1n;
-      cadence.push(Number(interval) / 1000);
-    }
-    assert.ok(rows.length >= sampleCount - 1, 'The selected native endpoint must advance through the timing window.');
-    return {source, port, rows, captureSequenceGaps:String(gaps), captureIntervalsMs:summarizeMilliseconds(cadence),
-      captureToReducerBatchMs:summarizeMilliseconds(durations)};
-  };
-}
-
 // The invalidation has no packet payload. Match the unique value from the
 // observation-driven read instead of treating any notification as its receipt.
 export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitOwnship) {
@@ -198,7 +165,9 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
         }
       });
     })()`);
-    if (process.env.OSG_DCS_NATIVE_REDUCER_TIMING === '1') finishReducer = await openReducerTiming(cdp);
+    if (process.env.OSG_DCS_NATIVE_REDUCER_TIMING === '1') {
+      finishReducer = await openReducerTiming(cdp, {source:'telemetry', port:'flight.airspeed.true', minimumSamples:sampleCount - 1});
+    }
     for (let index = 0; index < sampleCount; index++) {
       const value = -20 - index;
       const fastBefore = await cdp.evaluate(`(() => {

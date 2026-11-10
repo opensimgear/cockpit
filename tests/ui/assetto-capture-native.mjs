@@ -6,11 +6,13 @@ import {promisify} from 'node:util';
 import {mkdir,writeFile,readFile,access,rm} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
 import {nativePage,until} from '../../scripts/reactive/cdp.mjs';
+import {openReducerTiming} from './native-reducer-timing.mjs';
 
 const specs=[['assetto-corsa','acs.exe','Assetto Corsa'],['assetto-corsa-competizione','AC2-Win64-Shipping.exe','Assetto Corsa Competizione'],
   ['assetto-corsa-evo','AssettoCorsaEVO.exe','Assetto Corsa EVO'],['assetto-corsa-rally','acr.exe','Assetto Corsa Rally']];
 const execute=promisify(execFile);
 const normalized=path=>path.replace(/^\\\\\?\\/,'').replaceAll('\\','/').toLowerCase();
+const timingPort='physics.packetId';
 
 test('four Assetto native page readers preserve processing, frozen expiry and recovery',{
   skip:process.env.OSG_ASSETTO_CAPTURE_NATIVE!=='1',timeout:300000,
@@ -26,6 +28,8 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
   };
   const games=async()=>(await native({command:'game_get_state'})).games;
   try{
+    await until(()=>page.evaluate(`!!window.__TAURI_INTERNALS__
+      && !!document.querySelector('nav[aria-label="Main navigation"]')`));
     await page.evaluate(`import('/src/lib/streams/shared.ts').then(({SharedObservations})=>{
       const observations=new SharedObservations();
       window.__assettoTelemetryObservation={observations,revision:'0',frames:0};
@@ -88,7 +92,10 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           total=result.total;assert.ok(result.ports.length||allPorts.length===total);allPorts.push(...result.ports);
         }
         const expected={rpm:4500,max_rpm:9000,rev_ratio:0.5,'engine.rpm':4500,'vehicle.speed_mps':20};
-        const selected=Object.keys(expected).map(id=>{const port=allPorts.find(port=>port.descriptor.id===`channel:${id}`);assert.ok(port,`${gameId}: ${id}`);return port;});
+        const measureTiming=process.env.OSG_ASSETTO_NATIVE_REDUCER_TIMING==='1';
+        const selectedIds=Object.keys(expected);
+        if(measureTiming) selectedIds.push(timingPort);
+        const selected=selectedIds.map(id=>{const port=allPorts.find(port=>port.descriptor.id===`channel:${id}`);assert.ok(port,`${gameId}: ${id}`);return port;});
         const document=(await native({command:'profile_create',name:`Capture ${gameId} ${Date.now()}`})).profiles.document;
         profile={id:document.id,revision:document.revision};record.profile=profile;
         document.eligibility={gameIds:[gameId]};
@@ -144,9 +151,16 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           return channel?.status==='known'&&channel.value===expected['engine.rpm']&&channel;
         },Boolean,25000);
         const frames=()=>page.evaluate('window.__assettoTelemetryObservation.frames');
-        const framesBefore=await frames();
-        await new Promise(resolve=>setTimeout(resolve,1250));
-        record.phases.liveNotifications=await frames()-framesBefore;
+        const finishTiming=measureTiming ? await openReducerTiming(page,{
+          source:'telemetry',port:timingPort,minimumSamples:16,packetCounter:true,
+        }) : undefined;
+        try{
+          const framesBefore=await frames();
+          await new Promise(resolve=>setTimeout(resolve,1250));
+          record.phases.liveNotifications=await frames()-framesBefore;
+        }finally{
+          record.phases.nativeReducerTiming=await finishTiming?.();
+        }
         assert.ok(record.phases.liveNotifications>=16,
           `${gameId}: expected source wakes beyond the 100 ms maintenance cadence, got ${record.phases.liveNotifications}`);
         await mode('frozen');

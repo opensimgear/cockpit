@@ -5,7 +5,8 @@ use osg_mapping::{
         native::{Admission, NativeChangeKind, NativeInput, NativeValidity},
         Phase,
     },
-    program::Endpoint,
+    program::{Endpoint, SignalSample, SignalValue},
+    signal::PortValue,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -66,12 +67,14 @@ pub(crate) fn request(
             port,
         } => {
             if current_owner != Some(&owner)
-                || owner.game_id.as_deref() != Some("dcs")
+                || !owner.game_id.as_deref().is_some_and(|game| {
+                    game == "dcs" || crate::game_telemetry::Game::from_id(game).is_ok()
+                })
                 || [&source, &port]
                     .into_iter()
                     .any(|value| value.is_empty() || value.len() > 512)
             {
-                return Err("Select one exact DCS profile endpoint.".into());
+                return Err("Select one exact DCS or Assetto profile endpoint.".into());
             }
             let now = Instant::now();
             if slot.as_ref().is_some_and(|tracker| {
@@ -194,9 +197,14 @@ fn observe(
             capture.generation.0,
             capture.sequence.0,
         ));
+        let value = match &change.sample {
+            SignalSample::Known(SignalValue::Scalar(PortValue::Number(value))) => Some(*value),
+            _ => None,
+        };
         tracker.rows.push(json!({
             "producer": capture.producer_id, "generation": capture.generation, "sequence": capture.sequence,
             "capturedUs": capture.captured_us, "appliedUs": applied_us.to_string(), "clockId": frame.clock_id,
+            "value": value,
         }));
     }
 }
@@ -227,7 +235,7 @@ mod tests {
         }
         let owner = json!({
             "session": "fixture", "generation": 1, "profileId": "fixture",
-            "profileRevision": 1, "gameId": "dcs",
+            "profileRevision": 1, "gameId": "assetto-corsa-rally",
         });
         let start = json!({
             "command": "qualification_native_timing", "action": "start", "owner": owner,
@@ -264,7 +272,11 @@ mod tests {
                 sources: vec![SourcePort {
                     endpoint: endpoint.clone(),
                     contract: PortContract::State {
-                        schema: ScalarSchema::Boolean {},
+                        schema: ScalarSchema::Integer {
+                            min: 0,
+                            max: 100,
+                            unit: None,
+                        },
                         freshness_ms: 100,
                         fallback: None,
                     },
@@ -308,7 +320,7 @@ mod tests {
                     port_id: "airspeed".into(),
                     continuity: Counter(1),
                     kind,
-                    sample: SignalSample::scalar(PortValue::Boolean(true)),
+                    sample: SignalSample::scalar(PortValue::Number(sequence as f64)),
                     contributors: vec![NativeContributor {
                         input: NativeInput::Channel("airspeed".into()),
                         capture: 0,
@@ -363,6 +375,7 @@ mod tests {
         );
         assert_eq!(tracker.rows[0]["capturedUs"], "20");
         assert_eq!(tracker.rows[0]["appliedUs"], "23");
+        assert_eq!(tracker.rows[0]["value"], 2.0);
         observe(&mut tracker, &[update], &[], &reducer, 25);
         assert!(tracker.error.is_some());
         assert_eq!(tracker.rows.len(), 1);
