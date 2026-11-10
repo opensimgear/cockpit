@@ -218,3 +218,24 @@ build using the installed tools.
 | Candidate `lifecycle_probe.exe` | `7b85d07d7847e355a817a6c49fe1bc8d05cd9fc1977e7e267975826165049991` |
 | Instrumented Windows companion test binary | `6cbe141d1fb00c290c9ed7b1a1190536918d40fd0a44a13b7272f1e83362a04a` |
 | `companion-client-io-native/1794231227027/evidence.json` | `d108a3a78db75358bf21b9bc0bf6c587fcc3cc5b506f97fb46903be1069e71b5` |
+
+## Native mobile build artifacts on 10 November 2026
+
+The build-only [workflow run 42748855063](https://github.com/opensimgear/cockpit/actions/runs/42748855063)
+passed the shared checks, Android debug APK build and iOS simulator
+build on published revision `940ed755b3e9b1bbbf31754ebfc2d1f5c814d612`.
+The revision includes the Local Network, Bonjour and lifecycle changes.
+The local Cockpit branch carries a later shared stream change that raises
+only the Cockpit portal's reader limit.
+
+| Artifact | Verified packaged contents | SHA-256 |
+| --- | --- | --- |
+| Android arm64 debug APK | The merged manifest targets and compiles against API 37 with minimum API 29. It declares Local Network and Wi-Fi multicast permissions. The APK includes the arm64 native companion library. | `f277f530c0b20b9bd42042e76b7fda048b1a82a86fac993342184c96b4112958` |
+| iOS arm64 simulator bundle | The packaged Info.plist declares `iPhoneSimulator`, a minimum OS of 15.0, a Local Network usage description and the `_osg-companion._tcp` Bonjour service. Xcode 16.4 used the iOS 18.5 simulator SDK. | `a757d27f98953fb45f1c3d5082461fcb428e18a628f3208b2095287b91b2629b` |
+
+Both artifacts use the default debug configuration. Authenticated
+panel device qualification uses the separate `mobile-qualification`
+feature. Native installation and runtime behavior, protected-store
+recovery, LAN permission transitions and signed-device distribution
+remain in #55, #56 and #199. All 12 mobile packaging tests also passed
+locally in Ubuntu.
