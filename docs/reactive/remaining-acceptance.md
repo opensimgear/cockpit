@@ -5,10 +5,9 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 44 checked and 11
-open. Six of the open criteria were transferred to #199 for user-operated
-qualification. Some remaining criteria have delivered software and outstanding
-integrated or platform qualification.
+The original #189–198 acceptance list has 55 criteria, with 45 checked and 10
+open. User-operated qualification is tracked in #199. Some open criteria
+combine delivered software with integrated or platform qualification.
 
 #190 (R1, shared stream contracts), #191 (R2, native input), #192 (R3,
 telemetry streams), #193 (R4, desktop and direct output), #194 (R5,
@@ -28,14 +27,25 @@ cover discovery, process, filesystem, settings and Activity on native
 Windows and browser-dev. Windows process-event consent and watcher lifetime
 and macOS LaunchAgent delivery remain in #199.
 
+The parent inventory criterion is verified. The committed scan reconciled
+all 473 current timing sites across Cockpit and the three sibling firmware
+repositories, all 247 historical dispositions and the frontend timer owners.
+The [timing matrix](current-timing/README.md#acquisition-and-publication-without-a-named-timer-call)
+also covers acquisition and publication inside owners that the scanner
+cannot identify by a named timing call. The [source matrix](read-model-sources.md)
+accounts for the committed read-model producers. The [remaining acquisition
+boundaries](acquisition.md#unresolved-acquisition-boundaries) are recorded
+separately, including Sunton held-touch sampling. The stricter source
+decision and hardware qualification remain in #189 and #199.
+
 ## Software and software qualification remain in the original issues
 
 | Issue | Remaining boundary |
 | --- | --- |
 | #189 | The [current timing matrix](current-timing/README.md) accounts for the scanned sites and documents acquisition inside hardware and platform loops. DCS and Assetto setup [withdraw readiness when file watch registration fails and recover from a fresh baseline](../verification/2026-11-08-setup-watch-recovery.md). Passive vehicle admission requires a live exact process watch and a capture notification. Installation and setup commits wake scope revalidation independently of the catalogue worker. DCS alias and X-Plane installed aircraft catalogues use [scoped native file notifications](../verification/2026-11-08-vehicle-catalogue-wakes.md). The [30-minute Windows baseline](../verification/2026-11-09-dual-rate-recheck.md#30-minute-windows-baseline) verifies the software timing targets. The operator approved the active 250 ms HidHide executable safety check. Sunton held-touch qualification remains open for a future hardware or firmware change. The user approved one native shared-memory reader per active Assetto game. The approved [Windows process discovery boundary](../verification/2026-11-07-game-process-discovery-preference.md) uses a Settings opt-in and one shared one-second check when events are off or denied. |
 | #193 | Worker-owned tap release, native high-resolution waits, parent/helper scope notifications and immutable queued admission proofs are delivered. Qualified native HID/internal desktop profiles use retained wakes and deadlines, and the recent-application chooser uses native events. Authored DCS profiles with [explicit](../verification/2026-11-08-mixed-game-desktop-wakes.md) and [selected-game](../verification/2026-11-08-selected-game-desktop-wakes.md) desktop scopes run without the 5 ms service interval while their watches and process proof are healthy. The controlled two-window focus check passes after Windows is unlocked. Stop handles a known late worker reply. [Neutral preparation](../verification/2026-11-09-desktop-neutral-preparation.md) removes Arm from the measured first press. [Abrupt private helper loss](../verification/2026-11-09-desktop-worker-loss.md) passes with a held key, explicit recovery and fresh input after re-Apply. [Audit attribution](../verification/2026-11-09-desktop-journal-write-comparison.md) places the longest serial dispatch waits behind prior recovery writes. [Ordered KeyHold writes](../verification/2026-11-09-ordered-keyhold-journal.md) combine the previous receipt and the next queued intent, lowering steady p95 in both paired comparisons. The same path combines two adjacent release receipts and reduces the wait before the second release issues. [Keyboard first dispatch and queued tap dwell](../verification/2026-11-09-desktop-queued-taps.md) pass on the Windows fixture. [Mixed key and pointer delivery](../verification/2026-11-09-desktop-queued-taps.md#mixed-keyboard-and-pointer-delivery) passes under Profiles navigation. Two stock mixed-load runs passed the p95 and p99 budgets and closed #193. Live simulator effects remain in #199. |
-| #195 | Actual simulator feedback and separate native transport and board qualification remain. Listener accepts/server peers and native client reads use event I/O. Pending approval uses a host event. Active profile companion scheduling uses producer wakes and explicit deadlines. Unsupported adapters and physical companion firmware acquisition still need their original software disposition. The historical legacy mapping-route worker has no Cockpit caller and its commands are rejected. |
-| #198 | The [30-minute dual-rate Windows soak](../verification/2026-11-09-dual-rate-recheck.md#30-minute-windows-baseline), [software burst and fault scenarios](../verification/2026-11-07-stream-fault-scenarios.md), and [terminal observation reopen](../verification/2026-11-08-terminal-observation-reopen.md) passed on their recorded builds. All eight views passed [60-second native and browser-dev idle traces](../verification/2026-11-08-idle-transport-matrix.md) with zero gateway requests. The [Windows native suite](../verification/2026-11-08-telemetry-quality-transitions.md#retain-identical-captures-on-2026-11-09) passed 2,486 tests at eight threads after identical telemetry projections stopped replacing the retained capture. The integrated matrix, full timing budget, remaining applicable suites and CI, and final acquisition inventory remain open. Physical unplug and replug remain in #199. |
+| #195 | Browser and Windows native client transport, lease, release and backpressure checks passed. Android and iOS shell software qualification remains open through #55 and #56. Actual simulator feedback, signed device behavior and physical companion board checks remain in #199. |
+| #198 | The [30-minute dual-rate Windows soak](../verification/2026-11-09-dual-rate-recheck.md#30-minute-windows-baseline), [software burst and fault scenarios](../verification/2026-11-07-stream-fault-scenarios.md), and [terminal observation reopen](../verification/2026-11-08-terminal-observation-reopen.md) passed on their recorded builds. All eight views passed [60-second native and browser-dev idle traces](../verification/2026-11-08-idle-transport-matrix.md) with zero gateway requests. The [Windows dev vJoy qualification](../verification/2026-11-07-virtual-preview-reopen.md#successful-vjoy-api-calls-under-the-dual-rate-workload) verified driver acceptance separately from Raw Input, and the Windows host suite passed 2,510 tests. The integrated matrix and timing criteria remain open for the physical and actual simulator paths. |
 
 The #198 timing evidence now includes the
 [minimum host input lease margins during the 30-minute dual-rate soak](../verification/2026-11-09-dual-rate-recheck.md#sustained-host-input-lease-margin).
