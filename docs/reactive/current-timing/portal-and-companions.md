@@ -32,7 +32,7 @@
 | `packages/companion-ui/src/PanelCanvas.svelte:59` | Widget deadline | Advance the panel controller at its next authored transition. |
 | `packages/companion-ui/src/PanelCanvas.svelte:66` | Presentation | Reproject the panel at its visible feedback expiry boundary. |
 | `packages/widget-compiler/src/compiler.ts:87` | Cooperative yield | Yield between authored raster frames so an explicit compile can report progress and honor cancellation. |
-| `scripts/native-gateway-bridge.mjs:85` | Operation deadline | Fail a timed-out browser-dev gateway request and retire the stalled native service. |
+| `scripts/native-gateway-bridge.mjs:86` | Operation deadline | Fail a timed-out browser-dev gateway request and retire the stalled native service. |
 | `src/lib/activation-progress-presenter.ts:64` | Declaration | Handle for the local progress confirmation deadline. |
 | `src/lib/activation-progress-presenter.ts:69` | Presentation | Injected scheduler for the progress presenter's confirmation deadline. Native observation owns progress data. |
 | `src/lib/activity/ActivityPanel.svelte:28` | User debounce | Apply the search text 250 ms after the last edit. |
