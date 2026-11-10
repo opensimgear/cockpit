@@ -85,11 +85,11 @@ on actual writes; never discard valid latched bytes solely because their capture
 is old. Account for the worst case of 65,536 distinct byte captures and copy-on-write
 snapshots. Measure string/address catalogue maxima before fixing frame limits.
 
-## Remaining integration
+## Implementation and qualification
 
 The [acquisition prerequisite verification](../verification/2026-11-03-native-capture-evidence.md)
-records ownship receive time/counters and X-Plane component time/counters now
-retained at their native owners. Their mapping integration remains below.
+records ownship receive time and counters, and X-Plane component time and
+counters, at their native owners.
 
 The [BIOS byte-capture verification](../verification/2026-11-03-bios-byte-captures.md)
 records original per-byte receive positions/times through fragmented parsing and
@@ -102,12 +102,16 @@ positions separately from the processed raw cursor and qualification generation.
   writes; reset/gap fences clear validity and corresponding marks.
 - All four Assetto dialects now retain page-specific host acquisition evidence
   before decoding/queuing; see the [page-capture verification](../verification/2026-11-03-assetto-page-captures.md).
-  Exact field/derived contributor selection is retained in the paired values. This does not resolve
-  their upstream notification gate or prove simulator write time/multi-page atomicity.
-- `GameSources` still needs portable captured-value envelopes and independent
-  per-port family state. Reducer admission timestamps are not native proof.
-- Reducer state, script/timer tickets, desktop observations and adapters need
-  contributors and selective per-port baseline semantics.
+  Exact field and derived contributor selection is retained in the paired
+  values. Host acquisition uses the [approved shared-memory reader](acquisition.md#unresolved-acquisition-boundaries).
+  Simulator write time and multi-page atomicity remain separate.
+- `GameSources` emits portable capture tables with independent family
+  continuity and per-port validity. The reducer keeps original contributor
+  stamps for state, script and timer work, and desktop observations.
+  A lease-only update can renew a latched value without creating an
+  occurrence. The [native ownship trace](../verification/2026-11-07-dcs-telemetry-backpressure.md#host-capture-to-reducer-batch-return)
+  checks the original capture sequence and stamp against the exact
+  reducer sample after admission.
 
 Acceptance includes deferred reads, equal-value captures, unrelated updates,
 mixed-age derived values, independent ownship/BIOS restart, absent components,

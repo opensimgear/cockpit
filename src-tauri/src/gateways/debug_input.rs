@@ -22,6 +22,13 @@ impl GatewayManager {
         let lease = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).virtual_lease_evidence(&owner)?;
         Ok(json!({"owner":owner,"lease":lease}))
     }
+
+    pub(crate) fn qualify_native_timing(&self, request: Value) -> Result<Value, String> {
+        let session = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+        crate::profile_debug_controller::qualification_native_timing::request(
+            request, session.status().owner.as_ref(),
+        )
+    }
 }
 
 impl GatewayManager {

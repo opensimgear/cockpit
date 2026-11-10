@@ -115,6 +115,40 @@ async function clockBracket(cdp) {
   return best;
 }
 
+async function openReducerTiming(cdp) {
+  const invoke = request => cdp.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{
+    request:${JSON.stringify(request)}
+  })`);
+  const status = await invoke({command:'profile_status', clientId:'dcs-native-timing'});
+  assert.equal(status.ok, true, status.error);
+  const {owner} = status.state.profiles.profileSession;
+  const command = 'qualification_native_timing', source = 'telemetry', port = 'flight.airspeed.true';
+  await invoke({command, action:'start', owner, source, port});
+  return async () => {
+    const {rows} = await invoke({command, action:'finish', owner});
+    const durations = [], cadence = [];
+    let gaps = 0n;
+    for (const [index, row] of rows.entries()) {
+      const elapsed = BigInt(row.appliedUs) - BigInt(row.capturedUs);
+      assert.ok(elapsed >= 0n);
+      durations.push(Number(elapsed) / 1000);
+      if (index === 0) continue;
+      const previous = rows[index - 1];
+      assert.equal(row.clockId, previous.clockId);
+      assert.equal(row.producer, previous.producer);
+      assert.equal(row.generation, previous.generation);
+      const gap = BigInt(row.sequence) - BigInt(previous.sequence);
+      const interval = BigInt(row.capturedUs) - BigInt(previous.capturedUs);
+      assert.ok(gap > 0n && interval > 0n);
+      gaps += gap - 1n;
+      cadence.push(Number(interval) / 1000);
+    }
+    assert.ok(rows.length >= sampleCount - 1, 'The selected native endpoint must advance through the timing window.');
+    return {source, port, rows, captureSequenceGaps:String(gaps), captureIntervalsMs:summarizeMilliseconds(cadence),
+      captureToReducerBatchMs:summarizeMilliseconds(durations)};
+  };
+}
+
 // The invalidation has no packet payload. Match the unique value from the
 // observation-driven read instead of treating any notification as its receipt.
 export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitOwnship) {
@@ -124,6 +158,7 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
   const mcpSamples = [];
   const mcp = process.env.OSG_DCS_MCP_TELEMETRY_TIMING === '1'
     ? await openMcpTelemetryTiming(cdp, timingChannel) : undefined;
+  let finishReducer;
   try {
     await cdp.evaluate(`(async () => {
       const {GameTelemetryClient,GameTelemetryController} = await import('/src/lib/game-telemetry.ts');
@@ -163,6 +198,7 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
         }
       });
     })()`);
+    if (process.env.OSG_DCS_NATIVE_REDUCER_TIMING === '1') finishReducer = await openReducerTiming(cdp);
     for (let index = 0; index < sampleCount; index++) {
       const value = -20 - index;
       const fastBefore = await cdp.evaluate(`(() => {
@@ -185,6 +221,9 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
       samples.push({...submission, ...received, fastBefore});
       if (mcpSample) mcpSamples.push(mcpSample);
     }
+    const finish = finishReducer;
+    finishReducer = undefined;
+    const nativeReducerTiming = await finish?.();
     const final = await clockBracket(cdp);
     const low = Math.max(initial.low, final.low);
     const high = Math.min(initial.high, final.high);
@@ -204,11 +243,13 @@ export async function measureDcsTelemetryBackpressure(cdp, nativeValues, submitO
     const mcpTiming = mcp && {samples:mcpSamples,
       submissionToValueMs:summarizeMilliseconds(mcpSamples.map(sample => sample.receivedMs - sample.submittedMs)),
       matchingReadMs:summarizeMilliseconds(mcpSamples.map(sample => sample.receivedMs - sample.requestedMs))};
-    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs, notificationToRequestMs, mcpTiming,
+    return {sampleCount, offeredPacketHz, lowerMs, upperMs, inspectionMs, projectionMs, notificationToRequestMs, mcpTiming, nativeReducerTiming,
       alignmentWidthMs:high - low, samples, budgetMisses};
   } finally {
     nativeValues[timingChannel] = original;
     try {
+      // Release any armed trace even when an earlier fixture phase failed.
+      await finishReducer?.().catch(() => {});
       await cdp.evaluate('window.__dcsSlowReader.stopTiming?.(); delete window.__dcsSlowReader.stopTiming;');
     } finally { await mcp?.close(); }
   }

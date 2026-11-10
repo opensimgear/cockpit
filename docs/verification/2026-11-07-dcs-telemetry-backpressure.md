@@ -273,3 +273,39 @@ The local record `1794272479725/evidence.json` has SHA-256
 The MCP timing helper reached 96.84% lines, 89.47% branches and 87.50%
 functions in the live fixture. The default Windows fixture also passed, as
 did all 18 focused telemetry and trace tests.
+
+## Host capture to reducer batch return
+
+The Windows qualification build traces the active profile's
+`telemetry / flight.airspeed.true` endpoint while the same authored
+workload exercises the WebView and MCP read paths. The host stamps the
+received DCS ownship datagram before decoding. The trace uses that original
+stamp and checks the same sequence, timestamp and sample in the reducer
+after admission. It records the host clock immediately after the batch
+returns, before destination dispatch or sample publication.
+
+| Boundary | Samples | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Host capture intervals | 95 | 47.044 ms | 48.375 ms | 52.550 ms |
+| Host capture to reducer batch return | 96 | 0.967 ms | 1.169 ms | 1.245 ms |
+
+The 96 accepted captures covered native sequence 130 through 225 from
+one producer generation on the same clock, with no sequence gaps. The
+fixture reported zero cleanup errors. The first attempt stopped before
+collecting samples because the diagnostic request included an unsupported
+gateway client ID. The corrected fixture sends the command's exact fields.
+
+Build the Windows dev binary with `--features reactive-qualification`
+and add `OSG_REACTIVE_QUALIFICATION=1` and
+`OSG_DCS_NATIVE_REDUCER_TIMING=1` to the authored MCP timing run above.
+The trace retains at most 512 rows for one active profile owner and endpoint.
+An interrupted trace expires after 30 seconds.
+The binary SHA-256 is
+`d765f910498da5ee241e53ac5992d089656ee28474e06c3476c17f846ea72019`.
+The local record `1794273414319/evidence.json` has SHA-256
+`8354d54088bcd2dcbad68ae623af743e9b840893bb3f4eb4beea1042de56a7b2`.
+All 2,505 Windows library tests passed with 18 existing ignores, as did all
+12 opt-in qualification tests and 18 focused JavaScript tests. LLVM measured
+89.27% line and 72.22% function coverage for the native trace module.
+Physical input, actual simulator export and other acquisition paths remain
+separate timing boundaries.

@@ -1,7 +1,7 @@
 //! Bound debug capture-to-reducer time by the end of its accepted batch.
 use super::Request;
 use crate::profile_session::RunOwner;
-use osg_mapping::engine::{typed::native::Admission, Reason};
+use osg_mapping::engine::{typed::{native::Admission, Phase}, Reason};
 use serde_json::{json, Value};
 use std::{
     sync::{
@@ -154,12 +154,21 @@ pub(crate) fn accepted(
     owner: &RunOwner,
     admissions: &[Admission],
     diagnostics: &[String],
+    reducer: &Phase,
     clock: impl FnOnce() -> u64,
 ) {
-    if admissions.is_empty() || !ACTIVE.load(Ordering::Acquire) {
+    let debug_active = ACTIVE.load(Ordering::Acquire);
+    let native_active = super::qualification_native_timing::active();
+    if admissions.is_empty() || !(debug_active || native_active) {
         return;
     }
     let applied_us = clock();
+    if native_active {
+        super::qualification_native_timing::accepted(owner, admissions, diagnostics, reducer, applied_us);
+    }
+    if !debug_active {
+        return;
+    }
     let mut slot = TRACKER.lock().unwrap_or_else(|p| p.into_inner());
     let Some(tracker) = slot
         .as_mut()

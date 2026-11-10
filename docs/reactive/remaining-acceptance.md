@@ -48,6 +48,9 @@ The [authored DCS telemetry trace](../verification/2026-11-07-dcs-telemetry-back
 measures UDP submission to the matching value through the MCP and WebView
 read paths while a second WebView reader is stalled. It separates the
 matching MCP request time from end-to-end read latency.
+The [native ownship trace](../verification/2026-11-07-dcs-telemetry-backpressure.md#host-capture-to-reducer-batch-return)
+also pairs 96 consecutive native captures with the exact samples retained
+by the reducer. Host capture to batch return measured 1.169 ms p95.
 
 The [dated evidence index](../verification/2026-11-09-reactive-evidence-index.md)
 records app, firmware and profile identities, scoped workloads, results and

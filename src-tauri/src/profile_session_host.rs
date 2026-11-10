@@ -1368,7 +1368,7 @@ impl Host for NativeProfileHost {
         )?;
         #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
         crate::profile_debug_controller::qualification_reducer::accepted(
-            &run.owner, &admissions, &admission_diagnostics, || controllers.monotonic_us(),
+            &run.owner, &admissions, &admission_diagnostics, reducer, || controllers.monotonic_us(),
         );
         degraded.extend(admission_diagnostics);
         reducer.advance(tick)?;

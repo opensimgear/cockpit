@@ -20,6 +20,8 @@ pub(crate) mod ingress;
 pub(crate) mod qualification;
 #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
 pub(crate) mod qualification_reducer;
+#[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+pub(crate) mod qualification_native_timing;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

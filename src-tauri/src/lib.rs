@@ -340,6 +340,10 @@ async fn gateway_request(
             return Ok(profile_debug_controller::qualification::run(&service, request));
         }
         #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
+        if request["command"] == "qualification_native_timing" {
+            return service.qualify_native_timing(request);
+        }
+        #[cfg(all(windows, debug_assertions, feature = "reactive-qualification"))]
         if request["command"] == "qualification_companion_leases" {
             return service.qualify_companion_leases(request);
         }
