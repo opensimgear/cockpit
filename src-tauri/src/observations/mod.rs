@@ -103,7 +103,7 @@ impl Runtime {
         wakes.retain(|wake|wake.strong_count()>0);
         let weak=Arc::downgrade(&wake);
         // Includes independent input and metadata bridges (four each), games
-        // and profile samples. Keep the bound aligned with delivery admission.
+        // and profile samples. This bounds producer watches, not readers.
         if wakes.len()<64&&!wakes.iter().any(|old|old.ptr_eq(&weak)){wakes.push(weak);}
     }
     pub(crate) fn broker(&self) -> Broker {
@@ -135,7 +135,7 @@ impl Runtime {
         self.inner
             .workers
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < 64).then_some(count + 1)
+                (count < osg_streams::MAX_READERS).then_some(count + 1)
             })
             .map_err(|_| "Observation delivery worker limit reached.")?;
         let slot = WorkerSlot(self.inner.workers.clone(), self.inner.reader_wake.lock().unwrap_or_else(|p|p.into_inner()).clone());

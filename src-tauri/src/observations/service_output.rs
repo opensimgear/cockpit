@@ -9,7 +9,8 @@ use std::{
 };
 
 const BYTE_LIMIT: usize = 16 * 1024 * 1024;
-const FRAME_LIMIT: usize = 64;
+// Leave room for control replies beside the browser bridge's reader deliveries.
+const FRAME_LIMIT: usize = 128;
 
 #[derive(Clone)]
 pub struct ServiceOutput {

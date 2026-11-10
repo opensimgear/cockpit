@@ -11,7 +11,7 @@ test('default browser factories share a context transport; injected dependencies
   assert.equal(createBrowserObservationTransport(),createBrowserObservationTransport());
   assert.notEqual(createBrowserObservationTransport({}),createBrowserObservationTransport({}));
 });
-function harness({subscribeWait, ackWait, unsubscribeWait, initial, responseMode, ackStatus=200}={}) {
+function harness({subscribeWait, ackWait, unsubscribeWait, initial, responseMode, ackStatus=200, unsubscribeStatus=200}={}) {
   const calls=[],physical=[],errors=[];let serial=0;
   const transport=createBrowserObservationTransport({connectionId:()=>`00000000-0000-4000-8000-${String(++serial).padStart(12,'0')}`,fetch:async(url,init)=>{
     const body=JSON.parse(init.body);calls.push({url,init,body});
@@ -30,7 +30,7 @@ function harness({subscribeWait, ackWait, unsubscribeWait, initial, responseMode
       return json({ok:true,subscriptionId:`token-${body.requestId}`});
     }
     if(url.endsWith('/ack')) {if(ackWait)await ackWait(body);return new Response(null,{status:ackStatus});}
-    if(url.endsWith('/unsubscribe')){if(unsubscribeWait)await unsubscribeWait;return json({ok:true});}
+    if(url.endsWith('/unsubscribe')){if(unsubscribeWait)await unsubscribeWait;return new Response(null,{status:unsubscribeStatus});}
     throw Error('unexpected request '+url);
   }});
   function send(requestId,overrides={},deliveryId='1') {
@@ -69,20 +69,20 @@ test('one slow ACK never blocks independent topic delivery; one early ACK-race f
   first.controller.abort();second.controller.abort();
 });
 
-test('an application context admits 56 readers and reuses released capacity',async()=>{
+test('an application context admits 72 readers and reuses released capacity',async()=>{
   const h=harness();
-  const readers=Array.from({length:56},(_,index)=>h.open(`topic-${index}`));
+  const readers=Array.from({length:72},(_,index)=>h.open(`topic-${index}`));
   h.open('overflow');
   await turn();
   const subscriptions=()=>h.calls.filter(call=>call.url.endsWith('/subscribe'));
-  assert.equal(subscriptions().length,56);
+  assert.equal(subscriptions().length,72);
   assert.deepEqual(h.errors,['Observation subscription limit exceeded']);
   readers[0].controller.abort();
   const replacement=h.open('replacement');
   await turn();
   assert.equal(subscriptions().at(-1).body.topic,'replacement');
   assert.equal(h.physical.length,1);
-  h.send('57');
+  h.send('73');
   await turn();
   assert.equal(replacement.frames.length,1);
   h.physical[0].controller.close();
@@ -159,11 +159,47 @@ test('already aborted entries perform no work, last disposal aborts pending phys
   assert.equal(calls[0][1].signal.aborted,true);assert.equal(cancelled,true);
 });
 
-test('stalled cancellation controls remain bounded and fault the physical connection at the budget',async()=>{
-  const stalled=deferred(),h=harness({unsubscribeWait:stalled.promise});h.open('keeper');await turn();
-  for(let index=0;index<17;index++){const entry=h.open(`transient${index}`);await turn();entry.controller.abort();}
-  await turn();assert.equal(h.calls.filter(call=>call.url.endsWith('/unsubscribe')).length,16);
-  assert.equal(h.errors.length,1);assert.match(h.errors[0],/cancellation budget/);assert.equal(h.physical[0].cancelled,true);
-  assert.ok(h.calls.filter(call=>call.url.endsWith('/unsubscribe')).every(call=>call.init.signal.aborted));
+test('a full path retires before replacement opens while existing topics deliver',async()=>{
+  const stalled=deferred(),h=harness({unsubscribeWait:stalled.promise});
+  const keeper=h.open('keeper');
+  const readers=Array.from({length:48},(_,index)=>h.open(`old-${index}`));
+  await turn();
+  for(const reader of readers)reader.controller.abort();
+  const replacement=h.open('replacement');
+  for(let i=0;i<130;i++)h.open('abandoned').controller.abort();
+  const second=h.open('second-replacement');
+  h.send('1');await turn();
+  assert.equal(keeper.frames.length,1);
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/unsubscribe')).length,48);
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/subscribe')).length,49);
   stalled.resolve();await turn();
+  const latest=h.calls.filter(call=>call.url.endsWith('/subscribe')).slice(-2).map(call=>call.body);
+  assert.deepEqual(latest.map(({topic,requestId})=>[topic,requestId]),[['replacement','50'],['second-replacement','51']]);
+  h.send('50');await turn();
+  assert.equal(replacement.frames.length,1);
+  assert.deepEqual(h.errors,[]);
+  keeper.controller.abort();replacement.controller.abort();second.controller.abort();
+});
+
+test('replacing the last reader waits on its existing connection',async()=>{
+  const stalled=deferred(),h=harness({unsubscribeWait:stalled.promise});
+  const old=h.open('old');await turn();
+  old.controller.abort();
+  const replacement=h.open('replacement');await turn();
+  assert.equal(h.physical.length,1);
+  assert.equal(h.physical[0].cancelled,false);
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/subscribe')).length,1);
+  stalled.resolve();await turn();
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/subscribe')).at(-1).body.topic,'replacement');
+  replacement.controller.abort();await turn();
+  assert.equal(h.physical[0].cancelled,true);
+});
+
+test('failed cancellation faults the context before opening replacements',async()=>{
+  const h=harness({unsubscribeStatus:400});
+  h.open('keeper');const old=h.open('old');await turn();
+  old.controller.abort();h.open('replacement');await turn();
+  assert.equal(h.physical[0].cancelled,true);
+  assert.deepEqual(h.errors,['Observation cancellation failed (400)','Observation cancellation failed (400)']);
+  assert.equal(h.calls.filter(call=>call.url.endsWith('/subscribe')).length,2);
 });

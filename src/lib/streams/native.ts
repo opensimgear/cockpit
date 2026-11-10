@@ -7,10 +7,26 @@ export interface NativeObservationDependencies {
 }
 
 export function createNativeObservationTransport(dependencies?: NativeObservationDependencies): ObservationTransport {
+  const waiting = new Set<(error?: string) => void>();
+  let retiring = 0;
+  let retirementError: string | undefined;
+  const retired = () => {
+    if (--retiring) return;
+    const error = retirementError;
+    retirementError = undefined;
+    for (const open of waiting) {
+      if (retiring) break;
+      waiting.delete(open);
+      open(error);
+    }
+  };
   return { open(topic, observer, signal) {
     if (signal.aborted) return;
     void (async () => {
       let token: string | undefined;
+      let opening: Promise<string> | undefined;
+      let queued: ((error?: string) => void) | undefined;
+      let retirementStarted = false;
       let pending: unknown;
       let pendingSet = false;
       let active = !signal.aborted;
@@ -20,18 +36,25 @@ export function createNativeObservationTransport(dependencies?: NativeObservatio
       const expand = topic.startsWith('controllers.input.') ? controllerChannelDecoder() : undefined;
       const fail = (error: unknown) => {
         if (!active) return;
-        observer.error(errorMessage(error));
         stop();
+        observer.error(errorMessage(error));
+      };
+      const retire = () => {
+        if (!opening || retirementStarted || !deps) return;
+        retirementStarted = true;
+        retiring++;
+        const invoke = deps.invoke;
+        const unsubscribe = async (id: string) => invoke('observation_unsubscribe', { subscriptionId: id });
+        const cancellation = token ? unsubscribe(token)
+          : opening.then(id => typeof id === 'string' && id ? unsubscribe(id) : undefined, () => {});
+        void cancellation.catch(error => { retirementError ??= errorMessage(error); }).finally(retired);
       };
       const stop = () => {
         active = false;
         pending = undefined;
         signal.removeEventListener('abort', stop);
-        if (token && deps) {
-          const closing = token;
-          token = undefined;
-          void deps.invoke('observation_unsubscribe', { subscriptionId: closing }).catch(() => {});
-        }
+        if (queued) waiting.delete(queued);
+        retire();
       };
       signal.addEventListener('abort', stop, { once: true });
       try {
@@ -87,16 +110,28 @@ export function createNativeObservationTransport(dependencies?: NativeObservatio
             });
           } catch (error) { fail(error); }
         };
-        const opened = await deps.invoke<string>('observation_subscribe', { topic, channel: deps.channel(receive) });
-        if (typeof opened !== 'string' || !opened) throw new Error('Invalid observation subscription token');
-        token = opened;
-        if (!active) { stop(); return; }
-        if (pendingSet) {
-          const value = pending;
-          pending = undefined;
-          pendingSet = false;
-          receive(value);
-        }
+        const transport = deps;
+        const subscribe = async () => {
+          if (!active) return;
+          opening = transport.invoke<string>('observation_subscribe', { topic, channel: transport.channel(receive) });
+          if (!active) retire();
+          const opened = await opening;
+          if (typeof opened !== 'string' || !opened) throw new Error('Invalid observation subscription token');
+          if (!active) return;
+          token = opened;
+          if (pendingSet) {
+            const value = pending;
+            pending = undefined;
+            pendingSet = false;
+            receive(value);
+          }
+        };
+        queued = error => {
+          if (error !== undefined) fail(error);
+          else void subscribe().catch(fail);
+        };
+        if (retiring) waiting.add(queued);
+        else queued();
       } catch (error) { fail(error); }
     })();
   } };

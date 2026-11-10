@@ -231,7 +231,7 @@ fn browser_protocol_and_runtime_caps_close_without_command_authority() {
         true
     );
     let (capped, _) = setup();
-    capped.inner.workers.store(64, Ordering::Release);
+    capped.inner.workers.store(osg_streams::MAX_READERS, Ordering::Release);
     assert!(capped
         .subscribe("capped", "ui", "test.state", |_| Ok(()))
         .is_err());

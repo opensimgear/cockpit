@@ -8,13 +8,12 @@ export interface BrowserObservationDependencies {
 }
 interface Entry {
   topic: string;
-  requestId: string;
+  requestId?: string;
   observer: ObservationObserver;
   signal: AbortSignal;
   controller: AbortController;
   stop: () => void;
   active: boolean;
-  opening: boolean;
   token?: string;
   delivery?: bigint;
   inFlight: boolean;
@@ -27,14 +26,14 @@ interface Connection {
   reader?: ReadableStreamDefaultReader<Uint8Array>;
   ready: boolean;
   active: boolean;
-  entries: Map<string, Entry>;
+  entries: Set<Entry>;
+  started: Map<string, Entry>;
   closing: number;
 }
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-// A connected path can use 32 readers and the inspector can use 16 more.
-// Allow for portal subscriptions and leave eight of the bridge's 64 slots
-// available to another browser context.
-const MAX_CONTEXT_READERS = 56;
+// Allow 48 profile sample readers and the portal's own subscriptions.
+// The bridge reserves the remaining 24 of its 96 slots for other contexts.
+const MAX_CONTEXT_READERS = 72;
 let sharedBrowserTransport: ObservationTransport | undefined;
 
 /** Defaults share one context connection; injected dependencies create an isolated transport. */
@@ -56,8 +55,9 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
     if (connection === current) connection = undefined;
     current.controller.abort();
     void current.reader?.cancel().catch(() => {});
-    const entries = [...current.entries.values()];
+    const entries = [...current.entries];
     current.entries.clear();
+    current.started.clear();
     for (const entry of entries) {
       entry.active = false;
       entry.controller.abort();
@@ -74,17 +74,26 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
     entry.active = false;
     entry.controller.abort();
     entry.pending = undefined;
-    current.entries.delete(entry.requestId);
+    current.entries.delete(entry);
     entry.signal.removeEventListener('abort', entry.stop);
-    if (entry.opening) {
-      if (current.closing >= 16) close(current, 'Observation cancellation budget exceeded');
+    if (entry.requestId) {
+      current.started.delete(entry.requestId);
+      if (current.closing >= MAX_CONTEXT_READERS) close(current, 'Observation cancellation budget exceeded');
       else {
         current.closing++;
         void post(`${root}/unsubscribe`, { connectionId: current.id, requestId: entry.requestId }, current.controller.signal)
-          .catch(() => {}).finally(() => { current.closing--; });
+          .then(result => {
+            if (!result.ok) throw new Error(`Observation cancellation failed (${result.status})`);
+          })
+          .catch(error => close(current, errorMessage(error)))
+          .finally(() => {
+            if (--current.closing !== 0) return;
+            if (!current.entries.size) close(current);
+            else for (const next of current.entries) subscribe(current, next);
+          });
       }
     }
-    if (!current.entries.size) close(current);
+    if (!current.entries.size && !current.closing) close(current);
     if (message) entry.observer.error(message);
   }
 
@@ -133,8 +142,10 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
   }
 
   function subscribe(current: Connection, entry: Entry) {
-    if (!entry.active || !current.active || !current.ready || entry.opening) return;
-    entry.opening = true;
+    if (!entry.active || !current.active || !current.ready || current.closing || entry.requestId) return;
+    if (nextRequest > 18446744073709551615n) return remove(current, entry, 'Observation request counter exhausted');
+    entry.requestId = String(nextRequest++);
+    current.started.set(entry.requestId, entry);
     void (async () => {
       try {
         const result = await post(`${root}/subscribe`, {
@@ -166,7 +177,7 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
         throw new Error('Invalid observation connection readiness');
       }
       current.ready = true;
-      for (const entry of current.entries.values()) subscribe(current, entry);
+      for (const entry of current.entries) subscribe(current, entry);
       return;
     }
     if (Object.hasOwn(value, 'type') || !uint64(value.requestId) || value.requestId === '0'
@@ -174,7 +185,7 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
       throw new Error('Invalid observation multiplex delivery');
     }
     if (BigInt(value.requestId) >= nextRequest) throw new Error('Unknown future observation request');
-    const entry = current.entries.get(value.requestId);
+    const entry = current.started.get(value.requestId);
     if (!entry) return; // Retired counters need no unbounded tombstone set.
     try { receive(current, entry, parseDelivery(value.envelope, entry.topic)); }
     catch (error) { remove(current, entry, errorMessage(error)); }
@@ -183,7 +194,7 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
   function start(): Connection {
     const current: Connection = {
       id: (dependencies!.connectionId ?? (() => crypto.randomUUID()))(),
-      controller: new AbortController(), ready: false, active: true, entries: new Map(), closing: 0,
+      controller: new AbortController(), ready: false, active: true, entries: new Set(), started: new Map(), closing: 0,
     };
     connection = current;
     void (async () => {
@@ -209,13 +220,12 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
   return { open(topic, observer, signal) {
     if (signal.aborted) return;
     if (connection && connection.entries.size >= MAX_CONTEXT_READERS) { observer.error('Observation subscription limit exceeded'); return; }
-    if (nextRequest > 18446744073709551615n) { observer.error('Observation request counter exhausted'); return; }
     const current = connection ?? start();
     const entry: Entry = {
-      topic, requestId: String(nextRequest++), observer, signal, controller: new AbortController(), active: true, opening: false,
+      topic, observer, signal, controller: new AbortController(), active: true,
       inFlight: false, acknowledging: false, stop: () => remove(current, entry),
     };
-    current.entries.set(entry.requestId, entry);
+    current.entries.add(entry);
     signal.addEventListener('abort', entry.stop, { once: true });
     if (signal.aborted) entry.stop(); else subscribe(current, entry);
   } };

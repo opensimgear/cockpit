@@ -17,8 +17,9 @@ pub const KNOWN_AUDIENCES: &[&str] = &["ui", "browser", "panel", "mcp"];
 pub const MAX_TOPICS: usize = 128;
 pub const MAX_READERS: usize = 128;
 pub const MAX_CLIENT_READERS: usize = 16;
-// A visible path (32 nodes) can coexist with the inspector (16) and shell subscriptions.
-const MAX_COCKPIT_READERS: usize = 64;
+// A visible path and inspector can use 48 readers alongside portal subscriptions.
+// The browser bridge may also carry a second portal over the same native client.
+const MAX_COCKPIT_READERS: usize = 96;
 
 #[derive(Clone, Debug)]
 pub struct TopicSpec {

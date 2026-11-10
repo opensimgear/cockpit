@@ -19,12 +19,12 @@ it does not refresh state through a command after a notification.
 
 `osg-streams::Broker` owns the topic registry. Each topic declares its source and
 allowed audiences. A broker admits at most 128 topics and 128 readers overall.
-Native UI and browser clients each have a 64-reader limit, with a 16-reader
+Native UI and browser clients each have a 96-reader limit, with a 16-reader
 limit for other clients. Each reader retains at most 256 frames and 512 KiB of encoded
 payload. Admission reserves metadata overhead within the 1 MiB snapshot envelope
 ceiling. Changes have a 64 KiB wire ceiling. Counters cross JSON as decimal strings.
 
-The native runtime owns one blocking worker per admitted reader, with at most 64
+The native runtime owns one blocking worker per admitted reader, with at most 128
 workers including canceled workers that have not exited. Producers publish to the
 bounded channel without running a delivery callback. A worker sends one record,
 then waits for that record's exact receipt. Cancellation drops the channel lease
@@ -42,9 +42,10 @@ This avoids exhausting a browser's HTTP connection pool with one permanent reque
 per topic. Subscribe/unsubscribe and receipt requests use separate bounded POST
 controls. Same-origin, loopback, content-type and application-marker checks apply.
 Native stdout delivery is bounded independently of command replies. The bridge
-admits at most 16 physical connections and 64 pending logical readers and limits
-unflushed delivery to 16 MiB. Receipts wait for their own output write to complete.
-The bounded request replay window accepts parallel controls arriving out of order;
+admits at most 16 physical connections and 96 logical readers across them. The
+native stdout delivery queue holds at most 128 frames and 16 MiB. The bridge also
+limits unflushed HTTP delivery to 16 MiB. Receipts wait for their own output write
+to complete. The 128-ID replay window accepts parallel controls arriving out of order;
 cancellation advances that window too, so aborted opens cannot accumulate forever.
 
 Frontend `SharedObservations` shares exact-topic subscriptions, replays the current
@@ -56,10 +57,11 @@ subscription for all listeners still attached to the topic. It discards the
 old token, continuity state and cached payload. Late frames and receipts
 remain fenced to the retired attempt. The default browser transport is
 shared across clients within one browser context. Each context can open up to
-56 readers, including its portal subscriptions, a 32-node connected path and
-a 16-port inspector page. The 64-slot shared bridge leaves eight slots when
-one context reaches its limit. Independent receipt requests do not block the
-multiplexed reader loop.
+72 readers, including its portal subscriptions, a 32-node connected path and
+a disjoint 16-port inspector page. The shared bridge leaves 24 slots when one
+context reaches its limit. Both transports wait for pending cancellations before
+opening replacement readers. Existing readers continue to deliver and acknowledge
+frames while those cancellations complete.
 
 The first real producer publishes committed values for `preferences.theme`,
 `preferences.devices-mode`, `preferences.canvas-navigation`,

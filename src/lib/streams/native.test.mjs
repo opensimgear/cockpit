@@ -108,20 +108,84 @@ test('native early channel delivery waits for token and ACK follows delivery', a
 
 test('cancellation while native subscribe is pending closes returned token without callback', async () => {
   const opening = deferred();
+  const closing = deferred();
   const calls = [];
   let receive;
   const transport = createNativeObservationTransport({
     channel(callback) { receive = callback; return {}; },
-    async invoke(command, args) { calls.push([command, args]); if (command === 'observation_subscribe') return opening.promise; },
+    async invoke(command, args) {
+      calls.push([command, args]);
+      if (command === 'observation_subscribe') return args.topic === 'preferences' ? opening.promise : 'replacement-token';
+      if (command === 'observation_unsubscribe') return closing.promise;
+    },
   });
   const controller = new AbortController();
   transport.open('preferences', { frame: assert.fail, error: assert.fail }, controller.signal);
   receive(delivery());
   controller.abort();
+  const replacement = new AbortController();
+  transport.open('replacement', { frame: assert.fail, error: assert.fail }, replacement.signal);
+  const abandoned = new AbortController();
+  transport.open('abandoned', { frame: assert.fail, error: assert.fail }, abandoned.signal);
+  abandoned.abort();
   opening.resolve('token');
   await turn();
   assert.equal(calls.at(-1)[0], 'observation_unsubscribe');
   receive(delivery());
+  closing.resolve();
+  await turn();
+  assert.deepEqual(calls.filter(([command]) => command === 'observation_subscribe').map(([, args]) => args.topic),
+    ['preferences', 'replacement']);
+  replacement.abort();
+});
+
+test('an existing native reader delivers and acknowledges while another retires', async () => {
+  const closing = deferred();
+  const calls = [], frames = [];
+  let receive;
+  const transport = createNativeObservationTransport({
+    channel(callback) { receive ??= callback; return {}; },
+    async invoke(command, args) {
+      calls.push([command, args]);
+      if (command === 'observation_subscribe') return args.topic === 'preferences' ? 'token' : 'other-token';
+      if (command === 'observation_unsubscribe' && args.subscriptionId === 'other-token') return closing.promise;
+    },
+  });
+  const keeper = new AbortController(), old = new AbortController(), replacement = new AbortController();
+  transport.open('preferences', { frame(frame, ack) { frames.push(frame); void ack(); }, error: assert.fail }, keeper.signal);
+  transport.open('old', { frame: assert.fail, error: assert.fail }, old.signal);
+  await turn();
+  old.abort();
+  transport.open('replacement', { frame: assert.fail, error: assert.fail }, replacement.signal);
+  receive(delivery());
+  await turn();
+  assert.equal(frames.length, 1);
+  assert.equal(calls.at(-1)[0], 'observation_acknowledge');
+  closing.resolve();
+  await turn();
+  assert.equal(calls.at(-1)[1].topic, 'replacement');
+  keeper.abort();replacement.abort();
+});
+
+test('failed native retirement rejects queued replacement without issuing a subscribe', async () => {
+  const calls = [], errors = [];
+  const transport = createNativeObservationTransport({
+    channel() { return {}; },
+    invoke(command) {
+      calls.push(command);
+      if (command === 'observation_unsubscribe') throw new Error('Cancellation rejected.');
+      return Promise.resolve('token');
+    },
+  });
+  const old = new AbortController(), replacement = new AbortController();
+  transport.open('old', { frame: assert.fail, error: assert.fail }, old.signal);
+  await turn();
+  old.abort();
+  transport.open('replacement', { frame: assert.fail, error: value => errors.push(value) }, replacement.signal);
+  await turn();
+  assert.deepEqual(calls, ['observation_subscribe', 'observation_unsubscribe']);
+  assert.deepEqual(errors, ['Cancellation rejected.']);
+  replacement.abort();
 });
 
 test('native bounded ACK race buffers just one next frame then drains', async () => {

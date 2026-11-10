@@ -22,6 +22,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
   const observations = observationBridge(
     (payload, beforeWrite) => request(payload, { observation: true, beforeWrite }),
     id => /^observation:[1-9][0-9]{0,19}$/.test(id) && BigInt(id.slice(12)) <= observationCounter,
+    error => fail?.(error),
   );
   function start() {
     if (child) return;

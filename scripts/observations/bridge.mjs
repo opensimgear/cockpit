@@ -5,7 +5,7 @@ import { authorize, decimal, identity, readBody, validateDelivery } from './prot
 /** @typedef {{bytes: number, completed: boolean}} WriteRecord */
 /** @typedef {{delivery: string, written: boolean, acknowledging?: boolean, resolve?: () => void, reject?: (error: Error) => void}} Receipt */
 /** @typedef {{res: HttpResponse, readers: Map<string, ReaderState>, canceled: Set<string>, seen: Set<string>, highest: bigint, writes: Set<WriteRecord>, id?: string, closing?: boolean}} Connection */
-/** @typedef {{connection: Connection, frontendId: string, topic: string, settled: boolean, requestId?: string, token?: string, current?: Receipt, lastDelivery?: string, closing?: boolean, failed?: boolean, unsubscribing?: boolean, unsubscribed?: boolean}} ReaderState */
+/** @typedef {{connection: Connection, frontendId: string, topic: string, settled: boolean, requestId?: string, token?: string, current?: Receipt, lastDelivery?: string, closing?: boolean, failed?: boolean, unsubscribing?: boolean, unsubscribed?: boolean, releaseError?: unknown, released?: Promise<void>, finishRelease?: () => void}} ReaderState */
 /** @typedef {{operation: 'subscribe'|'unsubscribe'|'acknowledge', clientId: string, topic?: string, subscriptionId?: string, delivery?: string}} NativeControl */
 /** @typedef {{ok?: boolean, error?: string, subscriptionId?: string}} NativeResponse */
 /** @typedef {(payload: NativeControl, beforeWrite?: (requestId: string) => void) => Promise<NativeResponse>} NativeRequest */
@@ -16,12 +16,15 @@ const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-
 /** @param {unknown} value @returns {value is string} */
 const positive = value => decimal(value) && value !== '0';
 const outputLimit = 16 * 1024 * 1024;
+const readerLimit = 96;
+const replayWindow = 128n;
 
 /** One physical stream multiplexes bounded, independently acknowledged readers.
  * @param {NativeRequest} request
  * @param {(requestId: string) => boolean} wasIssued
+ * @param {(error: unknown) => void} failNative
  */
-export function observationBridge(request, wasIssued = () => false) {
+export function observationBridge(request, wasIssued, failNative) {
   /** @type {Map<string, Connection>} */
   const connections = new Map();
   /** @type {Set<Connection>} */
@@ -44,11 +47,12 @@ export function observationBridge(request, wasIssued = () => false) {
   }
   /** @param {ReaderState} state */
   function release(state) {
-    slots.delete(state);
+    if (!slots.delete(state)) return;
     state.connection.readers.delete(state.frontendId);
     if (state.requestId) requests.delete(state.requestId);
     if (state.token) tokens.delete(state.token);
     state.current?.reject?.(new Error('Observation closed.'));
+    state.finishRelease?.();
   }
   /** @param {ReaderState} state */
   async function close(state) {
@@ -57,8 +61,15 @@ export function observationBridge(request, wasIssued = () => false) {
     if (state.failed || (state.settled && (!state.token || state.unsubscribed))) { release(state); return; }
     if (!state.token || state.unsubscribing) return;
     state.unsubscribing = true;
-    try { await request({ operation: 'unsubscribe', clientId, subscriptionId: state.token }); }
-    catch { /* Native failure also releases every reader. */ }
+    try {
+      const response = await request({ operation: 'unsubscribe', clientId, subscriptionId: state.token });
+      if (response?.ok !== true) throw new Error(response?.error ?? 'Native observation cancellation failed.');
+    } catch (error) {
+      if (!state.failed) {
+        state.releaseError = error;
+        failNative(error);
+      }
+    }
     finally { state.unsubscribed = true; if (state.settled) release(state); }
   }
   /** @param {Connection} connection @param {unknown} [error] */
@@ -148,15 +159,15 @@ export function observationBridge(request, wasIssued = () => false) {
       const counter = BigInt(payload.requestId);
       // Parallel HTTP controls may arrive out of order. Keep a bounded replay
       // window wider than the maximum simultaneous native readers.
-      if (connection.seen.has(payload.requestId) || counter + 64n <= connection.highest) throw new Error('Replayed observation subscription.');
+      if (connection.seen.has(payload.requestId) || counter + replayWindow <= connection.highest) throw new Error('Replayed observation subscription.');
       if (counter > connection.highest) {
         connection.highest = counter;
-        for (const id of connection.seen) if (BigInt(id) + 64n <= counter) connection.seen.delete(id);
-        for (const id of connection.canceled) if (BigInt(id) + 64n <= counter) connection.canceled.delete(id);
+        for (const id of connection.seen) if (BigInt(id) + replayWindow <= counter) connection.seen.delete(id);
+        for (const id of connection.canceled) if (BigInt(id) + replayWindow <= counter) connection.canceled.delete(id);
       }
       connection.seen.add(payload.requestId);
       if (connection.canceled.delete(payload.requestId)) throw new Error('Observation subscription canceled.');
-      if (slots.size >= 64) throw new Error('Observation reader limit reached.');
+      if (slots.size >= readerLimit) throw new Error('Observation reader limit reached.');
       state = { connection, frontendId: payload.requestId, topic: payload.topic, settled: false };
       const reader = state;
       slots.add(state);
@@ -187,15 +198,20 @@ export function observationBridge(request, wasIssued = () => false) {
       const connection = connectionFor(payload);
       if (Object.keys(payload).length !== 2 || !positive(payload.requestId)) throw new Error('Invalid observation cancellation.');
       const state = connection.readers.get(payload.requestId);
-      if (state) void close(state);
-      else if (!connection.seen.has(payload.requestId) && BigInt(payload.requestId) + 64n > connection.highest) {
+      if (state) {
+        if (state.released) throw new Error('Observation cancellation is already pending.');
+        state.released = new Promise(resolve => { state.finishRelease = resolve; });
+        void close(state);
+        await state.released;
+        if (state.releaseError) throw state.releaseError;
+      } else if (!connection.seen.has(payload.requestId) && BigInt(payload.requestId) + replayWindow > connection.highest) {
         const counter = BigInt(payload.requestId);
         if (counter > connection.highest) {
           connection.highest = counter;
-          for (const id of connection.seen) if (BigInt(id) + 64n <= counter) connection.seen.delete(id);
-          for (const id of connection.canceled) if (BigInt(id) + 64n <= counter) connection.canceled.delete(id);
+          for (const id of connection.seen) if (BigInt(id) + replayWindow <= counter) connection.seen.delete(id);
+          for (const id of connection.canceled) if (BigInt(id) + replayWindow <= counter) connection.canceled.delete(id);
         }
-        if (!connection.canceled.has(payload.requestId) && connection.canceled.size >= 64) throw new Error('Observation pending cancellation limit reached.');
+        if (!connection.canceled.has(payload.requestId) && connection.canceled.size >= Number(replayWindow)) throw new Error('Observation pending cancellation limit reached.');
         connection.canceled.add(payload.requestId);
       }
       res.end(JSON.stringify({ ok: true }));
@@ -258,7 +274,7 @@ export function observationBridge(request, wasIssued = () => false) {
     },
     /** @param {unknown} error */
     fail(error) {
-      for (const state of slots) { state.failed = true; state.closing = true; release(state); }
+      for (const state of slots) { state.failed = true; state.closing = true; state.releaseError ??= error; release(state); }
       for (const connection of physical) closeConnection(connection, error);
     },
   };

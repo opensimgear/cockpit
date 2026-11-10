@@ -80,11 +80,15 @@ test('pending cancellation disposes an early token and ignores one retired late 
   const open = await connect(bridge);
   const subscription = subscribe(bridge);
   await tick();
-  assert.equal((await cancel(bridge).finished).statusCode, 200);
+  const cancellation = cancel(bridge);
+  await tick();
+  assert.ok(!cancellation.res.writableEnded);
+  assert.equal((await cancel(bridge).finished).statusCode, 400);
   deliver(pending.child, pending.envelope.requestId);
   await tick();
   reply(pending.child, pending.envelope.requestId, { ok: true, subscriptionId: 'token' });
   assert.equal((await subscription.finished).statusCode, 400);
+  assert.equal((await cancellation.finished).statusCode, 200);
   assert.equal(open.res.lines.length, 1);
   await subscribe(bridge, '2', 'other').handled;
   deliver(pending.child, pending.envelope.requestId);
@@ -93,6 +97,26 @@ test('pending cancellation disposes an early token and ignores one retired late 
   const healthyToken = JSON.parse(open.res.lines[1]).envelope.subscriptionId;
   assert.equal((await ack(bridge, healthyToken).finished).statusCode, 200);
   open.res.abort(); bridge.close();
+});
+
+test('a rejected native cancellation fails the connection and retires the service', async () => {
+  const bridge = fixture((envelope, child) => {
+    if (envelope.observation?.operation === 'unsubscribe') {
+      reply(child, envelope.requestId, { ok: false, error: 'Cancellation rejected.' });
+    } else service(envelope, child);
+  });
+  const open = await connect(bridge);
+  await subscribe(bridge).handled;
+  const canceled = await cancel(bridge).finished;
+  assert.equal(canceled.statusCode, 400);
+  assert.match(canceled.lines.join(''), /Cancellation rejected/);
+  assert.match(open.res.lines.at(-1), /Cancellation rejected/);
+  assert.equal(bridge.children[0].killed, true);
+  const replacement = await connect(bridge);
+  await subscribe(bridge).handled;
+  assert.equal(bridge.children.length, 2);
+  replacement.res.abort();
+  bridge.close();
 });
 
 test('physical close cancels pending opens after their token reply without restarting', async () => {
@@ -166,7 +190,7 @@ test('all observation endpoints require same local origin, POST, marker and JSON
   bridge.close();
 });
 
-test('physical connections cap at16 and native pending readers cap at64', async () => {
+test('physical connections cap at 16 and native pending readers cap at 96', async () => {
   const bridge = fixture(() => {});
   const opens = [];
   for (let n = 0; n < 16; n++) {
@@ -176,10 +200,10 @@ test('physical connections cap at16 and native pending readers cap at64', async 
   assert.equal((await bridge.request(openPath, { connectionId }).finished).statusCode, 400);
   opens[0].res.abort();
   const open = await connect(bridge);
-  const readers = Array.from({ length: 64 }, (_, n) => subscribe(bridge, String(n + 1)));
+  const readers = Array.from({ length: 96 }, (_, n) => subscribe(bridge, String(n + 1)));
   await tick();
-  assert.equal(bridge.commands.length, 64);
-  assert.equal((await subscribe(bridge, '65').finished).statusCode, 400);
+  assert.equal(bridge.commands.length, 96);
+  assert.equal((await subscribe(bridge, '97').finished).statusCode, 400);
   bridge.children[0].emit('exit');
   await Promise.all(readers.map(value => value.handled));
   assert.equal(open.res.writableEnded, true);

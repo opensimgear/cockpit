@@ -39,6 +39,9 @@ test(`${transport} profile samples share observations and fence retired owners`,
     const boolean={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
     created.resources=[{id:'debug',name:'Debug input',kind:'debug-controller',required:false,
       ports:[{id:'button-1',name:'Button',direction:'output',contract:boolean}]}];
+    // The first inspection page sorts ahead of the path and uses 16 distinct readers.
+    const inspectorNodes=Array.from({length:16},(_,index)=>`a-inspector-${String(index).padStart(2,'0')}`);
+    created.resources.push(...inspectorNodes.map(id=>({...structuredClone(created.resources[0]),id,name:id})));
     created.processingNodes=[{id:'mirror',name:'Boolean mirror',operation:{kind:'identity'},
       inputs:[{id:'in',name:'Input',direction:'input',contract:boolean}],
       outputs:[{id:'out',name:'Output',direction:'output',contract:boolean}]}];
@@ -51,6 +54,17 @@ test(`${transport} profile samples share observations and fence retired owners`,
       created.bindings.push({id:`route-${index}`,from:{nodeId:previous,portId:'out'},to:{nodeId:id,portId:'in'}});
       previous=id;
     }
+    created.resources.push({...structuredClone(created.resources[0]),id:'alternate-debug',name:'Alternate debug input'});
+    previous='alternate-debug';
+    for(let index=0;index<31;index++){
+      const id=`alternate-${index}`;
+      created.processingNodes.push({...structuredClone(created.processingNodes[0]),id,name:`Alternate ${index}`});
+      created.bindings.push({id:`alternate-route-${index}`,from:{nodeId:previous,portId:index?'out':'button-1'},to:{nodeId:id,portId:'in'}});
+      previous=id;
+    }
+    const inspectorMirror={...structuredClone(created.processingNodes[0]),id:'z-inspector-mirror',name:'Inspector mirror'};
+    created.processingNodes.push(inspectorMirror);
+    created.bindings.push({id:'inspector-route',from:{nodeId:inspectorNodes[0],portId:'button-1'},to:{nodeId:inspectorMirror.id,portId:'in'}});
     profile=(await request({command:'profile_editor_save',document:created,assignments:[],expectedRevision:created.revision})).profiles.document;
     assert.equal(profile.virtualOutputs.length,0,'The fixture has no virtual outputs.');
     assert.equal((profile.desktopOutputs??[]).length,0,'The fixture has no desktop outputs.');
@@ -79,14 +93,29 @@ test(`${transport} profile samples share observations and fence retired owners`,
         probe.topologyReads++;
         return (await gateway(request)).profileTopology;
       }),observeProfileNodeSamples);
-      probe.activityOutput=()=>profileActivityPort(probe.activity.state,{nodeId:'stage-29',portId:'out'})?.sample;
+      probe.activityOutput=nodeId=>profileActivityPort(probe.activity.state,{nodeId,portId:'out'})?.sample;
       const exactOwner=${JSON.stringify(owner)};
       const opened=await Promise.all([probe.inspector.open(exactOwner),probe.activity.open(exactOwner,'mirror')]);
       return {opened,inspectionError:probe.inspector.state.error,activityError:probe.activity.state.error};
     })()`);
     assert.deepEqual(installed.opened,[true,true],JSON.stringify(installed));
-    const states=()=>page.evaluate(`({first:window.__profileSampleProbe.first.at(-1),second:window.__profileSampleProbe.second.at(-1), inspector:window.__profileSampleProbe.inspector.state,activityStale:window.__profileSampleProbe.activity.state.stale,activityError:window.__profileSampleProbe.activity.state.error,activityOutput:window.__profileSampleProbe.activityOutput()})`);
+    const states=()=>page.evaluate(`(() => {
+      const probe=window.__profileSampleProbe;
+      return {first:probe.first.at(-1),second:probe.second.at(-1),inspector:probe.inspector.state,
+        activityStale:probe.activity.state.stale,activityError:probe.activity.state.error,
+        activityOutput:probe.activityOutput('stage-29'),alternateOutput:probe.activityOutput('alternate-30')};
+    })()`);
     const output=state=>state?.value?.ports?.find(port=>port.endpoint.portId==='out')?.sample;
+    const waitForSamples=async(label,predicate)=>{
+      let latest;
+      try {
+        return await until(async()=>latest=await states(),predicate);
+      } catch(error) {
+        const {inspector,activityStale,activityError,activityOutput,alternateOutput}=latest??{};
+        throw new Error(`${label}: ${JSON.stringify({inspectionStale:inspector?.stale,inspectionError:inspector?.error,
+          activityStale,activityError,activityOutput,alternateOutput})}`,{cause:error});
+      }
+    };
 
     // Both consumers must receive the native baseline before any explicit debug input.
     const baseline=await until(states,value=>value.first?.status==='ready'&&value.second?.status==='ready'
@@ -96,11 +125,11 @@ test(`${transport} profile samples share observations and fence retired owners`,
     assert.deepEqual(baseline.second.value.owner,owner);
     assert.equal(baseline.first.value.nodeId,'mirror');
 
-    const inspected=value=>value.inspector.page?.ports.find(port=>port.endpoint.nodeId==='mirror'&&port.endpoint.portId==='out');
-    await until(states,value=>{
-      assert.equal(value.activityError,'','The full connected path must subscribe without an error.');
-      return !value.inspector.stale&&inspected(value)?.sample.value?.value===false&&!value.activityStale&&value.activityOutput?.value?.value===false;
-    });
+    const inspected=value=>value.inspector.page?.ports.find(port=>port.endpoint.nodeId===inspectorNodes[0]);
+    await waitForSamples('The full path and disjoint inspector must receive samples',value=>
+      !value.inspector.stale&&!!inspected(value)&&!value.activityStale&&value.activityOutput?.value?.value===false);
+    const inspection=await states();
+    assert.deepEqual(inspection.inspector.page.ports.map(port=>port.endpoint.nodeId),inspectorNodes);
     const peer=browserUrl?await page.openPeer():null;
     if(peer){
       await peer.evaluate(`(async()=>{
@@ -111,19 +140,30 @@ test(`${transport} profile samples share observations and fence retired owners`,
       })()`);
       await until(()=>peer.evaluate('window.__profileSamplePeerOwner'),value=>equalOwner(value,owner));
     }
-    const streamId=randomUUID();
-    await request({command:'profile_debug_controller_input',owner,nodeId:'debug',streamId,sequence:'1',changes:[{portId:'button-1',value:true}]});
-    const high=await until(states,value=>output(value.first)?.value?.value===true&&output(value.second)?.value?.value===true&&!value.inspector.stale&&inspected(value)?.sample.value?.value===true&&!value.activityStale&&value.activityOutput?.value?.value===true);
+    assert.equal(await page.evaluate("window.__profileSampleProbe.activity.selectEdge('alternate-route-0')"),true);
+    await waitForSamples('Switching to a disjoint path must release the old readers',value=>
+      !value.activityStale&&value.alternateOutput?.value?.value===false&&!value.inspector.stale);
+    assert.equal(await page.evaluate("window.__profileSampleProbe.activity.selectBlock('mirror')"),true);
+    await waitForSamples('Switching back must reopen the original path',value=>
+      !value.activityStale&&value.activityOutput?.value?.value===false&&!value.inspector.stale);
+    const streamId=randomUUID(),inspectorStreamId=randomUUID();
+    const send=(nodeId,streamId,sequence,value)=>request({
+      command:'profile_debug_controller_input',owner,nodeId,streamId,sequence,changes:[{portId:'button-1',value}],
+    });
+    await send('debug',streamId,'1',true);
+    await send(inspectorNodes[0],inspectorStreamId,'1',true);
+    const high=await waitForSamples('Both paths must show the true sample',value=>output(value.first)?.value?.value===true&&output(value.second)?.value?.value===true&&!value.inspector.stale&&inspected(value)?.sample.value?.value===true&&!value.activityStale&&value.activityOutput?.value?.value===true);
     assert.equal(output(high.first).value.value,true);
     assert.equal(output(high.second).value.value,true);
-    await request({command:'profile_debug_controller_input',owner,nodeId:'debug',streamId,sequence:'2',changes:[{portId:'button-1',value:false}]});
+    await send('debug',streamId,'2',false);
+    await send(inspectorNodes[0],inspectorStreamId,'2',false);
     const low=await until(states,value=>output(value.first)?.status==='known'&&output(value.first)?.value?.value===false
       &&output(value.second)?.status==='known'&&output(value.second)?.value?.value===false);
     assert.equal(output(low.first).value.value,false,'A false sample is preserved as a known Boolean.');
     assert.equal(output(low.second).value.value,false,'The second consumer sees the same false sample.');
 
-    await until(states,value=>!value.inspector.stale&&inspected(value)?.sample.value?.value===false&&!value.activityStale&&value.activityOutput?.value?.value===false);
-    assert.equal(await page.evaluate('window.__profileSampleProbe.topologyReads'),2,'Path activity reads its node and edge topology once.');
+    await waitForSamples('Both paths must show the false sample',value=>!value.inspector.stale&&inspected(value)?.sample.value?.value===false&&!value.activityStale&&value.activityOutput?.value?.value===false);
+    assert.equal(await page.evaluate('window.__profileSampleProbe.topologyReads'),3,'Path activity reuses its two node pages and one edge page.');
     assert.equal(await page.evaluate('window.__profileSampleProbe.inspections'),1,'Live changes reuse the opening inspection page.');
 
     await request({command:'profile_stop'});
@@ -176,7 +216,9 @@ test(`${transport} profile samples share observations and fence retired owners`,
       baselineWithoutExplicitInput:baseline,knownTrueChange:high,knownFalseChange:low,lossAfterStop:stopped,
       retiredOwnerReopenRejected:oldRejected,replacementBaseline:fresh,staleInputRejected:true,
       peerSawOwnerLifecycle:!!peer,
-      sharedConsumers:4,inspectionRequests:1,topologyRequests:2,pathNodes:32,noPhysicalOutputs:true,noExternalOutputs:true,simulatorQualified:false,latencyQualified:false};
+      mirrorConsumers:3,inspectionRequests:1,topologyRequests:3,pathNodes:32,independentInspectorNodes:inspectorNodes.length,
+      disjointPathHandoff:true,
+      noPhysicalOutputs:true,noExternalOutputs:true,simulatorQualified:false,latencyQualified:false};
     await writeFile(`${directory}/evidence.json`,JSON.stringify(evidence,null,2)+'\n');
   }finally{
     try{
