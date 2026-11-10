@@ -208,3 +208,8 @@ async function verifyDcsAliasCatalogue(game, until, biosTarget) {
   await until(async () => !(await contains()), 'The removed DCS alias remained in the closed game vehicle list');
   console.log(JSON.stringify({closedDcsAliasCatalogueCreationAndRemoval: true}));
 }
+export async function restoreDcsCommandVehicle({game, aircraft, until, resumeBios}) {
+  resumeBios();
+  await until(async () => (await game()).currentVehicle?.id === aircraft,
+    'The fixture needs a fresh verified BIOS aircraft before command profile reapply');
+}

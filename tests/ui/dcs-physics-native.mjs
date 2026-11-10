@@ -13,7 +13,7 @@ import {qualifyDcsTelemetryReopen} from './dcs-telemetry-reopen.mjs';
 import {measureDcsTelemetryBackpressure, openDcsTelemetryReaders, ownshipSubmission, verifyOwnshipTransitions} from './dcs-telemetry-backpressure.mjs';
 import {browserGateway} from './vjoy-rate-transport.mjs';
 import {dcsDesktopWakes} from './dcs-desktop-wakes.mjs';
-import {verifyActiveDcsCatalogue, verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
+import {restoreDcsCommandVehicle, verifyActiveDcsCatalogue, verifyDcsSetupWatchRecovery, verifyLiveDcsSetupWithdrawal} from './dcs-setup-watch-recovery.mjs';
 const browserUrl = process.env.OSG_DCS_PHYSICS_BROWSER_URL;
 const observeMcp = process.env.OSG_DCS_COMBINED_MCP === '1';
 const nativeRates = process.env.OSG_DCS_COMBINED_NATIVE_RATES === '1', nativeCommands = process.env.OSG_DCS_COMMANDS_NATIVE === '1';
@@ -396,7 +396,7 @@ test(`${browserUrl ? 'browser-dev' : 'native'} managed DCS ownship physics and B
       evidence.phases.panelPresentation, browserUrl || nativeRates && !dualRateSoak ? evidence.phases.combined : null,
     ) : [])];
     evidence.budgetMisses = budgetMisses;
-    if (nativeCommands) biosMode = 'full';
+    if (nativeCommands) await restoreDcsCommandVehicle({game, aircraft, until, resumeBios: () => { biosMode = 'full'; }});
     await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
     if (nativeCommands) evidence.phases.commandReapply = await live();
     else evidence.phases.ownshipOnlyStart = await until(async () => {

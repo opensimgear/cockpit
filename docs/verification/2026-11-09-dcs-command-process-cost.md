@@ -223,3 +223,60 @@ simulator effects and the wider R9 matrix remain open.
 | `command-pairs-diagnostic-stages.json` | `e73e2cbb9c1aae8b352e409d3eeffc3fb13a1ed1ee0b94337739925b4e7dd372` |
 | `command-pairs-memory-stages.json` | `46917e9d1db411fcb94f44676520cd5afda590d10af358d6059ab206a10ee2e4` |
 | `command-pairs-memory-stages-2.json` | `899addaa9714996003cc5e0feadbf277818407b8f4bb70cd72c8e0cccd06b992` |
+
+## 30-minute command workload on 10 November 2026
+
+Windows dev Cockpit at `f0bc8742` ran the authored DCS Feature Lab fixture
+with two paired browser panels, a held desktop observation receipt, an
+unread MCP response, navigation and repeated discovery. The two input
+lanes overlapped for 1,800,000.03 ms. Windows Raw Input matched all
+2,025,002 offered vJoy edges and the two Stop releases. The private DCS
+UDP receiver matched 179 debug commands and 179 browser-panel commands.
+
+| Path | Actual cadence | p50 / p95 / p99 | Peak queued frames |
+| --- | ---: | ---: | ---: |
+| 1 kHz debug capture to reducer batch end | 1,000.00 Hz | 1.2 / 2.2 / 3.0 ms | 42 |
+| 125 Hz debug capture to reducer batch end | 125.00 Hz | 1.2 / 2.1 / 2.9 ms | 41 |
+| 1 kHz debug offer to vJoy Raw Input receipt | 1,000.00 Hz | 1.6 / 2.5 / 3.4 ms | 42 |
+| 125 Hz debug offer to vJoy Raw Input receipt | 125.00 Hz | 1.7 / 2.6 / 3.6 ms | 41 |
+| Debug offer to private DCS UDP receipt | 9,995.06 ms median between offers | 7.00 / 8.61 / 14.50 ms | |
+| Browser activation to private DCS UDP receipt, upper bound | 9,994.40 ms median between activations | 6.20 / 7.71 / 31.33 ms | |
+| Authored UDP submission to panel 1 canvas, upper bound | 433 deliberate transitions | 5.07 / 31.78 / 45.41 ms | |
+| Authored UDP submission to panel 2 canvas, upper bound | 433 deliberate transitions | 6.43 / 36.40 / 47.10 ms | |
+
+The browser-to-receiver clock bracket was 0.371 ms wide. Command receipt
+timing includes the client offer or browser activation. Native
+capture-to-command acceptance was measured separately in the earlier
+diagnostic trials above. Canvas timing measures loopback presentation.
+
+The owner and panel sessions stayed intact through 433 health checks,
+60 inventory reads and 60 discovery scans. The fast MCP reader advanced
+4,405 times and received retirement. The unread MCP connection closed.
+The desktop observation resumed after its held receipt was released.
+Both Stop releases arrived within 33.47 ms, and the vJoy slot returned
+to free. The minimum margins were 161.92 ms on the 250 ms vJoy feeder
+lease and 1,233 ms on the 1,500 ms panel lease. The 60 memory samples
+passed the retained-growth bound. The final five-minute peaks for
+Cockpit private bytes and both browser heaps were below the comparable
+initial peaks.
+
+The 30-minute measurements and Stop completed with zero budget misses
+and zero cleanup errors. The overall test then failed on reapply because
+it issued Apply while the restored BIOS stream was still establishing the
+loaded aircraft. The fixture now waits for that aircraft before sending
+one Apply. A two-minute rerun with the same dev executable passed the
+full sequence, including reapply without command replay. It matched all
+238 commands, 135,002 offered vJoy edges and both Stop releases, with
+zero budget misses or cleanup errors.
+
+The local executable SHA-256 is
+`eb31655adf5f936b39419e28f194a9712eea6d7cd15a5eeb1a6a1dd30b2674d1`.
+The evidence file
+`.research/c193-reconnect/reader-budget-max/windows-source-22590390/.research/dcs-physics-native/1794275529006/evidence.json`
+has SHA-256
+`df737b8b5708f96ee8535dcdef7ae97a24db5a594e9c8ae89950711dea864a10`.
+The reapply rerun's `1794277488670/evidence.json` in the same parent
+directory has SHA-256
+`e781c5da27d7fbaf7fec6b4a1ae30e0cc7f368e11bc000eb3015e4a062b558bf`.
+Real simulator effects, LAN presentation and physical control latency
+remain in #199.
