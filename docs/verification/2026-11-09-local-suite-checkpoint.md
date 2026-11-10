@@ -272,3 +272,55 @@ browser-dev server. The Windows native and gateway builds were
 | Browser-dev `1794256551240/evidence.json` | `e01c8602de6ea349d3f1413a261777dd8f65468cb317701324b388104e24e916` |
 | WebKitGTK `1794256573967/evidence.json` | `63ae7744325c5c0ea746a0670e0ed821d599a5891e564a33d88e4c58520f7e87` |
 | WebView2 `1794256595377/evidence.json` | `9ed928397f38c577e045c2857260aecf9732c31a46bf4ac04b18cddf27ee9b67` |
+
+## Local suite checkpoint on 10 November 2026
+
+The production source at `eb4b3558` passed 2,429 Linux host tests with
+nine existing ignores, the gateway framing test, and the real gateway
+process integration. The two panel-save tests that had stalled on an
+earlier run passed separately in 0.93 seconds and also passed in the
+eight-thread suite. The clean export used the pinned offline dependencies
+and a private D-Bus session and Secret Service store.
+
+| Linux host module | LLVM lines | LLVM functions |
+| --- | ---: | ---: |
+| X-Plane session | 97.91% | 90.48% |
+| X-Plane snapshot | 100.00% | 100.00% |
+| Observation delivery | 91.20% | 81.25% |
+| Native profile admission | 96.30% | 97.14% |
+
+The latest [Windows host and virtual-controller suites](2026-11-07-virtual-preview-reopen.md#successful-vjoy-api-calls-under-the-dual-rate-workload)
+used the same production source and passed 2,510 and 114 tests respectively.
+The [companion transport checkpoint](2026-11-08-companion-transport-and-timing-audit.md#current-software-transport-lifecycle-on-10-november-2026)
+records the unchanged-source ESP32, native client, mobile UI and portal
+transport coverage. The sibling firmware sources retain the exact
+revisions listed in the firmware table above.
+
+The uncached frontend check, test and build matrix ran on all 19
+applicable projects. Its first run passed every task except the shared
+fixture and release tooling tasks, which require a `python` command.
+Both tasks passed on the same source with a private alias to Ubuntu's
+Python 3. Svelte reported zero errors and warnings.
+
+The real MCP SDK and navigation fixtures passed in the current Windows
+dev Cockpit. The first MCP run attempted to start discovery while the
+automatic first-run scan still owned it. The follow-up also exposed
+that a scan ready for review keeps an open job record. The fixture
+now waits for that ready phase or another terminal result through its
+existing native jobs observer and retires its observer even if the MCP
+stream expires. The corrected run matched the manually started scan
+on both MCP and the native UI without status requests. The subsequent
+navigation fixture opened and retired the expected readers in both
+cycles.
+
+| Local artifact under `.research/c193-reconnect/reader-budget-max/` | SHA-256 |
+| --- | --- |
+| `linux-eb4b3558-full.log` | `3389c52ced8d756eda47221dd01371d57e7eef0ce0b5c37cc29dd7339ca60e34` |
+| `linux-eb4b3558-gateway.log` | `147dad70c23bdb8c13cf4d345e04f1b0fcbffc1a8c5c09c5136e0a9e1035d5f6` |
+| `frontend-eb4b3558-suite.log` | `f784c4a54dc8f925327e8d4c33908071203bd8e326961718b0ec323f2772dbcd` |
+| `frontend-eb4b3558-python-rerun.log` | `d244ece076d85566324a2d3584ffdbb7e90e57b39d05743d9dbaa3fbd1d8ce2f` |
+| `mcp-navigation-eb4b3558-final.log` | `402143108cffbcb8950a25b8c04426835f6f2434096075df1c14ccae036bc21d` |
+| `windows-source-22590390/.research/reactive/mcp-native-observation.json` | `7f802ad7e90b0e39ef9dd2ce5f9eff0e55ca5608cf0e3d7913539ad7075be286` |
+
+Native macOS runtime, signed mobile runtime and physical and simulator
+acceptance remain in their respective platform and operator gates.
