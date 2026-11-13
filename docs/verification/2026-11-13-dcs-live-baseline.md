@@ -174,3 +174,39 @@ SHA-256 `85f690961690d0db436e89c039328bb81fa7e41cee7e676c35dfca92d2791be3`.
 The original exporter remains restored on disk; the running simulator still
 has the previously documented log-only diagnostic exporter loaded. The
 combined destination/cleanup proof and clean-runtime repeat remain open.
+
+## Completed simultaneous physical vJoy and DCS routing
+
+The corrected repeat passed on the same controller-clock native build and
+actual TF-51D process. Separate physical controls were used: the left
+Gladiator EVO OT L main trigger drove vJoy slot 1 button 1, while the right
+Gladiator trigger and browser panel drove the DCS landing light. The left
+trigger stayed held through the right trigger's light-on and light-off
+sequence. After its release, the browser panel held the light on for eight
+seconds and released it. DCS-BIOS returned known 1/0 for both command
+sequences, and the same panel session/publication received fresh feedback.
+
+The independent Windows Raw Input receiver retained exactly three ordered
+vJoy states: neutral, pressed, released. It identified the vJoy device and
+report 1, found no peer-button press or capture overflow, and observed the
+release before Stop. This is a functional destination check, not a new
+latency measurement. The final DCS light state was off.
+
+After Stop, the cached inventory still said busy. A fresh read-only native
+driver inspection found slot 1 free with no owner before launcher shutdown.
+Receiver collection then completed, the temporary profile and panel peer
+were removed, the listener was disabled and no profile owner remained.
+The previous capture-loss/cleanup failure is superseded for this repeat.
+
+The stored trace is
+`.research/c193-reconnect/reader-budget-max/controller-clock-7fd7d57a2d4f4528a6c06537aac579d5/passive-live-evidence.json`,
+SHA-256 `3cb8f174de1b02b0d77646c612c739154ffdcfd14f0743dcb6533a175918dc73`.
+The verifier independently rebuilt its three edges from the raw receiver
+events and checked the controller baselines, returned DCS states, panel
+identity, driver release and cleanup. It and all eleven telemetry-model
+tests passed before this documentation commit. No production code changed.
+
+The browser panel was routed to DCS in this fixture; panel input to vJoy
+was not exercised. That remaining destination, the clean-runtime repeat,
+context/export-permission transitions and the combined soak remain open in
+the broader #198/#199 matrix.
