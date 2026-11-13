@@ -135,3 +135,42 @@ verifiers and all eleven telemetry-model tests passed before this commit.
 Simultaneous virtual routing, context/export-permission transitions, the
 combined soak and the untouched-runtime repeat remain open. The broader
 #198/#199 matrix is not closed by these individual control checks.
+
+## Operator-confirmed effects during separated routing, 14 November
+
+The operator visually confirmed the TF-51D landing-light switch moved on
+and off for both the right Gladiator trigger and the browser panel's
+eight-second hold. DCS-BIOS returned known 1/0 states for both sequences.
+The authenticated panel received fresh true/false feedback on the same
+session and publication. The DCS process and profile owner stayed unchanged
+through the routing phases. This completes visual confirmation of those
+two DCS command effects.
+
+The same profile also assigned the left Gladiator EVO OT L trigger to vJoy
+button 1. Its observed source went false, true while the right trigger
+operated DCS, then false before the panel sequence. The compiler correctly
+rejected an earlier draft that sent the same physical trigger to both vJoy
+and a direct simulator command; the revised graph uses separate controls.
+
+The combined test did not finish successfully. Immediately after Stop,
+its cached inventory read still reported vJoy busy. The harness asserted
+before collecting the independent Raw Input receiver's final result, then
+terminated that receiver in its failure cleanup. No independent vJoy
+destination trace was retained. Profile/panel cleanup was also skipped by
+that assertion before the private launcher terminated its owned processes.
+A subsequent read-only native driver inspection found slot 1 free with no
+owner. That later inspection does not establish the release time or prove
+the earlier in-session cleanup completed.
+
+The research harness now attempts receiver collection and the remaining
+cleanup steps independently, and uses a direct driver inspection alongside
+the cached inventory status. These changes are syntax-checked; their next
+live run remains pending. No production source changed. The partial-trace
+verifier and all eleven telemetry-model tests passed locally.
+
+Trace:
+`.research/c193-reconnect/reader-budget-max/controller-clock-b4d9ba9b1700453b978437776e24efdb/passive-live-evidence.json`,
+SHA-256 `85f690961690d0db436e89c039328bb81fa7e41cee7e676c35dfca92d2791be3`.
+The original exporter remains restored on disk; the running simulator still
+has the previously documented log-only diagnostic exporter loaded. The
+combined destination/cleanup proof and clean-runtime repeat remain open.
