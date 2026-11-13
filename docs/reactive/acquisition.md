@@ -252,6 +252,12 @@ worker and explicit launch and setup checks are separate.
 
 ## Unresolved acquisition boundaries
 
+On 13 November 2026 the user excluded all Sunton-related work from the
+current #189 scope. Sunton entries below remain documented as deferred work.
+They do not gate R0 closure. This is a scope deferral, with Sunton acquisition
+and hardware behavior still unqualified. It does not approve its sampling
+behavior. The acquisition gate is complete for the remaining in-scope sources.
+
 | Boundary | Current behavior | Remaining gate |
 | --- | --- | --- |
 | Windows process observation | General Settings opts in to Windows process events. The watcher requires access under the current Windows account. While events are off or unavailable, one native scan per second feeds automatic activation and background integration context. The owner parks without monitorable installations and wakes on catalogue or preference commits. Live continuity loss retires the watcher and permits one replacement after completion. Initial denial leaves the fallback active. Scoped integration setup still has its explicit temporary helper. | The user approved the discovery boundary in [#189](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6712663423). Privileged event continuity and exact lifetime need operator qualification. Applied-session and command authority checks keep their own safety budgets. |

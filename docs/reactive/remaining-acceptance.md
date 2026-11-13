@@ -5,7 +5,7 @@ qualification. It does not introduce another feature or waive an original gate.
 The former 70% effort estimate is withdrawn: acceptance checkboxes are not
 equally sized implementation tasks.
 
-The original #189–198 acceptance list has 55 criteria, with 45 checked and 10
+The original #189–198 acceptance list has 55 criteria, with 46 checked and 9
 open. User-operated qualification is tracked in #199. Some open criteria
 combine delivered software with integrated or platform qualification.
 
@@ -13,7 +13,11 @@ combine delivered software with integrated or platform qualification.
 telemetry streams), #193 (R4, desktop and direct output), #194 (R5,
 committed read models), #196 (R7, reactive UI) and #197 (R8, MCP workflow
 parity) are closed.
-Integrated qualification remains open in #198.
+Integrated qualification remains open in #198. On 13 November 2026 the user
+excluded Sunton-related work from the current #189 scope. R0 is complete for
+the remaining sources. Sunton acquisition and hardware qualification are
+deferred and do not gate #189 closure. This decision does not qualify Sunton
+or approve its sampling behavior.
 
 For R2, the [input acquisition inventory](acquisition.md#r2-native-input-transport-gate)
 records the Windows Raw Input, USB CDC and CAN push paths. Ordinary
