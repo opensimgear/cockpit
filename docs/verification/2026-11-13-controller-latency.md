@@ -94,3 +94,45 @@ All ten diagnostic tests passed again before this evidence update.
 The failed-attempt trace is
 `.research/reactive/physical-vjoy-hotplug/a8fbba73-4f07-4fca-9a35-336daa4f7410/evidence.json`,
 SHA-256 `cfcbf60a9b8cadfdf9f47c9f6fc7415e9158517220c3067ed7fe2638dac51d20`.
+
+## Completed held-unplug and reconnect phases
+
+After the operator reconnected USB, the first retry expired before observing
+a held trigger. The private phase window was extended from 24 to 60 seconds.
+A subsequent preparation attempt requested a receiver duration above its
+125-second limit and failed before input was applied. The final run retained
+the supported 125-second receiver duration.
+
+The final native trace recorded the held main trigger on generation 1,
+confirmed offline loss with no baseline and a null value, then a complete
+held baseline on generation 2. The required-source loss retired the profile
+owner. Reconnect left it retired. The operator released the trigger, the
+fixture stopped and reapplied the saved profile, and owner generation 2
+accepted a deliberate fresh press and release.
+
+The independent vJoy receiver recorded seven transitions before reconnect,
+including extra preparatory/operator presses. Its last pre-reconnect
+transition was release, 1,371.967 ms before the reconnect cue. It recorded
+no further transitions from that cue through the held reconnect, release,
+neutral baseline and reapply, until the final deliberate press. That press
+and its release were the only two transitions after the final tap cue.
+Stop left no owner, freed slot 1 and deleted the temporary profile with no
+cleanup errors. The receiver reported no overflow or peer-button activity.
+
+The older exact-five-transition validator failed on the additional
+pre-unplug presses. A separate phase-boundary verification checked the
+complete raw receiver records, clock bracket, monotonic timestamps,
+exact vJoy identity, source baseline/generation, pre-reconnect held release,
+absence of reconnect replay and final two fresh edges. It passed. Three
+negative controls rejected a missing neutral release, an invalid replacement
+baseline and a replay injected into the reconnect interval. The failed
+exact-sequence result remains in the evidence rather than being overwritten.
+
+The final raw trace is
+`.research/reactive/physical-vjoy-hotplug/1a4287e8-ea63-4255-a144-c67cb34c5f46/evidence.json`,
+SHA-256 `d616f21a69bf283f8f4c4da1a954fb91c0f8f915e033be8b006e33da6a102ecd`.
+The private verifier is
+`.research/reactive/preview-delivery-handoff/clock-calibration/verify-hotplug-scoped.mjs`.
+All ten focused diagnostic tests passed before this evidence commit.
+No production code changed. This completes the Gladiator held-unplug and
+stream-replacement scenario in #199. Other hardware and HidHide remain open.
