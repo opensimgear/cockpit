@@ -89,3 +89,49 @@ datagrams on both the default and explicit sender interfaces, ruling out
 the proposed default-interface explanation for this attempt. The captured
 binary feed is retained for comparison with the native decoder and its
 baseline requirements. No production repository code changed.
+
+## Completed physical and browser-panel control routes
+
+The source-admission check explained the control-profile timeout. The live
+DCS-BIOS multicast sender was the local adapter `172.19.112.1`, while the
+private connection used command host `127.0.0.1` and unspecified multicast
+interface `0.0.0.0`. `Network::accepts_export_source` admits the command host
+or an explicitly selected local multicast interface. Selecting the observed
+adapter through `game_integration_settings_save` admitted the real feed.
+This changed only the private test configuration. The source fence and
+production acquisition implementation were preserved.
+
+The corrected profile used the actual TF-51D tab, its P-51D catalogue alias
+and the exact right-hand Gladiator main trigger `hid:0009:0001:1:0:8`.
+Physical and browser inputs fed an explicit Boolean OR, a 0/1 selector and
+one set-on-change writer to `command:LANDING_LIGHT:set_state`. Native
+feedback `channel:LANDING_LIGHT:0` fed a comparison and the browser indicator.
+The initial research graph's two writers were rejected by the compiler.
+The corrected single-writer graph compiled without error diagnostics.
+
+In actual DCS, the physical trigger produced returned light states 1 and 0.
+The same authenticated browser panel then produced returned states 1 and 0.
+The panel received fresh on/off feedback on one session and publication.
+These samples came from DCS-BIOS, rather than native submission acknowledgements.
+No simulator telemetry or UDP command receiver was substituted.
+
+The operator initially could not identify the switch, then located callout 4
+in the installed cockpit manual. A panel-only repeat held the light on for
+20 seconds. The operator explicitly confirmed seeing both on and off.
+Physical-trigger visual confirmation was not separately asserted. The native
+returned-state proof covers that physical route. The final light state was
+off, matching the recorded activation baseline. Both private profiles and
+panel peers were removed, listeners disabled and owners cleared successfully.
+
+The first routing trace and the panel-only repeat were verified separately,
+so the repeat is not counted as another physical-trigger test. Both evidence
+verifiers and all eleven telemetry-model tests passed before this commit.
+
+| Local control evidence | SHA-256 |
+| --- | --- |
+| `.research/c193-reconnect/reader-budget-max/controller-clock-8098c6fc32db4e0d9729d746d905a13a/passive-live-evidence.json` | `644c622ed72a188e9355e6b9fc5446a4fb1a21d2a4e256c0ed4573cac462331a` |
+| `.research/c193-reconnect/reader-budget-max/controller-clock-e21bac269adc4a84a85f0b3f91e2690d/passive-live-evidence.json` | `d2bfe8e4562238556d9a544e2e6847eb58ec578228acfe5d215ff4e540ca383b` |
+
+Simultaneous virtual routing, context/export-permission transitions, the
+combined soak and the untouched-runtime repeat remain open. The broader
+#198/#199 matrix is not closed by these individual control checks.
