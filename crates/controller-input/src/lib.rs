@@ -18,8 +18,8 @@ mod windows_caps;
 mod windows_inventory;
 #[cfg(windows)]
 mod windows_receive;
-#[cfg(windows)]
-mod windows_hid;
+#[cfg(any(windows, target_os = "linux"))]
+mod hid;
 #[cfg(target_os = "linux")]
 use capture::linux::Wake as CaptureWake;
 #[cfg(target_os = "macos")]
@@ -41,8 +41,8 @@ fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
     Registry::default().restore(saved.clone())
 }
 pub struct ControllerService {
-    #[cfg(windows)]
-    hid: windows_hid::Service,
+    #[cfg(any(windows, target_os = "linux"))]
+    hid: hid::Service,
     registry: Arc<Mutex<Registry>>,
     clock: stream::Clock,
     stop: Arc<AtomicBool>,
@@ -193,8 +193,8 @@ impl ControllerService {
             r.set_backend_state("unavailable", diagnostic);
         }
         Self {
-            #[cfg(windows)]
-            hid: windows_hid::Service::new(native),
+            #[cfg(any(windows, target_os = "linux"))]
+            hid: hid::Service::new(native),
             registry,
             clock,
             stop,
@@ -277,10 +277,10 @@ impl ControllerService {
             .as_str()
             .ok_or("Missing controller command.")?;
         if command.starts_with("controller_hid_") {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             return self.hid.request(command, request);
-            #[cfg(not(windows))]
-            return Err("Generic Windows HID receiver is unavailable on this platform.".into());
+            #[cfg(not(any(windows, target_os = "linux")))]
+            return Err("Generic HID receiver is unavailable on this platform.".into());
         }
         if command.starts_with("controller_visibility_") {
             return self.visibility.request(request);
@@ -409,7 +409,7 @@ impl ControllerService {
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         self.hid.shutdown();
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         if let Some(wake) = &self.capture_wake {

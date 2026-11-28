@@ -57,7 +57,7 @@ def main():
     sources.append(root / 'crates/controller-input/src/inventory.rs')
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/windows.rs')
-        for name in ['windows_hid', 'windows_inventory', 'windows_receive', 'windows_caps']:
+        for name in ['windows_inventory', 'windows_receive', 'windows_caps']:
             folder = root / 'crates/controller-input/src' / name
             sources.append(folder.with_suffix('.rs'))
             sources.extend(path for path in sorted(folder.rglob('*.rs'))
@@ -69,6 +69,14 @@ def main():
     sources.append(root / 'crates/controller-input/src/stream/clock.rs')
     if sys.platform.startswith('linux'):
         sources.append(root / 'crates/controller-input/src/linux.rs')
+        folder = root / 'crates/controller-input/src/linux_hid'
+        sources.extend(path for path in sorted(folder.rglob('*.rs'))
+                       if not any('test' in part for part in path.relative_to(folder).parts))
+    if os.name == 'nt' or sys.platform.startswith('linux'):
+        folder = root / 'crates/controller-input/src/hid'
+        sources.append(folder.with_suffix('.rs'))
+        sources.extend(path for path in sorted(folder.glob('*.rs'))
+                       if 'test' not in path.name and (os.name == 'nt' or path.name != 'native.rs'))
     if sys.platform == 'darwin':
         sources.append(root / 'crates/controller-input/src/macos.rs')
     sources.extend(root / f'crates/controller-input/src/visibility/{name}.rs' for name in ['capabilities', 'suppression', 'policy', 'journal', 'wire', 'settings', 'self_access', 'session', 'runtime', 'service', 'game', 'handoff'])

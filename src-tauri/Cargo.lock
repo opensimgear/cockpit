@@ -3603,6 +3603,7 @@ dependencies = [
  "evdev",
  "iohidmanager",
  "libc",
+ "osg-hid-report",
  "osg-persistence",
  "osg-streams",
  "serde",
@@ -3624,6 +3625,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "osg-hid-report"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "serde",
 ]
 
 [[package]]

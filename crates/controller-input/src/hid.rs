@@ -1,5 +1,13 @@
 //! Explicitly selected HID capture. The mapping service keeps its own controller projection.
+#[cfg(windows)]
 mod native;
+#[cfg(windows)]
+use native::Windows as Native;
+#[cfg(target_os = "linux")]
+#[path = "linux_hid/mod.rs"]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::Linux as Native;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -36,7 +44,7 @@ fn required<'a>(request: &'a Value, name: &str) -> Result<&'a str, String> {
 impl Service {
     pub fn new(native: bool) -> Self {
         Self {
-            backend: native.then(|| Arc::new(native::Windows::default()) as Arc<dyn Backend>),
+            backend: native.then(|| Arc::new(Native::default()) as Arc<dyn Backend>),
             sessions: Mutex::default(),
             stopped: AtomicBool::new(false),
         }

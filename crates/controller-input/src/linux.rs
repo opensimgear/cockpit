@@ -319,7 +319,7 @@ fn definition(
         },
         name: name.into(),
         controls,
-        diagnostics: vec!["evdev controls only; vendor hidraw features are not captured.".into()],
+        diagnostics: vec!["Kernel-translated evdev events; inspect the correlated hidraw interface for HID descriptors and reports.".into()],
     })
 }
 struct LinuxInput<D: Kernel> {

@@ -9,6 +9,8 @@ Milestone dependencies and platform qualification are tracked in the [parent fea
 
 ## Using the portable decoder
 
+For Linux hardware and native package checks, follow the [hidraw receiver qualification procedure](linux-receiver.md).
+
 The [Rust library](../../crates/hid-report/) accepts a descriptor byte slice through
 `parse_descriptor`. Inspect its diagnostics before interpreting a report. Item byte offsets
 and lengths refer to the original descriptor. Fields reference their declaring item and enclosing

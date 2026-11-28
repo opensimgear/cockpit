@@ -38,7 +38,7 @@ impl Get {
             report_id: req["reportId"]
                 .as_u64()
                 .and_then(|n| n.try_into().ok())
-                .ok_or("Expected Windows HID report ID 0..255")?,
+                .ok_or("Expected HID report ID 0..255 (zero selects unnumbered)")?,
             max_bytes: req["maxBytes"]
                 .as_u64()
                 .filter(|n| (1..=65536).contains(n))
@@ -63,7 +63,15 @@ impl History {
     fn push(&mut self, micros: u128, raw: &[u8], projection: Value) {
         self.sequence += 1;
         let mut row = json!({"sequence":self.sequence.to_string(),"receivedUs":micros.to_string(),
-            "windowsReportId":raw.first(),"wireHex":hex(raw),"samples":projection});
+            "wireHex":hex(raw),"samples":projection});
+        #[cfg(windows)]
+        {
+            row["windowsReportId"] = json!(raw.first());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            row["reportId"] = row["samples"]["report_id"].clone();
+        }
         let mut encoded = row.to_string();
         if encoded.len() > 512 * 1024 {
             row["samples"] =
@@ -186,7 +194,18 @@ impl Session {
                         let removed = value
                             .as_ref()
                             .err()
-                            .filter(|e| e["kind"] == "removed")
+                            .filter(|e| {
+                                matches!(
+                                    e["kind"].as_str(),
+                                    Some(
+                                        "removed"
+                                            | "stale-generation"
+                                            | "permission-denied"
+                                            | "access-denied"
+                                            | "eof"
+                                    )
+                                )
+                            })
                             .cloned();
                         pending.store(false, Ordering::Release);
                         if let Some(error) = removed {

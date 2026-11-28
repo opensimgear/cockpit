@@ -18,6 +18,7 @@ tempfile = "3"
 windows-sys = { version = "0.61.2", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Graphics_Gdi", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Registry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+osg-hid-report = { path = "../hid-report" }
 evdev = "=0.13.2"
 udev = "=0.9.3"
 libc = "0.2"
