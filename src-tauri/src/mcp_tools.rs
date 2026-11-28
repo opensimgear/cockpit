@@ -24,6 +24,10 @@ mod integration_settings;
 mod game_library;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
+#[path = "mcp_tools/hid_read.rs"]
+mod hid_read;
+#[path = "mcp_tools/hid_query.rs"]
+mod hid_query;
 #[path = "mcp_tools/schema.rs"]
 mod schema;
 pub use definitions::{catalogue, is_mutation, resources};
@@ -188,7 +192,8 @@ impl Tools {
             Ok(data) => json!({"ok":true,"data":data}),
             Err(error) => error,
         };
-        if result.to_string().len() > MAX_REPLY {
+        let max_reply = if name.starts_with("controller_hid_") { hid_read::MAX_DATA_BYTES } else { MAX_REPLY };
+        if result.to_string().len() > max_reply {
             // Mutations must retain their known outcome. Their large documents
             // are inspectable separately and never cause an ambiguous error.
             result = if mutation {
@@ -248,27 +253,35 @@ impl Tools {
         native_result(self.backend.guarded(request, owner.clone()), section)
     }
     fn dispatch(&self, name: &str, args: &Value, client: &str) -> Result<Value, Value> {
+        if name.starts_with("controller_hid_") { hid_read::validate_args(args)?; }
         let selected = |keys: &[&str]| select(args, keys);
         let forward = |command: &str, keys: &[&str], section: Option<&str>| {
             self.native(command, selected(keys), client, section)
         };
         match name {
-            "controller_hid_reports" => {
-                if let Some(after)=args.get("after") {
-                    let valid=after.as_str().is_some_and(|value|value.parse::<u64>().ok().is_some_and(|number|number.to_string()==value));
-                    if !valid { return Err(failure("invalid_arguments","after must be a canonical unsigned 64-bit decimal cursor.",false)); }
-                }
-                forward(name, &["interfaceId","generation","after"], Some("controllers"))
+            name if hid_query::handles(name) => self.hid_query_tool(name, args, client),
+            "controller_hid_list" | "controller_hid_catalog" | "controller_hid_state"
+            | "controller_hid_inspect" | "controller_hid_snapshot" | "controller_hid_replay_read" =>
+                self.hid_read(name, args, client),
+            "controller_hid_capture_status" | "controller_hid_report_slice" | "controller_hid_inspection_slice" =>
+                forward(name, &["source","interfaceId","generation","sequence","offset","limit","contentFingerprint","contractFingerprint","snapshotId","replayId","part","after","elapsedUs","seek"], Some("controllers")),
+            "controller_hid_reports" =>
+                forward(name, &["interfaceId","generation","after","limit"], Some("controllers")),
+            "controller_hid_get" => {
+                let mut fields=selected(&["interfaceId","generation","requestId","kind","reportId","maxBytes","deadlineMs"]);
+                fields["bounded"]=json!(true);
+                self.native(name,fields,client,Some("controllers"))
             }
+            "controller_hid_get_slice" =>
+                forward(name,&["interfaceId","generation","requestId","offset","limit"],Some("controllers")),
             "controller_hid_record_list" | "controller_hid_record_start" | "controller_hid_record_status" | "controller_hid_record_stop"
             | "controller_hid_record_export" | "controller_hid_record_discard" =>
                 forward(name, &["interfaceId","generation","maxBytes","maxRecords","offset","limit"], Some("controllers")),
             "controller_hid_replay_upload_start" | "controller_hid_replay_upload_chunk"
             | "controller_hid_replay_upload_finish" | "controller_hid_replay_upload_cancel"
-            | "controller_hid_replay_read" | "controller_hid_replay_close" =>
+            | "controller_hid_replay_close" =>
                 forward(name, &["totalBytes","uploadId","offset","chunk","replayId","after","limit","elapsedUs","seek","part","byteOffset","maxBytes"], Some("controllers")),
-            "controller_hid_list" | "controller_hid_inspect" | "controller_hid_catalog" | "controller_hid_snapshot"
-            | "controller_hid_open" | "controller_hid_state" | "controller_hid_get" | "controller_hid_close" =>
+            "controller_hid_open" | "controller_hid_close" =>
                 forward(name, &["interfaceId","generation","contractFingerprint","after","requestId","kind","reportId","maxBytes","deadlineMs"], Some("controllers")),
             "controller_update" => {
                 let updated = forward(name, &["sourceId", "name", "role"], Some("controllers"))?;
@@ -969,6 +982,13 @@ fn compact_operation_result(result: &Value, id: &str) -> Value {
         return result.clone();
     }
     let data = &result["data"];
+    if data["requestId"].is_string() && data["generation"].is_string() && data["interfaceId"].is_string() {
+        let mut receipt=select(data,&["requestId","generation","interfaceId","contractFingerprint"]);
+        receipt["state"]=json!("completed");
+        receipt["result"]=select(&data["result"],&["kind","status","getSlice"]);
+        receipt["reconciliation"]=json!("Read controller_hid_get_slice with this requestId and generation before issuing another GET.");
+        return json!({"ok":true,"operationId":id,"data":receipt});
+    }
     json!({"ok":true,"operationId":id,"data":{"state":"completed","document":select(&data["document"],&["id","name","revision"]),"session":data["session"],"profileSession":data["profileSession"],"saveApplication":data["saveApplication"],"activationId":data["activationId"],"revision":data["revision"],"reconciliation":"Operation completed. Read profile_get/profile_status or the device/settings inspection tool for the full current state."}})
 }
 

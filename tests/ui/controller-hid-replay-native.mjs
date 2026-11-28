@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
+import {hidMcpSession} from './hid-mcp-session.mjs';
+import {verifyReplayTransfer} from './hid-recording-mcp.mjs';
 
 const manifest=fileURLToPath(new URL('../../crates/hid-report/Cargo.toml',import.meta.url));
 const corpus=name=>JSON.parse(readFileSync(new URL(`../hid-contract/authored/${name}.json`,import.meta.url),'utf8'));
@@ -41,6 +43,15 @@ function scenarios() {
   return archives;
 }
 
+function largeArchive() {
+  const value=archive(centered,centered.samples[0]);
+  value.interfaceId='bounded-authored';value.descriptor.interfaceId=value.interfaceId;
+  value.descriptor.opaque='é'.repeat(550000);
+  value.records[0].samples.opaque='é'.repeat(550000);
+  while(value.bytes!==Buffer.byteLength(JSON.stringify(value)))value.bytes=Buffer.byteLength(JSON.stringify(value));
+  return value;
+}
+
 async function click(page, label) {
   await until(()=>page.evaluate(`(() => {
     const button=[...document.querySelectorAll('button')].find(b=>(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)})&&!b.disabled&&b.getClientRects().length);
@@ -52,11 +63,18 @@ async function click(page, label) {
 test('running Debug renders authored native HID domains through offline file replay',{
   skip:process.env.OSG_HID_NATIVE!=='1',timeout:180000,
 },async()=>{
-  const page=await nativePage();
+  const page=await nativePage();let mcp;
   try {
+    mcp=await hidMcpSession(page);
+    await assert.rejects(()=>mcp.reader.callTool({name:'controller_hid_replay_upload_start',arguments:{totalBytes:1,operationId:crypto.randomUUID()}}));
+    // Legal descriptor and row sizes above the MCP message budget must still be
+    // discoverable and exactly recoverable through the advertised bounded slices.
+    await verifyReplayTransfer(mcp.writer,mcp.reader,largeArchive());
     await click(page,'Debug');
     await click(page,'HID interfaces');
     for(const [value,expected] of scenarios()) {
+      const records=await verifyReplayTransfer(mcp.writer,mcp.reader,value,257,expected);
+      assert.equal(records[0].wireHex,value.records[0].wireHex);
       const text=JSON.stringify(value);
       await until(()=>page.evaluate(`(() => {
         const input=document.querySelector('input[type=file][accept*="json"]');
@@ -85,5 +103,5 @@ test('running Debug renders authored native HID domains through offline file rep
         `wire bytes for ${value.interfaceId}`);
       await click(page,'Close replay');
     }
-  }finally { page.close(); }
+  }finally {if(mcp)await mcp.close();page.close();}
 });

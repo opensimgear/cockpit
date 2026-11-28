@@ -14,6 +14,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos::Mac as Native;
 mod catalog;
+mod client_lifecycle;
+mod inspection;
 mod recording;
 mod replay;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -53,6 +55,7 @@ pub(super) struct Service {
 struct Active {
     generation: String,
     fingerprint: String,
+    owner: Option<String>,
     session: Option<Session>,
 }
 
@@ -84,6 +87,9 @@ impl Service {
     pub fn request(&self, command: &str, req: &Value) -> Result<Value, String> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("HID service has stopped".into());
+        }
+        if command == "controller_hid_inspection_slice" {
+            return self.inspection_slice(req);
         }
         if command.starts_with("controller_hid_replay_") {
             return self
@@ -175,6 +181,7 @@ impl Service {
                 json!({"closed":true})
             }
             "controller_hid_state" => session.state(),
+            "controller_hid_capture_status" => session.status(),
             "controller_hid_reports" => {
                 let after = req
                     .get("after")
@@ -185,8 +192,17 @@ impl Service {
                     })
                     .transpose()?
                     .unwrap_or(0);
-                session.page(after)?
+                let limit = req.get("limit").map_or(Ok(128), |value| {
+                    value
+                        .as_u64()
+                        .filter(|n| (1..=128).contains(n))
+                        .map(|n| n as usize)
+                        .ok_or("HID report limit must be 1..128")
+                })?;
+                session.page_limit(after, limit)?
             }
+            "controller_hid_report_slice" => session.report_slice(req)?,
+            "controller_hid_get_slice" => session.get_slice(req)?,
             "controller_hid_get" => {
                 let get = Get::parse(req)?;
                 let reply = session.submit(get)?;
@@ -384,6 +400,10 @@ impl Service {
             Active {
                 generation: generation.clone(),
                 fingerprint: fingerprint.clone(),
+                owner: req
+                    .get("clientId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 session: None,
             },
         );
@@ -420,3 +440,11 @@ impl Service {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "hid/bounded_tests.rs"]
+mod bounded_tests;
+
+#[cfg(test)]
+#[path = "hid/get_tests.rs"]
+mod get_tests;

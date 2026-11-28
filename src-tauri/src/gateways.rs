@@ -948,6 +948,7 @@ impl GatewayManager {
     pub(crate) fn mcp_authorize_client(&self, client: &str, authorized: bool) {
         let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
         self.set_mcp_authorization_admitted(client, authorized);
+        if !authorized { self.controllers.release_hid_client(client); }
     }
     // The caller owns profile admission for this policy transition. Keeping the
     // registry update separate also permits deterministic queued-writer tests.

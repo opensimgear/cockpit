@@ -12,7 +12,7 @@ fn retained_pages_expose_evictions_and_preserve_oversized_sample_wire() {
     h.push(4101, &[0, 1], json!("s".repeat(513 * 1024)), None);
     let last = h.page(4100).unwrap();
     assert_eq!(last["reports"][0]["wireHex"], "0001");
-    assert!(last["reports"][0]["samples"]["unavailable"].is_string());
+    assert_eq!(last["reports"][0]["samples"], "s".repeat(513 * 1024));
     assert_eq!(last["gap"], false);
 }
 #[test]
@@ -43,6 +43,9 @@ fn explicit_reads_validate_deadline_scope_and_reply_fencing() {
             expires: Instant::now(),
             id: "r".into(),
             stop: Arc::new(AtomicBool::new(closed)),
+            history: Arc::new(Mutex::new(History::default())),
+            token: String::new(),
+            bounded: false,
         };
         assert_eq!(
             reply.wait("a", "g").unwrap()["result"]["error"]["kind"],
@@ -388,8 +391,15 @@ fn an_oversized_recording_row_keeps_native_wire_history_and_an_importable_prefix
     history.push(1, &[0, 1], json!({"value":1}), None);
     history.push(2, &[0, 2], json!({"opaque":"x".repeat(2*1024*1024)}), None);
     let native = history.page(1).unwrap();
-    assert_eq!(native["reports"][0]["wireHex"], "0002");
-    assert!(native["reports"][0]["samples"]["unavailable"].is_string());
+    assert!(
+        native["reports"][0]["reportSlice"]["totalBytes"]
+            .as_u64()
+            .unwrap()
+            > 2 * 1024 * 1024
+    );
+    let exact: Value = serde_json::from_str(&history.entries.back().unwrap().json).unwrap();
+    assert_eq!(exact["wireHex"], "0002");
+    assert_eq!(exact["samples"]["opaque"], "x".repeat(2 * 1024 * 1024));
     assert!(history.terminal.is_none());
     let export = store.request("controller_hid_record_export", &req).unwrap();
     assert_eq!(

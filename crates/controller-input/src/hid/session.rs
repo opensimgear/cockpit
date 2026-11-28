@@ -1,4 +1,6 @@
 use super::values;
+#[path = "session/get_result.rs"]
+mod get_result;
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
@@ -24,6 +26,7 @@ pub(super) struct Get {
     pub feature: bool,
     pub report_id: u8,
     pub max_bytes: usize,
+    bounded: bool,
     expires: Instant,
 }
 impl Get {
@@ -48,12 +51,17 @@ impl Get {
                 .filter(|n| (1..=65536).contains(n))
                 .ok_or("Expected maxBytes 1..65536")? as usize,
             expires: Instant::now() + Duration::from_millis(ms),
+            bounded: req.get("bounded").map_or(Ok(false), |value| {
+                value.as_bool().ok_or("HID bounded must be boolean")
+            })?,
         })
     }
 }
 
 struct Entry {
     seq: u64,
+    received: u128,
+    report_id: Option<u8>,
     json: Box<str>,
 }
 #[derive(Default)]
@@ -66,9 +74,13 @@ struct History {
     detail: Value,
     recording: Option<Weak<super::recording::Archive>>,
     clock: Option<Instant>,
+    get_token: Option<String>,
+    last_get: Option<get_result::Retained>,
 }
 impl History {
     fn end(&mut self, reason: Value) {
+        self.get_token = None;
+        self.last_get = None;
         self.values.clear();
         if self.terminal.is_none() {
             if let Some(recording) = self.recording.as_ref().and_then(Weak::upgrade) {
@@ -90,7 +102,11 @@ impl History {
         if self.terminal.is_some() {
             return;
         }
-        self.sequence += 1;
+        let Some(sequence) = self.sequence.checked_add(1) else {
+            self.end(json!({"kind":"overflow","message":"HID report sequence exhausted"}));
+            return;
+        };
+        self.sequence = sequence;
         self.values
             .observe(self.sequence, micros, &projection, provenance.as_ref());
         let mut row = json!({"sequence":self.sequence.to_string(),"receivedUs":micros.to_string(),
@@ -113,43 +129,61 @@ impl History {
             row["reportId"] = source["reportId"].clone();
             row["provenance"] = source;
         }
-        let mut encoded = row.to_string();
+        let encoded = row.to_string();
         if let Some(recording) = self.recording.as_ref().and_then(Weak::upgrade) {
             recording.observe_value(self.sequence, micros, &encoded, &row);
-        }
-        if encoded.len() > 512 * 1024 {
-            row["samples"] =
-                json!({"unavailable":"Decoded projection exceeds capture page budget"});
-            encoded = row.to_string();
         }
         self.bytes += encoded.len();
         self.entries.push_back(Entry {
             seq: self.sequence,
+            received: micros,
+            report_id: row["reportId"]
+                .as_u64()
+                .or_else(|| row["windowsReportId"].as_u64())
+                .and_then(|id| id.try_into().ok()),
             json: encoded.into_boxed_str(),
         });
-        while self.entries.len() > 4096 || self.bytes > 8 * 1024 * 1024 {
+        while self.entries.len() > 4096 || self.bytes + self.get_bytes() > 8 * 1024 * 1024 {
             self.bytes -= self.entries.pop_front().unwrap().json.len();
         }
     }
+    #[cfg(test)]
     fn page(&self, after: u64) -> Result<Value, String> {
+        self.page_limit(after, 128)
+    }
+    fn page_limit(&self, after: u64, limit: usize) -> Result<Value, String> {
         if after > self.sequence {
             return Err("HID cursor is ahead of this generation".into());
         }
-        let oldest = self.entries.front().map_or(1, |e| e.seq);
-        let mut bytes = 0;
-        let reports: Vec<_> = self
+        let oldest = self
             .entries
-            .iter()
-            .filter(|e| e.seq > after)
-            .take(128)
-            .take_while(|e| {
-                bytes += e.json.len();
-                bytes <= 900 * 1024
-            })
-            .map(|e| serde_json::from_str::<Value>(&e.json).expect("entry serialized on insertion"))
-            .collect();
+            .front()
+            .map_or(self.sequence.saturating_add(1), |e| e.seq);
+        let mut bytes = 0;
+        let mut reports = Vec::new();
+        for entry in self.entries.iter().filter(|e| e.seq > after).take(limit) {
+            let row = if entry.json.len() >= 900 * 1024 {
+                json!({"sequence":entry.seq.to_string(),"receivedUs":entry.received.to_string(),
+                    "reportId":entry.report_id,"samples":{"unavailable":"Report exceeds page budget; read report slice for exact JSON"},"reportSlice":{
+                    "totalBytes":entry.json.len(),"encoding":"json-utf8"}})
+            } else {
+                serde_json::from_str::<Value>(&entry.json).expect("entry serialized on insertion")
+            };
+            let size = row.to_string().len() + 1;
+            if bytes + size > 900 * 1024 {
+                break;
+            }
+            bytes += size;
+            reports.push(row);
+        }
+        let next = reports
+            .last()
+            .and_then(|row| row["sequence"].as_str())
+            .and_then(|sequence| sequence.parse::<u64>().ok())
+            .unwrap_or(after.max(oldest.saturating_sub(1)));
         Ok(
             json!({"reports":reports,"oldest":oldest.to_string(),"latest":self.sequence.to_string(),
+            "next":next.to_string(),"hasMore":self.entries.back().is_some_and(|entry|entry.seq>next),
             "gap":after.saturating_add(1)<oldest,"terminal":self.terminal}),
         )
     }
@@ -169,6 +203,9 @@ pub(super) struct Reply {
     expires: Instant,
     id: String,
     stop: Arc<AtomicBool>,
+    history: Arc<Mutex<History>>,
+    token: String,
+    bounded: bool,
 }
 impl Reply {
     pub fn wait(self, target: &str, generation: &str) -> Result<Value, String> {
@@ -185,6 +222,11 @@ impl Reply {
                 Err(mpsc::RecvTimeoutError::Disconnected) => json!({"error":{"kind":"offline"}}),
             }
         };
+        let result = self
+            .history
+            .lock()
+            .map_err(|_| "HID history lock unavailable")?
+            .retain_get(&self.id, &self.token, result, self.bounded);
         Ok(
             json!({"interfaceId":target,"generation":generation,"requestId":self.id,"result":result}),
         )
@@ -306,8 +348,45 @@ impl Session {
             worker: Some(worker),
         })
     }
+    #[cfg(test)]
     pub fn page(&self, after: u64) -> Result<Value, String> {
         self.history.lock().unwrap().page(after)
+    }
+    pub fn page_limit(&self, after: u64, limit: usize) -> Result<Value, String> {
+        self.history.lock().unwrap().page_limit(after, limit)
+    }
+    pub fn status(&self) -> Value {
+        let history = self.history.lock().unwrap();
+        json!({"status":if history.terminal.is_some() {"offline"} else {"open"},
+            "latest":history.sequence.to_string(),
+            "oldest":history.entries.front().map_or(history.sequence.saturating_add(1),|entry|entry.seq).to_string(),
+            "retainedRecords":history.entries.len(),"retainedBytes":history.bytes,"terminal":history.terminal})
+    }
+    pub fn report_slice(&self, request: &Value) -> Result<Value, String> {
+        let sequence = super::required(request, "sequence")?
+            .parse::<u64>()
+            .map_err(|_| "Invalid HID report sequence")?;
+        if request["sequence"].as_str().unwrap() != sequence.to_string() {
+            return Err(
+                "Invalid HID report sequence; expected canonical unsigned decimal string".into(),
+            );
+        }
+        let history = self
+            .history
+            .lock()
+            .map_err(|_| "HID history lock unavailable")?;
+        let entry = history.entries.iter().find(|e| e.seq == sequence).ok_or(
+            "HID report sequence is not retained; page reports again to recover the cursor",
+        )?;
+        let mut result = super::inspection::slice(entry.json.as_bytes(), request)?;
+        result["sequence"] = json!(sequence.to_string());
+        Ok(result)
+    }
+    pub fn get_slice(&self, request: &Value) -> Result<Value, String> {
+        self.history
+            .lock()
+            .map_err(|_| "HID history lock unavailable")?
+            .get_slice(request)
     }
     pub fn state(&self) -> Value {
         self.history.lock().unwrap().state()
@@ -348,11 +427,20 @@ impl Session {
             return Err("Busy: explicit HID read already outstanding".into());
         }
         let (tx, rx) = mpsc::channel();
+        let token = uuid::Uuid::new_v4().to_string();
+        {
+            let mut history = self.history.lock().unwrap();
+            history.last_get = None;
+            history.get_token = Some(token.clone());
+        }
         let result = Reply {
             rx,
             expires: get.expires,
             id: get.id.clone(),
             stop: self.stop.clone(),
+            history: self.history.clone(),
+            token,
+            bounded: get.bounded,
         };
         if self.tx.try_send((get, tx)).is_err() {
             self.busy.store(false, Ordering::Release);
@@ -373,3 +461,7 @@ impl Drop for Session {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_bounds_tests.rs"]
+mod bounds_tests;

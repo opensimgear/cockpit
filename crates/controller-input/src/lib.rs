@@ -55,6 +55,11 @@ pub struct ControllerService {
     visibility: visibility::service::Service,
 }
 impl ControllerService {
+    pub fn release_hid_client(&self, client: &str) {
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        self.hid.release_client(client);
+    }
+
     /// Capture all retained metadata atomically; unlike UI pages, this cannot
     /// mix different connection generations between list and inspect calls.
     pub fn resource_inventory(&self) -> registry::ResourceInventory {

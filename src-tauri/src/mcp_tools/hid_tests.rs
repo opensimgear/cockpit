@@ -65,6 +65,7 @@ fn recording_and_offline_replay_use_bounded_authenticated_native_tasks() {
         let mut expected = args.clone();
         expected["clientId"] = json!(native_client("inspector"));
         expected["command"] = json!(name);
+        if name == "controller_hid_replay_read" {expected["bounded"]=json!(true);}
         let mut call = args;
         if write && !definitions::is_streaming(name) {
             call["operationId"] = json!(format!("00000000-0000-4000-8000-{index:012}"));

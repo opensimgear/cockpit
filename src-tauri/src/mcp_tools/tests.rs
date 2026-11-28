@@ -160,6 +160,7 @@ fn catalogue_is_explicit_strict_unique_and_annotated_consistently() {
             let required:&[&str]=match tool["name"].as_str().unwrap(){
                 "profile_debug_controller_input"=>&["owner","nodeId","streamId","sequence","changes"],
                 "workspace_client_renew"=>&["gatewayId"],
+                "controller_hid_replay_upload_chunk"=>&["uploadId","offset","chunk"],
                 name=>panic!("Undocumented non-ledger mutation: {name}"),
             };
             for required in required {assert!(tool["inputSchema"]["required"].as_array().unwrap().contains(&json!(required)));}

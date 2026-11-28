@@ -25,6 +25,7 @@ const MAX_ARCHIVES: usize = 4;
 pub(super) type Handle = Arc<Archive>;
 
 pub(super) struct Archive {
+    owner: Option<String>,
     live: Arc<AtomicBool>,
     inner: Mutex<Recording>,
 }
@@ -150,11 +151,22 @@ impl Store {
             );
         }
         let handle = Arc::new(Archive {
+            owner: req["clientId"].as_str().map(str::to_owned),
             live: recording.live.clone(),
             inner: Mutex::new(recording),
         });
         self.recordings.insert((id, generation), handle.clone());
         Ok(handle)
+    }
+
+    pub(super) fn release_client(&self, client: &str) {
+        for archive in self.recordings.values().filter(|a| a.owner.as_deref()==Some(client)) {
+            if let Some(mut recording) = archive.active_lock() {
+                let seq = recording.last_sequence();
+                let at = recording.started_micros + recording.clock.elapsed().as_micros();
+                recording.end(json!({"kind":"authorization-revoked"}), seq, at, false);
+            }
+        }
     }
 
     pub fn request(&mut self, command: &str, req: &Value) -> Result<Value, String> {

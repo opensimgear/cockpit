@@ -154,6 +154,35 @@ the original relative timing, and Seek reconstructs observations at the selected
 microsecond. For external clients, authenticated MCP exposes sealed archives in bounded
 byte slices and accepts chunked uploads. Replays are private to the importing client.
 
+## Using the HID debugger through MCP
+
+Discover the typed arguments and credential requirements with `tools/list`. Read credentials
+can inspect existing receivers and exported recordings. Opening a receiver, explicit device
+reads, and recording or replay lifecycle changes require write access. Mutations use a fresh
+`operationId` UUID except upload chunks, whose client, upload ID, offset and bytes identify a retry.
+
+| Debug action | MCP tools and behavior |
+| --- | --- |
+| Refresh and select a device | `controller_hid_list` lists interfaces and open generations. `controller_hid_inspect` reads the selected contract. `controller_hid_catalog` and `controller_hid_snapshot` read last-observed offline metadata. |
+| Search the descriptor tree and capabilities | `controller_hid_descriptor_query` searches paths and values in a live contract, offline snapshot or imported replay. Page with the returned offsets and fingerprint. The full contract preserves Input, Output and Feature declarations. |
+| Start, pause and resume observation | `controller_hid_open` accepts the inspected fingerprint and returns a generation. Use `controller_hid_capture_status` for its retained range and terminal reason. Pause by retaining the last sequence. Resume with `controller_hid_reports` and inspect gap evidence before consuming the new page. `controller_hid_close` retires that exact generation. |
+| Inspect absolute values, deltas and raw deliveries | `controller_hid_state` returns current decoded state. `controller_hid_reports` returns ordered input. `controller_hid_monitor_query` applies the Debug filters to live or replay observations. For Changed, supply the previous samples from your observation. Raw context preserves packet boundaries and loss markers. |
+| Request an Input or Feature report | `controller_hid_get` takes a unique request ID, report kind and ID, byte limit, and deadline. Inspect the actual platform outcome. Use `controller_hid_get_slice` for a large retained result before issuing another GET. Fetching slices never repeats the device request. |
+| Record and download | `controller_hid_record_start`, `controller_hid_record_status`, and `controller_hid_record_stop` operate independently of display reads. Find retained generations with `controller_hid_record_list`. Download using `controller_hid_record_export` and release storage with `controller_hid_record_discard`. |
+| Import, step, play, pause, rewind and seek | Use `controller_hid_replay_upload_start`, `_chunk`, then `_finish`, or `_cancel` an unfinished upload. `controller_hid_replay_read` steps with `limit: 1`, plays at caller-supplied elapsed microseconds and seeks with `seek: true`. Pause by retaining the cursor and clock, rewind by seeking to zero, and release the import with `controller_hid_replay_close`. |
+
+Each HID reply fits within 1 MiB. Report pages carry up to 128 entries. For an oversized retained
+report, pass its sequence to `controller_hid_report_slice`. For large descriptors, inventory or
+state, use `controller_hid_inspection_slice` with the indicated source and identity. Decode each
+base64 chunk separately and concatenate its bytes at the returned offsets before parsing UTF-8
+JSON. A continuation fingerprint fences mutable observations. If it becomes stale, restart at
+offset zero or use a sealed recording for a stable observation. Sequence and clock strings
+preserve exact integers.
+
+Revoking a credential or disabling MCP retires its receivers, seals its active recordings, and
+releases its uploads and replays. A shared receiver opened by another client remains available.
+The separate vJoy force-feedback debugger is tracked in [H8](https://github.com/opensimgear/cockpit/issues/186).
+
 ## Budgets and milestone acceptance
 
 The following are acceptance targets for the subsequent implementations. H0 supplies the contract and

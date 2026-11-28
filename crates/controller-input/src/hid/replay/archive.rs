@@ -302,6 +302,11 @@ impl Archive {
         )
     }
     pub fn page(&mut self, req: &Value) -> Result<Value, String> {
+        let state_only = req["part"] == "state";
+        let bounded = match req.get("bounded") {
+            None => false,
+            Some(value) => value.as_bool().ok_or("Replay bounded must be boolean")?,
+        };
         let after = req
             .get("after")
             .map(|n| bounds::decimal(n, "after"))
@@ -337,7 +342,11 @@ impl Archive {
                 let end = self.entries.partition_point(|r| r.at <= clock);
                 after = end;
                 let mut tail_bytes = 0;
-                for row in self.entries[..end].iter().rev().take(limit) {
+                for row in self.entries[..end]
+                    .iter()
+                    .rev()
+                    .take(if state_only { 0 } else { limit })
+                {
                     if after < end && tail_bytes + row.json.len() > 900 * 1024 {
                         break;
                     }
@@ -356,15 +365,27 @@ impl Archive {
             .entries
             .iter()
             .skip(after)
-            .take(limit)
+            .take(if state_only { 0 } else { limit })
             .take_while(|r| r.at <= clock)
         {
-            if !records.is_empty() && bytes + row.json.len() > 900 * 1024 {
+            let value: Value = serde_json::from_str(&row.json).expect("validated recording row");
+            let value = if bounded && row.json.len() > 900 * 1024 {
+                json!({"sequence":value["sequence"],"receivedUs":value["receivedUs"],
+                    "recordSlice":{"byteOffset":self.prefix.len()+row.offset,
+                        "totalBytes":row.json.len(),"encoding":"json-utf8"}})
+            } else {
+                value
+            };
+            let size = if bounded {
+                value.to_string().len() + 1
+            } else {
+                row.json.len()
+            };
+            if !records.is_empty() && bytes + size > 900 * 1024 {
                 break;
             }
-            records
-                .push(serde_json::from_str::<Value>(&row.json).expect("validated recording row"));
-            bytes += row.json.len();
+            records.push(value);
+            bytes += size;
             next += 1;
         }
         if next < self.state_cursor {
@@ -399,10 +420,15 @@ impl Archive {
             }
         }
         self.state_cursor = next;
+        let mut state = self.current.state(self.latest, self.terminal.as_ref());
+        if bounded && bytes + state.to_string().len() > 900 * 1024 {
+            state = json!({"status":state["status"],"latest":state["latest"],"stateSlice":true,
+                "unavailable":"Current state exceeds this page budget; read part state in bounded byte slices"});
+        }
         Ok(
             json!({"records":records,"next":next.to_string(),"hasMore":self.entries.get(next).is_some_and(|r|r.at<=clock),
             "complete":next==self.entries.len(),"positionUs":if clock==u64::MAX {self.entries.get(next.wrapping_sub(1)).map_or(0,|r|r.at)} else {clock.min(self.duration)}.to_string(),
-            "durationUs":self.duration.to_string(),"state":self.current.state(self.latest,self.terminal.as_ref())}),
+            "durationUs":self.duration.to_string(),"state":state}),
         )
     }
 }

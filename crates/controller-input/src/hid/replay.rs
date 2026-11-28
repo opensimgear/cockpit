@@ -165,13 +165,16 @@ impl Store {
                     self.replays.remove(key);
                     return Ok(json!({"replayId":key,"closed":true}));
                 }
-                let mut page = if req["part"] == "recording" {
-                    archive.export(req)?
-                } else {
-                    if req.get("part").is_some() {
-                        return Err("Replay part must be recording".into());
+                let mut page = match req["part"].as_str() {
+                    Some("recording") => archive.export(req)?,
+                    Some("descriptor") => json!({"descriptor":archive.descriptor}),
+                    Some("state") => {
+                        let mut exact = req.clone();
+                        exact.as_object_mut().unwrap().remove("bounded");
+                        json!({"state":archive.page(&exact)?["state"]})
                     }
-                    archive.page(req)?
+                    None if req.get("part").is_none() => archive.page(req)?,
+                    _ => return Err("Replay part must be recording, descriptor or state".into()),
                 };
                 page["replayId"] = json!(key);
                 Ok(page)
@@ -183,6 +186,10 @@ impl Store {
         self.replays.clear();
         self.uploads.clear();
     }
+    pub(super) fn release_client(&mut self, client: &str) {
+        self.replays.retain(|_, archive| archive.owner != client);
+        self.uploads.retain(|_, upload| upload.owner != client);
+    }
 }
 #[cfg(test)]
 #[path = "replay/native_tests.rs"]
@@ -193,3 +200,7 @@ mod tests;
 #[cfg(test)]
 #[path = "replay/validation_tests.rs"]
 mod validation_tests;
+
+#[cfg(test)]
+#[path = "replay/bounded_tests.rs"]
+mod bounded_tests;

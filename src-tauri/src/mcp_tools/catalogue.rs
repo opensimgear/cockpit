@@ -212,6 +212,7 @@ pub fn catalogue() -> Vec<Value> {
     tools.extend(companion::catalogue());
     tools.extend(activity_catalogue());
     tools.extend(hid_catalogue::catalogue());
+    tools.extend(super::hid_query::catalogue());
     tools
 }
 

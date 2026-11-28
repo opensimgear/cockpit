@@ -125,7 +125,13 @@
       "controller_hid_replay_upload_finish",
       "controller_hid_replay_upload_cancel",
       "controller_hid_replay_read",
-      "controller_hid_replay_close"
+      "controller_hid_replay_close",
+      "controller_hid_capture_status",
+      "controller_hid_report_slice",
+      "controller_hid_inspection_slice",
+      "controller_hid_get_slice",
+      "controller_hid_descriptor_query",
+      "controller_hid_monitor_query"
     ],
     "tests": [
       {
@@ -143,6 +149,18 @@
       {
         "path": "tests/ui/controller-hid-replay-native.mjs",
         "anchor": "running Debug renders authored native HID domains through offline file replay"
+      },
+      {
+        "path": "src-tauri/src/mcp_tools/hid_read.rs",
+        "anchor": "paged_discovery_fences_content_and_recovers_large_rows"
+      },
+      {
+        "path": "tests/ui/hid-query-mcp.mjs",
+        "anchor": "verifyReplayQueries"
+      },
+      {
+        "path": "crates/controller-input/src/hid/client_lifecycle.rs",
+        "anchor": "revocation_releases_only_the_credentials_receivers_and_uploads"
       }
     ],
     "actions": [

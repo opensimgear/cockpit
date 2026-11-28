@@ -213,6 +213,7 @@ impl ServerHandler for Handler {
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
         let mutation = mcp_tools::is_mutation(&name);
+        let hid = name.starts_with("controller_hid_");
         let (server, principal) = self.principal(&context, mutation)?;
         let urgent = matches!(
             name.as_str(),
@@ -253,12 +254,14 @@ impl ServerHandler for Handler {
             Ok(Err(_))=>operation_error("native_failure","Native task failed. Inspect current state before retrying.",operation_id),
             Err(_)=>operation_error("outcome_pending","Native work may still complete. Reconcile this operationId or activation status; do not repeat with a new operationId.",operation_id),
         };
-        Ok(if value["ok"] == false {
-            CallToolResult::structured_error(value)
-        } else {
-            CallToolResult::structured(value)
+        let mut reply = if value["ok"] == false { CallToolResult::structured_error(value) }
+            else { CallToolResult::structured(value) };
+        if hid && serde_json::to_vec(&reply).map_or(true, |v|v.len()>1_040_000) {
+            // rmcp duplicates structured JSON in a text block. Large HID payloads
+            // remain exact in structuredContent; byte-slice tools also fit text clients.
+            reply.content=vec![ContentBlock::text("Read structuredContent for the complete HID result. For text clients, request smaller pages or bounded HID byte slices.")];
         }
-        .into())
+        Ok(reply.into())
     }
     async fn list_resources(
         &self,
