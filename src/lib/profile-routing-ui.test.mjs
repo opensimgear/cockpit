@@ -497,12 +497,12 @@ test('route parameter edits reject incompatible bounds and preserve valid route 
 
 test('Debug defaults to telemetry and retains working profile inspection and runtime panels behind their own tabs',async()=>{
   const {ProfileRuntimeController}=(await loadModules(['./profile-runtime-controller'])).get('./profile-runtime-controller');
-  for(const section of ['telemetry','profile','runtime']){
+  for(const section of ['telemetry','hid','profile','runtime']){
     const runtime=new ProfileRuntimeController({status:noRequest}),h=await debugHarness(draft(),section==='telemetry'?{}:{section},{runtime});
     const panels=[...h.body.matchAll(/<div\b[^>]*role="tabpanel"[^>]*>/g)].map(([tag])=>tag);
-    assert.equal(panels.length,3);assert.equal(panels.filter(tag=>! /\shidden(?:[\s=>])/.test(tag)).length,1);
-    for(const id of ['telemetry','profile','runtime'])assert.equal(/\shidden(?:[\s=>])/.test(panels.find(tag=>tag.includes(`-${id}-panel`))),id!==section);
-    for(const label of ['Incoming telemetry','Profile inspection','Runtime &amp; recovery','Native graph preflight','Applied port samples','Runtime profile status','Native runtime and desktop output details','Companion loading and image cache details'])assert.ok(h.body.includes(label),label);
+    assert.equal(panels.length,4);assert.equal(panels.filter(tag=>! /\shidden(?:[\s=>])/.test(tag)).length,1);
+    for(const id of ['telemetry','hid','profile','runtime'])assert.equal(/\shidden(?:[\s=>])/.test(panels.find(tag=>tag.includes(`-${id}-panel`))),id!==section);
+    for(const label of ['Incoming telemetry','HID interfaces','Profile inspection','Runtime &amp; recovery','Native graph preflight','Applied port samples','Runtime profile status','Native runtime and desktop output details','Companion loading and image cache details'])assert.ok(h.body.includes(label),label);
     assert.ok(h.body.includes('aria-label="Incoming game telemetry"'));runtime.dispose();
   }
 });
@@ -510,7 +510,7 @@ test('Debug defaults to telemetry and retains working profile inspection and run
 test('standalone Debug retains all diagnostic sections without a profile-owned Back button',async()=>{
   const h=await debugHarness(draft(),{},{editor:null,close:undefined,locate:undefined});
   assert.match(h.body.replace(/<!--[\s\S]*?-->/g,''),/<h1\b[^>]*>Debug<\/h1>/);assert.ok(h.body.includes('aria-label="Debug sections"'));
-  for(const label of ['Incoming telemetry','Profile inspection','Runtime &amp; recovery'])assert.ok(h.body.includes(label),label);
+  for(const label of ['Incoming telemetry','HID interfaces','Profile inspection','Runtime &amp; recovery'])assert.ok(h.body.includes(label),label);
   assert.ok(!h.body.includes('Back to Profiles'));assert.ok(!h.body.includes('Current editor draft'));
 });
 
