@@ -7,6 +7,13 @@ concurrency:
   group: cockpit-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  hid-report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: rustup component add llvm-tools-preview
+      - run: python3 scripts/hid-report-coverage.py
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

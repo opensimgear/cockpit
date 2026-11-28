@@ -7,6 +7,29 @@ The existing controller service in `crates/controller-input` remains the baselin
 current behavior. Its mapping-oriented ports and latest-value projection cover a subset of this model.
 Milestone dependencies and platform qualification are tracked in the [parent feature](https://github.com/opensimgear/cockpit/issues/177).
 
+## Using the portable decoder
+
+The [Rust library](../../crates/hid-report/) accepts a descriptor byte slice through
+`parse_descriptor`. Inspect its diagnostics before interpreting a report. Item byte offsets
+and lengths refer to the original descriptor. Fields reference their declaring item and enclosing
+collection, and each report kind and ID has its own payload layout.
+
+Pass the descriptor, report kind, delivery framing and complete wire bytes to `decode_report`.
+Choose `IdPrefix` for a numbered wire report, `Unnumbered` for a bare unnumbered payload,
+`OsZeroPrefix` for an unnumbered delivery with a leading zero, or `OutOfBand` when the caller
+supplies the ID separately. A truncated report retains its bytes and yields no partial values.
+Extra delivery bytes remain inspectable beside a diagnostic.
+
+Each value references its source field and element. Read the field's `attributes()` for wrapping
+and other Main flags. Integer and selector strings retain full precision. Where linear scaling
+is defined, the physical result gives an exact numerator and denominator with the descriptor's
+unit and decimal exponent. The field's logical and physical endpoints provide its derivation.
+The caller supplies all input bytes, so the same descriptor and delivery can be replayed offline.
+
+Run `cargo test --locked --manifest-path crates/hid-report/Cargo.toml` from the repository root.
+With the Rust `llvm-tools-preview` component installed, `python scripts/hid-report-coverage.py`
+runs the corpus and generated tests and checks production coverage per source file.
+
 ## Identity and provenance
 
 Publish a snapshot atomically. Within one service epoch distinguish interfaces, top-level collections
