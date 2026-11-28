@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - run: cargo test --locked --manifest-path crates/controller-input/Cargo.toml --lib hid::
+      - run: 'cargo test --locked --manifest-path crates/controller-input/Cargo.toml --lib hid::'
       - run: node --test tests/hid-device-captures/verify-macos.test.mjs
       - name: Independently enumerate IOHID registry entries
         run: |
