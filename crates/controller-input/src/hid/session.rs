@@ -12,6 +12,9 @@ use std::{
 pub(super) trait Reader {
     fn poll(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, Value>;
     fn project(&self, bytes: &[u8]) -> Value;
+    fn provenance(&self) -> Option<Value> {
+        None
+    }
     fn get(&mut self, request: &Get, remaining: Duration) -> Result<Value, Value>;
 }
 
@@ -60,17 +63,24 @@ struct History {
     terminal: Option<Value>,
 }
 impl History {
-    fn push(&mut self, micros: u128, raw: &[u8], projection: Value) {
+    fn push(&mut self, micros: u128, raw: &[u8], projection: Value, provenance: Option<Value>) {
         self.sequence += 1;
         let mut row = json!({"sequence":self.sequence.to_string(),"receivedUs":micros.to_string(),
-            "wireHex":hex(raw),"samples":projection});
+            "samples":projection});
+        if provenance.as_ref().is_none_or(|p| p["wireAvailable"] == true) {
+            row["wireHex"] = json!(hex(raw));
+        }
         #[cfg(windows)]
-        {
+        if provenance.is_none() {
             row["windowsReportId"] = json!(raw.first());
         }
         #[cfg(target_os = "linux")]
         {
             row["reportId"] = row["samples"]["report_id"].clone();
+        }
+        if let Some(source) = provenance {
+            row["reportId"] = source["reportId"].clone();
+            row["provenance"] = source;
         }
         let mut encoded = row.to_string();
         if encoded.len() > 512 * 1024 {
@@ -219,7 +229,7 @@ impl Session {
                         Ok(Some(raw)) => {
                             let at = clock.elapsed().as_micros();
                             let projection = reader.project(&raw);
-                            log.lock().unwrap().push(at, &raw, projection);
+                            log.lock().unwrap().push(at, &raw, projection, reader.provenance());
                         }
                         Ok(None) => {}
                         Err(error) => {

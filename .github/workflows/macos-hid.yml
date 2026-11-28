@@ -1,0 +1,50 @@
+name: macOS HID qualification
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'crates/controller-input/src/macos_hid/**'
+      - 'crates/controller-input/src/hid.rs'
+      - 'crates/controller-input/src/hid/**'
+      - 'crates/controller-input/Cargo.toml'
+      - 'crates/hid-report/src/**'
+      - 'tests/hid-device-captures/*macos*'
+      - '.github/workflows/macos-hid.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: cargo test --locked --manifest-path crates/controller-input/Cargo.toml --lib hid::
+      - run: node --test tests/hid-device-captures/verify-macos.test.mjs
+      - name: Independently enumerate IOHID registry entries
+        run: |
+          xcrun swiftc tests/hid-device-captures/probe-macos-elements.swift -o "$RUNNER_TEMP/iohid-probe"
+          "$RUNNER_TEMP/iohid-probe" --list
+  package:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --debug --bundles app -- --locked
+      - name: Verify and launch the bundled cockpit
+        run: |
+          app="src-tauri/target/debug/bundle/macos/OpenSimGear Cockpit.app"
+          codesign --verify --deep --strict "$app"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          "$app/Contents/MacOS/$executable" >"$RUNNER_TEMP/cockpit.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          sleep 5
+          kill -0 "$pid" || { cat "$RUNNER_TEMP/cockpit.log"; exit 1; }

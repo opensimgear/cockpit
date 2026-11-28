@@ -18,7 +18,7 @@ mod windows_caps;
 mod windows_inventory;
 #[cfg(windows)]
 mod windows_receive;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod hid;
 #[cfg(target_os = "linux")]
 use capture::linux::Wake as CaptureWake;
@@ -41,7 +41,7 @@ fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
     Registry::default().restore(saved.clone())
 }
 pub struct ControllerService {
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     hid: hid::Service,
     registry: Arc<Mutex<Registry>>,
     clock: stream::Clock,
@@ -156,7 +156,9 @@ impl ControllerService {
             match std::thread::Builder::new()
                 .name("controller-input".into())
                 .spawn(move || {
-                    let result = std::panic::catch_unwind(|| {
+                    // The native worker exits after a panic. Its callback state
+                    // is dropped and never used to resume capture.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         native_run(
                             shared.clone(),
                             stopped,
@@ -164,7 +166,7 @@ impl ControllerService {
                             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
                             wake,
                         )
-                    })
+                    }))
                     .unwrap_or_else(|_| Err("Controller capture stopped unexpectedly.".into()));
                     let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
                     r.disconnect_all();
@@ -193,7 +195,7 @@ impl ControllerService {
             r.set_backend_state("unavailable", diagnostic);
         }
         Self {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             hid: hid::Service::new(native),
             registry,
             clock,
@@ -277,9 +279,9 @@ impl ControllerService {
             .as_str()
             .ok_or("Missing controller command.")?;
         if command.starts_with("controller_hid_") {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             return self.hid.request(command, request);
-            #[cfg(not(any(windows, target_os = "linux")))]
+            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
             return Err("Generic HID receiver is unavailable on this platform.".into());
         }
         if command.starts_with("controller_visibility_") {
@@ -409,7 +411,7 @@ impl ControllerService {
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         self.hid.shutdown();
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         if let Some(wake) = &self.capture_wake {

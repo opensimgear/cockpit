@@ -24,9 +24,11 @@ udev = "=0.9.3"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+osg-hid-report = { path = "../hid-report" }
 iohidmanager = { version = "=0.11.0", default-features = false }
 
 [dev-dependencies]
+osg-hid-report = { path = "../hid-report" }
 osg-persistence = { path = "../persistence", features = ["test-support"] }
 
 [target.'cfg(windows)'.dev-dependencies]

@@ -8,7 +8,14 @@ use native::Windows as Native;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux::Linux as Native;
+#[cfg(any(target_os = "macos", test))]
+#[path = "macos_hid/mod.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::Mac as Native;
 mod session;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod restrictions;
 #[cfg(test)]
 mod tests;
 

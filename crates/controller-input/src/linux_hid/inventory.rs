@@ -3,7 +3,7 @@ use std::fs::File;
 mod types;
 pub use types::*;
 mod evidence;
-mod restrictions;
+use crate::hid::restrictions;
 mod scan;
 
 pub fn enumerate() -> Result<Inventory, Failure> {
