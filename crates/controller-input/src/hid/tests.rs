@@ -119,6 +119,8 @@ fn blocked_native_open_reserves_only_its_own_interface() {
             resume: Mutex::new(resume),
         })),
         sessions: Mutex::default(),
+        recordings: Mutex::default(),
+        replays: Mutex::default(),
         catalog: Mutex::new(catalog::Catalog::new(None)),
     });
     let slow = service.clone();
@@ -181,6 +183,8 @@ fn selected_generation_preserves_equal_reports_and_fences_reopens() {
         stopped: AtomicBool::default(),
         backend: Some(Arc::new(Fixture(AtomicUsize::new(0)))),
         sessions: Mutex::default(),
+        recordings: Mutex::default(),
+        replays: Mutex::default(),
         catalog: Mutex::new(catalog::Catalog::new(None)),
     };
     let run = |name: &str, p: Value| service.request(&format!("controller_hid_{name}"), &p);
@@ -247,4 +251,67 @@ fn selected_generation_preserves_equal_reports_and_fences_reopens() {
     assert!(Service::new(false, None)
         .request("controller_hid_list", &json!({}))
         .is_err());
+}
+
+#[test]
+fn recordings_survive_closed_generations_and_can_be_discarded_and_restarted() {
+    let service = Service {
+        backend: Some(Arc::new(Fixture(AtomicUsize::new(0)))),
+        ..Service::new(false, None)
+    };
+    let first = service
+        .request("controller_hid_open", &json!({"interfaceId":"a"}))
+        .unwrap();
+    let status = service
+        .request("controller_hid_record_start", &first)
+        .unwrap();
+    assert_eq!(status["result"]["status"], "recording");
+    assert!(service
+        .request("controller_hid_record_start", &first)
+        .is_err());
+    service.request("controller_hid_close", &first).unwrap();
+    let retained = service
+        .request("controller_hid_record_list", &json!({}))
+        .unwrap();
+    assert_eq!(retained["recordings"][0]["generation"], first["generation"]);
+    assert_eq!(retained["recordings"][0]["status"], "stopped");
+    let export = service
+        .request("controller_hid_record_export", &first)
+        .unwrap();
+    assert_eq!(
+        export["result"]["recording"]["descriptor"]["contractFingerprint"],
+        first["contractFingerprint"]
+    );
+    assert_eq!(export["result"]["recording"]["reason"]["kind"], "closed");
+    let second = service
+        .request("controller_hid_open", &json!({"interfaceId":"a"}))
+        .unwrap();
+    assert!(service
+        .request("controller_hid_record_status", &second)
+        .is_err());
+    assert!(service
+        .request("controller_hid_record_start", &first)
+        .is_err());
+    service
+        .request("controller_hid_record_start", &second)
+        .unwrap();
+    service
+        .request("controller_hid_record_stop", &second)
+        .unwrap();
+    service
+        .request("controller_hid_record_discard", &second)
+        .unwrap();
+    assert!(service
+        .request("controller_hid_record_status", &second)
+        .is_err());
+    assert_eq!(
+        service
+            .request("controller_hid_record_start", &second)
+            .unwrap()["result"]["status"],
+        "recording"
+    );
+    assert!(service
+        .request("controller_hid_record_export", &first)
+        .is_ok());
+    service.shutdown();
 }

@@ -113,7 +113,19 @@
       "controller_hid_state",
       "controller_hid_reports",
       "controller_hid_get",
-      "controller_hid_close"
+      "controller_hid_close",
+      "controller_hid_record_list",
+      "controller_hid_record_start",
+      "controller_hid_record_status",
+      "controller_hid_record_stop",
+      "controller_hid_record_export",
+      "controller_hid_record_discard",
+      "controller_hid_replay_upload_start",
+      "controller_hid_replay_upload_chunk",
+      "controller_hid_replay_upload_finish",
+      "controller_hid_replay_upload_cancel",
+      "controller_hid_replay_read",
+      "controller_hid_replay_close"
     ],
     "tests": [
       {
@@ -123,6 +135,14 @@
       {
         "path": "tests/ui/controller-hid-native.mjs",
         "anchor": "running Debug and credentialed MCP share selected HID contract and capture generation"
+      },
+      {
+        "path": "src-tauri/src/mcp_tools/hid_tests.rs",
+        "anchor": "recording_and_offline_replay_use_bounded_authenticated_native_tasks"
+      },
+      {
+        "path": "tests/ui/controller-hid-replay-native.mjs",
+        "anchor": "running Debug renders authored native HID domains through offline file replay"
       }
     ],
     "actions": [
@@ -139,12 +159,47 @@
       {
         "path": "src/lib/controller-hid.ts",
         "kind": "transport",
+        "anchor": "controller_hid_get"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
         "anchor": "controller_hid_list"
       },
       {
         "path": "src/lib/controller-hid.ts",
         "kind": "transport",
         "anchor": "controller_hid_open"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_record_export"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_record_list"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_record_status"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_replay_close"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_replay_import"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_replay_read"
       },
       {
         "path": "src/lib/controller-hid.ts",
@@ -180,6 +235,81 @@
         "path": "src/lib/DebugHidInspector.svelte",
         "kind": "ui",
         "anchor": "onclick={()=>controller?.refresh()}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>monitoring=!monitoring}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={async()=>{const selected=view?.selected;if(selected){await controller?.refresh();await controller?.select(selected);}}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onchange={event=>{if(!event.currentTarget.value)return;const identity=JSON.parse(event.currentTarget.value);void controller.selectRecording(identity.interfaceId,identity.generation);}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onchange={importFile}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>{playing=false;void controller.replayRead(String(view.replay?.next??'0'),undefined,1);}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>{playing=false;void controller.select('');}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>{seekUs='0';seek();}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller.get(getKind,reportId,maxBytes,deadlineMs)}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller.record('discard')}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller.record('start',Math.min(64,Math.max(1,recordMiB))*1024*1024,recordCount)}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller.record('status')}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller.record('stop')}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={exportFile}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={seek}"
+      },
+      {
+        "path": "src/lib/hid-inspector/HidOperations.svelte",
+        "kind": "ui",
+        "anchor": "onclick={togglePlay}"
       }
     ]
   }

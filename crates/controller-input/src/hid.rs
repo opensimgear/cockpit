@@ -14,11 +14,15 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos::Mac as Native;
 mod catalog;
+mod recording;
+mod replay;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod restrictions;
 mod session;
 #[cfg(test)]
 mod tests;
+mod transfer;
+mod values;
 
 use serde_json::{json, Value};
 use session::{Get, Reader, Session};
@@ -42,6 +46,8 @@ pub(super) struct Service {
     backend: Option<Arc<dyn Backend>>,
     catalog: Mutex<Result<catalog::Catalog, String>>,
     sessions: Mutex<HashMap<String, Active>>,
+    recordings: Mutex<recording::Store>,
+    replays: Mutex<replay::Store>,
 }
 
 struct Active {
@@ -68,6 +74,8 @@ impl Service {
         Self {
             backend: native.then(|| Arc::new(Native::default()) as Arc<dyn Backend>),
             sessions: Mutex::default(),
+            recordings: Mutex::default(),
+            replays: Mutex::default(),
             catalog: Mutex::new(catalog::Catalog::new(path)),
             stopped: AtomicBool::new(false),
         }
@@ -76,6 +84,21 @@ impl Service {
     pub fn request(&self, command: &str, req: &Value) -> Result<Value, String> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("HID service has stopped".into());
+        }
+        if command.starts_with("controller_hid_replay_") {
+            return self
+                .replays
+                .lock()
+                .map_err(|_| "HID replay lock unavailable")?
+                .request(command, req);
+        }
+        if command.starts_with("controller_hid_record_") && command != "controller_hid_record_start"
+        {
+            return self
+                .recordings
+                .lock()
+                .map_err(|_| "HID recording store lock unavailable")?
+                .request(command, req);
         }
         if matches!(
             command,
@@ -134,6 +157,13 @@ impl Service {
             .as_ref()
             .ok_or("Busy: HID interface is opening or closing")?;
         let result = match command {
+            "controller_hid_record_start" => {
+                let mut recordings = self
+                    .recordings
+                    .lock()
+                    .map_err(|_| "HID recording store lock unavailable")?;
+                return session.record_start(&mut recordings, req);
+            }
             "controller_hid_close" => {
                 let closing = active.session.take();
                 drop(sessions);
@@ -384,6 +414,9 @@ impl Service {
         self.stopped.store(true, Ordering::Release);
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.clear();
+        }
+        if let Ok(mut replays) = self.replays.lock() {
+            replays.clear();
         }
     }
 }

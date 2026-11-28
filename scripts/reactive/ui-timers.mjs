@@ -5,6 +5,12 @@ import { parse } from 'svelte/compiler';
 const intervals = new Map();
 
 const timeouts = new Map([
+  // Explicitly started diagnostic presentation/replay. Native recording is independent of display cadence.
+  ['src/lib/DebugHidInspector.svelte', ['()=>{void controller?.read();},250']],
+  ['src/lib/hid-inspector/HidOperations.svelte', [
+    "()=>{void controller.replayRead(String(replay.next??'0'),String(Math.floor(playOrigin+(performance.now()-playStarted)*1000)));},50",
+    '()=>URL.revokeObjectURL(url),1000',
+  ]],
   // Connection retries and protocol deadlines.
   ['apps/companion/src/lib/lease-heartbeat.ts', ['send,Math.max(0,Math.ceil(deadline-now()))']],
   ['apps/browser-companion/src/App.svelte', [

@@ -336,7 +336,71 @@ fn revoke_fences_an_explicit_read_in_progress() {
 #[test]
 fn element_without_declared_relative_flag_has_no_inferred_absolute_semantics() {
     let mut h = History::default();
-    h.push(1,&[],json!({"elements":[{"cookie":1,"integer":"1","valueHex":"01"}]}),
-        Some(json!({"source":"iohid-element","reportId":0,"wireAvailable":false})));
-    assert_eq!(h.state()["values"],json!([]));
+    h.push(
+        1,
+        &[],
+        json!({"elements":[{"cookie":1,"integer":"1","valueHex":"01"}]}),
+        Some(json!({"source":"iohid-element","reportId":0,"wireAvailable":false})),
+    );
+    assert_eq!(h.state()["values"], json!([]));
+}
+
+#[test]
+fn recording_precedes_display_eviction_and_projection_truncation() {
+    let mut store = super::super::recording::Store::default();
+    let req = json!({"interfaceId":"a","generation":"g"});
+    let recording = store
+        .start(&req, json!({"descriptorHex":"01"}), 0, 0)
+        .unwrap();
+    let mut history = History {
+        recording: Some(Arc::downgrade(&recording)),
+        ..History::default()
+    };
+    for micros in 0..4200 {
+        history.push(micros, &[0, 1], json!({"delta":1}), None);
+    }
+    let exact = "s".repeat(513 * 1024);
+    history.push(4201, &[0, 2], json!({"opaque":exact}), None);
+    assert_eq!(history.page(0).unwrap()["gap"], true);
+    history.end(json!({"kind":"removed"}));
+    let archive = store.request("controller_hid_record_export", &req).unwrap();
+    let rows = archive["result"]["recording"]["records"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.len(), 4202);
+    assert_eq!(rows[0]["sequence"], "1");
+    assert_eq!(rows[4200]["samples"]["opaque"], exact);
+    assert_eq!(rows[4201]["kind"], "terminal");
+    assert_eq!(rows[4201]["reason"]["kind"], "removed");
+}
+
+#[test]
+fn an_oversized_recording_row_keeps_native_wire_history_and_an_importable_prefix() {
+    let mut store = super::super::recording::Store::default();
+    let req = json!({"interfaceId":"a","generation":"g"});
+    let recording = store
+        .start(&req, json!({"descriptorHex":"01"}), 0, 0)
+        .unwrap();
+    let mut history = History {
+        recording: Some(Arc::downgrade(&recording)),
+        ..History::default()
+    };
+    history.push(1, &[0, 1], json!({"value":1}), None);
+    history.push(2, &[0, 2], json!({"opaque":"x".repeat(2*1024*1024)}), None);
+    let native = history.page(1).unwrap();
+    assert_eq!(native["reports"][0]["wireHex"], "0002");
+    assert!(native["reports"][0]["samples"]["unavailable"].is_string());
+    assert!(history.terminal.is_none());
+    let export = store.request("controller_hid_record_export", &req).unwrap();
+    assert_eq!(
+        export["result"]["recording"]["records"][0]["wireHex"],
+        "0001"
+    );
+    assert_eq!(
+        export["result"]["recording"]["reason"]["kind"],
+        "oversized-row"
+    );
+    assert!(crate::hid::replay::Store::default()
+        .request("controller_hid_replay_import", &json!({"recording":export}))
+        .is_ok());
 }

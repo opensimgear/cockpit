@@ -1,10 +1,17 @@
 //! Exact, generation-local absolute observations. This layer never scales or integrates.
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    io::{self, Write},
+    sync::Arc,
+};
+#[cfg(test)]
+#[path = "values_tests.rs"]
+mod tests;
 
 #[derive(Default)]
 pub(super) struct Current {
-    detail: Value,
+    detail: Arc<Value>,
     values: BTreeMap<String, (usize, Value)>,
     bytes: usize,
     received: Option<String>,
@@ -14,7 +21,7 @@ pub(super) struct Current {
 impl Current {
     pub fn new(detail: Value) -> Self {
         Self {
-            detail,
+            detail: Arc::new(detail),
             ..Self::default()
         }
     }
@@ -66,17 +73,35 @@ impl Current {
             });
             return;
         }
-        let rows = if let Some(values) = projection["values"].as_array() {
-            values.iter().map(|v| self.portable(v)).collect::<Vec<_>>()
-        } else if let Some(elements) = projection["elements"].as_array() {
-            elements.iter().map(|v| self.element(v)).collect()
-        } else if projection["data"].is_array() {
-            self.windows(projection)
-        } else {
-            self.invalidate(&report);
-            self.status = Some("unsupported");
-            return;
-        };
+        // Own a cheap immutable reference independently of the mutable baseline.
+        // Construct at most one row before applying the baseline's byte/entry cap.
+        let detail = Arc::clone(&self.detail);
+        let rows: Box<dyn Iterator<Item = Value> + '_> =
+            if let Some(values) = projection["values"].as_array() {
+                Box::new(
+                    values
+                        .iter()
+                        .filter(|v| {
+                            v["semantics"]
+                                .as_str()
+                                .is_some_and(|s| s.eq_ignore_ascii_case("absolute"))
+                        })
+                        .map(|v| portable(&detail, v)),
+                )
+            } else if let Some(elements) = projection["elements"].as_array() {
+                Box::new(
+                    elements
+                        .iter()
+                        .filter(|v| v["relative"] == false)
+                        .map(|v| element(&detail, v)),
+                )
+            } else if projection["data"].is_array() {
+                Box::new(windows(&detail, projection))
+            } else {
+                self.invalidate(&report);
+                self.status = Some("unsupported");
+                return;
+            };
         // Raw reports describe their whole layout; element callbacks describe only
         // the cookies actually delivered. In particular, do not retain old pressed
         // button data omitted by the next HidP_GetData result.
@@ -84,6 +109,15 @@ impl Current {
             self.invalidate(&report);
         }
         self.status = Some("live");
+        self.retain_rows(rows, &report, seq, micros);
+    }
+    fn retain_rows(
+        &mut self,
+        rows: impl IntoIterator<Item = Value>,
+        report: &Value,
+        seq: u64,
+        micros: u128,
+    ) {
         for mut row in rows {
             if row["semantics"] != "absolute" {
                 continue;
@@ -92,16 +126,18 @@ impl Current {
             row["sequence"] = json!(seq.to_string());
             row["receivedUs"] = json!(micros.to_string());
             let key = format!("{}:{}:{}", report, row["fieldId"], row["elementIndex"]);
-            let size = row.to_string().len();
             if let Some((old_size, _)) = self.values.remove(&key) {
                 self.bytes -= old_size;
             }
-            if self.values.len() >= 16_384 || self.bytes.saturating_add(size) > 8 * 1024 * 1024 {
+            let size = (self.values.len() < 16_384)
+                .then(|| bounded_size(&row, 8 * 1024 * 1024 - self.bytes))
+                .flatten();
+            let Some(size) = size else {
                 self.clear();
                 self.status = Some("stale");
                 self.diagnostics = json!([{"kind":"capacity","reason":"Current exact value budget exceeded; baseline invalidated"}]);
                 return;
-            }
+            };
             self.bytes += size;
             self.values.insert(key, (size, row));
         }
@@ -116,33 +152,55 @@ impl Current {
             }
         });
     }
-    fn portable(&self, v: &Value) -> Value {
-        let field = v["field"]
-            .as_u64()
-            .and_then(|n| self.detail["descriptor"]["fields"].get(n as usize));
-        let globals = field.map(|f| &f["globals"]).unwrap_or(&Value::Null);
-        let mut row = json!({"fieldId":format!("descriptor:{}",v["field"]),"elementIndex":v["element"],
+}
+fn bounded_size(value: &Value, limit: usize) -> Option<usize> {
+    struct Counter {
+        bytes: usize,
+        limit: usize,
+    }
+    impl Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes = self.bytes.saturating_add(bytes.len());
+            if self.bytes > self.limit {
+                return Err(io::Error::other("current value capacity"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Counter { bytes: 0, limit };
+    serde_json::to_writer(&mut count, value).ok()?;
+    Some(count.bytes)
+}
+fn portable(detail: &Value, v: &Value) -> Value {
+    let field = v["field"]
+        .as_u64()
+        .and_then(|n| detail["descriptor"]["fields"].get(n as usize));
+    let globals = field.map(|f| &f["globals"]).unwrap_or(&Value::Null);
+    let mut row = json!({"fieldId":format!("descriptor:{}",v["field"]),"elementIndex":v["element"],
             "semantics":v["semantics"].as_str().unwrap_or("Opaque").to_lowercase(),
             "rawBits":{"state":"observed","source":"report-descriptor","value":v["raw_bits"]},
             "sample":sample(&v["sample"]),"logical":{"minimum":globals["logical_min"],"maximum":globals["logical_max"]},
             "physicalBounds":{"minimum":globals["physical_min"],"maximum":globals["physical_max"]},
             "usages":v["usages"]});
-        if !v["physical"].is_null() {
-            row["physical"] = v["physical"].clone();
-        }
-        row
+    if !v["physical"].is_null() {
+        row["physical"] = v["physical"].clone();
     }
-    fn element(&self, v: &Value) -> Value {
-        let metadata = self.detail["elements"]
-            .as_array()
-            .and_then(|a| a.iter().find(|e| e["cookie"] == v["cookie"]));
-        let bound = |key: &str| {
-            v.get(key)
-                .or_else(|| metadata.and_then(|m| m.get(key)))
-                .cloned()
-                .unwrap_or(Value::Null)
-        };
-        json!({"fieldId":format!("iohid-cookie:{}",v["cookie"]),"elementIndex":0,
+    row
+}
+fn element(detail: &Value, v: &Value) -> Value {
+    let metadata = detail["elements"]
+        .as_array()
+        .and_then(|a| a.iter().find(|e| e["cookie"] == v["cookie"]));
+    let bound = |key: &str| {
+        v.get(key)
+            .or_else(|| metadata.and_then(|m| m.get(key)))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    json!({"fieldId":format!("iohid-cookie:{}",v["cookie"]),"elementIndex":0,
             "semantics":match v["relative"].as_bool() {Some(true)=>"relative",Some(false)=>"absolute",None=>"opaque"},
             "rawBits":unavailable("element-only"),"elementValueHex":v["valueHex"],
             "sample":if v["integer"].is_string() {json!({"state":"valid","kind":"integer","value":v["integer"]})}
@@ -150,14 +208,13 @@ impl Current {
             "logical":{"minimum":bound("logicalMin"),"maximum":bound("logicalMax")},
             "physicalBounds":{"minimum":bound("physicalMin"),"maximum":bound("physicalMax")},
             "usagePage":v["usagePage"],"usage":v["usage"]})
-    }
-    fn windows(&self, projection: &Value) -> Vec<Value> {
-        let mut rows = Vec::new();
-        let report = self.detail["capabilities"]["reports"]
-            .as_array()
-            .and_then(|a| a.iter().find(|r| r["kind"] == projection["kind"]));
-        for data in projection["data"].as_array().into_iter().flatten() {
-            for v in data["values"].as_array().into_iter().flatten() {
+}
+fn windows<'a>(detail: &'a Value, projection: &'a Value) -> impl Iterator<Item = Value> + 'a {
+    let report = detail["capabilities"]["reports"]
+        .as_array()
+        .and_then(|a| a.iter().find(|r| r["kind"] == projection["kind"]));
+    let data = projection["data"].as_array().into_iter().flatten().flat_map(move |data| {
+            let values = data["values"].as_array().into_iter().flatten().filter_map(move |v| {
                 let index = v["capabilityIndex"].as_u64().unwrap_or(u64::MAX) as usize;
                 let caps = report
                     .and_then(|r| r["valueCaps"].get(index))
@@ -172,41 +229,44 @@ impl Current {
                     v["semantics"].as_str().unwrap_or("opaque")
                 };
                 let quality = v["quality"].as_str().unwrap_or("unknown");
-                rows.push(json!({"fieldId":format!("hidp-value:{}:data:{}",index,data["dataIndex"]),
+                if semantics != "absolute" { return None; }
+                Some(json!({"fieldId":format!("hidp-value:{}:data:{}",index,data["dataIndex"]),
                     "elementIndex":0,"semantics":semantics,"rawBits":unavailable("os-projected"),
                     "encoded":data["rawValue"],"dataIndex":data["dataIndex"],
                     "sample":if quality == "valid" {json!({"state":"valid","kind":if v["semantics"] == "array-selector" {"array-selector"} else {"integer"},"value":v["native"]})}
                         else {json!({"state":if quality == "null" || quality == "invalid" {quality} else {"unsupported"},"reason":quality,"encoded":v["native"]})},
                     "logical":{"minimum":caps["logicalMin"],"maximum":caps["logicalMax"]},
                     "physicalBounds":{"minimum":caps["physicalMin"],"maximum":caps["physicalMax"]},
-                    "bitSize":caps["bitSize"],"unitCode":caps["units"],"unitExponent":caps["unitExponent"]}));
-            }
-            for index in data["matchingButtonCaps"].as_array().into_iter().flatten() {
+                    "bitSize":caps["bitSize"],"unitCode":caps["units"],"unitExponent":caps["unitExponent"]}))
+            });
+            let buttons = data["matchingButtonCaps"].as_array().into_iter().flatten().filter_map(move |index| {
                 let caps = index
                     .as_u64()
                     .and_then(|i| report.and_then(|r| r["buttonCaps"].get(i as usize)))
                     .unwrap_or(&Value::Null);
-                rows.push(json!({"fieldId":format!("hidp-button:{}:data:{}",index,data["dataIndex"]),"elementIndex":0,
+                if caps["isAbsolute"] != true { return None; }
+                Some(json!({"fieldId":format!("hidp-button:{}:data:{}",index,data["dataIndex"]),"elementIndex":0,
                     "semantics":if caps["isAbsolute"] == true {"absolute"} else {"opaque"},
                     "rawBits":unavailable("os-projected"),"sample":{"state":"valid","kind":"integer","value":data["rawValue"]},
-                    "logical":{"minimum":null,"maximum":null},"physicalBounds":{"minimum":null,"maximum":null}}));
-            }
-        }
-        for array in projection["valueArrays"].as_array().into_iter().flatten() {
+                    "logical":{"minimum":null,"maximum":null},"physicalBounds":{"minimum":null,"maximum":null}}))
+            });
+            values.chain(buttons)
+        });
+    let arrays = projection["valueArrays"].as_array().into_iter().flatten().filter_map(move |array| {
             let index = array["capabilityIndex"].as_u64().unwrap_or(u64::MAX) as usize;
             let caps = report
                 .and_then(|r| r["valueCaps"].get(index))
                 .unwrap_or(&Value::Null);
-            rows.push(json!({"fieldId":format!("hidp-array:{}",index),"elementIndex":0,
+            if caps["isAbsolute"] != true { return None; }
+            Some(json!({"fieldId":format!("hidp-array:{}",index),"elementIndex":0,
                 "semantics":if caps["isAbsolute"] == true {"absolute"} else {"opaque"},
                 "rawBits":unavailable("os-projected"),"osProjectionHex":array["bytes"],
                 "sample":{"state":"unsupported","reason":"Packed HidP usage value array retained without inferred selectors"},
                 "logical":{"minimum":caps["logicalMin"],"maximum":caps["logicalMax"]},
                 "physicalBounds":{"minimum":caps["physicalMin"],"maximum":caps["physicalMax"]},
-                "bitSize":array["bitSize"],"reportCount":array["reportCount"]}));
-        }
-        rows
-    }
+                "bitSize":array["bitSize"],"reportCount":array["reportCount"]}))
+        });
+    data.chain(arrays)
 }
 fn unavailable(reason: &str) -> Value {
     json!({"state":"unavailable","reason":reason})

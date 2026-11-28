@@ -39,3 +39,40 @@ fn hid_tasks_are_explicit_bounded_and_forward_the_same_native_projection() {
     ] {assert_eq!(tools.call(name,invalid,"hid-reader")["error"]["code"],"invalid_arguments","{name}");}
     assert_eq!(backend.0.lock().unwrap().len(),2);
 }
+#[test]
+fn recording_and_offline_replay_use_bounded_authenticated_native_tasks() {
+    let backend = Arc::new(HidBackend::default());
+    let tools = Tools {
+        backend: backend.clone(), ledger: Mutex::new(Ledger::default()),
+        drafts: Mutex::new(vec![]), workspace_uploads: Mutex::new(vec![]), integration: OnceLock::new(),
+    };
+    let identity = json!({"interfaceId":"rudder","generation":"first"});
+    for (index, (name, args, write)) in [
+        ("controller_hid_record_list", json!({}), false),
+        ("controller_hid_record_start", identity.clone(), true),
+        ("controller_hid_record_status", identity.clone(), false),
+        ("controller_hid_record_stop", identity.clone(), true),
+        ("controller_hid_record_export", json!({"interfaceId":"rudder","generation":"first","offset":0,"limit":32768}), false),
+        ("controller_hid_record_discard", identity, true),
+        ("controller_hid_replay_upload_start", json!({"totalBytes":1024}), true),
+        ("controller_hid_replay_upload_chunk", json!({"uploadId":"upload","offset":0,"chunk":"e30="}), true),
+        ("controller_hid_replay_upload_finish", json!({"uploadId":"upload"}), true),
+        ("controller_hid_replay_upload_cancel", json!({"uploadId":"upload"}), true),
+        ("controller_hid_replay_read", json!({"replayId":"offline","after":"0","elapsedUs":"3000"}), false),
+        ("controller_hid_replay_close", json!({"replayId":"offline"}), true),
+    ].into_iter().enumerate() {
+        assert_eq!(is_mutation(name), write, "{name}");
+        let mut expected = args.clone();
+        expected["clientId"] = json!(native_client("inspector"));
+        expected["command"] = json!(name);
+        let mut call = args;
+        if write && !definitions::is_streaming(name) {
+            call["operationId"] = json!(format!("00000000-0000-4000-8000-{index:012}"));
+        }
+        let reply = tools.call(name, call, "inspector");
+        assert_eq!(reply["ok"], true, "{name}: {reply}");
+        assert_eq!(backend.0.lock().unwrap().last(), Some(&expected));
+    }
+    let invalid = json!({"interfaceId":"rudder","generation":"first","offset":0,"limit":67_108_864});
+    assert_eq!(tools.call("controller_hid_record_export",invalid,"inspector")["error"]["code"],"invalid_arguments");
+}

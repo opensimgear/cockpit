@@ -260,6 +260,13 @@ impl Tools {
                 }
                 forward(name, &["interfaceId","generation","after"], Some("controllers"))
             }
+            "controller_hid_record_list" | "controller_hid_record_start" | "controller_hid_record_status" | "controller_hid_record_stop"
+            | "controller_hid_record_export" | "controller_hid_record_discard" =>
+                forward(name, &["interfaceId","generation","maxBytes","maxRecords","offset","limit"], Some("controllers")),
+            "controller_hid_replay_upload_start" | "controller_hid_replay_upload_chunk"
+            | "controller_hid_replay_upload_finish" | "controller_hid_replay_upload_cancel"
+            | "controller_hid_replay_read" | "controller_hid_replay_close" =>
+                forward(name, &["totalBytes","uploadId","offset","chunk","replayId","after","limit","elapsedUs","seek","part","byteOffset","maxBytes"], Some("controllers")),
             "controller_hid_list" | "controller_hid_inspect" | "controller_hid_catalog" | "controller_hid_snapshot"
             | "controller_hid_open" | "controller_hid_state" | "controller_hid_get" | "controller_hid_close" =>
                 forward(name, &["interfaceId","generation","contractFingerprint","after","requestId","kind","reportId","maxBytes","deadlineMs"], Some("controllers")),

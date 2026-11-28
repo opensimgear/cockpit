@@ -1,11 +1,10 @@
+use super::values;
 use serde_json::{json, Value};
-#[path = "values.rs"]
-mod values;
 use std::{
     collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, Weak,
     },
     thread,
     time::{Duration, Instant},
@@ -64,11 +63,23 @@ struct History {
     sequence: u64,
     terminal: Option<Value>,
     values: values::Current,
+    detail: Value,
+    recording: Option<Weak<super::recording::Archive>>,
+    clock: Option<Instant>,
 }
 impl History {
     fn end(&mut self, reason: Value) {
         self.values.clear();
         if self.terminal.is_none() {
+            if let Some(recording) = self.recording.as_ref().and_then(Weak::upgrade) {
+                let loss = reason["kind"] == "overflow";
+                recording.end(
+                    reason.clone(),
+                    self.sequence,
+                    self.clock.map_or(0, |c| c.elapsed().as_micros()),
+                    loss,
+                );
+            }
             self.terminal = Some(reason);
         }
     }
@@ -103,6 +114,9 @@ impl History {
             row["provenance"] = source;
         }
         let mut encoded = row.to_string();
+        if let Some(recording) = self.recording.as_ref().and_then(Weak::upgrade) {
+            recording.observe_value(self.sequence, micros, &encoded, &row);
+        }
         if encoded.len() > 512 * 1024 {
             row["samples"] =
                 json!({"unavailable":"Decoded projection exceeds capture page budget"});
@@ -197,8 +211,11 @@ impl Session {
     ) -> Result<Self, String> {
         let (ready, started) = mpsc::sync_channel(1);
         let (tx, rx) = mpsc::sync_channel::<Command>(1);
+        let clock = Instant::now();
         let history = Arc::new(Mutex::new(History {
-            values: values::Current::new(detail),
+            values: values::Current::new(detail.clone()),
+            detail,
+            clock: Some(clock),
             ..History::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -217,7 +234,6 @@ impl Session {
                 if ready.send(Ok(())).is_err() {
                     return;
                 }
-                let clock = Instant::now();
                 while !done.load(Ordering::Acquire) {
                     if let Ok((get, reply)) = rx.try_recv() {
                         let remaining = get.expires.saturating_duration_since(Instant::now());
@@ -295,6 +311,27 @@ impl Session {
     }
     pub fn state(&self) -> Value {
         self.history.lock().unwrap().state()
+    }
+    pub fn record_start(
+        &self,
+        store: &mut super::recording::Store,
+        request: &Value,
+    ) -> Result<Value, String> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "HID history lock unavailable")?;
+        if history.terminal.is_some() || self.stop.load(Ordering::Acquire) {
+            return Err("Offline: HID generation has ended".into());
+        }
+        let recording = store.start(
+            request,
+            history.detail.clone(),
+            history.sequence,
+            history.clock.map_or(0, |c| c.elapsed().as_micros()),
+        )?;
+        history.recording = Some(Arc::downgrade(&recording));
+        store.request("controller_hid_record_status", request)
     }
     pub fn is_terminal(&self) -> bool {
         self.history.lock().unwrap().terminal.is_some()

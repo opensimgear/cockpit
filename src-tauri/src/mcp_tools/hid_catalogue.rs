@@ -4,6 +4,9 @@ use super::*;
 pub(super) fn catalogue() -> Vec<Value> {
     let selected=||vec![("interfaceId",string(128))];
     let capture=||fields(selected(),vec![("generation",string(128))]);
+    let replay=||vec![("replayId",string(128))];
+    let upload=||vec![("uploadId",string(128))];
+    let cursor=||json!({"type":"string","minLength":1,"maxLength":20,"pattern":"^(0|[1-9][0-9]*)$"});
     vec![
         tool("controller_hid_list","Enumerate native HID interfaces and metadata availability. A captureGeneration identifies an already open shared receive stream. This never opens a receiver. Native sensitive-device restrictions remain authoritative.",vec![],&[]),
         tool("controller_hid_inspect","Inspect the selected native HID descriptor and contractFingerprint without opening a receiver. Preserve native partial-capability failures and provenance.",selected(),&["interfaceId"]),
@@ -14,5 +17,17 @@ pub(super) fn catalogue() -> Vec<Value> {
         tool("controller_hid_reports","Read a bounded native report page for an exact capture generation; after is an unsigned decimal cursor. Preserve repeated packets, gap and terminal evidence. Share the same captureGeneration as the UI; do not open a second receive stream.",fields(capture(),vec![("after",json!({"type":"string","minLength":1,"maxLength":20,"pattern":"^(0|[1-9][0-9]*)$"}))]),&["interfaceId","generation"]),
         tool("controller_hid_get","Explicit bounded input/feature GET on an existing receive-only HID generation. This sends no output report. Use a unique requestId; native support, sensitive-device restrictions, report bounds and deadlines remain authoritative.",fields(capture(),vec![("requestId",string(128)),("kind",choice(&["input","feature"])),("reportId",integer(0,255)),("maxBytes",integer(1,65536)),("deadlineMs",integer(1,2000))]),&["interfaceId","generation","requestId","kind","reportId","maxBytes","deadlineMs"]),
         tool("controller_hid_close","Close the exact selected HID capture generation you opened. This retires its receiver; a stale generation cannot close a replacement. Do not close a shared capture owned by another workflow.",capture(),&["interfaceId","generation"]),
+        tool("controller_hid_record_list","List retained recordings and their source identities, including sealed recordings from retired captures.",vec![],&[]),
+        tool("controller_hid_record_start","Record subsequent native reports independently of inspector polling. Optional maxBytes and maxRecords lower the native capacity limits. Retain the capture identity for stop and export.",fields(capture(),vec![("maxBytes",integer(16_384,67_108_864)),("maxRecords",integer(3,1_000_000))]),&["interfaceId","generation"]),
+        tool("controller_hid_record_status","Read recording status, capacity, stop reason and last sequence for this generation.",capture(),&["interfaceId","generation"]),
+        tool("controller_hid_record_stop","Seal the recording and retain its ordered records for export.",capture(),&["interfaceId","generation"]),
+        tool("controller_hid_record_export","Download a sealed archive in bounded base64 chunks. Start at offset 0 and continue at nextOffset until totalBytes. Preserve the bytes exactly for import.",fields(capture(),vec![("offset",integer(0,67_108_864)),("limit",integer(1,32_768))]),&["interfaceId","generation","offset","limit"]),
+        tool("controller_hid_record_discard","Release a sealed recording after export. A live capture can start another recording after discard.",capture(),&["interfaceId","generation"]),
+        tool("controller_hid_replay_upload_start","Reserve a bounded upload for an exported recording. Retain uploadId and send consecutive base64 chunks with exact byte offsets.",vec![("totalBytes",integer(1,67_108_864))],&["totalBytes"]),
+        tool("controller_hid_replay_upload_chunk","Append up to 24576 recording bytes at an exact offset under the initiating client identity.",fields(upload(),vec![("offset",integer(0,67_108_864)),("chunk",string(32_768))]),&["uploadId","offset","chunk"]),
+        tool("controller_hid_replay_upload_finish","Validate the completed recording and open an observation-only replay. Retain replayId to inspect records and close it.",upload(),&["uploadId"]),
+        tool("controller_hid_replay_upload_cancel","Release an unfinished recording upload.",upload(),&["uploadId"]),
+        tool("controller_hid_replay_read","Read ordered imported records at a decimal entry cursor and optional elapsed microseconds. Set seek=true with elapsedUs to inspect state at an absolute replay time. Repeat the same cursor and clock for deterministic replay. For exact archive slices use part recording, byteOffset and maxBytes.",fields(replay(),vec![("after",cursor()),("limit",integer(1,128)),("elapsedUs",cursor()),("seek",json!({"type":"boolean"})),("part",choice(&["recording"])),("byteOffset",integer(0,67_108_864)),("maxBytes",integer(1,24_576))]),&["replayId"]),
+        tool("controller_hid_replay_close","Release imported replay data from memory.",replay(),&["replayId"]),
     ]
 }

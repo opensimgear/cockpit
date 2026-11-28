@@ -134,6 +134,26 @@ bounds even when its original wire bits are unavailable. Physical values are inc
 when the decoder supplies them. Sessions, report pages, current values, and activation are
 memory-only. Profile input routing continues to use its configured mapping sources.
 
+## Using the HID debugger
+
+In **Debug → HID interfaces**, refresh the inventory and select a live interface or a
+last-observed descriptor. Search the descriptor tree for a usage, collection, report ID
+or native property. Open a live interface to read individual pages or start monitoring.
+Pause monitoring to freeze the display while the native receiver continues collecting
+reports. Expand a delivery to compare its wire bytes with its decode outcome.
+
+Start a recording before the activity you want to retain. The recorder keeps packet
+boundaries, native timestamps, source generation, descriptor provenance and loss markers.
+Each recording accepts up to 64 MiB or one million entries, including its final markers.
+Stopping capture, disconnecting the device, or reaching capacity seals the recording.
+Use the retained-recording picker to export it after reconnecting or reopening Debug.
+Discard a sealed recording to release its storage.
+
+Import an exported JSON file to inspect it offline. Step advances one entry, Play follows
+the original relative timing, and Seek reconstructs observations at the selected elapsed
+microsecond. For external clients, authenticated MCP exposes sealed archives in bounded
+byte slices and accepts chunked uploads. Replays are private to the importing client.
+
 ## Budgets and milestone acceptance
 
 The following are acceptance targets for the subsequent implementations. H0 supplies the contract and

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {verifyRecordingTransfer} from './hid-recording-mcp.mjs';
 
 async function nativePage(){
   const targets=await(await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9227'}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
@@ -39,7 +40,7 @@ test('running Debug and credentialed MCP share selected HID contract and capture
 },async()=>{
   const page=await nativePage(),clients=[],credentials=[];let initial;
   const admin=async(command,args={})=>{const status=await page.invoke('mcp_settings_get');return page.invoke(command,command==='mcp_settings_update'?{settings:{...args,expectedSettingsRevision:status.settingsRevision}}:{...args,expectedSettingsRevision:status.settingsRevision});};
-  const click=label=>page.evaluate(label=>{const buttons=[...document.querySelectorAll('button')];const button=buttons.find(button=>button.textContent.trim()===label&&!button.disabled&&button.getClientRects().length);if(!button)return false;button.click();return true;},label);
+  const click=label=>page.evaluate(label=>{const buttons=[...document.querySelectorAll('button')];const button=buttons.find(button=>(button.textContent.trim()===label||button.getAttribute('aria-label')===label)&&!button.disabled&&button.getClientRects().length);if(!button)return false;button.click();return true;},label);
   const select=id=>page.evaluate(id=>{const select=document.querySelector('select[aria-label="HID interface"]');if(!select||select.disabled||![...select.options].some(option=>option.value===`live:${id}`))return false;select.value=`live:${id}`;select.dispatchEvent(new Event('change',{bubbles:true}));return true;},id);
   const displayed=summary=>page.evaluate(summary=>{const inspector=document.querySelector('[aria-label="HID service inspection"]');const detail=[...inspector?.querySelectorAll('details')??[]].find(node=>node.querySelector('summary')?.textContent===summary);const text=detail?.querySelector('pre')?.textContent;return text?JSON.parse(text):null;},summary);
   const captureView=()=>page.evaluate(()=>{
@@ -72,12 +73,22 @@ test('running Debug and credentialed MCP share selected HID contract and capture
     assert.equal(detail.contractFingerprint,mcpDetail.contractFingerprint);assert.equal(detail.interfaceId,mcpDetail.interfaceId);
     const snapshot=await ok(reader,'controller_hid_snapshot',{interfaceId:selected.interfaceId});
     assert.equal(snapshot.contractFingerprint,detail.contractFingerprint);assert.equal(snapshot.status,'last-observed');assert.equal(snapshot.availability,'offline');
+    if(!explicit){await page.evaluate(()=>{
+      const input=document.querySelector('input[aria-label="Import HID recording"]'),transfer=new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(64*1024*1024+1)],'oversized.json',{type:'application/json'}));
+      input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+    });
+    await until(()=>page.evaluate(()=>[...document.querySelectorAll('[role="alert"]')].some(node=>node.textContent.includes('64 MiB import limit'))),'Oversized recording did not show its actionable import limit');
+    const afterRejectedImport=await ok(reader,'controller_hid_list');
+    assert.equal(afterRejectedImport.interfaces.find(row=>row.interfaceId===selected.interfaceId)?.captureGeneration,selected.captureGeneration,'Rejected file must not open an input/output route');}
     if(!explicit)return; // No receiver opens during the default metadata-only scenario.
     assert.ok(!selected.captureGeneration,'Use an interface with no pre-existing capture for owned-open acceptance.');
     await until(()=>click('Open'),'Explicit Open is unavailable');
     const opened=await until(async()=>{const rows=(await ok(reader,'controller_hid_list')).interfaces;return rows.find(row=>row.interfaceId===explicit&&row.captureGeneration);},'UI did not open a native generation');
     const identity={interfaceId:explicit,generation:opened.captureGeneration};
     const state=await ok(reader,'controller_hid_state',identity);assert.equal(state.contractFingerprint,detail.contractFingerprint);
+    await until(()=>click('Start recording'),'Explicit bounded recording is unavailable');
+    await until(async()=>(await ok(reader,'controller_hid_record_status',identity)).result.status==='recording','UI did not start generation-local recording');
     let lastView,observedReports,uiState;
     try{
       await until(async()=>{
@@ -121,8 +132,56 @@ test('running Debug and credentialed MCP share selected HID contract and capture
       assert.deepEqual(bySequence.get(row.sequence),row,`UI/MCP payload differs for exact sequence ${row.sequence}`);
       assert.ok(typeof row.wireHex==='string'&&row.wireHex.length>0,'Observed raw packets must retain their bytes, including all-zero packets');
     }
+    await until(()=>click('Stop recording'),'Stop recording is unavailable');
+    await until(async()=>(await ok(reader,'controller_hid_record_status',identity)).result.status==='stopped','UI did not seal the recording');
+    const archiveReply=await page.invoke('gateway_request',{request:{command:'controller_hid_record_export',clientId:'hid-recording-verification',...identity}});
+    assert.equal(archiveReply.ok,true,JSON.stringify(archiveReply));
+    const archive=archiveReply.state.controllers.result.recording;
+    assert.equal(archive.format,'osg-hid-recording');assert.equal(archive.generation,identity.generation);
+    assert.ok(archive.records.some(row=>typeof row.wireHex==='string'),'Archive must contain actual observed bytes');
+    assert.ok(archive.records.some(row=>row.kind==='terminal'),'Stopped archive must retain its terminal boundary');
+    await verifyRecordingTransfer(writer,reader,identity,archive);
+    // An explicit read-only GET displays the actual support/outcome, including native rejection.
+    await until(()=>click('Request'),'Read-only GET is unavailable');
+    const getOutcome=await until(()=>page.evaluate(()=>{
+      const section=document.querySelector('[aria-label="Read-only HID requests"]');
+      const output=section?.querySelector('pre[role="status"]');
+      const error=document.querySelector('[aria-label="HID service inspection"] [role="alert"]');
+      return output?.textContent?{reply:JSON.parse(output.textContent)}:error?.textContent?{error:error.textContent}:null;
+    }),'GET support outcome was not displayed');
+    assert.ok(getOutcome.reply||getOutcome.error);
     await until(()=>click('Close'),'Owned capture close is unavailable');
     await until(async()=>(await call(reader,'controller_hid_state',identity)).ok===false,'Closed generation remained readable');
+    // File import is bounded and uses native offline replay after the live handle is closed.
+    await page.evaluate(recording=>{
+      const input=document.querySelector('input[aria-label="Import HID recording"]'),transfer=new DataTransfer();
+      transfer.items.add(new File([JSON.stringify(recording)],'native-capture.json',{type:'application/json'}));
+      input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+    },archive);
+    await until(()=>click('Step'),'Imported replay did not offer deterministic stepping');
+    await until(()=>page.evaluate(()=>document.querySelector('[aria-label="Offline HID replay"]')?.textContent.includes('Imported observations')),'Offline replay was not visibly distinct');
+    const replayState=await until(()=>displayed('Current decoded state'),'Replay native state was not displayed');
+    assert.ok(replayState.result,'Replay must retain native decoded state');
+    await until(()=>click('Close replay'),'Replay close is unavailable');
+    await until(()=>click('Discard'),'Retained recording discard is unavailable');
+    await until(()=>select(explicit),'Could not reselect hardware after replay');
+    await until(()=>click('Open'),'Could not reopen hardware after replay');
+    const retired=await until(async()=>(await ok(reader,'controller_hid_list')).interfaces
+      .find(row=>row.interfaceId===explicit)?.captureGeneration,'Missing reopened generation');
+    await ok(writer,'controller_hid_close',{interfaceId:explicit,generation:retired,operationId:crypto.randomUUID()});
+    const replacement=await ok(writer,'controller_hid_open',{interfaceId:explicit,operationId:crypto.randomUUID()});
+    try{
+      assert.notEqual(replacement.generation,retired);
+      await until(()=>click('Refresh'),'Could not refresh after receiver replacement');
+      await until(()=>page.evaluate(old=>{
+        const history=document.querySelector('[aria-label="Historical HID generation"]')?.textContent;
+        return history?.includes(old)&&history.includes('replaced');
+      },retired),'Debug did not identify the retired generation after receiver replacement');
+      assert.equal(await displayed('Current decoded state'),null);
+      assert.equal((await ok(reader,'controller_hid_state',{interfaceId:explicit,generation:replacement.generation})).generation,replacement.generation);
+    }finally{
+      await ok(writer,'controller_hid_close',{interfaceId:explicit,generation:replacement.generation,operationId:crypto.randomUUID()});
+    }
   }finally{
     // Leaving the tab retires only generations opened by this view.
     await click('Incoming telemetry').catch(()=>{});
