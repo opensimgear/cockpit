@@ -1,4 +1,6 @@
 use serde_json::{json, Value};
+#[path = "values.rs"]
+mod values;
 use std::{
     collections::VecDeque,
     sync::{
@@ -61,13 +63,31 @@ struct History {
     bytes: usize,
     sequence: u64,
     terminal: Option<Value>,
+    values: values::Current,
 }
 impl History {
+    fn end(&mut self, reason: Value) {
+        self.values.clear();
+        if self.terminal.is_none() {
+            self.terminal = Some(reason);
+        }
+    }
+    fn state(&self) -> Value {
+        self.values.state(self.sequence, self.terminal.as_ref())
+    }
     fn push(&mut self, micros: u128, raw: &[u8], projection: Value, provenance: Option<Value>) {
+        if self.terminal.is_some() {
+            return;
+        }
         self.sequence += 1;
+        self.values
+            .observe(self.sequence, micros, &projection, provenance.as_ref());
         let mut row = json!({"sequence":self.sequence.to_string(),"receivedUs":micros.to_string(),
             "samples":projection});
-        if provenance.as_ref().is_none_or(|p| p["wireAvailable"] == true) {
+        if provenance
+            .as_ref()
+            .is_none_or(|p| p["wireAvailable"] == true)
+        {
             row["wireHex"] = json!(hex(raw));
         }
         #[cfg(windows)]
@@ -165,12 +185,22 @@ pub(super) struct Session {
     worker: Option<thread::JoinHandle<()>>,
 }
 impl Session {
+    #[cfg(test)]
     pub fn start(
+        open: impl FnOnce() -> Result<Box<dyn Reader>, String> + Send + 'static,
+    ) -> Result<Self, String> {
+        Self::start_with_detail(Value::Null, open)
+    }
+    pub fn start_with_detail(
+        detail: Value,
         open: impl FnOnce() -> Result<Box<dyn Reader>, String> + Send + 'static,
     ) -> Result<Self, String> {
         let (ready, started) = mpsc::sync_channel(1);
         let (tx, rx) = mpsc::sync_channel::<Command>(1);
-        let history = Arc::new(Mutex::new(History::default()));
+        let history = Arc::new(Mutex::new(History {
+            values: values::Current::new(detail),
+            ..History::default()
+        }));
         let stop = Arc::new(AtomicBool::new(false));
         let busy = Arc::new(AtomicBool::new(false));
         let (log, done, pending) = (history.clone(), stop.clone(), busy.clone());
@@ -213,13 +243,16 @@ impl Session {
                                             | "permission-denied"
                                             | "access-denied"
                                             | "eof"
+                                            | "overflow"
+                                            | "offline"
                                     )
                                 )
                             })
                             .cloned();
                         pending.store(false, Ordering::Release);
                         if let Some(error) = removed {
-                            log.lock().unwrap().terminal = Some(error);
+                            log.lock().unwrap().end(error);
+                            done.store(true, Ordering::Release);
                             let _ = reply.send(value);
                             break;
                         }
@@ -227,13 +260,19 @@ impl Session {
                     }
                     match reader.poll(Duration::from_millis(10)) {
                         Ok(Some(raw)) => {
+                            if done.load(Ordering::Acquire) {
+                                break;
+                            }
                             let at = clock.elapsed().as_micros();
                             let projection = reader.project(&raw);
-                            log.lock().unwrap().push(at, &raw, projection, reader.provenance());
+                            log.lock()
+                                .unwrap()
+                                .push(at, &raw, projection, reader.provenance());
                         }
                         Ok(None) => {}
                         Err(error) => {
-                            log.lock().unwrap().terminal = Some(error);
+                            log.lock().unwrap().end(error);
+                            done.store(true, Ordering::Release);
                             break;
                         }
                     }
@@ -254,7 +293,20 @@ impl Session {
     pub fn page(&self, after: u64) -> Result<Value, String> {
         self.history.lock().unwrap().page(after)
     }
+    pub fn state(&self) -> Value {
+        self.history.lock().unwrap().state()
+    }
+    pub fn is_terminal(&self) -> bool {
+        self.history.lock().unwrap().terminal.is_some()
+    }
+    pub fn revoke(&self, reason: Value) {
+        self.stop.store(true, Ordering::Release);
+        self.history.lock().unwrap().end(reason);
+    }
     pub fn submit(&self, get: Get) -> Result<Reply, String> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err("Offline: HID generation has ended".into());
+        }
         if self.busy.swap(true, Ordering::AcqRel) {
             return Err("Busy: explicit HID read already outstanding".into());
         }
@@ -274,7 +326,7 @@ impl Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.revoke(json!({"kind":"closed"}));
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }

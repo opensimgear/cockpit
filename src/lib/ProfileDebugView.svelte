@@ -7,6 +7,7 @@
   import ProfileRetiredRecovery from './ProfileRetiredRecovery.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import GameTelemetryInspector from './GameTelemetryInspector.svelte';
+  import DebugHidInspector from './DebugHidInspector.svelte';
   import {gatewayRequest} from './gateway';
   import {SharedObservations} from './streams/shared';
   import {companionObservations} from './companion-observations';
@@ -34,8 +35,8 @@
   let desktopDetailsOpen=$state(false);
   let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false,companionEpoch=0;
   const debugId=$props.id();
-  const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
-  let section=$state<'telemetry'|'profile'|'runtime'>('telemetry'),mounted=$state(false);
+  const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'hid',label:'HID interfaces'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
+  let section=$state<'telemetry'|'hid'|'profile'|'runtime'>('telemetry'),mounted=$state(false);
   const draft=$derived(source==='draft'?editor:saved);
   const graphSignature=$derived(JSON.stringify(draft?{document:draft.document,assignments:draft.assignments}:null));
   const inventorySignature=$derived(`${inventoryRevision}/${graphInventorySignature(inventory)}`);
@@ -132,6 +133,7 @@
   <PageHeader title="Debug" eyebrow="DIAGNOSTICS" subtitle="Watch incoming game telemetry, inspect profiles, and investigate output recovery." onback={close} backLabel={`Back to ${editor?'profile':'Profiles'}`}/>
   <div class="debug-sections" role="tablist" aria-label="Debug sections">{#each sections as item (item.id)}<button id={`${debugId}-${item.id}-tab`} role="tab" aria-selected={section===item.id} aria-controls={`${debugId}-${item.id}-panel`} tabindex={section===item.id?0:-1} onclick={()=>section=item.id} onkeydown={sectionKey}>{item.label}</button>{/each}</div>
   <div id={`${debugId}-telemetry-panel`} role="tabpanel" aria-labelledby={`${debugId}-telemetry-tab`} hidden={section!=='telemetry'}><GameTelemetryInspector active={active&&section==='telemetry'}/></div>
+  <div id={`${debugId}-hid-panel`} role="tabpanel" aria-labelledby={`${debugId}-hid-tab`} hidden={section!=='hid'}><DebugHidInspector active={active&&section==='hid'}/></div>
   <div id={`${debugId}-profile-panel`} role="tabpanel" aria-labelledby={`${debugId}-profile-tab`} hidden={section!=='profile'}>
   <section class="panel preflight" aria-label="Native graph preflight">
     <div class="debug-toolbar"><label>Profile to inspect<select aria-label="Debug profile" bind:value={source} onchange={read} disabled={busy||loading}>{#if editor}<option value="draft">Current editor draft · {editor.document.name}</option>{/if}{#each profiles as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={!draft||busy||loading} onclick={compile}>{busy?'Inspecting…':preview?'Refresh preflight':'Inspect draft preflight'}</button></div>

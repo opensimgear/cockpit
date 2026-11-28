@@ -196,7 +196,7 @@ impl ControllerService {
         }
         Self {
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            hid: hid::Service::new(native),
+            hid: hid::Service::new(native, path.as_deref()),
             registry,
             clock,
             stop,

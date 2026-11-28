@@ -6,6 +6,88 @@ use std::{
 struct Fixture(AtomicUsize);
 
 #[test]
+fn replacement_and_restart_never_reactivate_cached_contracts() {
+    struct Changing(AtomicUsize);
+    impl Backend for Changing {
+        fn inventory(&self, target: Option<&str>) -> Result<Value, String> {
+            let epoch = self.0.load(Ordering::Acquire);
+            let id = format!("handle-{epoch}");
+            let summary =
+                json!({"interfaceId":id,"pathFingerprint":"same-interface-and-collection"});
+            match target {
+                None if epoch == 0 => Ok(json!({"interfaces":[],"truncated":false,"failures":[]})),
+                None => Ok(json!({"interfaces":[summary],"truncated":false,"failures":[]})),
+                Some(selected) if selected == id && epoch != 0 => {
+                    let mut detail = summary;
+                    detail["descriptorHex"] = json!(format!("{epoch:02x}"));
+                    Ok(detail)
+                }
+                _ => Err("Interface was replaced".into()),
+            }
+        }
+        fn open(&self, _: &str) -> Result<Box<dyn Reader>, String> {
+            Ok(Box::new(Input { remaining: 2 }))
+        }
+    }
+    let temp = crate::test_directory();
+    let path = temp.path().join("settings.json");
+    let backend = Arc::new(Changing(AtomicUsize::new(1)));
+    let service = Service {
+        backend: Some(backend.clone()),
+        ..Service::new(false, Some(&path))
+    };
+    let request =
+        |command: &str, args: Value| service.request(&format!("controller_hid_{command}"), &args);
+    let first = request("open", json!({"interfaceId":"handle-1"})).unwrap();
+    let listed = request("list", json!({})).unwrap();
+    assert_eq!(
+        listed["interfaces"][0]["captureGeneration"],
+        first["generation"]
+    );
+    assert_eq!(
+        request("state", first.clone()).unwrap()["contractFingerprint"],
+        first["contractFingerprint"]
+    );
+    backend.0.store(2, Ordering::Release);
+    let next = request("list", json!({})).unwrap();
+    assert!(next["interfaces"][0].get("captureGeneration").is_none());
+    assert!(request("reports", first.clone()).is_err());
+    assert!(request(
+        "open",
+        json!({"interfaceId":"handle-2","contractFingerprint":first["contractFingerprint"]})
+    )
+    .is_err());
+    let second = request("open", json!({"interfaceId":"handle-2"})).unwrap();
+    assert_ne!(first["contractFingerprint"], second["contractFingerprint"]);
+    backend.0.store(0, Ordering::Release);
+    assert!(request("list", json!({})).unwrap()["interfaces"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(request("state", second.clone()).is_err());
+    service.shutdown();
+    let restarted = Service::new(false, Some(&path));
+    let catalog = restarted
+        .request("controller_hid_catalog", &json!({}))
+        .unwrap();
+    let rows = catalog["snapshots"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["availability"], "offline");
+    assert_eq!(
+        rows[0]["contractFingerprint"],
+        second["contractFingerprint"]
+    );
+    let snapshot = restarted
+        .request(
+            "controller_hid_snapshot",
+            &json!({"interfaceId":rows[0]["snapshotId"]}),
+        )
+        .unwrap();
+    assert_eq!(snapshot["detail"]["descriptorHex"], "02");
+    assert!(restarted.request("controller_hid_state", &second).is_err());
+}
+
+#[test]
 fn blocked_native_open_reserves_only_its_own_interface() {
     use std::sync::mpsc;
     struct Slow {
@@ -13,8 +95,8 @@ fn blocked_native_open_reserves_only_its_own_interface() {
         resume: Mutex<mpsc::Receiver<()>>,
     }
     impl Backend for Slow {
-        fn inventory(&self, _: Option<&str>) -> Result<Value, String> {
-            Ok(Value::Null)
+        fn inventory(&self, target: Option<&str>) -> Result<Value, String> {
+            Ok(json!({"interfaceId":target}))
         }
         fn open(&self, target: &str) -> Result<Box<dyn Reader>, String> {
             if target == "slow" {
@@ -37,6 +119,7 @@ fn blocked_native_open_reserves_only_its_own_interface() {
             resume: Mutex::new(resume),
         })),
         sessions: Mutex::default(),
+        catalog: Mutex::new(catalog::Catalog::new(None)),
     });
     let slow = service.clone();
     let open = std::thread::spawn(move || {
@@ -79,7 +162,10 @@ impl Reader for Input {
 }
 impl Backend for Fixture {
     fn inventory(&self, target: Option<&str>) -> Result<Value, String> {
-        Ok(json!({"target":target}))
+        Ok(match target {
+            Some(id) => json!({"interfaceId":id}),
+            None => json!({"interfaces":[{"interfaceId":"a"}],"failures":[],"truncated":false}),
+        })
     }
     fn open(&self, target: &str) -> Result<Box<dyn Reader>, String> {
         if target == "denied" {
@@ -95,12 +181,13 @@ fn selected_generation_preserves_equal_reports_and_fences_reopens() {
         stopped: AtomicBool::default(),
         backend: Some(Arc::new(Fixture(AtomicUsize::new(0)))),
         sessions: Mutex::default(),
+        catalog: Mutex::new(catalog::Catalog::new(None)),
     };
     let run = |name: &str, p: Value| service.request(&format!("controller_hid_{name}"), &p);
     assert!(run("list", json!({})).is_ok());
     assert!(run("inspect", json!({})).is_err());
     assert_eq!(
-        run("inspect", json!({"interfaceId":"a"})).unwrap()["target"],
+        run("inspect", json!({"interfaceId":"a"})).unwrap()["interfaceId"],
         "a"
     );
     assert!(run("open", json!({"interfaceId":"denied"})).is_err());
@@ -157,7 +244,7 @@ fn selected_generation_preserves_equal_reports_and_fences_reopens() {
     assert_ne!(opened["generation"], again["generation"]);
     assert!(run("close", opened).is_err());
     service.shutdown();
-    assert!(Service::new(false)
+    assert!(Service::new(false, None)
         .request("controller_hid_list", &json!({}))
         .is_err());
 }

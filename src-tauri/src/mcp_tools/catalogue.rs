@@ -3,6 +3,8 @@ use super::*;
 mod companion;
 #[path = "desktop_preview_catalogue.rs"]
 mod desktop_preview_catalogue;
+#[path = "hid_catalogue.rs"]
+mod hid_catalogue;
 
 fn string(max: usize) -> Value {
     json!({"type":"string","minLength":1,"maxLength":max,"pattern":"^[^\\u0000-\\u001f\\u007f]*$"})
@@ -209,6 +211,7 @@ pub fn catalogue() -> Vec<Value> {
     ];
     tools.extend(companion::catalogue());
     tools.extend(activity_catalogue());
+    tools.extend(hid_catalogue::catalogue());
     tools
 }
 
@@ -225,6 +228,7 @@ fn activity_catalogue() -> Vec<Value> {
 pub fn is_streaming(name:&str)->bool {matches!(name,"profile_debug_controller_input"|"workspace_client_renew")}
 
 pub fn is_mutation(name: &str) -> bool {
+    if matches!(name,"controller_hid_open"|"controller_hid_get"|"controller_hid_close") { return true; }
     if is_streaming(name) { return true; }
     matches!(name,"activity_clear"|"activity_settings_save") || super::companion_controls::mutation(name)
         || matches!(

@@ -113,6 +113,27 @@ A parsed element delivery identifies only the elements actually observed. On a r
 loss, invalidate the absolute baseline until the backend supplies a fresh observation. Missing relative
 deltas stay missing. Replay carries the recording origin and stays outside the live interface inventory.
 
+## Native inspection and retained metadata
+
+Open **Debug → HID interfaces** to inspect a current native interface or its last-observed
+descriptor. MCP exposes the same service through the `controller_hid_*` tools. An inspection
+records the native interface/collection identity, the available descriptor or OS capability
+metadata, its provenance, and a content fingerprint. A changed contract replaces the previous
+snapshot for that identity. The catalog also works after restart. Its entries carry
+`status: "last-observed"` and `availability: "offline"`. Reading one never opens the device.
+
+Opening a capture explicitly binds an interface ID and contract fingerprint to a new generation.
+Supply that generation when reading state, paging reports, issuing a bounded input/feature GET,
+or closing. Clients can discover an already-open generation in the current inventory. Report
+sequences are decimal strings scoped to that generation. Advance the cursor using the last
+returned sequence and inspect `gap` and `terminal` before interpreting continuity.
+
+Current state contains observed absolute values. A waiting receiver has no inferred zero.
+Relative deltas stay in the ordered report history. An OS-projected value can have logical
+bounds even when its original wire bits are unavailable. Physical values are included only
+when the decoder supplies them. Sessions, report pages, current values, and activation are
+memory-only. Profile input routing continues to use its configured mapping sources.
+
 ## Budgets and milestone acceptance
 
 The following are acceptance targets for the subsequent implementations. H0 supplies the contract and

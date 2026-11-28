@@ -156,4 +156,7 @@ impl Receiver {
     pub fn samples(&self, kind: ReportKind, wire: &[u8]) -> Samples {
         unsafe { windows_caps::samples(self.native.preparsed(), &self.snapshot, kind, wire) }
     }
+    pub(crate) fn capabilities(&self) -> &Snapshot {
+        &self.snapshot
+    }
 }

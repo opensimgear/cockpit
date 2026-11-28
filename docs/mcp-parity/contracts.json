@@ -101,5 +101,86 @@
         "anchor": "onclick={onToggleTheme}"
       }
     ]
+  },
+  {
+    "workflow": "Inspect shared receive-only HID contracts and selected captures",
+    "tools": [
+      "controller_hid_list",
+      "controller_hid_inspect",
+      "controller_hid_catalog",
+      "controller_hid_snapshot",
+      "controller_hid_open",
+      "controller_hid_state",
+      "controller_hid_reports",
+      "controller_hid_get",
+      "controller_hid_close"
+    ],
+    "tests": [
+      {
+        "path": "src-tauri/src/mcp_tools/hid_tests.rs",
+        "anchor": "hid_tasks_are_explicit_bounded_and_forward_the_same_native_projection"
+      },
+      {
+        "path": "tests/ui/controller-hid-native.mjs",
+        "anchor": "running Debug and credentialed MCP share selected HID contract and capture generation"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_catalog"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_close"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_list"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_open"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_reports"
+      },
+      {
+        "path": "src/lib/controller-hid.ts",
+        "kind": "transport",
+        "anchor": "controller_hid_state"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onchange={event=>{const [kind,...id]=event.currentTarget.value.split(':');void controller?.select(id.join(':'),kind==='cached');}}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller?.close()}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller?.open()}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller?.read()}"
+      },
+      {
+        "path": "src/lib/DebugHidInspector.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>controller?.refresh()}"
+      }
+    ]
   }
 ]

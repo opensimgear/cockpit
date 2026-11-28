@@ -50,3 +50,293 @@ fn explicit_reads_validate_deadline_scope_and_reply_fencing() {
         );
     }
 }
+
+fn integer(field: usize, semantics: &str, value: &str) -> Value {
+    json!({"field":field,"element":0,"raw_bits":"01","sample":{"Integer":value},
+        "semantics":semantics,"physical":null,"usages":[]})
+}
+
+#[test]
+fn current_state_preserves_exact_values_without_integrating_relative_events() {
+    let mut h = History::default();
+    assert_eq!(h.state()["status"], "waiting");
+    for n in 1..=2 {
+        h.push(
+            n,
+            &[1],
+            json!({"kind":"input","report_id":1,"diagnostics":[],"values":[
+            integer(0,"Absolute","9232379236109516801"), integer(1,"Relative","-1")]}),
+            None,
+        );
+    }
+    let state = h.state();
+    assert_eq!(state["status"], "live");
+    assert_eq!(state["latest"], "2");
+    assert_eq!(state["values"].as_array().unwrap().len(), 1);
+    assert_eq!(state["values"][0]["sample"]["value"], "9232379236109516801");
+    assert_eq!(state["values"][0]["sequence"], "2");
+    assert_eq!(state["values"][0]["rawBits"]["value"], "01");
+    assert_eq!(h.page(0).unwrap()["reports"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn sample_quality_and_missing_reports_do_not_become_zero() {
+    let mut h = History::default();
+    for (sample, expected) in [
+        (json!({"Integer":"0"}), "valid"),
+        (json!({"Null":"255"}), "null"),
+        (json!({"Invalid":"256"}), "invalid"),
+        (
+            json!({"Unknown":{"reason":"selector unknown","encoded":"7"}}),
+            "unknown",
+        ),
+    ] {
+        let mut value = integer(0, "Absolute", "0");
+        value["sample"] = sample;
+        h.push(
+            1,
+            &[0],
+            json!({"report_id":1,"values":[value],"diagnostics":[]}),
+            None,
+        );
+        assert_eq!(h.state()["values"][0]["sample"]["state"], expected);
+    }
+    h.push(
+        2,
+        &[1],
+        json!({"report_id":1,"values":[],"diagnostics":[{"reason":"truncated"}]}),
+        None,
+    );
+    assert_eq!(h.state()["status"], "stale");
+    assert_eq!(h.state()["values"], json!([]));
+    h.push(
+        3,
+        &[0],
+        json!({"report_id":1,"unavailable":"unsupported descriptor"}),
+        None,
+    );
+    assert_eq!(h.state()["status"], "unsupported");
+    assert_eq!(h.state()["values"], json!([]));
+}
+
+#[test]
+fn windows_native_data_indices_keep_scalar_quality_and_opaque_raw_separate() {
+    let mut h = History::default();
+    h.push(1, &[3,255], json!({"provenance":"windows-hidp-report-projection","kind":"input",
+        "reportId":3,"data":[{"dataIndex":42,"rawValue":"255","matchingButtonCaps":[],
+            "matchingValueCaps":[0],"quality":"os-projected","values":[{"capabilityIndex":0,
+            "native":"-1","quality":"valid","semantics":"absolute"}]}],"valueArrays":[],"failures":[]}),None);
+    let value = &h.state()["values"][0];
+    assert_eq!(value["sample"]["value"], "-1");
+    assert_eq!(value["encoded"], "255");
+    assert_eq!(value["rawBits"]["state"], "unavailable");
+    assert!(value["fieldId"].as_str().unwrap().contains("42"));
+}
+
+#[test]
+fn mac_elements_keep_independent_cookie_identity_and_never_invent_wire() {
+    let mut h = History::default();
+    let source = Some(json!({"source":"iohid-element","wireAvailable":false,"reportId":0}));
+    h.push(
+        1,
+        &[],
+        json!({"elements":[{"cookie":17,"integer":"0","relative":false,
+        "valueHex":"00","logicalMin":"-128","logicalMax":"127","array":false}]}),
+        source.clone(),
+    );
+    h.push(
+        2,
+        &[],
+        json!({"elements":[{"cookie":18,"integer":"-1","relative":true,"valueHex":"ff"}]}),
+        source,
+    );
+    let state = h.state();
+    assert_eq!(state["values"].as_array().unwrap().len(), 1);
+    assert_eq!(state["values"][0]["sample"]["value"], "0");
+    assert_eq!(state["values"][0]["logical"]["minimum"], "-128");
+    assert_eq!(state["values"][0]["rawBits"]["state"], "unavailable");
+}
+
+#[test]
+fn terminal_invalidates_current_authority_but_preserves_the_ordered_prefix() {
+    let mut h = History::default();
+    h.push(
+        1,
+        &[0],
+        json!({"report_id":0,"values":[integer(0,"Absolute","1")]}),
+        None,
+    );
+    h.end(json!({"kind":"overflow"}));
+    assert_eq!(h.state()["status"], "offline");
+    assert_eq!(h.state()["values"], json!([]));
+    assert_eq!(h.page(0).unwrap()["reports"].as_array().unwrap().len(), 1);
+    assert_eq!(h.state()["terminal"]["kind"], "overflow");
+}
+
+#[test]
+fn a_complete_report_replaces_its_fields_but_preserves_other_report_ids() {
+    let mut h = History::default();
+    for report in [1, 2] {
+        h.push(
+            1,
+            &[0],
+            json!({"report_id":report,"values":[integer(0,"Absolute","1")]}),
+            None,
+        );
+    }
+    h.push(
+        2,
+        &[0],
+        json!({"report_id":1,"values":[],"diagnostics":[]}),
+        None,
+    );
+    let state = h.state();
+    assert_eq!(state["values"].as_array().unwrap().len(), 1);
+    assert_eq!(state["values"][0]["reportId"], 2);
+}
+
+#[test]
+fn trailing_delivery_diagnostics_preserve_values_the_portable_decoder_validated() {
+    let mut h = History::default();
+    h.push(1,&[1,2],json!({"report_id":1,"values":[integer(0,"Absolute","1")],
+        "diagnostics":[{"reason":"Trailing delivery bytes preserved outside the declared payload"}]}),None);
+    assert_eq!(h.state()["values"][0]["sample"]["value"], "1");
+    assert_eq!(h.state()["diagnostics"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn revoke_fences_a_report_already_waiting_in_the_native_poll() {
+    struct Blocked {
+        entered: mpsc::SyncSender<()>,
+        resume: mpsc::Receiver<()>,
+    }
+    impl Reader for Blocked {
+        fn poll(&mut self, _: Duration) -> Result<Option<Vec<u8>>, Value> {
+            self.entered.send(()).unwrap();
+            self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+            Ok(Some(vec![1]))
+        }
+        fn project(&self, _: &[u8]) -> Value {
+            json!({"report_id":1,"values":[integer(0,"Absolute","1")]})
+        }
+        fn get(&mut self, _: &Get, _: Duration) -> Result<Value, Value> {
+            unreachable!()
+        }
+    }
+    let (entered, at_poll) = mpsc::sync_channel(1);
+    let (resume, paused) = mpsc::channel();
+    let mut session = Session::start(move || {
+        Ok(Box::new(Blocked {
+            entered,
+            resume: paused,
+        }))
+    })
+    .unwrap();
+    at_poll.recv_timeout(Duration::from_secs(2)).unwrap();
+    session.revoke(json!({"kind":"stale-generation"}));
+    resume.send(()).unwrap();
+    session.worker.take().unwrap().join().unwrap();
+    assert_eq!(session.state()["status"], "offline");
+    assert_eq!(session.state()["latest"], "0");
+    assert_eq!(session.state()["values"], json!([]));
+    assert!(session.page(0).unwrap()["reports"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(session
+        .submit(
+            Get::parse(&json!({"deadlineMs":100,"maxBytes":1,
+        "kind":"input","reportId":1,"requestId":"closed"}))
+            .unwrap()
+        )
+        .is_err());
+}
+
+#[test]
+fn descriptor_bounds_and_optional_exact_physical_values_remain_distinct() {
+    let mut h = History {
+        values: values::Current::new(json!({"descriptor":{"fields":[{"globals":{
+            "logical_min":"0","logical_max":"255","physical_min":"-2","physical_max":"2"}}]}})),
+        ..History::default()
+    };
+    let mut v = integer(0, "Absolute", "128");
+    v["physical"] = json!({"numerator":"2","denominator":"255","unit":17,"exponent":-2});
+    h.push(1, &[128], json!({"report_id":1,"values":[v]}), None);
+    let row = &h.state()["values"][0];
+    assert_eq!(row["sample"]["value"], "128");
+    assert_eq!(row["logical"]["maximum"], "255");
+    assert_eq!(row["physicalBounds"]["minimum"], "-2");
+    assert_eq!(row["physical"]["denominator"], "255");
+    h.push(
+        2,
+        &[0],
+        json!({"report_id":1,"values":[integer(0,"Absolute","0")]}),
+        None,
+    );
+    assert!(h.state()["values"][0].get("physical").is_none());
+}
+
+#[test]
+fn current_value_expansion_exceeding_its_budget_invalidates_the_baseline() {
+    let mut h = History::default();
+    let mut value = integer(0, "Absolute", "0");
+    value["sample"]["Integer"] = json!("1".repeat(8 * 1024 * 1024));
+    h.push(1, &[1], json!({"report_id":1,"values":[value]}), None);
+    assert_eq!(h.state()["status"], "stale");
+    assert_eq!(h.state()["values"], json!([]));
+    assert_eq!(h.state()["diagnostics"][0]["kind"], "capacity");
+}
+
+#[test]
+fn revoke_fences_an_explicit_read_in_progress() {
+    struct PendingGet {
+        entered: mpsc::SyncSender<()>,
+        resume: mpsc::Receiver<()>,
+    }
+    impl Reader for PendingGet {
+        fn poll(&mut self, _: Duration) -> Result<Option<Vec<u8>>, Value> {
+            thread::yield_now();
+            Ok(None)
+        }
+        fn project(&self, _: &[u8]) -> Value {
+            unreachable!()
+        }
+        fn get(&mut self, _: &Get, _: Duration) -> Result<Value, Value> {
+            self.entered.send(()).unwrap();
+            self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+            Ok(json!({"wireHex":"01"}))
+        }
+    }
+    let (entered, at_get) = mpsc::sync_channel(1);
+    let (resume, paused) = mpsc::channel();
+    let mut session = Session::start(move || {
+        Ok(Box::new(PendingGet {
+            entered,
+            resume: paused,
+        }))
+    })
+    .unwrap();
+    let reply = session
+        .submit(
+            Get::parse(&json!({"deadlineMs":2000,"maxBytes":1,
+        "kind":"input","reportId":1,"requestId":"old"}))
+            .unwrap(),
+        )
+        .unwrap();
+    at_get.recv_timeout(Duration::from_secs(2)).unwrap();
+    session.revoke(json!({"kind":"stale-generation"}));
+    resume.send(()).unwrap();
+    assert_eq!(
+        reply.wait("i", "g").unwrap()["result"]["error"]["kind"],
+        "offline"
+    );
+    session.worker.take().unwrap().join().unwrap();
+}
+
+#[test]
+fn element_without_declared_relative_flag_has_no_inferred_absolute_semantics() {
+    let mut h = History::default();
+    h.push(1,&[],json!({"elements":[{"cookie":1,"integer":"1","valueHex":"01"}]}),
+        Some(json!({"source":"iohid-element","reportId":0,"wireAvailable":false})));
+    assert_eq!(h.state()["values"],json!([]));
+}

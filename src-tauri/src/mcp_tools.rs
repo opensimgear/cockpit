@@ -253,6 +253,16 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "controller_hid_reports" => {
+                if let Some(after)=args.get("after") {
+                    let valid=after.as_str().is_some_and(|value|value.parse::<u64>().ok().is_some_and(|number|number.to_string()==value));
+                    if !valid { return Err(failure("invalid_arguments","after must be a canonical unsigned 64-bit decimal cursor.",false)); }
+                }
+                forward(name, &["interfaceId","generation","after"], Some("controllers"))
+            }
+            "controller_hid_list" | "controller_hid_inspect" | "controller_hid_catalog" | "controller_hid_snapshot"
+            | "controller_hid_open" | "controller_hid_state" | "controller_hid_get" | "controller_hid_close" =>
+                forward(name, &["interfaceId","generation","contractFingerprint","after","requestId","kind","reportId","maxBytes","deadlineMs"], Some("controllers")),
             "controller_update" => {
                 let updated = forward(name, &["sourceId", "name", "role"], Some("controllers"))?;
                 let source = &updated["source"];
@@ -972,3 +982,7 @@ mod process_monitor_tests;
 #[cfg(test)]
 #[path = "mcp_tools/desktop_status_tests.rs"]
 mod desktop_status_tests;
+
+#[cfg(test)]
+#[path = "mcp_tools/hid_tests.rs"]
+mod hid_tests;

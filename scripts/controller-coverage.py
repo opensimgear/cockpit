@@ -75,8 +75,9 @@ def main():
     if os.name == 'nt' or sys.platform.startswith('linux') or sys.platform == 'darwin':
         folder = root / 'crates/controller-input/src/hid'
         sources.append(folder.with_suffix('.rs'))
-        sources.extend(path for path in sorted(folder.glob('*.rs'))
-                       if 'test' not in path.name and (os.name == 'nt' or path.name != 'native.rs'))
+        sources.extend(path for path in sorted(folder.rglob('*.rs'))
+                       if not any('test' in part for part in path.relative_to(folder).parts)
+                       and (os.name == 'nt' or path.name != 'native.rs'))
         mac = root / 'crates/controller-input/src/macos_hid'
         sources.extend([mac / 'receiver.rs', mac / 'receiver/get_worker.rs', mac / 'inventory/policy.rs'])
     if sys.platform == 'darwin':

@@ -1,0 +1,15 @@
+[
+  {
+    "workflow": "Inspect shared receive-only HID contracts and selected captures",
+    "status": "supported",
+    "ui": "src/lib/DebugHidInspector.svelte via the HID interfaces tab in src/lib/ProfileDebugView.svelte; src/lib/controller-hid.ts",
+    "native": "controller_hid_list; controller_hid_inspect; controller_hid_catalog; controller_hid_snapshot; controller_hid_open; controller_hid_state; controller_hid_reports; controller_hid_get; controller_hid_close",
+    "mcp": "controller_hid_list; controller_hid_inspect; controller_hid_catalog; controller_hid_snapshot; controller_hid_open; controller_hid_state; controller_hid_reports; controller_hid_get; controller_hid_close",
+    "input": "Explicit interfaceId selection; exact capture generation for receiver operations; optional inspected contractFingerprint on open; unsigned decimal report cursor; bounded input/feature GET requestId/reportId/maxBytes/deadlineMs; operationId for open/get/close",
+    "output": "Native descriptor detail and contract fingerprint, process-local last-observed snapshots, shared capture generation, decoded state with unknown/stale diagnostics and ordered report pages with gap/terminal evidence",
+    "effect": "Discovery and inspection never open receivers. Explicit Open starts receive-only native capture; input/feature GET is bounded and explicit. No output reports, mapping changes or profile activation. Close retires the exact generation.",
+    "guard": "Authenticated read credentials can inspect existing captures; open/get/close require write credentials and mutation identity. Native sensitive-interface, metadata-only, access-denied and read-only availability rules remain authoritative.",
+    "lifecycle": "Selection/tab teardown closes captures opened by this view and never closes borrowed generations. UI and MCP use the same native generation and contract fingerprint. Cached snapshots are explicitly last-observed/offline and do not establish current availability.",
+    "scenario": "tests/ui/controller-hid-native.mjs is opt-in against the running native Cockpit: default checks metadata and credential scope without opening a receiver; an explicit OSG_HID_INTERFACE_ID checks UI-opened generation and MCP state/report parity, then closes and verifies stale rejection. Unit lifecycle coverage is in src/lib/controller-hid.test.mjs and bounded MCP dispatch coverage in src-tauri/src/mcp_tools/hid_tests.rs."
+  }
+]
