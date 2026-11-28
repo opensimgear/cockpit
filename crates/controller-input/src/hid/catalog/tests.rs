@@ -9,7 +9,7 @@ fn windows() -> Value {
 
 #[test]
 fn restart_retains_metadata_without_any_live_state() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("controllers.json");
     let mut catalog = Catalog::new(Some(&path)).unwrap();
     let mut detail = windows();
@@ -75,7 +75,7 @@ fn exact_native_identity_replaces_generation_and_invalidates_old_handle() {
 
 #[test]
 fn failed_database_commit_does_not_publish_new_metadata() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("controllers.json");
     let mut first = Catalog::new(Some(&path)).unwrap();
     let mut stale = Catalog::new(Some(&path)).unwrap();
@@ -166,7 +166,7 @@ fn invalid_and_oversized_metadata_cannot_replace_a_snapshot() {
 
 #[test]
 fn malformed_retained_contract_is_rejected_without_overwriting_evidence() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("controllers.json");
     let mut catalog = Catalog::new(Some(&path)).unwrap();
     catalog.observe("first", &windows()).unwrap();
@@ -215,7 +215,7 @@ fn macos_native_service_identity_never_merges_sibling_collections() {
 
 #[test]
 fn durable_replacement_restarts_with_exactly_the_new_contract() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("controllers.json");
     let mut catalog = Catalog::new(Some(&path)).unwrap();
     catalog
