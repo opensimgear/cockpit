@@ -1,0 +1,19 @@
+name: MCP workflow parity
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify parity guard and behavioral contracts
+        run: |
+          node --experimental-test-coverage --test-coverage-include='scripts/mcp-parity/*.mjs' --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test scripts/mcp-parity/check.test.mjs
+          node scripts/mcp-parity/check.mjs

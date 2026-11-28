@@ -1,0 +1,422 @@
+[
+  {
+    "workflow": "List and open saved profiles", "status": "supported",
+    "ui": "src/lib/ProfilesPanel.svelte; src/lib/profiles.ts ProfilesClient.list/getAssignments",
+    "native": "profile_list; profile_assignments_get",
+    "mcp": "profiles_list; profile_get; cockpit://observations/profiles.library",
+    "input": "offset/limit; exact profile id", "output": "Saved summaries/revisions and portable document with machine-local assignments",
+    "effect": "Read only; no activation", "guard": "Authenticated read scope; bounded pages",
+    "lifecycle": "Library observations invalidate summaries; reread current revision",
+    "scenario": "List profiles, open one and compare saved revision and assignments in UI/MCP."
+  },
+  {
+    "workflow": "Create, rename and duplicate profile", "status": "partial",
+    "ui": "src/lib/ProfilesPanel.svelte; ProfilesClient.create/rename/duplicate in src/lib/profiles.ts",
+    "native": "profile_create; profile_rename; profile_duplicate",
+    "mcp": "profile_create; profile_rename; profile_duplicate",
+    "input": "name; existing id and expectedRevision for MCP rename/duplicate; operationId", "output": "Saved profile identity and revision",
+    "effect": "Persist library change without applying outputs", "guard": "Configure access; native profile limits, name validation and revision admission",
+    "lifecycle": "The UI begins New and Copy in an unsaved editor. MCP create and duplicate persist immediately. The editor-session proposals in core-contracts.md cover begin, abandon and save.",
+    "scenario": "Begin New or Copy, edit a name and discard. The saved library and applied owner must stay unchanged. Separately verify durable create, rename and duplicate acknowledgements."
+  },
+  {
+    "workflow": "Delete saved profile", "status": "supported",
+    "ui": "src/lib/ProfileLibraryTools.svelte askDelete/remove",
+    "native": "profile_delete",
+    "mcp": "profile_delete",
+    "input": "id, expectedRevision, operationId", "output": "Deleted profile/library receipt or native rejection",
+    "effect": "Remove saved graph and assignments", "guard": "Default profile protected; revision and native ownership admission authoritative",
+    "lifecycle": "Stale revision fails; reconcile actual library after uncertain reply",
+    "scenario": "Delete disposable profile and test stale revision/default-profile rejection."
+  },
+  {
+    "workflow": "Import and export portable profile", "status": "supported",
+    "ui": "src/lib/ProfileLibraryTools.svelte importProfile/askExport/download",
+    "native": "profile_import; profile_export",
+    "mcp": "profile_import; profile_export",
+    "input": "Portable document and optional import name; saved id for export", "output": "Fresh imported identity or portable JSON",
+    "effect": "Import saves independent graph; export reads saved graph", "guard": "Strict nested schema/bounds; UI 512 KiB portable limit; no credentials/local assignments exported",
+    "lifecycle": "Unsaved editor content is distinct from saved export; import never applies",
+    "scenario": "Export saved profile, import it and verify fresh identity and absent machine assignments."
+  },
+  {
+    "workflow": "Author profile resources, routes, processing and vehicle tabs", "status": "partial",
+    "ui": "src/lib/ProfileCanvas.svelte; ProfileRoutingEditor.svelte; ProfileProcessingEditor.svelte; ProfileVehicleConflicts.svelte",
+    "native": "profile_compile; profile_editor_save/profile_draft_save",
+    "mcp": "profile_prepare_changes; compilation_inspect; profile_save_prepared",
+    "input": "Full typed ProfileDocument or bounded typed edits; expectedRevision; separate local assignments", "output": "draftId, deterministic diff, validation, compiler report; saved revision after commit",
+    "effect": "MCP preparation is ephemeral and prepared save persists only. UI editor Save can replace its own active run after committing. Preserve the separate persistence and application outcomes.", "guard": "src-tauri/src/mcp_tools/authoring.rs prepare/save_prepared; strict types, native compiler, client-owned draft and optimistic revision",
+    "lifecycle": "MCP drafts expire after 30 minutes or restart. The visible working copy, undo/redo, discard and save-with-application require the editor-session contract in core-contracts.md.",
+    "scenario": "Compare prep/save-only with editor Save on its active profile. Verify saved and applied revisions independently, including persistence success followed by failed application."
+  },
+  {
+    "workflow": "Discover profile resource ports and processing operations", "status": "supported",
+    "ui": "src/lib/ProfileComponentPalette.svelte; ProfilePortCombobox.svelte; profile-inspector/ProfileIntegrationPorts.svelte",
+    "native": "profile_resources_list; profile_resources_inspect; native processing catalogue",
+    "mcp": "resources_list; resource_inspect; resource_search_ports; processing_operations_list",
+    "input": "resourceId, search/category, offset/limit", "output": "Stable identity, typed port contracts, capability stamps and operation parameter schemas",
+    "effect": "Metadata only; no ownership or output", "guard": "Bounded matching pages; native compiler remains compatibility authority",
+    "lifecycle": "Refresh descriptors when capabilityStamp changes; retained offline resources are not live authority",
+    "scenario": "Search exact resource ports and processing schema, then compile a matching and mismatching route."
+  },
+  {
+    "workflow": "Select a saved profile without applying it", "status": "missing",
+    "ui": "src/lib/profiles.ts ProfilesClient.select exists; no visible UI invocation found by committed-HEAD search",
+    "native": "profile_select with id and selectionSource",
+    "mcp": "No profile_select tool in src-tauri/src/mcp_tools/catalogue.rs",
+    "input": "Saved profile id and selectionSource", "output": "Selected profile/session state",
+    "effect": "Native/UI changes selection without applying outputs", "guard": "Native selection and ownership admission",
+    "lifecycle": "Selection is distinct from saved and applied snapshots",
+    "scenario": "Native-only selection coverage: verify caller/UI exposure before treating absent MCP selection as manual portal parity gap."
+  },
+  {
+    "workflow": "Activate saved profile and inspect/cancel activation", "status": "supported",
+    "ui": "src/lib/ProfileRuntimeControls.svelte; ProfileActivationWindow.svelte; profile-runtime-controller.ts apply",
+    "native": "profile_apply; profile_activation_current/status/cancel",
+    "mcp": "profile_apply; activation_current; activation_status; activation_cancel",
+    "input": "id, expectedRevision, expectedActiveOwner or explicit null; optional gameId; operationId", "output": "Activation identity, progress, cancellation capability and final native owner/outcome",
+    "effect": "Acquires runtime resources and applies saved profile through staged native admission", "guard": "Exact revision/owner, resource capabilities, recovery and platform gates",
+    "lifecycle": "Poll returned activation identity; cancellation epoch cannot stop newer owner; cleanup is not cancelled",
+    "scenario": "Apply profile, observe progress, cancel pending attempt and ensure unrelated/newer owner is preserved."
+  },
+  {
+    "workflow": "Stop active profile and retry cleanup", "status": "supported",
+    "ui": "src/lib/ProfileRuntimeControls.svelte; ProfileDebugView.svelte runtime and recovery",
+    "native": "profile_stop; profile_recover",
+    "mcp": "profile_stop; profile_recover; profile_status",
+    "input": "operationId; fresh status for reconciliation", "output": "Stopped/cleanup/recovery state and retained owner diagnostics",
+    "effect": "Stop neutralizes outputs; recover retries cleanup without replaying graph", "guard": "Emergency cleanup has separate request capacity; native retained ownership rules",
+    "lifecycle": "Distinguish stopped, recovery pending and fault; timeout is not rollback",
+    "scenario": "Stop running profile and inspect cleanup; retry retained cleanup without reactivation."
+  },
+  {
+    "workflow": "Set automatic selection and per-game rule/preference", "status": "supported",
+    "ui": "src/lib/ProfileAutomaticControls.svelte; GameProfileRule.svelte",
+    "native": "profile_local_settings_get/save; profile_selection_mode; profile_game_rule_save/remove; profile_game_preference_save/remove",
+    "mcp": "local_settings_get/save scopes selection-mode, game-rule, game-preference",
+    "input": "scope, gameId when relevant, exact expectedSettingsRevision and expectedActiveOwner, typed settings", "output": "Revisioned selection policy/rule/preference",
+    "effect": "Persists policy; Automatic may activate a matching verified context", "guard": "Eligible profile and game identity, exact settings revision and owner; strict scope fields",
+    "lifecycle": "Manual pins selection; explicit Automatic can clear stop pin; rule edits may affect current activation",
+    "scenario": "Save disabled rule, enable Automatic in verified context, observe native activation and stale settings rejection."
+  },
+  {
+    "workflow": "Pin profile virtual controller to local vJoy slot", "status": "supported",
+    "ui": "src/lib/ProfileVirtualSlot.svelte",
+    "native": "profile_virtual_slots_get; profile_virtual_slot_set",
+    "mcp": "profile_virtual_slots_get; profile_virtual_slot_set",
+    "input": "Canonical profile id, expectedRevision, nodeId, slot 1..16 or null", "output": "Machine-local slot assignment",
+    "effect": "Persists pin without acquiring slot or activating", "guard": "Exact saved profile revision and portable node identifier",
+    "lifecycle": "Pins separate from portable export; external slot ownership checked at activation",
+    "scenario": "Pin/unpin virtual node, export profile and verify pin remains machine-local."
+  },
+  {
+    "workflow": "Learn physical controller inputs", "status": "supported",
+    "ui": "src/lib/ProfileInputLearning.svelte",
+    "native": "profile_input_learn_start/status/cancel",
+    "mcp": "profile_input_learn_start/status/cancel; cockpit://observations/profiles.learning",
+    "input": "Exact resourceId, generation, capabilityRevision; returned learnId", "output": "Passive capture phase and candidate ports",
+    "effect": "Capture only; no graph edit or output", "guard": "Current physical resource identity and capability generation; exact capture cancellation",
+    "lifecycle": "Inspect after observation invalidation; cancel withdraws candidates; reconnect requires fresh evidence",
+    "scenario": "Start capture, move physical/debug-backed input, read candidates and cancel exact learnId."
+  },
+  {
+    "workflow": "Inspect applied samples and topology", "status": "supported",
+    "ui": "src/lib/ProfileLiveInspector.svelte; ProfilePathActivity.svelte; ProfileDebugView.svelte",
+    "native": "profile_runtime_inspect; profile_runtime_topology; profiles.samples topics",
+    "mcp": "applied_ports_inspect; applied_topology_inspect; cockpit://observations/profiles.samples.<digest>",
+    "input": "Exact applied owner; optional nodeId; nodes/edges section; bounded page", "output": "Declared-port values and immutable applied graph",
+    "effect": "Passive inspection", "guard": "Saved/selected profile cannot impersonate applied owner; owner-derived SHA-256 topic",
+    "lifecycle": "Subscription ends when owner stops/replaces; refresh owner after replacement",
+    "scenario": "Inspect running graph then stop/reapply; reject old owner sample reads."
+  },
+  {
+    "workflow": "Preflight saved/draft profile and simulate desktop output", "status": "supported",
+    "ui": "src/lib/ProfileDebugView.svelte compile; ProfileDesktopPreview.svelte",
+    "native": "profile_compile; profile_compilation_inspect; profile_desktop_preview",
+    "mcp": "profile_prepare_changes; compilation_inspect; profile_desktop_preview",
+    "input": "Typed draft and assignments; compilationId; bounded frames/advances for desktop preview", "output": "Readiness, requirements, diagnostics, budgets and pure simulated desktop trace",
+    "effect": "No save or real desktop injection", "guard": "Native compiler and bounded preview schema; inspect current compilation",
+    "lifecycle": "Profile/inventory changes stale UI preflight; expired compilation needs fresh prepare",
+    "scenario": "Compile graph with desktop route, inspect error and preview trace without acquiring real keyboard/mouse."
+  },
+  {
+    "workflow": "Drive authored debug controller in running profile", "status": "supported",
+    "ui": "src/lib/DebugControllerControls.svelte; ProfileDebugControllerEditor.svelte",
+    "native": "profile_debug_controller_status/input",
+    "mcp": "profile_debug_controller_status; profile_debug_controller_input; profiles.debug-inputs observation",
+    "input": "Exact owner, nodeId, streamId, increasing decimal sequence, bounded changes", "output": "Volatile debug values and accepted sequence",
+    "effect": "Feeds authored debug controls into real running profile; values persist until update/Stop", "guard": "Exact applied owner and declared ports; 16 streams/controller, bounded backpressure; streaming identity replaces operationId",
+    "lifecycle": "Exact retries harmless; stale/reordered sequence rejected; Stop clears runtime",
+    "scenario": "Drive button/axis through profile route, replay exact sequence and reject stale owner after Stop."
+  },
+  {
+    "workflow": "Recover or acknowledge retired output/provisioning records", "status": "supported",
+    "ui": "src/lib/ProfileRetiredRecovery.svelte",
+    "native": "profile_retired_recovery_status/recover/acknowledge/provision_recover/provision_cancel",
+    "mcp": "profile_retired_recovery_status; profile_retired_recovery_recover; profile_retired_recovery_acknowledge; profile_retired_recovery_provision_recover; profile_retired_recovery_provision_cancel",
+    "input": "Exact inspected reference including recordHash/owner; provisioning jobId for cancel", "output": "Retained cleanup state, recovery job/outcome",
+    "effect": "Retry exact cleanup; acknowledgement sends no output", "guard": "Exact record identity/hash and explicit confirmation before uncertain ownership acknowledgement",
+    "lifecycle": "Observe profiles.retired-recovery then reread; cancel exact provisioning job",
+    "scenario": "Inspect retained fixture, recover exact record and reject stale hash/reference."
+  },
+  {
+    "workflow": "List registered games and read details/vehicle catalogue", "status": "supported",
+    "ui": "src/lib/GamesPanel.svelte; profile-inspector/ProfileIntegrationAssignment.svelte",
+    "native": "game_get_state; game read models; profile_dcs_vehicle_resource",
+    "mcp": "games_list; game_vehicles_list; game_read_model_page; game_aircraft_resource; games.state/detail observations",
+    "input": "gameId/search/page; issued immutable digest+offset; installed DCS vehicleId for registration", "output": "Game readiness/setup revisions, current context, vehicle catalogue and optional registered aircraft resource",
+    "effect": "Reads passive; aircraft resource registration changes authoring discovery without provider activation", "guard": "Digest/byte-count verification; installed DCS catalogue validation; metadata is not live readiness",
+    "lifecycle": "Expired immutable identity requires new observation baseline",
+    "scenario": "Inspect game, page vehicles and register installed DCS catalogue without starting provider/profile."
+  },
+  {
+    "workflow": "Discover installed games and review/apply scan", "status": "supported",
+    "ui": "src/lib/GameDiscoveryView.svelte; GamesPanel.svelte discoverInstallation",
+    "native": "game_discovery_start/status/apply",
+    "mcp": "game_discovery_start; game_discovery_status; game_discovery_apply; games.jobs/discovery observations",
+    "input": "Optional existing local root folders; scanId; paged filters; selected actions and optional executable/replacement", "output": "Immediate scan identity, progress, Add/Update/Remove review, atomic apply receipt",
+    "effect": "Scan changes no catalogue until Apply", "guard": "Immediate child folders only; platform tree exclusion; selected installation evidence revalidated; stale scan fails atomically",
+    "lifecycle": "Subscribe jobs before start; ready then applied are distinct states",
+    "scenario": "Scan fixture folder, review selected Add/unselected Remove, apply exact scan and verify catalogue."
+  },
+  {
+    "workflow": "Add, rename, remove, rescan and choose game installation/executable", "status": "supported",
+    "ui": "src/lib/GameAddDialog.svelte; GamesPanel.svelte; GameInstallationSelect.svelte",
+    "native": "game_add; game_save; game_remove; game_rescan; game_installation_select",
+    "mcp": "game_add; game_save; game_remove; game_rescan; game_installation_select",
+    "input": "Root-contained executable/name; gameId; exact installationId; optional metadata", "output": "Registered catalogue/settings receipt and subsequent game state",
+    "effect": "Persists local library; rescan refreshes only target game; no launch/provider start", "guard": "Executable must lie inside selected root for direct add; native installation validation",
+    "lifecycle": "Removal leaves profiles with unavailable context; rescan preserves tags/user artwork",
+    "scenario": "Add disposable local game, edit name/executable, choose installation, rescan and remove; inspect profile context fallout."
+  },
+  {
+    "workflow": "Read game metadata and edit tags/taxonomy", "status": "supported",
+    "ui": "src/lib/GameTagInput.svelte; GameTagsDialog.svelte; GamesPanel.svelte",
+    "native": "game_metadata_get; game_tags_list; game_tags_save; game_tag_definitions_save",
+    "mcp": "game_metadata_get; game_tags_list; game_tags_save; game_tag_definitions_save",
+    "input": "gameId; tagIds with exact expectedTagIds; complete taxonomy with expectedTags", "output": "Cached Wikidata provenance/metadata or normal unmatched state; saved taxonomy/tags",
+    "effect": "Metadata read performs no network; tag operations persist lists", "guard": "Optimistic equality; 32 unique tags/game; 128 taxonomy entries; bounded validated ids/names",
+    "lifecycle": "Rescan populates cached metadata; concurrent edits rejected",
+    "scenario": "Read unmatched/cached metadata, save tags, then reject stale expectedTagIds/taxonomy."
+  },
+  {
+    "workflow": "Choose/crop/reset game artwork", "status": "supported",
+    "ui": "src/lib/GameArtworkPicker.svelte; GameBackgroundCropDialog.svelte; GameBackgroundSettings.svelte",
+    "native": "game_artwork_list/preview; game_background_save",
+    "mcp": "game_artwork_list; game_artwork_preview; game_background_save",
+    "input": "gameId and issued artworkId; bounded imageData/normalized crop or reset path:null", "output": "Cached thumbnail/full preview and saved background receipt",
+    "effect": "Preview is read only; explicit save persists image/crop", "guard": "Exact game artwork identity; bounded image and normalized 16:9 crop",
+    "lifecycle": "Full preview precedes alignment/save; cancellation leaves saved image",
+    "scenario": "Preview artwork, crop/save and reset; verify UI persisted background matches MCP receipt."
+  },
+  {
+    "workflow": "Launch game with matching profile and remembered choice", "status": "missing",
+    "ui": "src/lib/GameProfileLaunch.svelte launch/launchWithOwner",
+    "native": "profile_game_candidates; profile_game_launch; src-tauri/src/games/discovery/launch.rs",
+    "mcp": "No game launch/candidates tool; explicit exclusion in catalogue workflow/security text",
+    "input": "gameId, expectedActiveOwner, optional profileId/rememberChoice", "output": "Started launch acknowledgement and matching running/degraded applied owner",
+    "effect": "Activates chosen profile before launching executable", "guard": "Native executable/platform readiness, candidate context, owner/switch confirmation",
+    "lifecycle": "UI validates exact launch acknowledgement then reads applied owner; errors require status/cleanup reconciliation",
+    "scenario": "Launch fixture game from UI with two matching profiles; demonstrate MCP cannot perform equivalent launch."
+  },
+  {
+    "workflow": "Check/setup/repair/cancel/remove/recover game integration", "status": "supported",
+    "ui": "src/lib/GamesPanel.svelte integrationCommand; GameProviderSettings.svelte",
+    "native": "game_integration_check/setup/cancel/remove/recover; games/integration/*",
+    "mcp": "game_integration_check; game_integration_setup; game_integration_cancel; game_integration_remove; game_integration_recover",
+    "input": "Registered gameId; optional DCS userFolder/provider connection; exact jobId for cancel", "output": "Bounded acknowledgement; games.jobs/detail carries setup phase/result/recovery",
+    "effect": "Native integration workflow can modify managed setup files or start bounded verification", "guard": "Selected installation/provider validation; DCS closed for retained recovery; native managed-file cleanup checks",
+    "lifecycle": "Subscribe jobs/detail before action; acknowledgement may precede completion; resolve immutable detail pages",
+    "scenario": "Set up disposable integration fixture, observe progress, cancel exact job, check/remove and recover interrupted DCS fixture."
+  },
+  {
+    "workflow": "Save machine-local provider connection/catalogue settings", "status": "supported",
+    "ui": "src/lib/GameProviderSettings.svelte; GameConfigEditor.svelte",
+    "native": "profile_local_settings_get/save scope game-provider",
+    "mcp": "local_settings_get; local_settings_save",
+    "input": "gameId, exact settings revision/active owner, strict connection and optional DCS userFolder/aircraftModule", "output": "Revisioned provider preferences/setup state",
+    "effect": "Persist preferences without launch or direct profile apply", "guard": "Strict per-provider fields; native addresses/ports/freshness/path/catalogue validation",
+    "lifecycle": "Concurrent UI/MCP or external edit rejected; reread before retry",
+    "scenario": "Change supported provider freshness/settings, verify native UI agreement and unknown-field/stale revision rejection."
+  },
+  {
+    "workflow": "Enable/cancel game process monitoring", "status": "supported",
+    "ui": "src/lib/GameProcessMonitor.svelte",
+    "native": "game_process_monitor_enable/cancel",
+    "mcp": "game_process_monitor_enable; game_process_monitor_cancel",
+    "input": "Observed registered X-Plane/Assetto gameId", "output": "Permission/helper progress and game state",
+    "effect": "Requests Windows permission for temporary notifications helper; cancel withdraws telemetry authority", "guard": "Native platform/consent/current-session gates; no installed service or simulator command",
+    "lifecycle": "May await Windows consent; cancel closes helper and removes session authority",
+    "scenario": "Enable fixture monitoring, inspect UI/MCP progress and cancel; ensure telemetry authority withdrawn."
+  },
+  {
+    "workflow": "Inspect incoming game telemetry", "status": "supported",
+    "ui": "src/lib/GameTelemetryInspector.svelte; ProfileDebugView.svelte incoming telemetry tab",
+    "native": "game_telemetry_inspect; src-tauri/src/game_telemetry_inspection.rs",
+    "mcp": "game_telemetry_inspect; games.telemetry observation",
+    "input": "Optional gameId, search/group and bounded page", "output": "Canonical channels and bounded fresh values",
+    "effect": "Inspection; X-Plane requests selected datarefs from existing source", "guard": "Existing native source/session/freshness qualification; no arbitrary simulator command",
+    "lifecycle": "Capture/expiry invalidations trigger reread; high-frequency general telemetry streaming excluded",
+    "scenario": "Feed native telemetry fixture, inspect grouped values and verify stale/expired samples withdraw."
+  },
+  {
+    "workflow": "Inspect system devices, USB details and host controller inputs", "status": "supported",
+    "ui": "src/lib/SystemDevices.svelte; SystemTopology.svelte; SystemUsbDetails.svelte; HostControllers.svelte; SystemControllerInputs.svelte",
+    "native": "system_inventory; controller_list/inspect and exact observation topics",
+    "mcp": "system_inventory; resources_list/resource_inspect; system.inventory and controllers.inventory plus exact controller/USB observation topics",
+    "input": "First page refresh:true; offset/limit and captured observedAt; observed exact detail topic", "output": "Committed inventory, identity/online evidence and passive input/details frames",
+    "effect": "Explicit native inspection or cached passive reads; no output acquisition", "guard": "Stable captured inventory paging; passive observations have no ownership authority",
+    "lifecycle": "Visibility-scoped UI readers release on hide; new inventory timestamp required after refresh",
+    "scenario": "Refresh system inventory, page with observedAt, compare host controller/USB detail and verify observer release on navigation."
+  },
+  {
+    "workflow": "Rename/reclassify host controller", "status": "supported",
+    "ui": "src/lib/HostControllers.svelte Save local details",
+    "native": "controller_update",
+    "mcp": "controller_update",
+    "input": "sourceId, name, role controller/joystick/wheelbase/pedals/throttle/panel", "output": "Saved source id/name/role",
+    "effect": "Persist local metadata", "guard": "Fresh inventory/source identity; strict role/name validation",
+    "lifecycle": "Inventory observation updates saved details",
+    "scenario": "Rename fixture controller and role through MCP; compare HostControllers fields after observation."
+  },
+  {
+    "workflow": "Reassign moved host controller to remembered offline identity", "status": "missing",
+    "ui": "src/lib/HostControllers.svelte Reassign this connection",
+    "native": "controller_reassign with sourceId and observedId",
+    "mcp": "No controller_reassign tool in catalogue.rs",
+    "input": "Remembered offline sourceId and current observedId", "output": "Updated stable controller association",
+    "effect": "Persist physical connection reassignment", "guard": "Native controller identity/eligibility checks; UI requires fresh inventory",
+    "lifecycle": "Reconcile current and offline identities after movement; stale inventory must not overwrite",
+    "scenario": "Create moved/offline fixture identities, reassign in UI and demonstrate missing MCP equivalent."
+  },
+  {
+    "workflow": "Forget offline controllers/modules and cleanup device inventory", "status": "partial",
+    "ui": "src/lib/SystemDevices.svelte forget; HostControllers.svelte Forget offline controller; system-inventory-providers.ts forget",
+    "native": "controller_forget; gateway forget; frontend remembered metadata removal; companion_revoke for companions",
+    "mcp": "No controller_forget/gateway forget tools; ui_preferences_save remembered is metadata only; companion_revoke covers its own trust domain",
+    "input": "Reviewed offline device identities and stored references", "output": "Per-device cleanup/revocation result and remaining inventory",
+    "effect": "Remove eligible remembered identities; companion revoke also changes trust", "guard": "Offline, unowned, visible/eligible; profile reference checks; fresh cleanup review",
+    "lifecycle": "Native identity forget differs from editing remembered cache; cancel stops remaining batch, not committed deletions",
+    "scenario": "Cleanup mixed offline inventory; prove MCP companion revoke works while controller/module forget remains unavailable."
+  },
+  {
+    "workflow": "Inspect/save/restore physical controller visibility", "status": "supported",
+    "ui": "src/lib/DeviceVisibility.svelte",
+    "native": "controller_visibility_status/inspect/processes/save/restore",
+    "mcp": "controller_visibility_status; controller_visibility_inspect; controller_visibility_processes; controller_visibility_save; controller_visibility_restore",
+    "input": "sourceId; typed visibility intent; observed jobId/sessionId and exact expectedActiveOwner for restore", "output": "Saved intent, inspected platform/HidHide rules and recovery/job state",
+    "effect": "Save only persists local intent; restore may stop exact profile/output and restore recorded rules", "guard": "Physical source qualification, platform support and exact owner/session admission",
+    "lifecycle": "Inspect fresh evidence; restore exact observed recovery/job; intent is not already applied hiding",
+    "scenario": "Save visibility preference without hiding, inspect native evidence, restore exact fixture session and reject stale owner."
+  },
+  {
+    "workflow": "Discover/connect/disconnect gateway", "status": "supported",
+    "ui": "src/App.svelte gateway workspace; src/lib/gateway-workspace.ts",
+    "native": "ports; status; connect; disconnect",
+    "mcp": "gateways_list; gateway_inspect; gateway_session",
+    "input": "Exact discovered gatewayId; action connect/disconnect; expectedActiveOwner", "output": "Gateway identity/session/state and typed module capabilities",
+    "effect": "Open/close exact native gateway endpoint", "guard": "Shared profile admission prevents independent setup takeover of applied owner",
+    "lifecycle": "Discovery does not open endpoint; reconnect/boot changes require fresh module baseline",
+    "scenario": "Discover and connect debug gateway, inspect modules, disconnect and reject operation conflicting with active profile."
+  },
+  {
+    "workflow": "Read, prepare, claim and configure CAN/gateway module", "status": "supported",
+    "ui": "src/App.svelte device setup; src/lib/RuntimeEditor.svelte",
+    "native": "config_read; claim/release; config_apply/config_apply_save/config_save/config_discard/config_reset",
+    "mcp": "gateway_config_read; device_config_prepare transport gateway; gateway_config_change; workspace_client_renew",
+    "input": "gatewayId/moduleId; complete RuntimeConfig for Apply; action and exact expectedActiveOwner", "output": "Baseline boot/route/generation, deterministic diff, claim/config/readback and persistence result",
+    "effect": "Prepare validates only; explicit claim/action applies RAM state or separately persists", "guard": "Native boot/route/writer/lease, firmware semantics, USB preference and cross-transport exclusion",
+    "lifecycle": "Renew only owned unexpired config leases while editing; reconnect invalidates baseline; no ambiguous write replay",
+    "scenario": "Read/prepare config, claim, apply RAM-only, save, discard/reset and release; compare dirty/savedGeneration and stale-route rejection."
+  },
+  {
+    "workflow": "Discover/connect/read/configure direct USB module", "status": "supported",
+    "ui": "src/lib/SystemUsbDetails.svelte and ModuleUsbClient in src/lib/module-usb.ts",
+    "native": "module_usb_list/status/connect/disconnect/config_read/claim/release/config_apply/config_save/config_discard/config_reset",
+    "mcp": "usb_modules_list; usb_module_inspect; usb_module_session; usb_module_config_read; device_config_prepare transport usb; usb_module_config_change",
+    "input": "Observed key/port; exact current route; complete RuntimeConfig; action/expectedActiveOwner", "output": "USB identity/admissibility, route, configuration baseline/diff and explicit action readback",
+    "effect": "Explicit connect/config ownership; RAM Apply and durable save remain separate", "guard": "Verified endpoint identity, current boot/route/config generation, client claim and profile ownership",
+    "lifecycle": "Reconnect/reboot needs fresh route; release claim when editing ends",
+    "scenario": "Inspect exact USB fixture, connect, read/prepare, claim/apply_save/release; reject stale route and competing owner."
+  },
+  {
+    "workflow": "Calibrate axes and map module physical input layout", "status": "supported",
+    "ui": "src/lib/RuntimeEditor.svelte axes/buttons/hats/encoders/selectors editor",
+    "native": "RuntimeConfig validation/encoder via config_apply or module_usb_config_apply",
+    "mcp": "device_config_prepare; gateway_config_change or usb_module_config_change",
+    "input": "Complete RuntimeConfig with axes raw min/max, normalized neutral/deadzone and mappings", "output": "Validation/diff and firmware accepted/rejected configuration readback",
+    "effect": "Explicit Apply updates calibration/layout; Save persists", "guard": "12-bit ADC raw 0..4095; typed array/range/capability validation; firmware contact/layout checks",
+    "lifecycle": "Changed controller counts/usages/neutrals can require separate USB layout publication, currently absent MCP controls",
+    "scenario": "Prepare valid calibration and invalid range, apply valid fixture configuration and compare live calibrated input."
+  },
+  {
+    "workflow": "Enable/disable/update/register gateway USB controller and apply layout", "status": "missing",
+    "ui": "src/App.svelte changeController/confirmController; Apply layout/Reconnect gateway",
+    "native": "enable; disable; update-profile; forget; register/unregister; reconnect/apply/save on gateway",
+    "mcp": "No corresponding gateway lifecycle/layout tool in catalogue.rs",
+    "input": "Exact gateway/module and reviewed controller/layout action", "output": "Saved controller roster/layout pending/error and reconnect outcome",
+    "effect": "Changes gateway USB controller order/publication; may reconnect USB", "guard": "Module/controller capability, claims/layoutPending, native profile mutation admission; UI confirmation for disruptive actions",
+    "lifecycle": "Enabled changed controls remain neutral until explicit profile/layout update; auto lifecycle saves/reconnects; older gateway requires Apply layout",
+    "scenario": "Change fixture module control counts, perform UI Update controller profile/Disable/Enable and verify layout/reconnect; demonstrate missing MCP action."
+  },
+  {
+    "workflow": "Inspect passive CAN/module inputs", "status": "supported",
+    "ui": "src/App.svelte Live inputs; src/lib/DebugControls.svelte calibrated preview",
+    "native": "can_input_inspect; exact can.inputs.<gateway serial>.<module identity> topic",
+    "mcp": "can_input_inspect; exact CAN observation URI",
+    "input": "Observed exact CAN topic", "output": "Fresh passive calibrated input preview",
+    "effect": "Read only; sends no device command", "guard": "Observed current gateway/module identity and freshness",
+    "lifecycle": "Input preview withdraws on disconnect/route changes; no read means no output authority",
+    "scenario": "Drive software CAN fixture and compare live UI calibrated values with inspected topic; disconnect withdraws preview."
+  },
+  {
+    "workflow": "Discover and invoke standalone module actions", "status": "missing",
+    "ui": "src/lib/ManualActions.svelte invoke; ActionControl.svelte",
+    "native": "action_describe; action_state; action_invoke; USB module actions commands",
+    "mcp": "No standalone action discovery/invocation tool; catalogue explicitly excludes standalone device action invocation",
+    "input": "moduleId, boot, catalogueRevision, actionId, typed values", "output": "Advertised action/state or uncertain/error/unsupported result",
+    "effect": "Manual native action can operate physical outputs independently of profile routes", "guard": "Advertised firmware contracts, exact boot/catalogue, action readiness, profile blocking and ownership admission",
+    "lifecycle": "Uncertain command requires state refresh; physical output verification remains separate from readback",
+    "scenario": "Discover fixture output action, invoke from UI, inspect readback; demonstrate MCP only supports authored profile route alternative, not equivalent manual invocation."
+  },
+  {
+    "workflow": "Create/manage simulated devices and drive raw simulated inputs", "status": "missing",
+    "ui": "src/lib/DebugDevices.svelte; DebugControls.svelte",
+    "native": "debug_describe; debug_invoke add/online/reboot/direct/neutral and raw input operations",
+    "mcp": "No debug_describe/debug_invoke tools; profile_debug_controller_input addresses different authored runtime nodes",
+    "input": "Preset; exact moduleId/boot; debugOperation and bounded raw args", "output": "Simulator device roster/boot/online/raw and calibrated state",
+    "effect": "Creates/reboots software modules, toggles routes and feeds normal calibration/event pipeline", "guard": "Connected debug gateway, advertised presets, boot and layout readiness; input queue ordering",
+    "lifecycle": "DebugControls resets inputs on exit; reboot changes boot; failed reset requires reconnect/reset before continuing",
+    "scenario": "Add preset, drive 12-bit raw axis/button, toggle offline/direct route, reboot and reset; contrast with MCP authored debug controller API."
+  },
+  {
+    "workflow": "Reset entire profile library to defaults", "status": "missing",
+    "ui": "src/lib/profiles.ts ProfilesClient.reset exists; no visible reset control confirmed in inspected ProfilesPanel/ProfileLibraryTools",
+    "native": "profile_reset with confirm:true",
+    "mcp": "No profile_reset tool in catalogue.rs",
+    "input": "Explicit confirm:true", "output": "Native reset profile/library state",
+    "effect": "Destructive profile reset through native command", "guard": "Native profile ownership/mutation authorization; explicit confirmation field",
+    "lifecycle": "Caller must reconcile active state; UI exposure not confirmed and should not be claimed as manual portal feature",
+    "scenario": "Native-only reset coverage: inspect admission/tests before deciding whether parity obligation applies; do not assert visible UI action."
+  },
+  {
+    "workflow": "Inspect and install optional drivers or open their configuration utility", "status": "partial",
+    "ui": "src/lib/OptionalDependencies.svelte install and src/lib/OutputSettings.svelte manageDriver",
+    "native": "src-tauri/src/lib.rs optional_dependencies, optional_dependency_install, open_vjoy and open_hidhide. src-tauri/src/optional_dependencies.rs owns allowlisted installation and launch.",
+    "mcp": "system_inventory and system.inventory.drivers expose installed state. Installer submission, job reconciliation and fixed configuration utility launch are proposed in core-contracts.md.",
+    "input": "Pinned dependency ID vjoy or hidhide, observed manifest and system revision, expected owner, operation UUID.", "output": "Bundled package identity, platform availability, job phase, native outcome and subsequent installed-state readback.",
+    "effect": "Reads inspect local state. Installation writes system files and can require elevation or restart. Opening the utility starts an external application.", "guard": "Native Windows x64 eligibility, fixed manifest, package size/hash, installation and ownership preflight. OS elevation stays with the operator.",
+    "lifecycle": "Serialize installs. Reconcile an interrupted reply against job and installed state. A cancelled elevation produces no successful install receipt.",
+    "scenario": "Reject a mismatched manifest and concurrent install. Compare denial, restart-required and fresh installed version through both entry points."
+  },
+  {
+    "workflow": "Route advertised input events and feedback through an applied profile", "status": "supported",
+    "ui": "src/lib/ProfileRoutingEditor.svelte and src/lib/ProfileCanvas.svelte author resource ports and explicit connections.",
+    "native": "src/lib/profile-compilation.ts describes compiled physical-action, physical-state and companion-feedback sinks. The profile compiler and native session admit and own the routes.",
+    "mcp": "resource_search_ports, profile_prepare_changes, compilation_inspect, profile_save_prepared, profile_apply and profile_status",
+    "input": "Exact resource and port identities, typed graph and local assignments, saved revision and observed active owner.", "output": "Compiler diagnostics, saved document revision and applied session owner. Feedback state and delivery depend on the connected endpoint.",
+    "effect": "Discovery and preparation inspect. Applying acquires eligible routes and can deliver actual output.", "guard": "Existing provider availability, advertised capability, revision, route and active owner checks apply to both surfaces.",
+    "lifecycle": "Stop releases the profile-owned routes. Reconnect requires current capability and route evidence.",
+    "scenario": "Prepare an advertised event-to-feedback binding. Verify compiler admission, exact applied owner and feedback withdrawal on Stop. Physical receipt requires independent device evidence."
+  }
+]

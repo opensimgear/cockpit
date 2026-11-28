@@ -57,15 +57,15 @@ device, and supported local-settings changes. The native listener checks access
 when requests arrive and again before dispatch; a client cannot obtain write
 access by calling a tool hidden from its read-only catalogue.
 
-**Replace token** creates a new credential with the same name and access, then
-revokes the original. Update the client with the replacement token. If creation
-fails, the original stays valid. If revocation cannot be confirmed, the UI keeps
-the replacement token visible and tells you to refresh and explicitly revoke the
-original. **Revoke** removes that credential's access. Credentials list their ID
-so identically named replacements can be distinguished.
+**Replace token** replaces the credential in one native transaction at the
+observed settings revision. Update the client with the one-time replacement
+token. A rejected rotation preserves the original. If the reply is lost,
+refresh the credential list to reconcile the outcome before attempting another
+change. **Revoke** removes the selected credential's access. Use the credential
+ID to distinguish entries with the same name.
 
-Only credential metadata and token hashes are saved in the machine-local
-`mcp-v1.json` settings file. Plain tokens are returned once at creation and are
+Credential metadata and token hashes are saved in the machine-local SQLite
+security store. Plain tokens are returned once at creation and are
 not stored in browser local/session storage or portable profile exports. The
 native store supports up to 32 credentials; remove an unused one before creating
 or replacing a token when that limit is reached. A damaged or unsafe settings
@@ -244,7 +244,9 @@ Supported game IDs are `dcs`, `x-plane-11`, `x-plane-12`,
 | Gateway/CAN module setup | Discover/connect an exact gateway, read its module, prepare a config diff, and use the advertised explicit setup actions | Uses the same native gateway/module session, CAN boot/route/writer/lease proof, device readback, USB preference, and cross-transport exclusion as the UI. No ambiguous write replay. Physical CAN/USB behavior is not qualified by an MCP preview. |
 | Module configuration fields | Native `RuntimeConfig`: `name`, `expanderMask`, `buttons`, `axes`, `hats`, `encoders`, `selectors` | Native encoder, array/range limits, advertised hardware capabilities, firmware semantic acceptance, and calibration/layout validation apply. The typed tool schema is the exact contract; MCP does not expand an adapter's device capabilities. |
 | Companion descriptors and profile assignment | Inspect retained companion identity/ports and verified panel publications, then reference exact publication hashes and local assignments in a prepared profile | Assignment persistence uses atomic draft save; runtime publication/ownership starts only through explicit profile activation. Existing pairing/trust, screen compatibility, retained publication, and resource-generation checks apply. Credentials and machine paths stay out of portable profiles. |
-| Deliberate v1 exclusions | Remote/LAN MCP hosting, general REST API, high-frequency telemetry streaming, arbitrary command/shell/filesystem access, firmware/driver provisioning, game launching, standalone device actions, publication upload, and full visual companion authoring | Use the existing native UI/workflows or separately planned features. MCP tools cannot bypass platform, game, output, or hardware enablement and recovery gates. |
+| Designer and publication | Read and save designer sources and workspace documents. Upload a compiled publication in bounded chunks and commit it against the host snapshot. | Source editing, compilation, publication and assignment are separate operations. See the [workflow inventory](mcp-parity/README.md) for the remaining editor workflows. |
+| Companion firmware | Inspect releases and use the advertised firmware tools for supported devices. | The same board, transport and job guards apply as in the desktop UI. Inspect the job outcome before reporting success. |
+| Other manual workflows | The [parity inventory](mcp-parity/README.md) records the available tools and gaps for game launching, device actions, installers and other desktop controls. | Planned contracts describe future tools. Discover currently callable tools with the authenticated connection's `tools/list`. |
 
 | Verification scope | Current claim |
 | --- | --- |
@@ -420,8 +422,8 @@ connection evidence.
   again. Preparation itself does not save anything.
 - **Uncertain native result:** reconcile the original operation ID and current
   native state before submitting further writes.
-- **Read-only settings file:** preserve the reported file and repair its
-  corruption, permissions, or unsafe path; the server does not silently reset it.
+- **Read-only settings**. Inspect the native SQLite diagnostic and repair the
+  reported storage problem before attempting another settings write.
 
 ## Verification and readiness
 

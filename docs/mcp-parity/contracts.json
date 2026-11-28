@@ -1,0 +1,105 @@
+[
+  {
+    "workflow": "Configure companion listener binding, discovery and lifecycle",
+    "tools": [
+      "companion_listener_get",
+      "companion_listener_save"
+    ],
+    "tests": [
+      {
+        "path": "src-tauri/src/mcp_tools/host_settings.rs",
+        "anchor": "mcp_listener_settings_use_exact_revisions_and_disable_the_real_listener"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/CompanionListenerSettings.svelte",
+        "kind": "ui",
+        "anchor": "onclick={() => toggle(!enabled)}"
+      }
+    ]
+  },
+  {
+    "workflow": "Widget source library creation/edit/import/export",
+    "tools": [
+      "widget_save",
+      "widget_get"
+    ],
+    "tests": [
+      {
+        "path": "tests/ui/mcp-widgets-native.mjs",
+        "anchor": "MCP widget saves replace plain sources in the running Widgets editor"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/CompiledCompanionDesigner.svelte",
+        "kind": "ui",
+        "anchor": "onsave={saveWidget}"
+      }
+    ]
+  },
+  {
+    "workflow": "Immutable panel publication upload and direct selection",
+    "tools": [
+      "companion_publish_begin",
+      "companion_publish_chunk",
+      "companion_publish_commit",
+      "companion_publish_abort"
+    ],
+    "tests": [
+      {
+        "path": "tests/ui/mcp-companion-scenarios.mjs",
+        "anchor": "export async function companionScenarios"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/CompiledCompanionDesigner.svelte",
+        "kind": "ui",
+        "anchor": "onclick={save}"
+      }
+    ]
+  },
+  {
+    "workflow": "Author profile resources, routes, processing and vehicle tabs",
+    "tools": [
+      "profile_prepare_changes",
+      "compilation_inspect",
+      "profile_save_prepared"
+    ],
+    "tests": [
+      {
+        "path": "tests/ui/mcp-software-scenarios.mjs",
+        "anchor": "export async function softwareScenarios"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/ProfileProcessingEditor.svelte",
+        "kind": "ui",
+        "anchor": "onchange={event=>field('clamp',event.currentTarget.checked)}"
+      }
+    ]
+  },
+  {
+    "workflow": "Theme, canvas navigation/styling, device layout and remembered metadata",
+    "tools": [
+      "ui_preferences_get",
+      "ui_preferences_save"
+    ],
+    "tests": [
+      {
+        "path": "tests/ui/mcp-ui-preference-scenarios.mjs",
+        "anchor": "export async function uiPreferenceScenarios"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/SettingsPanel.svelte",
+        "kind": "ui",
+        "anchor": "onclick={onToggleTheme}"
+      }
+    ]
+  }
+]

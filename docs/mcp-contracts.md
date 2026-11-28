@@ -5,6 +5,11 @@ See [client setup and workflow](mcp.md) for the user-facing sequence. The server
 adapts the running desktop's existing `Arc<GatewayManager>`; it does not create
 another device owner or service process.
 
+The [manual workflow inventory and execution contracts](mcp-parity/README.md)
+extend this implementation matrix for the embedded assistant feature. Use the
+inventory to distinguish current support from proposed operations, including
+workflows whose desktop editor holds an unsaved draft.
+
 ## Exact schemas and response envelope
 
 `tools/list` returns each tool's exact `inputSchema`, shared `outputSchema`, and
@@ -70,8 +75,9 @@ Native transport tests cover negotiation, baselines, unavailable and saturated r
 
 The activation window's focus, geometry and presentation are local. MCP
 clients use `profiles.activation` and the activation tools for progress and
-cancellation. Opening the browser companion and exporting its certificate
-through the desktop file dialog are also local presentation actions.
+cancellation. The desktop can open the browser companion or save its certificate
+through a file dialog. A Configure client can obtain the pairing URL through
+`companion_pair_offer` and export the public CA through `companion_certificate_get`.
 
 ## Tools to native commands
 
