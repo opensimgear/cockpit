@@ -13,10 +13,15 @@ export function validateIndependentProbe(probe) {
   assert.equal(probe.inputReads,false);
   assert.equal(probe.featureReads,false);
   assert.match(probe.device?.registryEntryId??'',/^\d+$/,'select one exact IORegistry entry ID');
-  assert.match(probe.descriptorHex??'',/^(?:[a-f0-9]{2})+$/i);
-  assert.ok(probe.descriptorHex.length/2<=MAX_DESCRIPTOR_BYTES);
-  assert.match(probe.descriptorSha256??'',/^[a-f0-9]{64}$/i);
-  assert.equal(createHash('sha256').update(Buffer.from(probe.descriptorHex,'hex')).digest('hex'),probe.descriptorSha256.toLowerCase());
+  if(probe.descriptorAvailable) {
+    assert.match(probe.descriptorHex??'',/^(?:[a-f0-9]{2})+$/i);
+    assert.ok(probe.descriptorHex.length/2<=MAX_DESCRIPTOR_BYTES);
+    assert.match(probe.descriptorSha256??'',/^[a-f0-9]{64}$/i);
+    assert.equal(createHash('sha256').update(Buffer.from(probe.descriptorHex,'hex')).digest('hex'),probe.descriptorSha256.toLowerCase());
+  } else {
+    assert.equal(probe.descriptorHex,null);
+    assert.equal(probe.descriptorSha256,null);
+  }
   assert.ok(Array.isArray(probe.elements)&&probe.elements.length>0&&probe.elements.length<=MAX_ELEMENTS);
   const cookies=new Set();
   for(const element of probe.elements) {
@@ -43,6 +48,12 @@ function elementKey(element) {
   return String(element.cookie);
 }
 
+function sampleRawHex(raw) {
+  if(typeof raw==='string')return raw.toLowerCase();
+  if(Array.isArray(raw)&&raw.every(byte=>Number.isInteger(byte)&&byte>=0&&byte<=255))return Buffer.from(raw).toString('hex');
+  return undefined;
+}
+
 export function compareMacEvidence(app,probe) {
   validateIndependentProbe(probe);
   assert.ok(['development','package'].includes(app.appBuildType),'identify the observed app build as development or package');
@@ -50,8 +61,15 @@ export function compareMacEvidence(app,probe) {
   assert.equal(app.deviceOpenedByRunner,true);
   assert.equal(app.interfaceId,app.inventory?.interfaceId,'selection must use one current inventory interface ID');
   assert.equal(app.identity?.registryEntryId,probe.device.registryEntryId,'registry entry must match the independent probe');
-  assert.equal(app.descriptorHex?.toLowerCase(),probe.descriptorHex.toLowerCase(),'original report descriptor bytes must match');
-  assert.equal(app.descriptorSha256?.toLowerCase(),probe.descriptorSha256.toLowerCase(),'descriptor digest must match');
+  assert.equal(app.descriptorAvailable,probe.descriptorAvailable,'native and independent descriptor availability must agree');
+  if(probe.descriptorAvailable) {
+    assert.equal(app.descriptorHex?.toLowerCase(),probe.descriptorHex.toLowerCase(),'original report descriptor bytes must match');
+    assert.equal(createHash('sha256').update(Buffer.from(app.descriptorHex,'hex')).digest('hex'),app.descriptorSha256?.toLowerCase());
+    assert.equal(app.descriptorSha256?.toLowerCase(),probe.descriptorSha256.toLowerCase(),'descriptor digest must match');
+  } else {
+    assert.equal(app.descriptorHex,null);
+    assert.equal(app.descriptorSha256,null);
+  }
   assert.ok(Array.isArray(app.elements)&&app.elements.length>0);
   const independent=new Map(probe.elements.map(element=>[elementKey(element),element]));
   assert.equal(independent.size,probe.elements.length,'independent IOHID cookies must be unique');
@@ -77,23 +95,35 @@ export function compareMacEvidence(app,probe) {
     if(provenance.source==='iohid-input-report') {
       assert.equal(provenance.wireAvailable,true);
       assert.match(report.wireHex??'',/^(?:[a-f0-9]{2})+$/i,'raw report callback must retain exact bytes');
+      if(probe.descriptorAvailable&&report.samples?.raw!==undefined)
+        assert.equal(sampleRawHex(report.samples.raw),report.wireHex.toLowerCase(),'decoded raw bytes must equal the retained callback delivery');
+      if(!probe.descriptorAvailable)
+        assert.ok(typeof report.samples?.unavailable==='string','without a descriptor, raw delivery stays undecoded');
     } else {
       assert.equal(provenance.wireAvailable,false);
       assert.equal(Object.hasOwn(report,'wireHex'),false,'element-only callback cannot invent raw bytes');
-      assert.ok(Array.isArray(report.elements)&&report.elements.length>0,'element callbacks retain only observed elements');
-      for(const sample of report.elements) {
+      assert.ok(Array.isArray(report.samples?.elements)&&report.samples.elements.length>0,'element callbacks retain only observed elements');
+      for(const sample of report.samples.elements) {
         const element=independent.get(String(sample.cookie));
         assert.ok(element,`callback element cookie ${sample.cookie} must exist on the selected device`);
-        assert.equal(sample.reportId,element.reportId,'callback report ID must match its element metadata');
         assert.equal(report.reportId,element.reportId,'callback record report ID must match its element metadata');
         assert.equal(sample.usagePage,element.usagePage);
         assert.equal(sample.usage,element.usage);
+        assert.equal(sample.reportSizeBits,element.reportSizeBits);
+        assert.equal(sample.reportCount,element.reportCount);
+        assert.equal(sample.logicalMin,element.logicalMin);
+        assert.equal(sample.logicalMax,element.logicalMax);
+        assert.equal(sample.relative,element.relative);
+        assert.equal(sample.array,element.array);
+        assert.ok(sample.integer===null||/^-?(?:0|[1-9]\d*)$/.test(sample.integer));
+        assert.match(sample.valueHex??'',/^(?:[a-f0-9]{2})*$/i);
       }
     }
   }
   const hasRaw=app.reports.some(report=>report.provenance?.source==='iohid-input-report');
   const hasElements=app.reports.some(report=>report.provenance?.source==='iohid-element');
   assert.ok(hasRaw||hasElements,'record whether this run delivered raw reports or parsed element callbacks');
+  assert.ok(probe.descriptorAvailable||hasRaw||hasElements,'record live callbacks even when no descriptor is available');
   const observations=app.operatorObservations??[];
   assert.ok(Array.isArray(observations),'operator observations must be a separate optional record');
   for(const observation of observations) {
@@ -103,10 +133,11 @@ export function compareMacEvidence(app,probe) {
     assert.ok(typeof observation.appEvidence==='string'&&observation.appEvidence.length>0);
   }
   return {appBuildType:app.appBuildType,registryEntryId:app.identity.registryEntryId,
-    descriptorSha256:app.descriptorSha256,nativeElements:app.elements.length,
+    descriptorAvailable:app.descriptorAvailable,descriptorSha256:app.descriptorSha256,nativeElements:app.elements.length,
     independentElements:probe.elements.length,nativeReports:app.reports.length,
     rawReportCallbacks:app.reports.filter(report=>report.provenance?.wireAvailable===true).length,
     elementCallbacks:app.reports.filter(report=>report.provenance?.source==='iohid-element').length,
+    portableDecoded:probe.descriptorAvailable&&app.reports.some(report=>report.provenance?.source==='iohid-input-report'&&Array.isArray(report.samples?.values)),
     operatorObservations:observations.length,deviceOpenedByRunner:true,readerClosed:true,
     packetSynchronized:false,releaseQualified:false};
 }

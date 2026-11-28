@@ -33,20 +33,20 @@ func arguments() throws -> Arguments {
     return result
 }
 
-func property(_ device: IOHIDDevice, _ key: CFString) -> Any? {
-    IOHIDDeviceGetProperty(device, key)
+func property(_ device: IOHIDDevice, _ key: String) -> Any? {
+    IOHIDDeviceGetProperty(device, key as CFString)
 }
 
-func number(_ device: IOHIDDevice, _ key: CFString) -> Int? {
+func number(_ device: IOHIDDevice, _ key: String) -> Int? {
     (property(device, key) as? NSNumber)?.intValue
 }
 
-func string(_ device: IOHIDDevice, _ key: CFString) -> String? {
+func string(_ device: IOHIDDevice, _ key: String) -> String? {
     property(device, key) as? String
 }
 
-func elementNumber(_ element: IOHIDElement, _ key: CFString) -> Int? {
-    (IOHIDElementGetProperty(element, key) as? NSNumber)?.intValue
+func elementNumber(_ element: IOHIDElement, _ key: String) -> Int? {
+    (IOHIDElementGetProperty(element, key as CFString) as? NSNumber)?.intValue
 }
 
 func identity(_ device: IOHIDDevice, _ id: UInt64) -> [String: Any] {
@@ -133,21 +133,26 @@ do {
         guard matches.count == 1, let (_, device) = matches.first else {
             throw NSError(domain: "probe", code: 3, userInfo: [NSLocalizedDescriptionKey: "The exact IORegistry entry ID must resolve to one current device"])
         }
-        guard let descriptor = property(device, kIOHIDReportDescriptorKey) as? Data,
-              !descriptor.isEmpty, descriptor.count <= 64 * 1024 else {
-            throw NSError(domain: "probe", code: 4, userInfo: [NSLocalizedDescriptionKey: "Original report descriptor is unavailable or exceeds 64 KiB"])
+        let descriptor = property(device, kIOHIDReportDescriptorKey) as? Data
+        if let descriptor, descriptor.count > 64 * 1024 {
+            throw NSError(domain: "probe", code: 4, userInfo: [NSLocalizedDescriptionKey: "Original report descriptor exceeds 64 KiB"])
         }
         let deviceElements = elements(device)
         guard !deviceElements.isEmpty, deviceElements.count <= 16_384 else {
             throw NSError(domain: "probe", code: 5, userInfo: [NSLocalizedDescriptionKey: "IOHID element count is empty or exceeds 16,384"])
         }
-        let hex = descriptor.map { String(format: "%02x", $0) }.joined()
-        let digest = SHA256.hash(data: descriptor).map { String(format: "%02x", $0) }.joined()
-        try output(["origin": "independent-macos-iohid-elements", "fixtureEvidence": false,
+        var receipt: [String: Any] = ["origin": "independent-macos-iohid-elements", "fixtureEvidence": false,
             "deviceOpened": false, "inputReads": false, "featureReads": false,
             "reportWrites": false, "descriptorProvenance": "IOHIDDeviceGetProperty(ReportDescriptor)",
             "elementsProvenance": "IOHIDDeviceCopyMatchingElements", "device": identity(device, args.registryID!),
-            "descriptorHex": hex, "descriptorSha256": digest, "elements": deviceElements])
+            "descriptorAvailable": false, "descriptorHex": NSNull(), "descriptorSha256": NSNull(),
+            "elements": deviceElements]
+        if let descriptor, !descriptor.isEmpty {
+            receipt["descriptorAvailable"] = true
+            receipt["descriptorHex"] = descriptor.map { String(format: "%02x", $0) }.joined()
+            receipt["descriptorSha256"] = SHA256.hash(data: descriptor).map { String(format: "%02x", $0) }.joined()
+        }
+        try output(receipt)
     }
 } catch {
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
