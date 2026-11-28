@@ -23,10 +23,11 @@ jobs:
           rustup component add llvm-tools-preview
           python3 scripts/controller-coverage.py
       - run: node --test tests/hid-device-captures/verify-macos.test.mjs
-      - name: Independently enumerate IOHID registry entries
+      - name: Compare native discovery with independent IORegistry metadata
         run: |
-          xcrun swiftc tests/hid-device-captures/probe-macos-elements.swift -o "$RUNNER_TEMP/iohid-probe"
-          "$RUNNER_TEMP/iohid-probe" --list
+          export OSG_TEST_IOHID_METADATA_PROBE="$RUNNER_TEMP/iohid-probe"
+          xcrun swiftc tests/hid-device-captures/probe-macos-elements.swift -o "$OSG_TEST_IOHID_METADATA_PROBE"
+          cargo test --locked --manifest-path crates/controller-input/Cargo.toml --lib generic_inventory_is_reachable -- --nocapture
   package:
     runs-on: macos-15
     timeout-minutes: 60
