@@ -208,3 +208,17 @@ or DMG creation is package-build evidence only.
 Keep candidate receipts under ignored `.generated/`; this workflow does not replace archived
 fixtures. A zero-device list, software probe fixture, app unit test or hosted CI run remains
 software/build evidence and cannot be promoted to physical hardware qualification.
+
+## Recorded results for #182
+
+On 2026-11-28 the public controller service on a hosted macOS 15 runner discovered
+the same two virtual USB interfaces as the independent Swift IORegistry probe.
+Both readers returned identical descriptor bytes and complete IOHID element trees
+for both registry IDs. The virtual keyboard remained visible with metadata-only
+access. The comparison opened no device for input or feature reads.
+[Native coverage and metadata comparison](https://github.com/opensimgear/cockpit/actions/runs/46132872749/job/140941700425)
+
+The ad-hoc-signed debug Cockpit app bundle passed signature verification and launched
+on macOS 15. Physical-device reception, actuation, hardware GET, and unplug/reconnect
+on a development Mac were deferred.
+[Package build and launch](https://github.com/opensimgear/cockpit/actions/runs/46132465753/job/140940427608)
