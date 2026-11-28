@@ -1,8 +1,10 @@
 // Opt-in test against the installed VKB pair and the native development Cockpit.
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {nativePage, until} from '../../scripts/reactive/cdp.mjs';
 
 const page = await nativePage();
@@ -16,8 +18,13 @@ async function request(command, args = {}) {
 try {
   // Position can change between archival and current captures. Use the archived
   // capabilities for layout and an independent Raw Input delivery for wire equality.
-  execFileSync('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('capture-raw.ps1',import.meta.url))]);
-  const independent = JSON.parse((await readFile(new URL('.generated/raw-input.json',import.meta.url),'utf8')).replace(/^\uFEFF/,''));
+  const dir = await mkdtemp(join(tmpdir(),'cockpit-hid-probe-'));
+  let independent;
+  try {
+    execFileSync('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('capture-raw.ps1',import.meta.url)),
+      '-OutputDirectory',dir]);
+    independent = JSON.parse((await readFile(join(dir,'raw-input.json'),'utf8')).replace(/^\uFEFF/,''));
+  } finally { await rm(dir,{recursive:true,force:true}); }
   assert.equal(independent.physicalOverflow,false);
   const inventory = await request('list');
   const restricted = inventory.interfaces.filter(row => row.access === 'metadata-only');
