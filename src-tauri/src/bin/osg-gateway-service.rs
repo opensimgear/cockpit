@@ -51,6 +51,7 @@ fn emit(output: &ServiceOutput, response: Value) {
     let _ = output.emit(response);
 }
 fn main() {
+    if osg_controller_input::run_vjoy_debug_helper() { return; }
     if let Some(code) = osg_desktop_output::entry::helper_main() { std::process::exit(code); }
     if let Some(code) = osg_mapping_host::logic_helper_main() {
         std::process::exit(code);

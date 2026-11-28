@@ -5,6 +5,8 @@ mod companion;
 mod desktop_preview_catalogue;
 #[path = "hid_catalogue.rs"]
 mod hid_catalogue;
+#[path = "vjoy_debug_catalogue.rs"]
+mod vjoy_debug_catalogue;
 
 fn string(max: usize) -> Value {
     json!({"type":"string","minLength":1,"maxLength":max,"pattern":"^[^\\u0000-\\u001f\\u007f]*$"})
@@ -212,6 +214,7 @@ pub fn catalogue() -> Vec<Value> {
     tools.extend(companion::catalogue());
     tools.extend(activity_catalogue());
     tools.extend(hid_catalogue::catalogue());
+    tools.extend(vjoy_debug_catalogue::catalogue());
     tools.extend(super::hid_query::catalogue());
     tools
 }
@@ -229,6 +232,7 @@ fn activity_catalogue() -> Vec<Value> {
 pub fn is_streaming(name:&str)->bool {matches!(name,"profile_debug_controller_input"|"workspace_client_renew"|"controller_hid_replay_upload_chunk")}
 
 pub fn is_mutation(name: &str) -> bool {
+    if matches!(name,"controller_vjoy_debug_open"|"controller_vjoy_debug_close"|"controller_vjoy_debug_record_start"|"controller_vjoy_debug_record_stop") { return true; }
     if matches!(name,"controller_hid_open"|"controller_hid_get"|"controller_hid_close"|"controller_hid_record_start"|"controller_hid_record_stop"|"controller_hid_record_discard"|
         "controller_hid_replay_upload_start"|"controller_hid_replay_upload_cancel"|"controller_hid_replay_upload_finish"|"controller_hid_replay_close") { return true; }
     if is_streaming(name) { return true; }

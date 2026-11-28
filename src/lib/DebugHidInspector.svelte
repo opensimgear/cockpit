@@ -6,6 +6,7 @@
   import HidContract from './hid-inspector/HidContract.svelte';
   import HidMonitor from './hid-inspector/HidMonitor.svelte';
   import HidOperations from './hid-inspector/HidOperations.svelte';
+  import VjoyDebug from './hid-inspector/VjoyDebug.svelte';
   import {appendReports,exact,object,rows} from './hid-inspector/model';
   let {active=true}:{active?:boolean}=$props();
   let controller=$state.raw<HidInspectionController|undefined>();
@@ -60,6 +61,8 @@
     {#if view.reports}<details><summary>Captured reports · current page</summary><pre>{text(view.reports)}</pre></details>{/if}
   {/if}
 </section>
+
+<VjoyDebug {active}/>
 
 <style>
   .hid-inspector{padding:var(--ui-panel-padding);margin-bottom:var(--ui-section-gap)}.heading{display:flex;justify-content:space-between;align-items:start;gap:16px}.heading h2{font-size:var(--ui-heading-size);margin:0}.heading p,p,label,summary{color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height)}label{display:grid;gap:8px}select{width:100%;min-height:var(--ui-control-height);font-size:var(--ui-text-size)}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}button{display:inline-flex;align-items:center;gap:6px}details{margin-top:16px}summary{cursor:pointer}.error{color:#d3a078}pre{max-height:360px;overflow:auto;font-size:var(--ui-text-size);line-height:var(--ui-line-height);white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:600px){.heading{flex-wrap:wrap}}

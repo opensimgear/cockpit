@@ -11,5 +11,18 @@
     "guard": "Authenticated reads inspect metadata, status, bounded archive slices and replay pages. Recording and upload lifecycle changes require write scope. Native device access policy remains authoritative. A chunk retry must match the original bytes at its offset.",
     "lifecycle": "Replay handles and uploads belong to the initiating client. Closing a live capture seals its recording. A sealed recording remains exportable by its original generation until discarded. Close a replay or cancel an upload to release its storage. Credential revocation retires owned receivers, seals owned recordings on borrowed receivers, and releases private replays and uploads.",
     "scenario": "Running dev Cockpit acceptance drives discovery, inspection, receive, recording and replay through authenticated MCP. The Debug view shares a native generation with the external client. Authored fixtures compare decoded data and exercise search, filters, paging, slice recovery and denied/stale requests."
+  },
+  {
+    "workflow": "Inspect vJoy slots and received force-feedback requests",
+    "status": "supported",
+    "ui": "src/lib/hid-inspector/VjoyDebug.svelte",
+    "native": "crates/controller-input/src/vjoy_debug.rs",
+    "mcp": "controller_vjoy_debug_inspect; controller_vjoy_debug_open; controller_vjoy_debug_read; controller_vjoy_debug_close; controller_vjoy_debug_record_start; controller_vjoy_debug_record_stop; controller_vjoy_debug_export; controller_vjoy_debug_replay",
+    "input": "Select a slot (1–16), then open an available force-feedback receiver. Read by generation and decimal sequence. Replay accepts a bounded raw callback archive.",
+    "output": "The native service returns SDK capabilities, ordered raw callback bytes, decoded PID requests, observed effect state and explicit capture errors.",
+    "effect": "Inspect reads SDK metadata. Open starts receive-only acquisition. Start and stop retain a bounded recording. Export saves the sealed prefix. Replay decodes it offline.",
+    "guard": "Write credentials are required to acquire a slot or change a recording. Only the owning client can close its generation. Read credentials can inspect, observe, export and replay.",
+    "lifecycle": "A capture has one owner. Closing, revocation and shutdown release its helper. A full recording seals its observed prefix; export it before closing.",
+    "scenario": "tests/ui/vjoy-debug-native.mjs compares the running Debug view with authenticated MCP for authored replay, device inspection and installed slot outcomes."
   }
 ]

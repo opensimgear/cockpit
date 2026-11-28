@@ -213,7 +213,7 @@ impl ServerHandler for Handler {
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
         let mutation = mcp_tools::is_mutation(&name);
-        let hid = name.starts_with("controller_hid_");
+        let hid = name.starts_with("controller_hid_") || name.starts_with("controller_vjoy_debug_");
         let (server, principal) = self.principal(&context, mutation)?;
         let urgent = matches!(
             name.as_str(),

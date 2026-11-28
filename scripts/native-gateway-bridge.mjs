@@ -87,7 +87,9 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         const requestId = observation && payload.operation === 'subscribe'
           ? `observation:${++observationCounter}` : randomUUID();
         const command = typeof payload?.command === 'string' ? payload.command : '';
-        const responseLimit = command.startsWith('game_') ? responseEnvelopeLimit : command.startsWith('profile_') ? 2_097_152 : 131_072;
+        const responseLimit = command.startsWith('game_') ? responseEnvelopeLimit
+          : command.startsWith('profile_') ? 2_097_152
+          : command.startsWith('controller_vjoy_debug_') ? 1_048_576 : 131_072;
         pending.set(requestId, { resolve, reject, timer, responseLimit });
         beforeWrite?.(requestId);
         const envelope = observation ? { requestId, observation: payload } : { requestId, request: payload };
@@ -125,7 +127,9 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
           const profile = typeof payload?.command === 'string' && payload.command.startsWith('profile_');
           const remembered = payload?.command === 'ui_preferences_save' && payload.key === 'remembered';
           if (profile && payload.command !== 'profile_editor_save' && bodySize > profileRequestLimit) throw new Error('Profile request exceeds its size limit.');
-          if (!profile && !remembered && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
+          const replay = payload?.command === 'controller_vjoy_debug_replay';
+          if (replay && bodySize > 385_024) throw new Error('vJoy replay request exceeds its size limit.');
+          if (!profile && !remembered && !replay && bodySize > 65_536) throw new Error('Gateway request exceeds 65536 bytes.');
           res.end(JSON.stringify(await request(payload)));
         } catch (error) {
           res.statusCode = 400;

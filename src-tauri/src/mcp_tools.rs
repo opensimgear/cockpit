@@ -192,7 +192,7 @@ impl Tools {
             Ok(data) => json!({"ok":true,"data":data}),
             Err(error) => error,
         };
-        let max_reply = if name.starts_with("controller_hid_") { hid_read::MAX_DATA_BYTES } else { MAX_REPLY };
+        let max_reply = if name.starts_with("controller_hid_") || name.starts_with("controller_vjoy_debug_") { hid_read::MAX_DATA_BYTES } else { MAX_REPLY };
         if result.to_string().len() > max_reply {
             // Mutations must retain their known outcome. Their large documents
             // are inspectable separately and never cause an ambiguous error.
@@ -259,6 +259,10 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "controller_vjoy_debug_inspect" | "controller_vjoy_debug_open" | "controller_vjoy_debug_close"
+            | "controller_vjoy_debug_read" | "controller_vjoy_debug_record_start" | "controller_vjoy_debug_record_stop"
+            | "controller_vjoy_debug_export" | "controller_vjoy_debug_replay" =>
+                forward(name, &["slot","generation","after","limit","recording"], Some("controllers")),
             name if hid_query::handles(name) => self.hid_query_tool(name, args, client),
             "controller_hid_list" | "controller_hid_catalog" | "controller_hid_state"
             | "controller_hid_inspect" | "controller_hid_snapshot" | "controller_hid_replay_read" =>
@@ -982,6 +986,11 @@ fn compact_operation_result(result: &Value, id: &str) -> Value {
         return result.clone();
     }
     let data = &result["data"];
+    if data["slot"].is_u64() && data["generation"].is_string() && data["capabilities"].is_object() {
+        let mut receipt=select(data,&["slot","generation"]);
+        receipt["inspectionTool"]=json!("controller_vjoy_debug_inspect");
+        return json!({"ok":true,"operationId":id,"data":receipt});
+    }
     if data["requestId"].is_string() && data["generation"].is_string() && data["interfaceId"].is_string() {
         let mut receipt=select(data,&["requestId","generation","interfaceId","contractFingerprint"]);
         receipt["state"]=json!("completed");

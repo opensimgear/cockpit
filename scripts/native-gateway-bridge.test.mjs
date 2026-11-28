@@ -184,3 +184,18 @@ test('atomic editor body and reply retain combined graph and exact pins above or
   const rejected=await bridge.request({...payload,command:'profile_save'});assert.equal(rejected.status,400);assert.match(rejected.body.error,/size limit/);assert.equal(bridge.starts(),1);bridge.close();
   const oversized=fixture(()=>assert.fail('oversized editor must not be forwarded'));const over=await oversized.request({...payload,document:'x'.repeat(2097152)});assert.equal(over.status,400);assert.equal(oversized.starts(),0);oversized.close();
 });
+test('vJoy replay carries bounded archives and capability responses through the browser bridge', async () => {
+  const bridge = fixture(({requestId,request}, child) => {
+    child.stdout.write(JSON.stringify({requestId,response:{ok:true,data:request.recording}})+'\n');
+  });
+  try {
+    const recording = {capabilities:{descriptorHex:'ab'.repeat(65_536)}};
+    const packet = {command:'controller_vjoy_debug_replay',recording};
+    const response = await bridge.request(packet);
+    assert.equal(response.status,200);
+    assert.deepEqual(response.body.data,recording);
+    const oversized = await bridge.request({...packet,recording:{value:'x'.repeat(385_024)}});
+    assert.equal(oversized.status,400);
+    assert.match(oversized.body.error,/vJoy replay request exceeds/);
+  } finally { bridge.close(); }
+});

@@ -40,7 +40,10 @@ const MAX_SETTINGS: u64 = 1_048_576;
 fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
     Registry::default().restore(saved.clone())
 }
+mod vjoy_debug;
+pub use vjoy_debug::run_vjoy_debug_helper;
 pub struct ControllerService {
+    vjoy_debug: vjoy_debug::Service,
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     hid: hid::Service,
     registry: Arc<Mutex<Registry>>,
@@ -56,6 +59,7 @@ pub struct ControllerService {
 }
 impl ControllerService {
     pub fn release_hid_client(&self, client: &str) {
+        self.vjoy_debug.release_client(client);
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         self.hid.release_client(client);
     }
@@ -200,6 +204,7 @@ impl ControllerService {
             r.set_backend_state("unavailable", diagnostic);
         }
         Self {
+            vjoy_debug: vjoy_debug::Service::new(native),
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             hid: hid::Service::new(native, path.as_deref()),
             registry,
@@ -283,6 +288,9 @@ impl ControllerService {
         let command = request["command"]
             .as_str()
             .ok_or("Missing controller command.")?;
+        if command.starts_with("controller_vjoy_debug_") {
+            return self.vjoy_debug.request(command, request);
+        }
         if command.starts_with("controller_hid_") {
             #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             return self.hid.request(command, request);
@@ -416,6 +424,7 @@ impl ControllerService {
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
+        self.vjoy_debug.shutdown();
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         self.hid.shutdown();
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]

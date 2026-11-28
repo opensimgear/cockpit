@@ -1,0 +1,29 @@
+{
+  "id": "vjoy-2.2.2-effects-lifecycle",
+    "source": "Authored vectors for BrunnerInnovation/vJoy v2.2.2.0 commit bd268d1fa5934a900a79e76e519d4aa804e0ee3d; no physical capture.",
+  "slot": 1,
+  "command": 720919,
+  "packets": [
+    { "name": "create-sine-assigned-block", "command": 721297, "bytesHex": "11040300", "expect": { "status": "ok", "reportName": "createNewEffect", "effectType": "sine", "effectBlockIndex": 3, "allocationStatus": "assigned" } },
+    { "name": "set-spring-infinite", "bytesHex": "110308ffffffff00000000ff00010000000034127856", "expect": { "status": "ok", "reportName": "setEffect", "effectType": "spring" } },
+    { "name": "start-looping", "bytesHex": "1a0301ff", "expect": { "status": "ok", "reportName": "effectOperation" } },
+    { "name": "global-gain", "bytesHex": "1dff", "expect": { "status": "ok", "reportName": "deviceGain" } },
+    { "name": "stop-effect", "bytesHex": "1a030300", "expect": { "status": "ok", "reportName": "effectOperation" } },
+    { "name": "pause-device", "bytesHex": "1c05", "expect": { "status": "ok", "reportName": "deviceControl", "control": "pause" } },
+    { "name": "truncated-report", "bytesHex": "1a03", "expect": { "status": "malformed", "reportName": "effectOperation" } }
+  ],
+  "expectedSnapshot": {
+    "effects": [
+      { "blockIndex": 3, "type": "spring", "running": false, "loopCount": 255, "fields": {
+        "effectBlockIndex": 3, "effectType": "spring", "durationMs": "infinite",
+        "triggerRepeatMs": "infinite", "samplePeriodMs": "0", "startDelayMs": 0,
+        "gainRaw": 255, "triggerButton": 0, "axesEnable": 1,
+        "direction": { "mode": "cartesian", "x": 0, "y": 0 }, "typeSpecificOffsets": [4660,22136], "created": true
+      } }
+    ],
+    "running": 0,
+    "gain": 255,
+    "paused": true,
+    "actuatorsEnabled": null
+  }
+}

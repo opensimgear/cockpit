@@ -1,0 +1,25 @@
+{
+  "id": "vjoy-2.2.2-active-report-layouts",
+  "source": "Authored from BrunnerInnovation/vJoy v2.2.2.0 commit bd268d1fa5934a900a79e76e519d4aa804e0ee3d descriptor; feature response vectors are descriptor-only and are not observed by the pinned callback; no physical capture.",
+  "slot": 1,
+  "command": 720919,
+  "packets": [
+    { "name": "envelope", "bytesHex": "120364003200e8030000d0070000", "expect": { "status": "ok", "reportName": "setEnvelope", "fields": { "effectBlockIndex": 3, "attackLevel": 100, "fadeLevel": 50, "attackTimeMs": 1000, "fadeTimeMs": 2000 } } },
+    { "name": "condition", "bytesHex": "130321f0d81027f0d8102700000a00", "expect": { "status": "ok", "reportName": "setCondition", "fields": { "effectBlockIndex": 3, "parameterBlockOffset": 1, "typeSpecificOffsets": [2,0], "isY": true, "centerPointOffset": -10000, "positiveCoefficient": 10000, "negativeCoefficient": -10000, "positiveSaturation": 10000, "negativeSaturation": 0, "deadBand": 10 } } },
+    { "name": "periodic", "bytesHex": "14031027f0d8282388130000", "expect": { "status": "ok", "reportName": "setPeriodic", "fields": { "effectBlockIndex": 3, "magnitude": 10000, "offset": -10000, "phase": 9000, "periodMs": 5000 } } },
+    { "name": "constant", "bytesHex": "1503f0d8", "expect": { "status": "ok", "reportName": "setConstant", "fields": { "effectBlockIndex": 3, "magnitude": -10000 } } },
+    { "name": "ramp", "bytesHex": "1603f0d81027", "expect": { "status": "ok", "reportName": "setRamp", "fields": { "effectBlockIndex": 3, "start": -10000, "end": 10000 } } },
+    { "name": "custom-force-data", "bytesHex": "17033412808f90ff00010203040506070809", "expect": { "status": "ok", "reportName": "setCustomForce", "fields": { "effectBlockIndex": 3, "offset": 4660, "samples": [-128,-113,-112,-1,0,1,2,3,4,5,6,7] } } },
+    { "name": "download-force-sample", "bytesHex": "18807f", "expect": { "status": "ok", "reportName": "downloadForceSample", "fields": { "x": -128, "y": 127 } } },
+    { "name": "effect-operation", "bytesHex": "1a0302ff", "expect": { "status": "ok", "reportName": "effectOperation", "fields": { "effectBlockIndex": 3, "operation": "solo", "loopCount": 255 } } },
+    { "name": "block-free", "bytesHex": "1b03", "expect": { "status": "ok", "reportName": "blockFree", "fields": { "effectBlockIndex": 3 } } },
+    { "name": "device-control", "bytesHex": "1c01", "expect": { "status": "ok", "reportName": "deviceControl", "fields": { "control": "enableActuators" } } },
+    { "name": "gain", "bytesHex": "1d80", "expect": { "status": "ok", "reportName": "deviceGain", "fields": { "gainRaw": 128 } } },
+    { "name": "set-custom-force", "bytesHex": "1e030ce803", "expect": { "status": "ok", "reportName": "setCustomForce", "fields": { "effectBlockIndex": 3, "sampleCount": 12, "samplePeriodMs": 1000 } } },
+    { "name": "create-new-effect-assigned-eid", "command": 721297, "bytesHex": "11040300", "expect": { "status": "ok", "reportName": "createNewEffect", "fields": { "effectType": "sine", "effectBlockIndex": 3, "allocationStatus": "assigned", "byteCountAvailable": false } } },
+    { "name": "block-load-feature-layout-unobserved", "command": 721301, "bytesHex": "1203013412", "expect": { "status": "unobserved", "reportName": "blockLoad", "fields": { "effectBlockIndex": 3, "loadStatusRaw": 1, "poolAvailable": 4660 } } },
+    { "name": "pool-feature-layout-unobserved", "command": 721301, "bytesHex": "1334120503", "expect": { "status": "unobserved", "reportName": "pool", "fields": { "poolSize": 4660, "simultaneousEffectsMax": 5, "deviceManagedPool": true, "sharedParameterBlocks": true } } },
+    { "name": "pid-state-input-layout-unobserved", "command": 721313, "bytesHex": "140302", "expect": { "status": "unobserved", "reportName": "pidState", "fields": { "effectBlockIndex": 3, "stateRaw": 2, "state": { "paused": true, "actuatorsEnabled": false, "safetySwitch": false, "actuatorOverride": false, "actuatorPower": false, "effectPlaying": false, "paddingRaw": 0 } } } },
+    { "name": "reserved-report-id-nine", "bytesHex": "1900", "expect": { "status": "unknown", "reportName": "unknown" } }
+  ]
+}

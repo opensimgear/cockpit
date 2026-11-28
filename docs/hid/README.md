@@ -181,7 +181,22 @@ preserve exact integers.
 
 Revoking a credential or disabling MCP retires its receivers, seals its active recordings, and
 releases its uploads and replays. A shared receiver opened by another client remains available.
-The separate vJoy force-feedback debugger is tracked in [H8](https://github.com/opensimgear/cockpit/issues/186).
+### Inspecting vJoy force-feedback requests
+
+In **Debug → HID interfaces → vJoy**, select a slot and choose **Inspect** to read its installed axis ranges, buttons, POV modes, effect support and SDK layout. The corresponding MCP tool is `controller_vjoy_debug_inspect`. Inspection leaves the slot available to its owner.
+
+Use the following operations on a free Windows vJoy slot configured for force feedback. Capture ownership lasts until Close, credential revocation or cockpit shutdown. The SDK runs in a dedicated helper process for each capture.
+
+| Debug action | MCP tool | Result |
+| --- | --- | --- |
+| Open | `controller_vjoy_debug_open` | Acquires the selected slot for observation and returns its generation. |
+| Read or monitor | `controller_vjoy_debug_read` | Returns ordered callback bytes, decoded requests, effect state and sequence cursors. Use `effectsThrough` to identify the state snapshot. |
+| Start or stop recording | `controller_vjoy_debug_record_start`, `controller_vjoy_debug_record_stop` | Retains the observed prefix independently of display paging. |
+| Export | `controller_vjoy_debug_export` | Downloads the sealed recording while its generation is available. |
+| Import and replay | `controller_vjoy_debug_replay` | Reconstructs state through the returned cursor, using only the supplied callbacks. Replay also works offline on Linux and macOS. |
+| Close | `controller_vjoy_debug_close` | Releases the helper and retires the generation. |
+
+Live history retains the latest 512 callbacks. Pages return up to 128. A gap indicates that earlier history has expired. Each recording retains up to 512 callbacks or 180,000 bytes of serialized rows and records why it stopped. Unknown commands and reports retain their original bytes. Effect state describes requests received by the SDK. Physical motor response is outside the observation.
 
 ## Budgets and milestone acceptance
 

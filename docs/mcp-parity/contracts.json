@@ -330,5 +330,95 @@
         "anchor": "onclick={togglePlay}"
       }
     ]
+  },
+  {
+    "workflow": "Inspect vJoy slots and received force-feedback requests",
+    "tools": [
+      "controller_vjoy_debug_inspect",
+      "controller_vjoy_debug_open",
+      "controller_vjoy_debug_read",
+      "controller_vjoy_debug_close",
+      "controller_vjoy_debug_record_start",
+      "controller_vjoy_debug_record_stop",
+      "controller_vjoy_debug_export",
+      "controller_vjoy_debug_replay"
+    ],
+    "tests": [
+      {
+        "path": "tests/ui/vjoy-debug-native.mjs",
+        "anchor": "running vJoy Debug and credentialed MCP share offline decoding and installed slot outcomes"
+      },
+      {
+        "path": "crates/controller-input/src/vjoy_debug/tests.rs",
+        "anchor": "recorded_callbacks_round_trip_with_exact_commands_bytes_and_state"
+      }
+    ],
+    "actions": [
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onchange={()=>{monitoring=false;page=null;after='';}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onchange={importFile}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>{after='';void read();}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>{after=String(page?.next??'');void read();}}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>monitoring=!monitoring}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>record('start')}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={()=>record('stop')}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={close}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={exportFile}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={inspect}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={open}"
+      },
+      {
+        "path": "src/lib/hid-inspector/VjoyDebug.svelte",
+        "kind": "ui",
+        "anchor": "onclick={read}"
+      },
+      {
+        "path": "src/lib/gateway.ts",
+        "kind": "transport",
+        "anchor": "controller_vjoy_debug_close"
+      }
+    ]
   }
 ]

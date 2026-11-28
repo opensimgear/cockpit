@@ -64,6 +64,11 @@ def main():
                            if not any('test' in part for part in path.relative_to(folder).parts))
         sources.extend(path for path in sorted((root / 'crates/controller-input/src/windows').rglob('*.rs'))
                        if not any('test' in part for part in path.relative_to(root / 'crates/controller-input/src/windows').parts))
+    folder = root / 'crates/controller-input/src/vjoy_debug'
+    sources.append(folder.with_suffix('.rs'))
+    sources.extend(path for path in sorted(folder.rglob('*.rs'))
+                   if not any('test' in part for part in path.relative_to(folder).parts)
+                   and (os.name == 'nt' or path.relative_to(folder).parts[0] not in ('sdk.rs', 'sdk')))
     sources.append(root / 'crates/controller-input/src/capture.rs')
     sources.append(root / 'crates/controller-input/src/stream.rs')
     sources.append(root / 'crates/controller-input/src/stream/clock.rs')
