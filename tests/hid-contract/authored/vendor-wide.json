@@ -1,0 +1,19 @@
+{
+  "id":"vendor-wide","provenance":"authored",
+  "description":"Vendor telemetry stresses exact 64-bit raw scalar preservation beyond 32-bit HID logical bounds and JavaScript's 53-bit integer precision. Logical overflow is explicit, never clamped or rounded.",
+  "descriptorHex":"0600ff0901a10185020901150027ffffffff7540950181020902170000008027ffffff7f7540950181020903150027ffffffff75409501810285030904150027ffffffff75409501b102c0",
+  "reports":[
+    {"kind":"input","reportId":2,"payloadBits":192,"fields":[
+      {"id":"counter","offset":0,"width":64,"count":1,"signed":false,"min":"0","max":"4294967295","mode":"variable","usage":"Vendor FF00:01"},
+      {"id":"signed-position","offset":64,"width":64,"count":1,"signed":true,"min":"-2147483648","max":"2147483647","mode":"variable","usage":"Vendor FF00:02"},
+      {"id":"sequence","offset":128,"width":64,"count":1,"signed":false,"min":"0","max":"4294967295","mode":"variable","usage":"Vendor FF00:03"}
+    ]},
+    {"kind":"feature","reportId":3,"payloadBits":64,"fields":[
+      {"id":"configuration","offset":0,"width":64,"count":1,"signed":false,"min":"0","max":"4294967295","mode":"variable","usage":"Vendor FF00:04"}
+    ]}
+  ],
+  "samples":[
+    {"name":"u64-max-i64-min-and-two-to-53-plus-one","kind":"input","reportId":2,"wireHex":"02ffffffffffffffff00000000000000800100000000002000","values":{"counter":["18446744073709551615"],"signed-position":["-9223372036854775808"],"sequence":["9007199254740993"]},"outsideLogicalRange":["counter","signed-position","sequence"]},
+    {"name":"feature-two-to-63-plus-one","kind":"feature","reportId":3,"wireHex":"030100000000000080","values":{"configuration":["9223372036854775809"]},"outsideLogicalRange":["configuration"]}
+  ]
+}

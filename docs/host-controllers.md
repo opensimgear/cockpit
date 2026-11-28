@@ -1,5 +1,8 @@
 # Host controller discovery
 
+For the complete HID reception and debugging design, see the [H0 contract and
+conformance matrix](hid/README.md). The discovery and mapping behavior below describes the current service.
+
 Windows Cockpit captures joystick, gamepad and multi-axis HID application collections through a dedicated Raw Input message thread. Capture continues while another application has focus. It does not request exclusive access, install drivers or provision virtual devices. Keyboard and mouse collections are excluded. Unknown standard controllers are usable without a model database; unknown, relative and array fields remain diagnostic.
 
 Before ordinary Windows capture starts, Cockpit automatically grants its current executable access through a supported installed HidHide driver. Normal mode adds only that executable to the application list; inverse mode removes only that executable from it. Existing device selections, global flags and other applications are preserved. The operation is idempotent and needs no profile or elevation. Missing HidHide is a no-op; unsupported drivers, busy control handles and pending visibility recovery report a startup diagnostic. Read-only qualification probes and inventory refreshes never perform this setup. Device visibility details show the startup result separately from the device's global hidden state.

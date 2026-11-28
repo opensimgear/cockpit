@@ -48,6 +48,9 @@ class RawInputProbe {
     static Dictionary<IntPtr,string> names = new Dictionary<IntPtr,string>();
     static Dictionary<string,int> reports = new Dictionary<string,int>();
     static HashSet<string> changes = new HashSet<string>();
+    static bool physicalCorpus, physicalOverflow;
+    static HashSet<IntPtr> physicalDevices = new HashSet<IntPtr>();
+    static List<object> physicalReports = new List<object>();
     static HashSet<IntPtr> vjoyDevices = new HashSet<IntPtr>();
     static List<object> vjoyButtons = new List<object>();
     static Dictionary<IntPtr,int> lastButtons = new Dictionary<IntPtr,int>();
@@ -132,6 +135,17 @@ class RawInputProbe {
                                 if (!vjoyCaptureOverflow && vjoyDevices.Contains(device)) {
                                     ObserveVjoyButton(device, name, IntPtr.Add(buffer, (int)HeaderSize + 8), item, count, receivedTicks);
                                 }
+                                if (physicalCorpus && physicalDevices.Contains(device)) {
+                                    // Fixed 5s, 512-report, 4096-byte/report input-only corpus.
+                                    if (item > 4096 || physicalReports.Count + count > 512) physicalOverflow = true;
+                                    else for (uint part = 0; part < count; part++) {
+                                        var raw = new byte[item];
+                                        Marshal.Copy(IntPtr.Add(buffer, (int)HeaderSize + 8 + (int)(part * item)), raw, 0, raw.Length);
+                                        physicalReports.Add(new { device=name, reportBytes=(int)item,
+                                            reportHex=BitConverter.ToString(raw).Replace("-", "").ToLowerInvariant(),
+                                            receivedTicks=receivedTicks, reportOrdinal=reports[name] - (int)count + (int)part + 1 });
+                                    }
+                                }
                                 if (changes.Count < 256) {
                                     byte[] bytes = new byte[item * count];
                                     Marshal.Copy(IntPtr.Add(buffer, (int)HeaderSize + 8), bytes, 0, bytes.Length);
@@ -190,6 +204,7 @@ class RawInputProbe {
 
 
     static int Main(string[] args) {
+        physicalCorpus = args.Length == 1 && args[0] == "--physical-corpus";
         observeSecondButton = args.Length > 0 && args[0] == "--vjoy-buttons";
         bool observeVjoy = observeSecondButton || (args.Length == 1 && args[0] == "--vjoy-button");
         int captureMs = 5000;
@@ -206,10 +221,10 @@ class RawInputProbe {
             tracePath = Path.GetFullPath(args[1]);
             vjoyEventLimit = MaximumTraceEvents;
         }
-        if (!traceCapture && ((args.Length > 0 && !observeVjoy) || args.Length > 2 ||
+        if (!physicalCorpus && !traceCapture && ((args.Length > 0 && !observeVjoy) || args.Length > 2 ||
             (args.Length == 2 && (!observeSecondButton || !int.TryParse(args[1], out captureMs)
                 || captureMs < 5000 || captureMs > 15000))))
-            throw new ArgumentException("Expected --vjoy-button, --vjoy-buttons [5000–15000 ms], --vjoy-trace <file> <captureMs> <slot>, or no arguments.");
+            throw new ArgumentException("Expected --physical-corpus, --vjoy-button, --vjoy-buttons [5000–15000 ms], --vjoy-trace <file> <captureMs> <slot>, or no arguments.");
         if (args.Length == 2) vjoyEventLimit = 8192;
         var devices = new List<object>();
         uint count = 0;
@@ -234,8 +249,15 @@ class RawInputProbe {
                 if (DeviceName(list[i].handle, RIDI_DEVICENAME, path, ref length) == uint.MaxValue) continue;
                 string id = Hash(Encoding.UTF8.GetBytes(path.ToString()));
                 uint vendor=(uint)Marshal.ReadInt32(info,8), product=(uint)Marshal.ReadInt32(info,12);
+                if (physicalCorpus && vendor == 0x1234 && product == 0xbead) continue;
                 names[list[i].handle] = id;
                 reports[id] = 0;
+                if (physicalCorpus) {
+                    physicalDevices.Add(list[i].handle);
+                    devices.Add(new { id=id, vendor=vendor, product=product, usage=usage,
+                        readHandleAttempted=false, virtualVjoy=false });
+                    continue;
+                }
                 if (observeVjoy && vendor == 0x1234 && product == 0xbead) vjoyDevices.Add(list[i].handle);
                 bool readable;
                 int openError;
@@ -269,11 +291,14 @@ class RawInputProbe {
                 traceWriter.Write((long)0);
                 traceWriter.Flush();
             }
-            uint foregroundPid;
-            GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
             string foreground = "unavailable";
-            try { foreground=Process.GetProcessById((int)foregroundPid).ProcessName; } catch {}
+            if (!physicalCorpus) {
+                uint foregroundPid;
+                GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
+                try { foreground=Process.GetProcessById((int)foregroundPid).ProcessName; } catch {}
+            }
             var clock=Stopwatch.StartNew();
+            if (physicalCorpus) vjoyCaptureStarted = Stopwatch.GetTimestamp();
             if (observeVjoy) {
                 // The writer may submit immediately after this signal.
                 vjoyCaptureStarted = Stopwatch.GetTimestamp();
@@ -313,6 +338,7 @@ class RawInputProbe {
             if (traceCapture) traceWriter.Flush();
             long endedTicks = Stopwatch.GetTimestamp();
             var serializer = new JavaScriptSerializer();
+            if (physicalCorpus) serializer.MaxJsonLength = 5 * 1024 * 1024;
             if (observeVjoy) {
                 if (traceCapture) {
                     traceWriter.Dispose();
@@ -326,6 +352,12 @@ class RawInputProbe {
                     captureOverflow=vjoyCaptureOverflow,
                     receiverTickHz=Stopwatch.Frequency, receiverStartedTicks=vjoyCaptureStarted.ToString(),
                     receiverEndedTicks=endedTicks.ToString()}));
+            } else if (physicalCorpus) {
+                Console.WriteLine(serializer.Serialize(new {
+                    devices=devices, reports=reports, physicalReports=physicalReports,
+                    physicalOverflow=physicalOverflow, tickHz=Stopwatch.Frequency,
+                    backgroundRegistration=true, durationMs=clock.ElapsedMilliseconds
+                }));
             } else {
                 Console.WriteLine(serializer.Serialize(new {
                     devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,

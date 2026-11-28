@@ -1,0 +1,18 @@
+{
+  "id":"relative-mouse","provenance":"authored",
+  "description":"Three-button relative mouse with signed X/Y/wheel deltas. Identical consecutive payloads are separate movement events, not stationary absolute-state duplicates.",
+  "descriptorHex":"05010902a1010901a1000509190129031500250195037501810295017505810105010930093109381581257f750895038106c0c0",
+  "reports":[{"kind":"input","reportId":null,"payloadBits":32,"fields":[
+    {"id":"buttons","offset":0,"width":1,"count":3,"signed":false,"min":"0","max":"1","mode":"variable","usage":"Button 01..03"},
+    {"id":"padding","offset":3,"width":5,"count":1,"signed":false,"min":"0","max":"1","mode":"constant","usage":"padding"},
+    {"id":"x","offset":8,"width":8,"count":1,"signed":true,"min":"-127","max":"127","mode":"variable","usage":"GenericDesktop X","relative":true},
+    {"id":"y","offset":16,"width":8,"count":1,"signed":true,"min":"-127","max":"127","mode":"variable","usage":"GenericDesktop Y","relative":true},
+    {"id":"wheel","offset":24,"width":8,"count":1,"signed":true,"min":"-127","max":"127","mode":"variable","usage":"GenericDesktop Wheel","relative":true}
+  ]}],
+  "samples":[
+    {"name":"first-relative-delta","kind":"input","reportId":null,"wireHex":"05817fff","values":{"buttons":["1","0","1"],"padding":["0"],"x":["-127"],"y":["127"],"wheel":["-1"]}},
+    {"name":"same-delta-next-event","kind":"input","reportId":null,"wireHex":"05817fff","values":{"buttons":["1","0","1"],"padding":["0"],"x":["-127"],"y":["127"],"wheel":["-1"]}},
+    {"name":"zero-delta-release","kind":"input","reportId":null,"wireHex":"00000000","values":{"buttons":["0","0","0"],"padding":["0"],"x":["0"],"y":["0"],"wheel":["0"]}},
+    {"name":"nonzero-constant-bits-preserved","kind":"input","reportId":null,"wireHex":"fd817fff","values":{"buttons":["1","0","1"],"padding":["31"],"x":["-127"],"y":["127"],"wheel":["-1"]}}
+  ]
+}

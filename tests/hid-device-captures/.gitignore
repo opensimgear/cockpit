@@ -1,0 +1,5 @@
+.generated/
+*.exe
+*.log
+raw-input.json
+cockpit-parsed.json

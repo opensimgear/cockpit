@@ -1,0 +1,26 @@
+{
+  "id":"metadata-preservation","provenance":"authored",
+  "description":"Nested collections, global Push/Pop, local alternative usage delimiter, string/designator indexes, and opaque long/reserved items. H0 verifies literal item bytes and offsets; H1 must interpret/preserve their semantics.",
+  "descriptorHex":"05010904a1010901a10085071500250f75049501a475080600ff090179033902a9010902a9008102b409308102750495018101fe0300aabbcc0cc0c0",
+  "metadata":[
+    {"offsetBytes":4,"hex":"a101","h1Expectation":"Application collection root; GenericDesktop Joystick"},
+    {"offsetBytes":8,"hex":"a100","h1Expectation":"Physical Pointer collection nested under the application"},
+    {"offsetBytes":20,"hex":"a4","h1Expectation":"Push complete global state, including report size four and GenericDesktop page"},
+    {"offsetBytes":28,"hex":"7903","h1Expectation":"Retain local string index three on the following Main item"},
+    {"offsetBytes":30,"hex":"3902","h1Expectation":"Retain local designator index two on the following Main item"},
+    {"offsetBytes":32,"hex":"a9010902a900","h1Expectation":"Retain ordered alternative delimiter branch containing Vendor FF00 usage two, separate from primary usage one"},
+    {"offsetBytes":38,"hex":"8102","h1Expectation":"Input field at payload bit zero, eight bits; Main item consumes and clears local state"},
+    {"offsetBytes":40,"hex":"b4","h1Expectation":"Restore complete pushed globals; later field returns to four bits and GenericDesktop page"},
+    {"offsetBytes":43,"hex":"8102","h1Expectation":"Input X at payload bit eight, four bits; string/designator/alternative locals must not leak"},
+    {"offsetBytes":49,"hex":"8101","h1Expectation":"Constant four-bit padding at payload bit twelve"},
+    {"offsetBytes":51,"hex":"fe0300aabbcc","h1Expectation":"Preserve full long item including size three, tag zero and opaque payload aabbcc"},
+    {"offsetBytes":57,"hex":"0c","h1Expectation":"Preserve unknown reserved-type short item rather than silently discarding it"},
+    {"offsetBytes":58,"hex":"c0c0","h1Expectation":"Close physical child then application parent; preserve collection hierarchy"}
+  ],
+  "reports":[{"kind":"input","reportId":7,"payloadBits":16,"fields":[
+    {"id":"vendor-byte","offset":0,"width":8,"count":1,"signed":false,"min":"0","max":"15","mode":"variable","usage":"Vendor FF00:01; alternative FF00:02; string 3; designator 2"},
+    {"id":"restored-x","offset":8,"width":4,"count":1,"signed":false,"min":"0","max":"15","mode":"variable","usage":"GenericDesktop X after Pop"},
+    {"id":"padding","offset":12,"width":4,"count":1,"signed":false,"min":"0","max":"15","mode":"constant","usage":"padding"}
+  ]}],
+  "samples":[{"name":"global-restore-and-local-reset","kind":"input","reportId":7,"wireHex":"070a05","values":{"vendor-byte":["10"],"restored-x":["5"],"padding":["0"]}}]
+}

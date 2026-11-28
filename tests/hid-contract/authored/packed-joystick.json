@@ -1,0 +1,14 @@
+{
+  "id":"packed-joystick","provenance":"authored",
+  "description":"Numbered joystick with two unaligned signed 12-bit axes, a four-bit hat null state, and four individual button usages.",
+  "descriptorHex":"05010904a10185010501093009311600f826ff07750c9502810209391500250775049501814205091901290415002501750195048102c0",
+  "reports":[{"kind":"input","reportId":1,"payloadBits":32,"fields":[
+    {"id":"axes","offset":0,"width":12,"count":2,"signed":true,"min":"-2048","max":"2047","mode":"variable","usage":"GenericDesktop X,Y"},
+    {"id":"hat","offset":24,"width":4,"count":1,"signed":false,"min":"0","max":"7","mode":"variable","usage":"GenericDesktop HatSwitch","hatDomain":"8way","nullValues":["8"]},
+    {"id":"buttons","offset":28,"width":1,"count":4,"signed":false,"min":"0","max":"1","mode":"variable","usage":"Button 01..04"}
+  ]}],
+  "samples":[
+    {"name":"cross-byte-negative-and-null-hat","kind":"input","reportId":1,"wireHex":"0185ff3fa8","values":{"axes":["-123","1023"],"hat":["8"],"buttons":["0","1","0","1"]},"nullFields":["hat"]},
+    {"name":"axis-boundaries-and-north","kind":"input","reportId":1,"wireHex":"0100f87f00","values":{"axes":["-2048","2047"],"hat":["0"],"buttons":["0","0","0","0"]}}
+  ]
+}

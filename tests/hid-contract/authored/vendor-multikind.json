@@ -1,0 +1,24 @@
+{
+  "id":"vendor-multikind","provenance":"authored",
+  "description":"The same report ID has distinct input, output and feature layouts and lengths. Output and feature bytes are reference data only, never sent to a device.",
+  "descriptorHex":"0600ff0901a10185050901150027ffffff0075189501810209021500251f7505950181027503950181010903150025647507950191020904150025017501950191020905150027ffffffff75209501b102c0",
+  "reports":[
+    {"kind":"input","reportId":5,"payloadBits":32,"fields":[
+      {"id":"sensor","offset":0,"width":24,"count":1,"signed":false,"min":"0","max":"16777215","mode":"variable","usage":"Vendor FF00:01"},
+      {"id":"status","offset":24,"width":5,"count":1,"signed":false,"min":"0","max":"31","mode":"variable","usage":"Vendor FF00:02"},
+      {"id":"padding","offset":29,"width":3,"count":1,"signed":false,"min":"0","max":"31","mode":"constant","usage":"padding"}
+    ]},
+    {"kind":"output","reportId":5,"payloadBits":8,"fields":[
+      {"id":"motor","offset":0,"width":7,"count":1,"signed":false,"min":"0","max":"100","mode":"variable","usage":"Vendor FF00:03"},
+      {"id":"enabled","offset":7,"width":1,"count":1,"signed":false,"min":"0","max":"1","mode":"variable","usage":"Vendor FF00:04"}
+    ]},
+    {"kind":"feature","reportId":5,"payloadBits":32,"fields":[
+      {"id":"revision","offset":0,"width":32,"count":1,"signed":false,"min":"0","max":"4294967295","mode":"variable","usage":"Vendor FF00:05"}
+    ]}
+  ],
+  "samples":[
+    {"name":"packed-24-bit-sensor","kind":"input","reportId":5,"wireHex":"0523c1ab11","values":{"sensor":["11256099"],"status":["17"],"padding":["0"]}},
+    {"name":"motor-full-and-enabled-reference","kind":"output","reportId":5,"wireHex":"05e4","values":{"motor":["100"],"enabled":["1"]}},
+    {"name":"feature-u32-boundary-reference","kind":"feature","reportId":5,"wireHex":"05ffffffff","values":{"revision":["4294967295"]}}
+  ]
+}

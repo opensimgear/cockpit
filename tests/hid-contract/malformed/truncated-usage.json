@@ -1,0 +1,11 @@
+{
+  "id":"truncated-usage","provenance":"authored",
+  "description":"A complete UsagePage item followed by a Usage prefix whose declared one-byte payload is absent. H1 must retain the raw prefix, report the truncation, and avoid inventing fields.",
+  "descriptorHex":"050109",
+  "kind":"truncated-short-item",
+  "offsetBytes":2,
+  "prefixHex":"09",
+  "declaredPayloadBytes":1,
+  "availablePayloadBytes":0,
+  "h1Expectation":"Preserve malformed item at byte two; truncation diagnostic; no fabricated Usage value or complete report layout"
+}

@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-28T06:44:40.859Z",
+  "title": "OpenSimGear Cockpit",
+  "native": true,
+  "view": "Devices",
+  "matchedProductLabels": [
+    "VKBSim T-Rudder",
+    "VKBsim Gladiator EVO R",
+    "VKBsim Gladiator EVO R",
+    "VKBSim T-Rudder"
+  ],
+  "verification": "Both attached physical controller product labels appear in actual Devices UI.",
+  "noInputInjection": true,
+  "noOutputWrites": true
+}

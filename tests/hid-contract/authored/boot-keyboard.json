@@ -1,0 +1,21 @@
+{
+  "id": "boot-keyboard", "provenance": "authored",
+  "description": "Boot-style keyboard modifier bitfield, six-key array, constant reserved byte, and LED output; unnumbered reports have no synthetic ID byte.",
+  "descriptorHex": "05010906a101050719e029e7150025017501950881029501750881019506750815002565050719002965810005081901290515002501950575019102950175039101c0",
+  "reports": [
+    {"kind":"input","reportId":null,"payloadBits":64,"fields":[
+      {"id":"modifiers","offset":0,"width":1,"count":8,"signed":false,"min":"0","max":"1","mode":"variable","usage":"Keyboard E0..E7"},
+      {"id":"reserved","offset":8,"width":8,"count":1,"signed":false,"min":"0","max":"1","mode":"constant","usage":"padding"},
+      {"id":"keys","offset":16,"width":8,"count":6,"signed":false,"min":"0","max":"101","mode":"array","usage":"Keyboard 00..65"}
+    ]},
+    {"kind":"output","reportId":null,"payloadBits":8,"fields":[
+      {"id":"leds","offset":0,"width":1,"count":5,"signed":false,"min":"0","max":"1","mode":"variable","usage":"LED 01..05"},
+      {"id":"padding","offset":5,"width":3,"count":1,"signed":false,"min":"0","max":"1","mode":"constant","usage":"padding"}
+    ]}
+  ],
+  "samples": [
+    {"name":"left-shift-a-and-enter","kind":"input","reportId":null,"wireHex":"0200042800000000","values":{"modifiers":["0","1","0","0","0","0","0","0"],"reserved":["0"],"keys":["4","40","0","0","0","0"]}},
+    {"name":"all-released","kind":"input","reportId":null,"wireHex":"0000000000000000","values":{"modifiers":["0","0","0","0","0","0","0","0"],"reserved":["0"],"keys":["0","0","0","0","0","0"]}},
+    {"name":"caps-and-scroll-leds","kind":"output","reportId":null,"wireHex":"06","values":{"leds":["0","1","1","0","0"],"padding":["0"]}}
+  ]
+}

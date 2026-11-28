@@ -1,0 +1,19 @@
+{
+  "id":"hat-domains","provenance":"authored",
+  "description":"Four-way discrete hat, continuous hundredths-of-degree hat, and asymmetric unsigned axis whose neutral is deliberately unknown rather than inferred from its range.",
+  "descriptorHex":"05010904a101850809391500250375029501810275069501810109391500269f8c3500469f8c550e65147510950181020930156426e8fd3500450055006500751095018102c0",
+  "metadata":[
+    {"offsetBytes":38,"hex":"550e6514","h1Expectation":"Preserve signed unit exponent minus two and English rotation degree unit code twenty; continuous hat raw 9000 means 90.00 degrees"}
+  ],
+  "reports":[{"kind":"input","reportId":8,"payloadBits":40,"fields":[
+    {"id":"four-way","offset":0,"width":2,"count":1,"signed":false,"min":"0","max":"3","mode":"variable","usage":"GenericDesktop HatSwitch","hatDomain":"4way"},
+    {"id":"padding","offset":2,"width":6,"count":1,"signed":false,"min":"0","max":"3","mode":"constant","usage":"padding"},
+    {"id":"continuous-angle","offset":8,"width":16,"count":1,"signed":false,"min":"0","max":"35999","mode":"variable","usage":"GenericDesktop HatSwitch","hatDomain":"continuous-angle","unitCode":"20","unitExponent":-2,"physical":{"min":"0","max":"35999"}},
+    {"id":"asymmetric-axis","offset":24,"width":16,"count":1,"signed":false,"min":"100","max":"65000","mode":"variable","usage":"GenericDesktop X","neutral":"unknown"}
+  ]}],
+  "samples":[
+    {"name":"west-full-angle-and-axis-max","kind":"input","reportId":8,"wireHex":"08039f8ce8fd","values":{"four-way":["3"],"padding":["0"],"continuous-angle":["35999"],"asymmetric-axis":["65000"]}},
+    {"name":"north-ninety-degrees-axis-min","kind":"input","reportId":8,"wireHex":"080028236400","values":{"four-way":["0"],"padding":["0"],"continuous-angle":["9000"],"asymmetric-axis":["100"]}},
+    {"name":"east-zero-angle-no-inferred-neutral","kind":"input","reportId":8,"wireHex":"080100003930","values":{"four-way":["1"],"padding":["0"],"continuous-angle":["0"],"asymmetric-axis":["12345"]}}
+  ]
+}

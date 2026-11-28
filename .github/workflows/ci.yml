@@ -23,6 +23,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify HID reception contracts and authored reports
+        run: |
+          pnpm exec tsc --noEmit --strict --skipLibCheck --target es2022 docs/hid/contract.ts
+          node --experimental-test-coverage --test-coverage-include=tests/hid-contract/conformance.mjs --test-coverage-lines=90 --test-coverage-branches=80 --test-coverage-functions=90 --test tests/hid-contract/conformance.test.mjs
+          node tests/hid-device-captures/verify.mjs
       - name: Guard reactive frontend timer ownership
         run: |
           node --test scripts/reactive/ui-timers.test.mjs
