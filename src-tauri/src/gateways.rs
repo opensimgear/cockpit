@@ -196,6 +196,7 @@ fn empty_state() -> Value {
     json!({"connected":false,"running":false,"needsReconnect":false,"reconnecting":false,"modules":[],"port":null,"ports":[]})
 }
 fn profile_guard_operation(command: &str) -> Option<&str> {
+    if command.starts_with("controller_hid_") { return None; }
     if matches!(command, "profile_debug_controller_status" | "profile_debug_controller_input") {
         return None;
     }
@@ -216,6 +217,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
 /// catalogue and editor reads must not keep cancelling the native learner.
 fn learning_interrupt(request:&Value)->bool{
     let command=request["command"].as_str().unwrap_or("");
+    if command.starts_with("controller_hid_") { return false; }
     if command.starts_with("profile_desktop_"){return !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker"|"profile_desktop_capture_application");}
     if command.starts_with("profile_"){return matches!(command,"profile_apply"|"profile_game_launch"|"profile_stop"|"profile_recover"|"profile_reset"|"profile_select"|"profile_selection_mode"|"profile_game_rule_save"|"profile_game_rule_remove"|"profile_game_preference_save"|"profile_game_preference_remove"|"profile_retired_recovery_recover"|"profile_retired_recovery_acknowledge"|"profile_retired_recovery_provision_recover"|"profile_retired_recovery_provision_cancel");}
     if command.starts_with("mapping_") || command=="companion_feedback_routes" { return false; }

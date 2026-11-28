@@ -12,6 +12,14 @@ pub mod stream;
 pub mod visibility;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_caps;
+#[cfg(windows)]
+mod windows_inventory;
+#[cfg(windows)]
+mod windows_receive;
+#[cfg(windows)]
+mod windows_hid;
 #[cfg(target_os = "linux")]
 use capture::linux::Wake as CaptureWake;
 #[cfg(target_os = "macos")]
@@ -33,6 +41,8 @@ fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
     Registry::default().restore(saved.clone())
 }
 pub struct ControllerService {
+    #[cfg(windows)]
+    hid: windows_hid::Service,
     registry: Arc<Mutex<Registry>>,
     clock: stream::Clock,
     stop: Arc<AtomicBool>,
@@ -183,6 +193,8 @@ impl ControllerService {
             r.set_backend_state("unavailable", diagnostic);
         }
         Self {
+            #[cfg(windows)]
+            hid: windows_hid::Service::new(native),
             registry,
             clock,
             stop,
@@ -264,6 +276,12 @@ impl ControllerService {
         let command = request["command"]
             .as_str()
             .ok_or("Missing controller command.")?;
+        if command.starts_with("controller_hid_") {
+            #[cfg(windows)]
+            return self.hid.request(command, request);
+            #[cfg(not(windows))]
+            return Err("Generic Windows HID receiver is unavailable on this platform.".into());
+        }
         if command.starts_with("controller_visibility_") {
             return self.visibility.request(request);
         }
@@ -391,6 +409,8 @@ impl ControllerService {
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
+        #[cfg(windows)]
+        self.hid.shutdown();
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         if let Some(wake) = &self.capture_wake {
             if let Err(error) = wake.signal() {

@@ -27,3 +27,6 @@ iohidmanager = { version = "=0.11.0", default-features = false }
 
 [dev-dependencies]
 osg-persistence = { path = "../persistence", features = ["test-support"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Pipes"] }

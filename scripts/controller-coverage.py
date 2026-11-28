@@ -57,6 +57,11 @@ def main():
     sources.append(root / 'crates/controller-input/src/inventory.rs')
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/windows.rs')
+        for name in ['windows_hid', 'windows_inventory', 'windows_receive', 'windows_caps']:
+            folder = root / 'crates/controller-input/src' / name
+            sources.append(folder.with_suffix('.rs'))
+            sources.extend(path for path in sorted(folder.rglob('*.rs'))
+                           if not any('test' in part for part in path.relative_to(folder).parts))
         sources.extend(path for path in sorted((root / 'crates/controller-input/src/windows').rglob('*.rs'))
                        if not any('test' in part for part in path.relative_to(root / 'crates/controller-input/src/windows').parts))
     sources.append(root / 'crates/controller-input/src/capture.rs')

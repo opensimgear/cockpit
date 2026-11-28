@@ -32,6 +32,8 @@ runs the corpus and generated tests and checks production coverage per source fi
 
 ## Identity and provenance
 
+For the Windows implementation, see the [selected-interface receiver and qualification procedure](windows-receiver.md).
+
 Publish a snapshot atomically. Within one service epoch distinguish interfaces, top-level collections
 and repeated sibling collections, even on two identical units or a composite device. Bind a field to
 its collection and declaration ordinal (or OS data index/element identity). Preserve the underlying
