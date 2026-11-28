@@ -29,8 +29,13 @@ fn arbitrary_ids_fail_before_native_discovery() {
 
 #[test]
 fn generic_inventory_is_reachable_through_service_without_opening_inputs() {
-    let service = crate::hid::Service::new(true);
-    let response = service.request("controller_hid_list", &json!({})).unwrap();
+    let service = crate::ControllerService::new(None, true);
+    let wake = std::sync::Arc::new(osg_streams::NativeWake::default());
+    service.watch_resource_inventory(&wake).unwrap();
+    let mapping_epoch = wake.observed();
+    let response = service
+        .request(&json!({"command":"controller_hid_list"}))
+        .unwrap();
     assert!(response["interfaces"].is_array());
     assert!(response["truncated"].is_boolean());
     for row in response["interfaces"].as_array().unwrap() {
@@ -39,11 +44,21 @@ fn generic_inventory_is_reachable_through_service_without_opening_inputs() {
         if let Some(id) = row["interfaceId"].as_str() {
             // No input registration, device open, value/feature read, or writes.
             let detail = service
-                .request("controller_hid_inspect", &json!({"interfaceId":id}))
+                .request(&json!({"command":"controller_hid_inspect","interfaceId":id}))
                 .unwrap();
             assert_eq!(detail["interfaceId"], id);
             assert!(detail["identity"]["registryEntryId"].is_string());
         }
     }
+    // Metadata-only IOHID discovery must never publish a mapping source.
+    assert!(service
+        .authoritative_resource_inventory()
+        .unwrap()
+        .sources
+        .is_empty());
+    assert_eq!(wake.observed(), mapping_epoch);
     service.shutdown();
+    assert!(service
+        .request(&json!({"command":"controller_hid_list"}))
+        .is_err());
 }

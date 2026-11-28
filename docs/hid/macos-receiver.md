@@ -45,7 +45,8 @@ tests/hid-device-captures/.generated/probe-macos-elements \
 
 Replace the sample decimal ID with the current device's exact ID. Re-run the probe if the
 device reconnects; a registry ID is a current OS address. A changed ID is a new observation.
-The probe rejects missing/oversize report descriptors and oversized or empty element lists.
+The probe records a missing descriptor as unavailable, rejects descriptors over 64 KiB, and
+rejects oversized or empty element lists.
 
 ## Capture through the running app
 
